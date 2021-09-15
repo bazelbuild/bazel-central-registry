@@ -207,6 +207,9 @@ module(
     # Create MODULE.bazel
     module_dot_bazel = p.joinpath("MODULE.bazel")
     if module.module_dot_bazel:
+      # TODO(pcloudy): Sanity check the given MODULE.bazel
+      #   - module name and version should match the specified values
+      #   - no override is used
       shutil.copy(module.module_dot_bazel, module_dot_bazel)
     else:
       deps = "\n".join(
@@ -277,7 +280,9 @@ module(
                                        "metadata.json")
     metadata = json.load(metadata_path.open())
     metadata["versions"].append(module.version)
-    metadata["versions"] = list(set(metadata["versions"])).sort()
+    metadata["versions"] = list(set(metadata["versions"]))
+    # TODO(pcloudy): versions should be sorted with the same logic in Bzlmod.
+    metadata["versions"].sort()
     json_dump(metadata_path, metadata)
 
   def delete(self, module_name, version):

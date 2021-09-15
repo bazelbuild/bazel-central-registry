@@ -106,7 +106,7 @@ def from_user_input():
         name, version = dep.split(":")
         module.add_dep(name, version)
 
-  if yes_or_no("Do you want to specify a presubmit.yml file", False):
+  if yes_or_no("Do you want to specify a presubmit.yml file?", False):
     path = ask_input("Please enter the presubmit.yml file path: ").strip()
     module.set_presubmit_yml(path)
   else:
@@ -155,7 +155,7 @@ def main(argv=None):
 
   parser = argparse.ArgumentParser()
   parser.add_argument("--registry", type=str, default=".",
-                      help="Specifiy the root path of the registry (default: the current working directory).")
+                      help="Specify the root path of the registry (default: the current working directory).")
   parser.add_argument(
       "--input", type=str, help="Take module information from a json file, which can be generated from previous input.")
 
