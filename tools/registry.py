@@ -53,6 +53,7 @@ def integrity(data):
 def json_dump(file, data):
   with open(file, "w") as f:
     json.dump(data, f, indent=4, sort_keys=True)
+    f.write("\n")
 
 
 class Module:
