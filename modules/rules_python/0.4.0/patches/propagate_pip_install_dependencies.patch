@@ -1,0 +1,78 @@
+commit 79d922cd4a4eb8f700dbdcb390cd383305ea3265
+Author: Yun Peng <pcloudy@google.com>
+Date:   Wed Sep 29 14:24:28 2021 +0200
+
+    Propagate pip_install_dependencies through module extension
+
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..2972e52
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,17 @@
++module(
++  name="rules_python",
++  version="0.4.0",
++)
++
++pip_install = use_extension("@rules_python//bzlmod:extensions.bzl", "pip_install")
++
++pip_install.pip_install_dependencies()
++
++use_repo(pip_install,
++  "pypi__click",
++  "pypi__pip",
++  "pypi__pip_tools",
++  "pypi__pkginfo",
++  "pypi__setuptools",
++  "pypi__wheel",
++)
+diff --git a/bzlmod/BUILD b/bzlmod/BUILD
+new file mode 100644
+index 0000000..139597f
+--- /dev/null
++++ b/bzlmod/BUILD
+@@ -0,0 +1,2 @@
++
++
+diff --git a/bzlmod/extensions.bzl b/bzlmod/extensions.bzl
+new file mode 100644
+index 0000000..90993e2
+--- /dev/null
++++ b/bzlmod/extensions.bzl
+@@ -0,0 +1,11 @@
++load("@rules_python//python/pip_install:repositories.bzl", "pip_install_dependencies")
++
++def _pip_install_impl(ctx):
++  pip_install_dependencies()
++
++pip_install_dependencies_tag = tag_class()
++
++pip_install = module_extension(
++  implementation = _pip_install_impl,
++  tag_classes = {"pip_install_dependencies": pip_install_dependencies_tag}
++)
+diff --git a/python/pip_install/repositories.bzl b/python/pip_install/repositories.bzl
+index 5c66752..bdc5df6 100644
+--- a/python/pip_install/repositories.bzl
++++ b/python/pip_install/repositories.bzl
+@@ -1,7 +1,6 @@
+ ""
+ 
+ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+-load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
+ 
+ _RULE_DEPS = [
+     (
+@@ -64,9 +63,8 @@ def pip_install_dependencies():
+     (However we call it from pip_install, making it optional for users to do so.)
+     """
+     for (name, url, sha256) in _RULE_DEPS:
+-        maybe(
+-            http_archive,
+-            name,
++        http_archive(
++            name = name,
+             url = url,
+             sha256 = sha256,
+             type = "zip",
