@@ -130,22 +130,21 @@ def from_user_input():
 
 def get_maintainers_from_input():
   maintainers = []
-  while True:
+  prefix = "a"
+  explain = " (See https://github.com/bazelbuild/bazel-central-registry/tree/main#module-maintainer)"
+  while yes_or_no(f"Do you want to add {prefix} maintainer for this module?{explain}", False):
     maintainer = {}
-    name = ask_input(
-        "Please enter maintainer name [default: The Bazel Team]: ") or "The Bazel Team"
+    name = ask_input("Please enter maintainer name: ")
     maintainer["name"] = name
-    email = ask_input(
-        "Please enter the maintainer's email address [default: bazel-dev@googlegroups.com]: ") \
-        or "bazel-dev@googlegroups.com"
+    email = ask_input("Please enter the maintainer's email address: ")
     maintainer["email"] = email
     username = ask_input(
         "(Optional) Please enter the maintainer's github username: ")
     if username:
       maintainer["github"] = username
     maintainers.append(maintainer)
-    if not yes_or_no("Do you want to add another maintainer?", False):
-      break
+    prefix = "another"
+    explain = ""
   return maintainers
 
 
