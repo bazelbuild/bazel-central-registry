@@ -219,7 +219,10 @@ module(
       with module_dot_bazel.open("w") as f:
         f.write(self._MODULE_BAZEL.format(
             module.name, module.version,
-            module.compatibility_level) + deps)
+            module.compatibility_level))
+        if deps:
+          f.write("\n")
+          f.write(deps)
         f.write("\n")
 
     # Create source.json & copy patch files to the registry
