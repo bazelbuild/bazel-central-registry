@@ -20,7 +20,7 @@ python3 ./tools/add_module.py
 
 ### Module Maintainer
 
-A person who maintains a speicify module entry in this registry is a module maintainer. The name and contact information of the module maintainers are recorded in the metadata.json file for each module.
+A person who maintains a specific module entry in this registry is a module maintainer. The name and contact information of the module maintainers are recorded in the metadata.json file for each module.
 
 **Note that**, a module maintainer doesn't have to be the project owner. Ideally, we prefer the project owner to maintain the module entry, as they know the project the best. But if the project owner is not maintaining the entry, a Bazel user who is interested in making the project available in this registry could also take on the responsibility.
 
@@ -34,7 +34,7 @@ To become a module maintainer, send a PR to add yourself as a maintainer in the 
 
 ### Registry Maintainer
 
-Currently, the Bazel team is the registry maintainer, who are repsonsible for:
+Currently, the Bazel team is the registry maintainer, who are responsible for:
 
   - Review and merge PRs for this repository.
   - Maintain testing and serving infrastructures for the Bazel Central Registry.
