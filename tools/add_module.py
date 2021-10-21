@@ -87,7 +87,7 @@ def from_user_input():
     for patch in patches.strip().split(","):
       module.add_patch(patch.strip())
     patch_strip = ask_input("Please enter the patch strip number [Default is 1, compatible with git generated "
-                            "patches]: ") or 1
+                            "patches]: ") or "1"
     module.set_patch_strip(int(patch_strip.strip()))
 
   if yes_or_no("Do you want to add a BUILD file?", False):
@@ -101,9 +101,9 @@ def from_user_input():
   else:
     if yes_or_no("Do you want to specify dependencies for this module?", False):
       deps = ask_input(
-          "Please enter dependencies in the form of <name>:<version>, separated by `,`: ")
+          "Please enter dependencies in the form of <name>@<version>, separated by `,`: ")
       for dep in deps.strip().split(","):
-        name, version = dep.split(":")
+        name, version = dep.split("@")
         module.add_dep(name, version)
 
   if yes_or_no("Do you want to specify a presubmit.yml file?", False):
