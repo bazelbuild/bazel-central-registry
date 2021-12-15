@@ -1,0 +1,125 @@
+commit 341024e64baf78032253aa04ffc3982f5b2e4d3b
+Author: Alex Eagle <alex@aspect.dev>
+Date:   Tue Dec 14 19:57:02 2021 -0800
+
+    feat: add bzlmod extension
+
+diff --git a/lib/extensions.bzl b/lib/extensions.bzl
+new file mode 100644
+index 0000000..f2aa62e
+--- /dev/null
++++ b/lib/extensions.bzl
+@@ -0,0 +1,44 @@
++"extensions for bzlmod"
++
++load("//lib/private:symlink_repository.bzl", "symlink_repository")
++load(":repositories.bzl", "register_jq_toolchains")
++
++jq_toolchain = tag_class(attrs = {
++    "name": attr.string(doc = "Base name for generated repositories"),
++    "version": attr.string(doc = "Version of the jq tool"),
++})
++
++def _toolchain_extension(module_ctx):
++    registrations = {}
++    for mod in module_ctx.modules:
++        for toolchain in mod.tags.jq_toolchain:
++            if toolchain.name in registrations.keys():
++                if toolchain.version == registrations[toolchain.name]:
++                    # No problem to register a matching toolchain twice
++                    continue
++                fail("Multiple conflicting toolchains declared for name {} ({} and {})".format(
++                    toolchain.name,
++                    toolchain.version,
++                    registrations[toolchain.name],
++                ))
++            else:
++                registrations[toolchain.name] = toolchain.version
++    for name, version in registrations.items():
++        register_jq_toolchains(
++            name = name,
++            version = version,
++            register = False,
++        )
++
++ext = module_extension(
++    implementation = _toolchain_extension,
++    tag_classes = {"jq_toolchain": jq_toolchain},
++)
++
++def _test_repos_impl(module_ctx):
++    symlink_repository(
++        name = "external_test_repo",
++        path = "lib/tests/external_test_repo",
++    )
++
++test_repos = module_extension(_test_repos_impl)
+diff --git a/lib/private/symlink_repository.bzl b/lib/private/symlink_repository.bzl
+new file mode 100644
+index 0000000..57c7857
+--- /dev/null
++++ b/lib/private/symlink_repository.bzl
+@@ -0,0 +1,19 @@
++"""
++Workaround for native repo rules not working in module extensions:
++https://groups.google.com/g/bazel-discuss/c/xpsg3mWQPZg
++"""
++
++def _symlink_repository_impl(repository_ctx):
++    relative_path = repository_ctx.attr.path
++    workspace_root = repository_ctx.path(Label("//:MODULE.bazel")).dirname
++    absolute_path = workspace_root
++    for segment in relative_path.split("/"):
++        absolute_path = absolute_path.get_child(segment)
++    repository_ctx.symlink(absolute_path, ".")
++
++symlink_repository = repository_rule(
++    implementation = _symlink_repository_impl,
++    attrs = {
++        "path": attr.string(mandatory = True),
++    },
++)
+diff --git a/lib/repositories.bzl b/lib/repositories.bzl
+index 5e678d3..e6e6ad4 100644
+--- a/lib/repositories.bzl
++++ b/lib/repositories.bzl
+@@ -16,12 +16,15 @@ def aspect_bazel_lib_dependencies():
+         ],
+     )
+ 
+-def register_jq_toolchains(version, name = "jq"):
++def register_jq_toolchains(version, register = True, name = "jq"):
+     """Registers jq toolchain and repositories
+ 
+     Args:
+         version: the version of jq to execute (see https://github.com/stedolan/jq/releases)
+         name: override the prefix for the generated toolchain repositories
++        register: whether to call Bazel register_toolchains on the created toolchains.
++            Should be True when used from a WORKSPACE file, and False used from bzlmod
++            which has its own toolchain registration syntax.
+     """
+     for platform in JQ_PLATFORMS.keys():
+         jq_platform_repo(
+@@ -29,7 +32,8 @@ def register_jq_toolchains(version, name = "jq"):
+             platform = platform,
+             jq_version = version,
+         )
+-        native.register_toolchains("@%s_toolchains//:%s_toolchain" % (name, platform))
++        if register:
++            native.register_toolchains("@%s_toolchains//:%s_toolchain" % (name, platform))
+ 
+     jq_toolchains_repo(
+         name = "%s_toolchains" % name,
+diff --git a/lib/tests/jq/BUILD.bazel b/lib/tests/jq/BUILD.bazel
+index 57a782a..badb81e 100644
+--- a/lib/tests/jq/BUILD.bazel
++++ b/lib/tests/jq/BUILD.bazel
+@@ -78,7 +78,7 @@ genrule(
+     srcs = ["a.json"],
+     outs = ["genrule_output.json"],
+     cmd = "$(JQ_BIN) '.' $(location a.json) > $@",
+-    toolchains = ["@jq_toolchains//:resolved_toolchain"],
++    toolchains = ["@default_jq_toolchains//:resolved_toolchain"],
+ )
+ 
+ diff_test(
