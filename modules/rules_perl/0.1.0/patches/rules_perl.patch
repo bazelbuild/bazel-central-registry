@@ -1,0 +1,160 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..93f4e52
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,21 @@
++module(
++    name = "rules_perl",
++    version = "0.1.0",
++    compatibility_level = 1,
++    toolchains_to_register = [
++        "@rules_perl//:darwin_toolchain",
++        "@rules_perl//:linux_x86_64_toolchain",
++        "@rules_perl//:linux_arm64_toolchain",
++        "@rules_perl//:windows_x86_64_toolchain"
++    ],
++)
++
++bazel_dep(name = "bazel_skylib", version = "1.0.3")
++bazel_dep(name = "rules_cc", version = "0.0.1")
++bazel_dep(name = "platforms", version = "0.0.4")
++
++toolchains = use_extension("@rules_perl//perl:extensions.bzl", "toolchains")
++use_repo(toolchains, "perl_darwin_2level")
++use_repo(toolchains, "perl_linux_arm64")
++use_repo(toolchains, "perl_linux_x86_64")
++use_repo(toolchains, "perl_windows_x86_64")
+diff --git a/WORKSPACE.bzlmod b/WORKSPACE.bzlmod
+new file mode 100644
+index 0000000..39cf7e3
+--- /dev/null
++++ b/WORKSPACE.bzlmod
+@@ -0,0 +1,20 @@
++load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
++
++http_archive(
++    name = "fcgi",
++    build_file = "//:examples/cpan_remote/fcgi.BUILD",
++    sha256 = "8cfa4e1b14fb8d5acaa22ced672c6af68c0a8e25dc2a9697a0ed7f4a4efb34e4",
++    strip_prefix = "FCGI-0.79",
++    url = "https://cpan.metacpan.org/authors/id/E/ET/ETHER/FCGI-0.79.tar.gz",
++)
++
++# genhtml can be used to generate HTML reports from the output of the bazel
++# coverage command. It also serves as a natural test case for Perl scripts with
++# no file extension.
++http_archive(
++    name = "genhtml",
++    build_file = "//:examples/genhtml/genhtml.BUILD",
++    sha256 = "d88b0718f59815862785ac379aed56974b9edd8037567347ae70081cd4a3542a",
++    strip_prefix = "lcov-1.15/bin",
++    url = "https://github.com/linux-test-project/lcov/archive/refs/tags/v1.15.tar.gz",
++)
+diff --git a/examples/cpan_remote/fcgi.BUILD b/examples/cpan_remote/fcgi.BUILD
+index d59bf83..4cc8529 100644
+--- a/examples/cpan_remote/fcgi.BUILD
++++ b/examples/cpan_remote/fcgi.BUILD
+@@ -12,7 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-load("@rules_perl//perl:perl.bzl", "perl_library", "perl_xs")
++load("@//perl:perl.bzl", "perl_library", "perl_xs")
+ 
+ perl_library(
+     name = "FCGI",
+diff --git a/examples/genhtml/genhtml.BUILD b/examples/genhtml/genhtml.BUILD
+index 8e0b8b7..a64c3ef 100644
+--- a/examples/genhtml/genhtml.BUILD
++++ b/examples/genhtml/genhtml.BUILD
+@@ -12,7 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
+-load("@rules_perl//perl:perl.bzl", "perl_binary")
++load("@//perl:perl.bzl", "perl_binary")
+ 
+ perl_binary(
+     name = "genhtml_bin",
+diff --git a/perl/deps.bzl b/perl/deps.bzl
+index 7f7ee7c..5360404 100644
+--- a/perl/deps.bzl
++++ b/perl/deps.bzl
+@@ -7,7 +7,18 @@ perl_download = _perl_download
+ 
+ # buildifier: disable=unnamed-macro
+ def perl_register_toolchains():
+-    """Register the relocatable perl toolchains."""
++    native.register_toolchains(
++        "@rules_perl//:darwin_toolchain",
++        "@rules_perl//:linux_toolchain",
++        "@rules_perl//:windows_toolchain",
++    )
++
++def perl_rules_dependencies():
++    """Declares external repositories that rules_perl depends on.
++    This function should be loaded and called from WORKSPACE of any project
++    that uses rules_perl.
++    """
++
+     perl_download(
+         name = "perl_linux_arm64",
+         strip_prefix = "perl-aarch64-linux",
+@@ -45,20 +56,6 @@ def perl_register_toolchains():
+         ],
+     )
+ 
+-    native.register_toolchains(
+-        "@rules_perl//:darwin_toolchain",
+-        "@rules_perl//:linux_arm64_toolchain",
+-        "@rules_perl//:linux_x86_64_toolchain",
+-        "@rules_perl//:windows_x86_64_toolchain",
+-    )
+-
+-def perl_rules_dependencies():
+-    """Declares external repositories that rules_go_simple depends on.
+-
+-    This function should be loaded and called from WORKSPACE of any project
+-    that uses rules_go_simple.
+-    """
+-
+     # bazel_skylib is a set of libraries that are useful for writing
+     # Bazel rules. We use it to handle quoting arguments in shell commands.
+     _maybe(
+diff --git a/perl/extensions.bzl b/perl/extensions.bzl
+new file mode 100644
+index 0000000..a6469c1
+--- /dev/null
++++ b/perl/extensions.bzl
+@@ -0,0 +1,8 @@
++"""Entry point for extensions used by bzlmod."""
++
++load("@rules_perl//perl:deps.bzl", "perl_rules_dependencies")
++
++def _init(module_ctx):
++    perl_rules_dependencies()
++
++toolchains = module_extension(implementation = _init)
+diff --git a/perl/toolchain.bzl b/perl/toolchain.bzl
+index 2768a10..82e017f 100644
+--- a/perl/toolchain.bzl
++++ b/perl/toolchain.bzl
+@@ -72,7 +72,7 @@ perl_toolchain = rule(
+ )
+ 
+ def _current_perl_toolchain_impl(ctx):
+-    toolchain = ctx.toolchains["@rules_perl//:toolchain_type"]
++    toolchain = ctx.toolchains["//:toolchain_type"]
+ 
+     return [
+         toolchain,
+@@ -93,5 +93,7 @@ def _current_perl_toolchain_impl(ctx):
+ # See https://github.com/bazelbuild/bazel/issues/14009#issuecomment-921960766
+ current_perl_toolchain = rule(
+     implementation = _current_perl_toolchain_impl,
+-    toolchains = ["@rules_perl//:toolchain_type"],
++    toolchains = [
++        "//:toolchain_type",
++    ],
+ )
