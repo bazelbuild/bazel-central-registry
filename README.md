@@ -41,9 +41,13 @@ Currently, the Bazel team is the registry maintainer, who are responsible for:
 
 ## presubmit.yml
 
-We require every module version to have a presubmit.yml file. With this file, you can specify a list of build and test targets for supported platforms. Those could be the targets you want to expose to the downstream users and a few integration tests that have good coverage over your APIs.
+We require every module version to have a `presubmit.yml` file for configuring the presubmit tests to verify the integrity of the module.
 
-**Note that**, it's NOT recommended to specify your entire test suite in this presubmit.yml file. Because running the entire test suite could be expensive and the result could be flaky. It's best to specify a list of test targets that are heavily used, well maintained and have a history of providing good signal and high-quality test results.
+In the `presubmit.yml` file:
+
+  - You should specify the list of build targets that you want to expose to downstream users.
+  - It's highly recommended to have a [test module](https://github.com/bazelbuild/continuous-integration/issues/1302) in your source archive.
+  - In general, you should NOT specify unit tests or test suites foucing on implementation details in this file.
 
 The presubmit.yml file will be used for:
 
