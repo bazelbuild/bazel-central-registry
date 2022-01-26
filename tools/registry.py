@@ -269,11 +269,11 @@ module(
       shutil.copy(module.presubmit_yml, presubmit_yml)
     else:
       PLATFORMS = ["centos7", "debian10", "ubuntu2004", "macos", "windows"]
-      presubmit = {}
-      presubmit["matrix"] = {}
+      presubmit = dict()
+      presubmit["matrix"] = dict()
       presubmit["matrix"]["platform"] = PLATFORMS.copy()
-      presubmit["tasks"] = {}
-      task = {}
+      presubmit["tasks"] = dict()
+      task = dict()
       task["name"] = "Verify build targets"
       task["platform"] = "${{ platform }}"
       if module.build_targets:
@@ -281,12 +281,12 @@ module(
       presubmit["tasks"]["verify_targets"] = task
 
       if module.test_module_path:
-        presubmit["bcr_test_module"] = {}
+        presubmit["bcr_test_module"] = dict()
         presubmit["bcr_test_module"]["module_path"] = module.test_module_path
-        presubmit["bcr_test_module"]["matrix"] = {}
+        presubmit["bcr_test_module"]["matrix"] = dict()
         presubmit["bcr_test_module"]["matrix"]["platform"] = PLATFORMS.copy()
-        presubmit["bcr_test_module"]["tasks"] = {}
-        task = {}
+        presubmit["bcr_test_module"]["tasks"] = dict()
+        task = dict()
         task["name"] = "Run test module"
         task["platform"] = "${{ platform }}"
         if module.test_module_build_targets:

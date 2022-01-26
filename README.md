@@ -47,7 +47,7 @@ In the `presubmit.yml` file:
 
   - You should specify the list of build targets that you want to expose to downstream users.
   - It's highly recommended to have a [test module](https://github.com/bazelbuild/continuous-integration/issues/1302) in your source archive.
-  - In general, you should NOT specify unit tests or test suites foucing on implementation details in this file.
+  - In general, you should NOT specify unit tests or test suites focusing on implementation details in this file.
 
 The presubmit.yml file will be used for:
 
