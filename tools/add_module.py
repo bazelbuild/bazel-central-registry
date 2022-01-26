@@ -106,25 +106,39 @@ def from_user_input():
         name, version = dep.split("@")
         module.add_dep(name, version)
 
-  if yes_or_no("Do you want to specify a presubmit.yml file?", False):
+  presubmit_url = "https://github.com/bazelbuild/bazel-central-registry/tree/main#presubmityml"
+  if yes_or_no(f"Do you want to specify an existing presubmit.yml file? (See {presubmit_url})", False):
     path = ask_input("Please enter the presubmit.yml file path: ").strip()
     module.set_presubmit_yml(path)
   else:
     first = True
-    while not (module.build_targets or module.test_targets):
+    while not module.build_targets:
       if not first:
-        print("Build targets and test targets cannot both be empty, please re-enter!")
+        print("Build targets cannot be empty, please re-enter!")
       first = False
       build_targets = ask_input(
-          "Please enter a list of build targets for this module, separated by `,`: ")
+          "Please enter a list of build targets you want to expose to downstream users, separated by `,`: ")
       for target in build_targets.strip().split(","):
         if target:
           module.add_build_target(target)
-      test_targets = ask_input(
-          "Please enter a list of test targets for this module, separated by `,`: ")
-      for target in test_targets.strip().split(","):
-        if target:
-          module.add_test_targets(target)
+
+    if yes_or_no("Do you have a test module in your source archive?", True):
+      module.test_module_path = ask_input("Please enter the test module path in your source archive: ")
+      first = True
+      while not (module.test_module_build_targets or module.test_module_test_targets):
+        if not first:
+          print("Build targets and test targets cannot both be empty, please re-enter!")
+        first = False
+        build_targets = ask_input(
+            "Please enter a list of build targets for the test module, separated by `,`: ")
+        for target in build_targets.strip().split(","):
+          if target:
+            module.add_test_module_build_target(target)
+        test_targets = ask_input(
+            "Please enter a list of test targets for the test module, separated by `,`: ")
+        for target in test_targets.strip().split(","):
+          if target:
+            module.add_test_module_test_target(target)
   return module
 
 
