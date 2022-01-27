@@ -269,31 +269,37 @@ module(
       shutil.copy(module.presubmit_yml, presubmit_yml)
     else:
       PLATFORMS = ["centos7", "debian10", "ubuntu2004", "macos", "windows"]
-      presubmit = dict()
-      presubmit["matrix"] = dict()
-      presubmit["matrix"]["platform"] = PLATFORMS.copy()
-      presubmit["tasks"] = dict()
-      task = dict()
-      task["name"] = "Verify build targets"
-      task["platform"] = "${{ platform }}"
-      if module.build_targets:
-        task["build_targets"] = module.build_targets.copy()
-      presubmit["tasks"]["verify_targets"] = task
+      presubmit = {
+        "matrix": {
+          "platform": PLATFORMS.copy(),
+        },
+        "tasks": {
+          "verify_targets": {
+            "name": "Verify build targets",
+            "platform": "${{ platform }}",
+            "build_targets": module.build_targets.copy()
+          }
+        }
+      }
 
       if module.test_module_path:
-        presubmit["bcr_test_module"] = dict()
-        presubmit["bcr_test_module"]["module_path"] = module.test_module_path
-        presubmit["bcr_test_module"]["matrix"] = dict()
-        presubmit["bcr_test_module"]["matrix"]["platform"] = PLATFORMS.copy()
-        presubmit["bcr_test_module"]["tasks"] = dict()
-        task = dict()
-        task["name"] = "Run test module"
-        task["platform"] = "${{ platform }}"
+        task = {
+          "name": "Run test module",
+          "platform": "${{ platform }}",
+        }
         if module.test_module_build_targets:
           task["build_targets"] = module.test_module_build_targets.copy()
         if module.test_module_test_targets:
           task["test_targets"] = module.test_module_test_targets.copy()
-        presubmit["bcr_test_module"]["tasks"]["run_test_module"] = task
+        presubmit["bcr_test_module"] = {
+          "module_path": module.test_module_path,
+          "matrix": {
+            "platform": PLATFORMS.copy(),
+          },
+          "tasks": {
+            "run_test_module": task
+          }
+        }
 
       with presubmit_yml.open("w") as f:
         yaml.dump(presubmit, f, sort_keys=False)
