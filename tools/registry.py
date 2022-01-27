@@ -269,18 +269,17 @@ module(
       shutil.copy(module.presubmit_yml, presubmit_yml)
     else:
       PLATFORMS = ["centos7", "debian10", "ubuntu2004", "macos", "windows"]
-      task = {
-        "name": "Verify build targets",
-        "platform": "${{ platform }}",
-        "build_targets": module.build_targets.copy()
-      }
       presubmit = {
         "matrix": {
           "platform": PLATFORMS.copy(),
         },
         "tasks": {
-          "verify_targets": task
-        },
+          "verify_targets": {
+            "name": "Verify build targets",
+            "platform": "${{ platform }}",
+            "build_targets": module.build_targets.copy()
+          }
+        }
       }
 
       if module.test_module_path:
@@ -299,7 +298,7 @@ module(
           },
           "tasks": {
             "run_test_module": task
-          },
+          }
         }
 
       with presubmit_yml.open("w") as f:
