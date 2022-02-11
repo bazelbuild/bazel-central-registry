@@ -1,6 +1,6 @@
 # Bazel Central Registry
 
-**Status:** This repository is still in alpha test phase, the content may not be accurate and can change without any notice.
+**Status:** This repository is in beta test phase, feel free to submit your project as Bazel module. During the test phase, checked in modules may still change without any notice.
 
 ## Goal
 A registry of Bazel modules for the Bzlmod external dependency system. It is the recommended Bazel registry to publish your Bazel open source projects for downstream users.
