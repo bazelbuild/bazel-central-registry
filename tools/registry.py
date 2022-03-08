@@ -147,6 +147,15 @@ module(
   def __init__(self, root):
     self.root = pathlib.Path(root)
 
+  def get_all_modules(self):
+    modules_dir = self.root.joinpath("modules")
+    return [path.name for path in modules_dir.iterdir()]
+
+  def get_metadata(self, module_name):
+    metadata_path = self.root.joinpath("modules", module_name,
+                                       "metadata.json")
+    return json.load(metadata_path.open())
+
   def contains(self, module_name, version=None):
     """
     Check if the registry contains a module or a specific version of a
@@ -270,35 +279,35 @@ module(
     else:
       PLATFORMS = ["centos7", "debian10", "ubuntu2004", "macos", "windows"]
       presubmit = {
-        "matrix": {
-          "platform": PLATFORMS.copy(),
-        },
-        "tasks": {
-          "verify_targets": {
-            "name": "Verify build targets",
-            "platform": "${{ platform }}",
-            "build_targets": module.build_targets.copy()
+          "matrix": {
+              "platform": PLATFORMS.copy(),
+          },
+          "tasks": {
+              "verify_targets": {
+                  "name": "Verify build targets",
+                  "platform": "${{ platform }}",
+                  "build_targets": module.build_targets.copy()
+              }
           }
-        }
       }
 
       if module.test_module_path:
         task = {
-          "name": "Run test module",
-          "platform": "${{ platform }}",
+            "name": "Run test module",
+            "platform": "${{ platform }}",
         }
         if module.test_module_build_targets:
           task["build_targets"] = module.test_module_build_targets.copy()
         if module.test_module_test_targets:
           task["test_targets"] = module.test_module_test_targets.copy()
         presubmit["bcr_test_module"] = {
-          "module_path": module.test_module_path,
-          "matrix": {
-            "platform": PLATFORMS.copy(),
-          },
-          "tasks": {
-            "run_test_module": task
-          }
+            "module_path": module.test_module_path,
+            "matrix": {
+                "platform": PLATFORMS.copy(),
+            },
+            "tasks": {
+                "run_test_module": task
+            }
         }
 
       with presubmit_yml.open("w") as f:
