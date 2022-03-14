@@ -28,11 +28,12 @@ import shutil
 import urllib.request
 import yaml
 
-from colorama import Fore, Style
+GREEN = "\x1b[32m"
+RESET = "\x1b[0m"
 
 
 def log(msg):
-  print(f"{Fore.GREEN}INFO: {Style.RESET_ALL}{msg}")
+  print(f"{GREEN}INFO: {RESET}{msg}")
 
 
 def download(url):

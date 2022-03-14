@@ -14,7 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
+
+import importlib.util
 import json
 import locale
 import pathlib
@@ -22,6 +23,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import os
 
 from registry import RegistryClient
 
@@ -31,14 +33,16 @@ WORKSPACE_NAME = "__main__"
 # The registry client points to the bazel central registry repo
 REGISTRY_CLIENT = RegistryClient(pathlib.Path(__file__).parent.parent)
 
-# Change the following to True to use bazel sync command to generate the resolved deps file.
+# Set USE_BAZEL_SYNC env var to use bazel sync command to generate the resolved deps file.
 # Using bazel sync will generate information for bind usages in the WORKSPACE, which helps
 # the migration. But bazel sync may take a long time and fail on specific platforms because
 # it fetch every repository defined in the WORKSPACE file.
-USE_BAZEL_SYNC = False
+USE_BAZEL_SYNC = os.environ.get("USE_BAZEL_SYNC", False)
 
 COMMON_REPO_TO_MODULE_MAP = {
-    "io_bazel_skydoc": "stardoc"
+    "io_bazel_skydoc": "stardoc",
+    "com_google_absl": "abseil-cpp",
+    "com_github_cares_cares": "c-ares",
 }
 
 
@@ -63,20 +67,26 @@ def eprint(*args, **kwargs):
   print(*args, flush=True, file=sys.stderr, **kwargs)
 
 
+GREEN = "\x1b[32m"
+YELLOW = "\x1b[33m"
+RED = "\x1b[31m"
+RESET = "\x1b[0m"
+
+
 def info(msg):
-  eprint(f"\x1b[32mINFO: \x1b[0m{msg}")
+  eprint(f"{GREEN}INFO: {RESET}{msg}")
 
 
 def warning(msg):
-  print(f"\x1b[33mWARNING: \x1b[0m{msg}")
+  eprint(f"{YELLOW}WARNING: {RESET}{msg}")
 
 
 def error(msg):
-  print(f"\x1b[31mERROR: \x1b[0m{msg}")
+  eprint(f"{RED}ERROR: {RESET}{msg}")
 
 
 def ask_input(msg):
-  return input(f"\x1b[33mACTION: \x1b[0m{msg}")
+  return input(f"{YELLOW}ACTION: {RESET}{msg}")
 
 
 def yes_or_no(question, default):
@@ -95,7 +105,7 @@ def yes_or_no(question, default):
     elif not user_input:
       var = default
     else:
-      print(f"Invalid selection: {user_input}")
+      eprint(f"Invalid selection: {user_input}")
   return var
 
 
@@ -110,8 +120,7 @@ def scratch_file(file_path, lines=None, mode="w"):
   return abspath
 
 
-def execute_command(args, cwd=None, env=None, shell=False, print_output=False, executable=None):
-  eprint("")
+def execute_command(args, cwd=None, env=None, shell=False, executable=None):
   info("Executing command: " + " ".join(args))
   with tempfile.TemporaryFile() as stdout:
     with tempfile.TemporaryFile() as stderr:
@@ -129,8 +138,6 @@ def execute_command(args, cwd=None, env=None, shell=False, print_output=False, e
       stdout_result = stdout.read().decode(locale.getpreferredencoding())
       stderr.seek(0)
       stderr_result = stderr.read().decode(locale.getpreferredencoding())
-      if print_output:
-        eprint(stderr_result)
       return exit_code, stdout_result, stderr_result
 
 
@@ -171,6 +178,9 @@ def print_repo_definition(dep):
       # Fix indentation
       if value_str.endswith("}") or value_str.endswith("]"):
         value_str = value_str[:-1] + "  " + value_str[-1]
+      # Fix boolean format
+      if value_str == "false" or value_str == "true":
+        value_str = value_str[0].upper() + value_str[1:]
       repo_def.append(f"  {key} = {value_str},")
   repo_def.append(")")
 
@@ -208,19 +218,24 @@ def detect_unavailable_repo_error(stderr):
         r"Repository '@([A-Za-z0-9_-]+)' is not defined", line)
     if s:
       eprint(line)
-      return s.groups()[0], "unknown_repo"
+      return s.groups()[0], ""
+    s = re.search(
+        r"This could either mean you have to add the '@([A-Za-z0-9_-]+)' repository with a statement like `http_archive`", line)
+    if s:
+      eprint(line)
+      return s.groups()[0], ""
   return None, None
 
 
 def address_unavailable_repo_error(repo, from_repo, resolved_deps):
-  warning(f"@{repo} is not visible from " +
-          (f"@{from_repo}" if from_repo else "the root repository"))
+  error(f"@{repo} is not visible from Bzlmod")
 
   # Check if it's the original main repo name
   if repo == WORKSPACE_NAME:
     warning(
-        f"Please remove the usages of refering your own repo via `@{repo}//`, targets should be referenced directly with `//`. "
-        f"If it's used in a macro, you can use `Label(\"//foo/bar\")` to make sure it alwasy points to your repo no matter where the macro is used.")
+        f"Please remove the usages of refering your own repo via `@{repo}//`, targets should be referenced directly with `//`. ")
+    eprint("If it's used in a macro, you can use `Label(\"//foo/bar\")` to make sure it alwasy points to your repo no matter where the macro is used.")
+    eprint(f"You can temporarily work around this by changing your module name to {WORKSPACE_NAME} and adding `workspace(name = '{WORKSPACE_NAME}')` in the WORKSPACE.bzlmod file.")
     return yes_or_no("Do you wish to retry the build after fixes?", True)
 
   # Special check for local_config_cc
@@ -289,6 +304,8 @@ def address_unavailable_repo_error(repo, from_repo, resolved_deps):
   else:
     info(f"{repo} isn't found in the registry.")
 
+  # TODO: ask user if the dependency should be introudced via module extension.
+
   # Ask user if this dep should be added to the WORKSPACE.bzlmod for now.
   if yes_or_no("Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?", True):
     repo_def = ["", "# TODO: Migrated to Bzlmod"] + repo_def
@@ -345,8 +362,47 @@ def grep_file(file_path, pattern):
   return result
 
 
+def _extract_version_number(bazel_version):
+  """Extracts the semantic version number from a version string
+  Args:
+    bazel_version: the version string that begins with the semantic version
+      e.g. "1.2.3rc1 abc1234" where "abc1234" is a commit hash.
+  Returns:
+    The semantic version string, like "1.2.3".
+  """
+  for i in range(len(bazel_version)):
+    c = bazel_version[i]
+    if not (c.isdigit() or c == "."):
+      return bazel_version[:i]
+  return bazel_version
+
+
+def _parse_bazel_version(bazel_version):
+  """Parses a version string into a 3-tuple of ints
+  int tuples can be compared directly using binary operators (<, >).
+  Args:
+    bazel_version: the Bazel version string
+  Returns:
+    An int 3-tuple of a (major, minor, patch) version.
+  """
+
+  version = _extract_version_number(bazel_version)
+  return tuple([int(n) for n in version.split(".")])
+
+
 def do_preparation():
   """Prepartion work before starting the migration."""
+  exit_code, stdout, _ = execute_command(["bazel", "--version"])
+  eprint(stdout.strip())
+  if exit_code != 0 or not stdout:
+    warning("Current bazel is not a release version.")
+    eprint("Please make sure you are running at least bazel 5.1.0")
+  elif _parse_bazel_version(stdout.strip().split(" ")[1]) < (5, 1, 0):
+    error("Current Bazel version  is older than 5.1.0")
+    eprint("Please make sure you are running at least bazel 5.1.0")
+    abort_migration()
+
+
   # Create MODULE.bazel file if it doesn't exist already.
   scratch_file("MODULE.bazel", [], mode="a")
 
@@ -444,7 +500,7 @@ def main(argv=None):
       else:
         abort_migration()
 
-    error("Unrecongnized error:\n" + stderr)
+    error("Unrecognized error:\n" + stderr)
     return 1
 
   return 0
