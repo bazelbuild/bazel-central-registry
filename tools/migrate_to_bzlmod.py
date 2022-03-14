@@ -227,7 +227,7 @@ def detect_unavailable_repo_error(stderr):
   return None, None
 
 
-def address_unavailable_repo_error(repo, from_repo, resolved_deps):
+def address_unavailable_repo_error(repo, resolved_deps):
   error(f"@{repo} is not visible from Bzlmod")
 
   # Check if it's the original main repo name
@@ -236,7 +236,7 @@ def address_unavailable_repo_error(repo, from_repo, resolved_deps):
         f"Please remove the usages of refering your own repo via `@{repo}//`, targets should be referenced directly with `//`. ")
     eprint("If it's used in a macro, you can use `Label(\"//foo/bar\")` to make sure it alwasy points to your repo no matter where the macro is used.")
     eprint(f"You can temporarily work around this by changing your module name to {WORKSPACE_NAME} and adding `workspace(name = '{WORKSPACE_NAME}')` in the WORKSPACE.bzlmod file.")
-    return yes_or_no("Do you wish to retry the build after fixes?", True)
+    return yes_or_no("Do you wish to retry the build?", True)
 
   # Special check for local_config_cc
   if repo == "local_config_cc":
@@ -485,9 +485,9 @@ def main(argv=None):
       break
 
     # 1. Detect build failure caused by unavailable repository
-    repo, from_repo = detect_unavailable_repo_error(stderr)
+    repo, _ = detect_unavailable_repo_error(stderr)
     if repo:
-      if address_unavailable_repo_error(repo, from_repo, resolved_deps):
+      if address_unavailable_repo_error(repo, resolved_deps):
         continue
       else:
         abort_migration()
