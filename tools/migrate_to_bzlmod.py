@@ -390,7 +390,7 @@ def _parse_bazel_version(bazel_version):
   return tuple([int(n) for n in version.split(".")])
 
 
-def do_preparation():
+def init():
   """Prepartion work before starting the migration."""
   exit_code, stdout, _ = execute_command(["bazel", "--version"])
   eprint(stdout.strip())
@@ -468,7 +468,7 @@ def main(argv=None):
   if argv is None:
     argv = sys.argv[1:]
 
-  do_preparation()
+  init()
 
   resolved_deps = load_resolved_deps(argv)
 
