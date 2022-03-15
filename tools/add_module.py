@@ -40,10 +40,13 @@ import argparse
 import sys
 import time
 
-from colorama import Fore, Style
 from registry import Module
 from registry import RegistryClient
 from registry import log
+
+
+YELLOW = "\x1b[33m"
+RESET = "\x1b[0m"
 
 
 def yes_or_no(question, default):
@@ -67,7 +70,7 @@ def yes_or_no(question, default):
 
 
 def ask_input(msg):
-  return input(f"{Fore.YELLOW}ACTION: {Style.RESET_ALL}{msg}")
+  return input(f"{YELLOW}ACTION: {RESET}{msg}")
 
 
 def from_user_input():
@@ -123,7 +126,8 @@ def from_user_input():
           module.add_build_target(target)
 
     if yes_or_no("Do you have a test module in your source archive?", True):
-      module.test_module_path = ask_input("Please enter the test module path in your source archive: ")
+      module.test_module_path = ask_input(
+          "Please enter the test module path in your source archive: ")
       first = True
       while not (module.test_module_build_targets or module.test_module_test_targets):
         if not first:
