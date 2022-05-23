@@ -15,7 +15,7 @@ A person who contributes a Bazel module entry to this registry is a module contr
 
 To contribute a Bazel module, you can start with the interactive helper script:
 ```
-python3 ./tools/add_module.py
+bazel run //tools:add_module
 ```
 
 ### Module Maintainer
