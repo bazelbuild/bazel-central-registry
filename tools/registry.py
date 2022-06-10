@@ -152,10 +152,25 @@ module(
     modules_dir = self.root.joinpath("modules")
     return [path.name for path in modules_dir.iterdir()]
 
+  def get_all_module_versions(self):
+    module_versions = []
+
+    for module_name in self.get_all_modules():
+      metadata = self.get_metadata(module_name)
+      for version in metadata["versions"]:
+        module_versions.append((module_name, version))
+
+    return module_versions
+
   def get_metadata(self, module_name):
     metadata_path = self.root.joinpath("modules", module_name,
                                        "metadata.json")
     return json.load(metadata_path.open())
+
+  def get_source(self, module_name, version):
+    source_path = self.root.joinpath("modules", module_name, version,
+                                     "source.json")
+    return json.load(source_path.open())
 
   def contains(self, module_name, version=None):
     """
