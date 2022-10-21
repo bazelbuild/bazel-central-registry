@@ -95,6 +95,8 @@ class Version:
 
   @staticmethod
   def convert_to_identifiers(s):
+    if s == None:
+      return None
     return [Version.Identifier(i) for i in s.split(".")]
 
   def __init__(self, version_str):
@@ -103,10 +105,7 @@ class Version:
     if not m:
       raise RegistryException(f"`{version_str}` is not a valid version")
     self.release = Version.convert_to_identifiers(m.groups()[0])
-    if m.groups()[1]:
-      self.prerelease = Version.convert_to_identifiers(m.groups()[1])
-    else:
-      self.prerelease = None
+    self.prerelease = Version.convert_to_identifiers(m.groups()[1])
 
   def __eq__(self, other):
     return (self.release, self.prerelease) == (other.release, other.prerelease)
