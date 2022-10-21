@@ -23,8 +23,10 @@ import base64
 import difflib
 import hashlib
 import json
+import netrc
 import pathlib
 import shutil
+import urllib.parse
 import urllib.request
 import yaml
 
@@ -37,7 +39,17 @@ def log(msg):
 
 
 def download(url):
-  with urllib.request.urlopen(url) as response:
+  parts = urllib.parse.urlparse(url)
+  authenticators = netrc.netrc().authenticators(parts.netloc)
+  if authenticators != None:
+    (login, _, password) = authenticators
+    req = urllib.request.Request(url)
+    creds = base64.b64encode(str.encode('%s:%s' % (login, password))).decode()
+    req.add_header("Authorization", "Basic %s" % creds)
+  else:
+    req = url
+
+  with urllib.request.urlopen(req) as response:
     return response.read()
 
 
