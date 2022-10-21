@@ -89,6 +89,7 @@ def sanity_check(registry, module_name, version):
     check_results.append((SanityCheckResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file."))
   if not registry.contains(module_name, version):
     check_results.append((SanityCheckResult.FAILED, f"{module_name}@{version} doesn't exist."))
+  if check_results:
     print_check_result(check_results)
     return check_results
 
