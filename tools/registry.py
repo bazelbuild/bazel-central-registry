@@ -21,10 +21,12 @@
 
 import base64
 import difflib
+import functools
 import hashlib
 import json
 import netrc
 import pathlib
+import re
 import shutil
 import urllib.parse
 import urllib.request
@@ -70,6 +72,54 @@ def json_dump(file, data):
   with open(file, "w") as f:
     json.dump(data, f, indent=4, sort_keys=True)
     f.write("\n")
+
+# Translated from:
+# https://github.com/bazelbuild/bazel/blob/79a53def2ebbd9358450f739ea37bf70662e8614/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Version.java#L58
+@functools.total_ordering
+class Version:
+
+  @functools.total_ordering
+  class Identifier:
+    def __init__(self, s):
+      if not s:
+        raise RegistryException("identifier is empty")
+      self.val = int(s) if s.isnumeric() else s
+
+    def __eq__(self, other):
+      if type(self.val) != type(other.val):
+        return False
+      return self.val == other.val
+
+    def __lt__(self, other):
+      if type(self.val) != type(other.val):
+        return type(self.val) == int
+      return self.val < other.val
+
+  @staticmethod
+  def convert_to_identifiers(s):
+    if s == None:
+      return None
+    return [Version.Identifier(i) for i in s.split(".")]
+
+  def __init__(self, version_str):
+    PATTERN = re.compile(r"^([a-zA-Z0-9.]+)(?:-([a-zA-Z0-9.-]+))?(?:\+[a-zA-Z0-9.-]+)?$")
+    m = PATTERN.match(version_str)
+    if not m:
+      raise RegistryException(f"`{version_str}` is not a valid version")
+    self.release = Version.convert_to_identifiers(m.groups()[0])
+    self.prerelease = Version.convert_to_identifiers(m.groups()[1])
+
+  def __eq__(self, other):
+    return (self.release, self.prerelease) == (other.release, other.prerelease)
+
+  def __lt__(self, other):
+    if self.release != other.release:
+      return self.release < other.release
+    if self.prerelease == None:
+      return False
+    if other.prerelease == None:
+      return True
+    return self.prerelease < other.prerelease
 
 
 class Module:
@@ -167,14 +217,17 @@ module(
     modules_dir = self.root.joinpath("modules")
     return [path.name for path in modules_dir.iterdir()]
 
+  def get_module_versions(self, module_name):
+    module_versions = []
+    metadata = self.get_metadata(module_name)
+    for version in metadata["versions"]:
+      module_versions.append((module_name, version))
+    return module_versions
+
   def get_all_module_versions(self):
     module_versions = []
-
     for module_name in self.get_all_modules():
-      metadata = self.get_metadata(module_name)
-      for version in metadata["versions"]:
-        module_versions.append((module_name, version))
-
+      module_versions.extend(self.get_module_versions(module_name))
     return module_versions
 
   def get_metadata(self, module_name):
@@ -186,6 +239,10 @@ module(
     source_path = self.root.joinpath("modules", module_name, version,
                                      "source.json")
     return json.load(source_path.open())
+
+  def get_presubmit_yml_path(self, module_name, version):
+    return self.root.joinpath("modules", module_name, version,
+                              "presubmit.yml")
 
   def contains(self, module_name, version=None):
     """
@@ -351,8 +408,7 @@ module(
     metadata = json.load(metadata_path.open())
     metadata["versions"].append(module.version)
     metadata["versions"] = list(set(metadata["versions"]))
-    # TODO(pcloudy): versions should be sorted with the same logic in Bzlmod.
-    metadata["versions"].sort()
+    metadata["versions"].sort(key=Version)
     json_dump(metadata_path, metadata)
 
   def delete(self, module_name, version):
