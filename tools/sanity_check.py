@@ -28,9 +28,11 @@ Sanity checks performed are:
 
 import argparse
 import sys
+import os
 
 from enum import Enum
 from difflib import unified_diff
+from urllib.parse import urlparse
 
 from registry import RegistryClient
 from registry import Version
@@ -102,7 +104,8 @@ def sanity_check(registry, module_name, version):
       break
     repo_type, repo_path = source_repository.split(":")
     if repo_type == "github":
-      matched = source_url.startswith(f"https://github.com/{repo_path}/")
+      parts = urlparse(source_url)
+      matched = parts.scheme == "https" and parts.netloc == "github.com" and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
   if not matched:
     check_results.append((SanityCheckResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}."))
 
