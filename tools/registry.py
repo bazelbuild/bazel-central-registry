@@ -187,6 +187,10 @@ module(
                                      "source.json")
     return json.load(source_path.open())
 
+  def get_presubmit_yml_path(self, module_name, version):
+    return self.root.joinpath("modules", module_name, version,
+                              "presubmit.yml")
+
   def contains(self, module_name, version=None):
     """
     Check if the registry contains a module or a specific version of a
