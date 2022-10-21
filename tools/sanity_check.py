@@ -20,10 +20,10 @@
 
 Sanity checks performed are:
   - Verify versions in metadata.json matches existing versions
+  - Verify the source archive URL matches the source repositories
   - Verify the source archive URL is stable
   - Verify if the presubmit.yml file matches the previous version
     - If not, we should require BCR maintainer review.
-  - Verify the source archive URL matches the github repo
 """
 
 import argparse
@@ -60,14 +60,17 @@ def print_collapsed_group(name):
 def print_expanded_group(name):
     print("\n\n+++ {0}\n\n".format(name))
 
-def parse_module_versions(registry, check_all, input_modules):
+def parse_module_versions(registry, check_all, inputs):
   """Parse module versions to be checked from input."""
   if check_all:
     return registry.get_all_module_versions()
   result = []
-  for module in input_modules:
-    name, version = module.split("@")
-    result.append((name, version))
+  for s in inputs:
+    if "@" in s:
+      name, version = s.split("@")
+      result.append((name, version))
+    else:
+      result.extend(registry.get_module_versions(s))
   return result
 
 def print_check_result(result):
@@ -147,7 +150,8 @@ def main(argv=None):
     type=str,
     action = "append",
     help="Specify a Bazel module version you want to perform the sanity check on."
-    + " (e.g. bazel_skylib@1.3.0). This flag can be repeated to accept multiple module versions.")
+    + " (e.g. bazel_skylib@1.3.0). If no version is specified, all versions of that module are checked."
+    + " This flag can be repeated to accept multiple module versions.")
   parser.add_argument(
     "--check_all",
     action="store_true",
@@ -175,12 +179,13 @@ def main(argv=None):
   # Calculate the return code
   # 0: All good
   # 1: Sanity check failed
-  # 2: Sanity check pass, but some changes need BCR maintainer review before trigging follow up BCR presubmit jobs.
+  # 42: Sanity check pass, but some changes need BCR maintainer review before trigging follow up BCR presubmit jobs.
   result_codes = [code for code, _ in check_results]
   if SanityCheckResult.FAILED in result_codes:
     return 1
   if SanityCheckResult.NEED_BCR_MAINTAINER_REVIEW in result_codes:
-    return 2
+    # Use a special return code to avoid conflict with other error code
+    return 42
   return 0
 
 if __name__ == "__main__":

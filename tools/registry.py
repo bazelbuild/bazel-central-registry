@@ -216,14 +216,17 @@ module(
     modules_dir = self.root.joinpath("modules")
     return [path.name for path in modules_dir.iterdir()]
 
+  def get_module_versions(self, module_name):
+    module_versions = []
+    metadata = self.get_metadata(module_name)
+    for version in metadata["versions"]:
+      module_versions.append((module_name, version))
+    return module_versions
+
   def get_all_module_versions(self):
     module_versions = []
-
     for module_name in self.get_all_modules():
-      metadata = self.get_metadata(module_name)
-      for version in metadata["versions"]:
-        module_versions.append((module_name, version))
-
+      module_versions.extend(self.get_module_versions(module_name))
     return module_versions
 
   def get_metadata(self, module_name):
