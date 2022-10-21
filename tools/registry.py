@@ -81,6 +81,8 @@ class Version:
   @functools.total_ordering
   class Identifier:
     def __init__(self, s):
+      if not s:
+        raise RegistryException("identifier is empty")
       self.val = int(s) if s.isnumeric() else s
 
     def __eq__(self, other):
