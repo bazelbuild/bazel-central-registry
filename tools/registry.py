@@ -21,10 +21,12 @@
 
 import base64
 import difflib
+import functools
 import hashlib
 import json
 import netrc
 import pathlib
+import re
 import shutil
 import urllib.parse
 import urllib.request
@@ -70,6 +72,53 @@ def json_dump(file, data):
   with open(file, "w") as f:
     json.dump(data, f, indent=4, sort_keys=True)
     f.write("\n")
+
+# Translated from:
+# https://github.com/bazelbuild/bazel/blob/79a53def2ebbd9358450f739ea37bf70662e8614/src/main/java/com/google/devtools/build/lib/bazel/bzlmod/Version.java#L58
+@functools.total_ordering
+class Version:
+
+  @functools.total_ordering
+  class Identifier:
+    def __init__(self, s):
+      self.val = int(s) if s.isnumeric() else s
+
+    def __eq__(self, other):
+      if type(self.val) != type(other.val):
+        return False
+      return self.val == other.val
+
+    def __lt__(self, other):
+      if type(self.val) != type(other.val):
+        return type(self.val) == int
+      return self.val < other.val
+
+  @staticmethod
+  def convert_to_identifiers(s):
+    return [Version.Identifier(i) for i in s.split(".")]
+
+  def __init__(self, version_str):
+    PATTERN = re.compile(r"^([a-zA-Z0-9.]+)(?:-([a-zA-Z0-9.-]+))?(?:\+[a-zA-Z0-9.-]+)?$")
+    m = PATTERN.match(version_str)
+    if not m:
+      raise RegistryException(f"`{version_str}` is not a valid version")
+    self.release = Version.convert_to_identifiers(m.groups()[0])
+    if m.groups()[1]:
+      self.prerelease = Version.convert_to_identifiers(m.groups()[1])
+    else:
+      self.prerelease = None
+
+  def __eq__(self, other):
+    return (self.release, self.prerelease) == (other.release, other.prerelease)
+
+  def __lt__(self, other):
+    if self.release != other.release:
+      return self.release < other.release
+    if self.prerelease == None:
+      return False
+    if other.prerelease == None:
+      return True
+    return self.prerelease < other.prerelease
 
 
 class Module:
@@ -355,8 +404,7 @@ module(
     metadata = json.load(metadata_path.open())
     metadata["versions"].append(module.version)
     metadata["versions"] = list(set(metadata["versions"]))
-    # TODO(pcloudy): versions should be sorted with the same logic in Bzlmod.
-    metadata["versions"].sort()
+    metadata["versions"].sort(key=Version)
     json_dump(metadata_path, metadata)
 
   def delete(self, module_name, version):

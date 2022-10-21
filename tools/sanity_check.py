@@ -33,6 +33,7 @@ from enum import Enum
 from difflib import unified_diff
 
 from registry import RegistryClient
+from registry import Version
 from verify_stable_archives import UrlStability
 from verify_stable_archives import verify_stable_archive
 
@@ -109,8 +110,7 @@ def sanity_check(registry, module_name, version):
                           + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context."))
 
   # Check if the presubmit.yml is the same as the previous version.
-  # TODO(pcloudy): Versions should be sorted in the Bazel registry version format.
-  versions.sort()
+  versions.sort(key=Version)
   index = versions.index(version)
   if index == 0:
     check_results.append((SanityCheckResult.NEED_BCR_MAINTAINER_REVIEW, f"Module version {module_name}@{version} is new, the presubmit.yml file should be reviewed by a BCR maintainer."))
