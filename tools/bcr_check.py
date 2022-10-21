@@ -16,9 +16,9 @@
 # pylint: disable=invalid-name
 # pylint: disable=line-too-long
 # pylint: disable=missing-function-docstring
-"""A script to perform sanity checks for Bazel modules
+"""A script to perform BCR checks for Bazel modules
 
-Sanity checks performed are:
+BCR checks performed are:
   - Verify versions in metadata.json matches existing versions
   - Verify the source archive URL match the source repositories
   - Verify the source archive URL is stable
@@ -40,7 +40,7 @@ from verify_stable_archives import UrlStability
 from verify_stable_archives import verify_stable_archive
 
 
-class SanityCheckResult(Enum):
+class BcrCheckResult(Enum):
   ALL_GOOD = 1
   NEED_BCR_MAINTAINER_REVIEW = 2
   FAILED = 3
@@ -51,9 +51,9 @@ YELLOW = "\x1b[33m"
 RESET = "\x1b[0m"
 
 COLOR = {
-  SanityCheckResult.ALL_GOOD: GREEN,
-  SanityCheckResult.NEED_BCR_MAINTAINER_REVIEW: YELLOW,
-  SanityCheckResult.FAILED: RED,
+  BcrCheckResult.ALL_GOOD: GREEN,
+  BcrCheckResult.NEED_BCR_MAINTAINER_REVIEW: YELLOW,
+  BcrCheckResult.FAILED: RED,
 }
 
 def print_collapsed_group(name):
@@ -80,7 +80,7 @@ def print_check_result(result):
     color = COLOR[code]
     print(f"{color}{code}{RESET}: {message}\n")
 
-def sanity_check(registry, module_name, version):
+def BCR_check(registry, module_name, version):
   print_collapsed_group(f"Checking {module_name}@{version}")
 
   check_results = []
@@ -88,9 +88,9 @@ def sanity_check(registry, module_name, version):
   # Check the version is recorded in metadata.json and the directory entry exists.
   versions = registry.get_metadata(module_name)["versions"]
   if version not in versions:
-    check_results.append((SanityCheckResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file."))
+    check_results.append((BcrCheckResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file."))
   if not registry.contains(module_name, version):
-    check_results.append((SanityCheckResult.FAILED, f"{module_name}@{version} doesn't exist."))
+    check_results.append((BcrCheckResult.FAILED, f"{module_name}@{version} doesn't exist."))
   if check_results:
     print_check_result(check_results)
     return check_results
@@ -107,11 +107,11 @@ def sanity_check(registry, module_name, version):
       parts = urlparse(source_url)
       matched = parts.scheme == "https" and parts.netloc == "github.com" and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
   if not matched:
-    check_results.append((SanityCheckResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}."))
+    check_results.append((BcrCheckResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}."))
 
   # Check source archive URL is stable
   if verify_stable_archive(source_url) == UrlStability.UNSTABLE:
-      check_results.append((SanityCheckResult.FAILED,
+      check_results.append((BcrCheckResult.FAILED,
                           f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
                           + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
                           + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context."))
@@ -120,7 +120,7 @@ def sanity_check(registry, module_name, version):
   versions.sort(key=Version)
   index = versions.index(version)
   if index == 0:
-    check_results.append((SanityCheckResult.NEED_BCR_MAINTAINER_REVIEW, f"Module version {module_name}@{version} is new, the presubmit.yml file should be reviewed by a BCR maintainer."))
+    check_results.append((BcrCheckResult.NEED_BCR_MAINTAINER_REVIEW, f"Module version {module_name}@{version} is new, the presubmit.yml file should be reviewed by a BCR maintainer."))
   elif index > 0:
     pre_version = versions[index - 1]
     previous_presubmit_yml = registry.get_presubmit_yml_path(module_name, pre_version)
@@ -129,12 +129,12 @@ def sanity_check(registry, module_name, version):
     current_presubmit_content = open(current_presubmit_yml, "r").readlines()
     diff = list(unified_diff(previous_presubmit_content, current_presubmit_content, fromfile=str(previous_presubmit_yml), tofile = str(current_presubmit_yml)))
     if diff:
-      check_results.append((SanityCheckResult.NEED_BCR_MAINTAINER_REVIEW,
+      check_results.append((BcrCheckResult.NEED_BCR_MAINTAINER_REVIEW,
                           f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
                           + "".join(diff)))
 
   if not check_results:
-    check_results.append((SanityCheckResult.ALL_GOOD, "Everything looks good!"))
+    check_results.append((BcrCheckResult.ALL_GOOD, "Everything looks good!"))
 
   print_check_result(check_results)
   return check_results
@@ -153,7 +153,7 @@ def main(argv=None):
     "--check",
     type=str,
     action = "append",
-    help="Specify a Bazel module version you want to perform the sanity check on."
+    help="Specify a Bazel module version you want to perform the BCR check on."
     + " (e.g. bazel_skylib@1.3.0). If no version is specified, all versions of that module are checked."
     + " This flag can be repeated to accept multiple module versions.")
   parser.add_argument(
@@ -178,16 +178,16 @@ def main(argv=None):
   # Perform checks on given module version.
   check_results = []
   for name, version in module_versions:
-    check_results.extend(sanity_check(registry, name, version))
+    check_results.extend(BCR_check(registry, name, version))
 
   # Calculate the return code
   # 0: All good
-  # 1: Sanity check failed
-  # 42: Sanity check pass, but some changes need BCR maintainer review before trigging follow up BCR presubmit jobs.
+  # 1: BCR check failed
+  # 42: BCR check pass, but some changes need BCR maintainer review before trigging follow up BCR presubmit jobs.
   result_codes = [code for code, _ in check_results]
-  if SanityCheckResult.FAILED in result_codes:
+  if BcrCheckResult.FAILED in result_codes:
     return 1
-  if SanityCheckResult.NEED_BCR_MAINTAINER_REVIEW in result_codes:
+  if BcrCheckResult.NEED_BCR_MAINTAINER_REVIEW in result_codes:
     # Use a special return code to avoid conflict with other error code
     return 42
   return 0
