@@ -40,7 +40,10 @@ def log(msg):
 
 def download(url):
   parts = urllib.parse.urlparse(url)
-  authenticators = netrc.netrc().authenticators(parts.netloc)
+  try:
+    authenticators = netrc.netrc().authenticators(parts.netloc)
+  except FileNotFoundError:
+    authenticators = None
   if authenticators != None:
     (login, _, password) = authenticators
     req = urllib.request.Request(url)
