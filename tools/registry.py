@@ -194,7 +194,7 @@ module(
       dir_path = dir_path.joinpath(version)
     return dir_path.is_dir()
 
-  def init_module(self, module_name, maintainers, homepage):
+  def init_module(self, module_name, maintainers, homepage, source_repository = ""):
     """
     Initialize a module, create the directory and metadata.json file.
 
@@ -217,6 +217,7 @@ module(
     metadata = {
         "maintainers": maintainers,
         "homepage": homepage,
+        "repository": [source_repository] if source_repository else [],
         "versions": [],
         "yanked_versions": {},
     }
