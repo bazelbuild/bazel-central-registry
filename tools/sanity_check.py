@@ -20,7 +20,7 @@
 
 Sanity checks performed are:
   - Verify versions in metadata.json matches existing versions
-  - Verify the source archive URL matches the source repositories
+  - Verify the source archive URL match the source repositories
   - Verify the source archive URL is stable
   - Verify if the presubmit.yml file matches the previous version
     - If not, we should require BCR maintainer review.
@@ -102,7 +102,7 @@ def sanity_check(registry, module_name, version):
       break
     repo_type, repo_path = source_repository.split(":")
     if repo_type == "github":
-      matched = source_url.startswith("https://github.com/" + repo_path)
+      matched = source_url.startswith(f"https://github.com/{repo_path}/")
   if not matched:
     check_results.append((SanityCheckResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}."))
 
