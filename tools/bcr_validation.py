@@ -81,7 +81,7 @@ def print_validation_result(result):
     print(f"{color}{code}{RESET}: {message}\n")
 
 def validate_module(registry, module_name, version):
-  print_collapsed_group(f"Validating {module_name}@{version}")
+  print_expanded_group(f"Validating {module_name}@{version}")
 
   validation_results = []
 
@@ -131,7 +131,7 @@ def validate_module(registry, module_name, version):
     if diff:
       validation_results.append((BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
                           f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
-                          + "".join(diff)))
+                          + "    " + "    ".join(diff)))
 
   if not validation_results:
     validation_results.append((BcrValidationResult.ALL_GOOD, "Everything looks good!"))
@@ -171,7 +171,7 @@ def main(argv=None):
 
   # Parse what module versions we should validate
   module_versions = parse_module_versions(registry, args.check_all, args.check)
-  print_collapsed_group("Module versions to be validated:")
+  print_expanded_group("Module versions to be validated:")
   for name, version in module_versions:
     print(f"{name}@{version}")
 
