@@ -36,6 +36,8 @@ from urllib.parse import urlparse
 
 from registry import RegistryClient
 from registry import Version
+from registry import download
+from registry import integrity
 from verify_stable_archives import UrlStability
 from verify_stable_archives import verify_stable_archive
 
@@ -115,6 +117,13 @@ def validate_module(registry, module_name, version):
                           f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
                           + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
                           + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context."))
+
+  #Verify the integrity value of the URL is correct
+  expected_integrity = registry.get_source(module_name, version)["integrity"]
+  real_integrity = integrity(download(source_url))
+  if real_integrity != expected_integrity:
+    validation_results.append((BcrValidationResult.FAILED, f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{real_integrity}`!"))
+
 
   # Verify if the presubmit.yml is the same as the previous version.
   versions.sort(key=Version)
