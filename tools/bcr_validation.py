@@ -43,6 +43,7 @@ from registry import Version
 from registry import download
 from registry import download_file
 from registry import integrity
+from registry import read
 from verify_stable_archives import UrlStability
 from verify_stable_archives import verify_stable_archive
 
@@ -191,11 +192,14 @@ def verify_module_dot_bazel(registry, module_name, version):
   download_file(source_url, archive_file)
   shutil.unpack_archive(str(archive_file), output_dir)
 
-  # Apply patch files if there are any
+  # Apply patch files if there are any, also verify their integrity values
   source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
   if "patches" in source:
-      for patch_name in source["patches"]:
+      for patch_name, expected_integrity in source["patches"].items():
           patch_file = registry.get_patch_file_path(module_name, version, patch_name)
+          actual_integrity = integrity(read(patch_file))
+          if actual_integrity != expected_integrity:
+            validation_results.append((BcrValidationResult.FAILED, f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`."))
           apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
 
   source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
