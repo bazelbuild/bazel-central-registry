@@ -106,7 +106,7 @@ def verify_source_archive_url(registry, module_name, version):
   validation_results = []
   source_url = registry.get_source(module_name, version)["url"]
   source_repositories = registry.get_metadata(module_name).get("repository", [])
-  matched = False
+  matched = not source_repositories
   for source_repository in source_repositories:
     if matched:
       break
