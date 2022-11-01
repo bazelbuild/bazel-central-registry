@@ -1,0 +1,116 @@
+commit cec4630c2d38e8ed2ce40db5a987d81ed3e84892
+Author: Fabian Meumertzheim <fabian@meumertzhe.im>
+Date:   Tue Nov 1 09:19:13 2022 +0100
+
+    Setup for inclusion in the Bazel Central Registry
+    
+    By adding a MODULE.bazel file, this library becomes usable with Bazel's
+    new external dependency management system Bzlmod.
+    
+    The new tests are run when a new version is included in the Bazel
+    Central Registry and verify that the basic functionality works with the
+    provided Bazel setup.
+    
+    See:
+    https://bazel.build/build/bzlmod
+
+diff --git a/.gitignore b/.gitignore
+index 30b62bfc..b8c1f1cc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,6 +20,7 @@
+ 
+ # build directories (vscode-cmake-tools, user-defined, ...)
+ /build*/
++bazel-*
+ 
+ # fuzzers
+ /tests/corpus_*
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 00000000..6db7201d
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,5 @@
++module(
++    name = "nlohmann_json",
++    compatibility_level = 1,
++    version = "3.11.2",
++)
+diff --git a/tests/bazel/.bazelrc b/tests/bazel/.bazelrc
+new file mode 100644
+index 00000000..3ce91d27
+--- /dev/null
++++ b/tests/bazel/.bazelrc
+@@ -0,0 +1 @@
++common --enable_bzlmod
+diff --git a/tests/bazel/.bazelversion b/tests/bazel/.bazelversion
+new file mode 100644
+index 00000000..ba8bc581
+--- /dev/null
++++ b/tests/bazel/.bazelversion
+@@ -0,0 +1 @@
++6.0.0rc1
+diff --git a/tests/bazel/BUILD.bazel b/tests/bazel/BUILD.bazel
+new file mode 100644
+index 00000000..73811205
+--- /dev/null
++++ b/tests/bazel/BUILD.bazel
+@@ -0,0 +1,5 @@
++cc_test(
++    name = "json_example_test",
++    srcs = ["json_example_test.cpp"],
++    deps = ["@json"],
++)
+diff --git a/tests/bazel/MODULE.bazel b/tests/bazel/MODULE.bazel
+new file mode 100644
+index 00000000..ffd20f6a
+--- /dev/null
++++ b/tests/bazel/MODULE.bazel
+@@ -0,0 +1,5 @@
++bazel_dep(name = "nlohmann_json", repo_name = "json")
++local_path_override(
++    module_name = "nlohmann_json",
++    path = "../.."
++)
+diff --git a/tests/bazel/WORKSPACE.bazel b/tests/bazel/WORKSPACE.bazel
+new file mode 100644
+index 00000000..e69de29b
+diff --git a/tests/bazel/WORKSPACE.bzlmod b/tests/bazel/WORKSPACE.bzlmod
+new file mode 100644
+index 00000000..b53e8d72
+--- /dev/null
++++ b/tests/bazel/WORKSPACE.bzlmod
+@@ -0,0 +1,2 @@
++# The presence of this file ensures that Bazel ignores WORKSPACE.bazel and
++# does not implicitly add any dependency declarations.
+diff --git a/tests/bazel/json_example_test.cpp b/tests/bazel/json_example_test.cpp
+new file mode 100644
+index 00000000..daf978ce
+--- /dev/null
++++ b/tests/bazel/json_example_test.cpp
+@@ -0,0 +1,24 @@
++#include <iostream>
++#include <string>
++
++#include <nlohmann/json.hpp>
++
++int main()
++{
++    nlohmann::json j;
++    j["pi"] = 3.141;
++    j["happy"] = true;
++    j["name"] = "Niels";
++    j["nothing"] = nullptr;
++    j["answer"]["everything"] = 42;
++    j["list"] = {1, 0, 2};
++    j["object"] = {{"currency", "USD"}, {"value", 42.99}};
++
++    std::string s = j.dump();
++    if (s != R"({"answer":{"everything":42},"happy":true,"list":[1,0,2],"name":"Niels","nothing":null,"object":{"currency":"USD","value":42.99},"pi":3.141})")
++    {
++        std::cerr << "Unexpected JSON serialization: " << s << std::endl;
++        return 1;
++    }
++    return 0;
++}
