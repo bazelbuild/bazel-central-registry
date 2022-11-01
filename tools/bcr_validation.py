@@ -43,7 +43,7 @@ from verify_stable_archives import verify_stable_archive
 
 
 class BcrValidationResult(Enum):
-  ALL_GOOD = 1
+  GOOD = 1
   NEED_BCR_MAINTAINER_REVIEW = 2
   FAILED = 3
 
@@ -53,7 +53,7 @@ YELLOW = "\x1b[33m"
 RESET = "\x1b[0m"
 
 COLOR = {
-  BcrValidationResult.ALL_GOOD: GREEN,
+  BcrValidationResult.GOOD: GREEN,
   BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW: YELLOW,
   BcrValidationResult.FAILED: RED,
 }
@@ -82,22 +82,28 @@ def print_validation_result(result):
     color = COLOR[code]
     print(f"{color}{code}{RESET}: {message}\n")
 
-def validate_module(registry, module_name, version):
-  print_expanded_group(f"Validating {module_name}@{version}")
+class BcrValidationException(Exception):
+  """
+  Raised whenever we should stop the validation immediately.
+  """
 
+def verify_module_existence(registry, module_name, version):
+  """Verify the directory exists and the version is recorded in metadata.json."""
   validation_results = []
-
-  # Verify the version is recorded in metadata.json and the directory entry exists.
+  if not registry.contains(module_name, version):
+    validation_results.append((BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist."))
+    print_validation_result(validation_results)
+    raise BcrValidationException("The module to be checked doesn't exist!")
   versions = registry.get_metadata(module_name)["versions"]
   if version not in versions:
     validation_results.append((BcrValidationResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file."))
-  if not registry.contains(module_name, version):
-    validation_results.append((BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist."))
-  if validation_results:
-    print_validation_result(validation_results)
-    return validation_results
+  else:
+    validation_results.append((BcrValidationResult.GOOD, "The module exists and is recorded in metadata.json."))
+  return validation_results
 
+def verify_source_archive_url(registry, module_name, version):
   # Verify the source archive URL matches the github repo. For now, we only support github repositories check.
+  validation_results = []
   source_url = registry.get_source(module_name, version)["url"]
   source_repositories = registry.get_metadata(module_name).get("repository", [])
   matched = False
@@ -110,22 +116,35 @@ def validate_module(registry, module_name, version):
       matched = parts.scheme == "https" and parts.netloc == "github.com" and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
   if not matched:
     validation_results.append((BcrValidationResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}."))
+  else:
+    validation_results.append((BcrValidationResult.GOOD, "The source URL matches one of the source repositories."))
 
-  # Verify source archive URL is stable
+  # Verify source archive URL is stable.
   if verify_stable_archive(source_url) == UrlStability.UNSTABLE:
-      validation_results.append((BcrValidationResult.FAILED,
-                          f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
-                          + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
-                          + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context."))
+    validation_results.append((BcrValidationResult.FAILED,
+                        f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
+                        + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
+                        + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context."))
+  else:
+    validation_results.append((BcrValidationResult.GOOD, "The source URL doesn't look unstable."))
+  return validation_results
 
-  #Verify the integrity value of the URL is correct
+def verify_source_archive_integrity(registry, module_name, version):
+  """Verify the integrity value of the URL is correct."""
+  validation_results = []
+  source_url = registry.get_source(module_name, version)["url"]
   expected_integrity = registry.get_source(module_name, version)["integrity"]
   real_integrity = integrity(download(source_url))
   if real_integrity != expected_integrity:
     validation_results.append((BcrValidationResult.FAILED, f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{real_integrity}`!"))
+  else:
+    validation_results.append((BcrValidationResult.GOOD, "The source archive's integrity value matches."))
+  return validation_results
 
-
-  # Verify if the presubmit.yml is the same as the previous version.
+def verify_presubmit_yml_change(registry, module_name, version):
+  """Verify if the presubmit.yml is the same as the previous version."""
+  validation_results = []
+  versions = registry.get_metadata(module_name)["versions"]
   versions.sort(key=Version)
   index = versions.index(version)
   if index == 0:
@@ -141,9 +160,18 @@ def validate_module(registry, module_name, version):
       validation_results.append((BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
                           f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
                           + "    " + "    ".join(diff)))
+    else:
+      validation_results.append((BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version."))
+  return validation_results
 
-  if not validation_results:
-    validation_results.append((BcrValidationResult.ALL_GOOD, "Everything looks good!"))
+def validate_module(registry, module_name, version):
+  print_expanded_group(f"Validating {module_name}@{version}")
+
+  validation_results = []
+  validation_results.extend(verify_module_existence(registry, module_name, version))
+  validation_results.extend(verify_source_archive_url(registry, module_name, version))
+  validation_results.extend(verify_source_archive_integrity(registry, module_name, version))
+  validation_results.extend(verify_presubmit_yml_change(registry, module_name, version))
 
   print_validation_result(validation_results)
   return validation_results
