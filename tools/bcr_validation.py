@@ -27,7 +27,11 @@ Validations performed are:
 """
 
 import argparse
+import subprocess
+from pathlib import Path
+import shutil
 import sys
+import tempfile
 import os
 
 from enum import Enum
@@ -37,6 +41,7 @@ from urllib.parse import urlparse
 from registry import RegistryClient
 from registry import Version
 from registry import download
+from registry import download_file
 from registry import integrity
 from verify_stable_archives import UrlStability
 from verify_stable_archives import verify_stable_archive
@@ -155,7 +160,7 @@ def verify_presubmit_yml_change(registry, module_name, version):
     previous_presubmit_content = open(previous_presubmit_yml, "r").readlines()
     current_presubmit_yml = registry.get_presubmit_yml_path(module_name, version)
     current_presubmit_content = open(current_presubmit_yml, "r").readlines()
-    diff = list(unified_diff(previous_presubmit_content, current_presubmit_content, fromfile=str(previous_presubmit_yml), tofile = str(current_presubmit_yml)))
+    diff = list(unified_diff(previous_presubmit_content, current_presubmit_content, fromfile=str(previous_presubmit_yml), tofile=str(current_presubmit_yml)))
     if diff:
       validation_results.append((BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
                           f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
@@ -164,17 +169,73 @@ def verify_presubmit_yml_change(registry, module_name, version):
       validation_results.append((BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version."))
   return validation_results
 
+def apply_patch(work_dir, patch_strip, patch_file):
+  # Requries patch to be installed
+  subprocess.run(
+      ["patch", "-p%d" % patch_strip, "-i", patch_file], shell=False, check=True, env=os.environ, cwd=work_dir
+  )
+
+def remove_trailing_empty_lines(lines):
+  pos = len(lines)
+  while pos > 0 and not lines[pos - 1].strip():
+    pos = pos - 1
+  return lines[0:pos]
+
+def verify_module_dot_bazel(registry, module_name, version):
+  validation_results = []
+  source = registry.get_source(module_name, version)
+  source_url = source["url"]
+  tmp_dir = Path(tempfile.mkdtemp())
+  archive_file = tmp_dir.joinpath(source_url.split("/")[-1])
+  output_dir = tmp_dir.joinpath("source_root")
+  download_file(source_url, archive_file)
+  shutil.unpack_archive(str(archive_file), output_dir)
+
+  # Apply patch files if there are any
+  source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
+  if "patches" in source:
+      for patch_name in source["patches"]:
+          patch_file = registry.get_patch_file_path(module_name, version, patch_name)
+          apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
+
+  source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
+  if source_module_dot_bazel.exists():
+    source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
+  else:
+    source_module_dot_bazel_content = []
+  bcr_module_dot_bazel_content = open(registry.get_module_dot_bazel_path(module_name, version), "r").readlines()
+  source_module_dot_bazel_content = remove_trailing_empty_lines(source_module_dot_bazel_content)
+  bcr_module_dot_bazel_content = remove_trailing_empty_lines(bcr_module_dot_bazel_content)
+  file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
+  diff = list(unified_diff(source_module_dot_bazel_content, bcr_module_dot_bazel_content, fromfile=file_name, tofile=file_name))
+
+  if diff:
+    validation_results.append((BcrValidationResult.FAILED,
+                               "Checked in MODULE.bazel file doesn't match the extracted and patched sources.\n"
+                               + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
+                               + "    " + "    ".join(diff)))
+  else:
+    validation_results.append((BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources."))
+
+  shutil.rmtree(tmp_dir)
+
+  return validation_results
+
+def print_and_append_result(all_results, new_results):
+  print_validation_result(new_results)
+  all_results.extend(new_results)
+
 def validate_module(registry, module_name, version):
   print_expanded_group(f"Validating {module_name}@{version}")
 
-  validation_results = []
-  validation_results.extend(verify_module_existence(registry, module_name, version))
-  validation_results.extend(verify_source_archive_url(registry, module_name, version))
-  validation_results.extend(verify_source_archive_integrity(registry, module_name, version))
-  validation_results.extend(verify_presubmit_yml_change(registry, module_name, version))
+  all_results = []
+  print_and_append_result(all_results, verify_module_existence(registry, module_name, version))
+  print_and_append_result(all_results, verify_source_archive_url(registry, module_name, version))
+  print_and_append_result(all_results, verify_source_archive_integrity(registry, module_name, version))
+  print_and_append_result(all_results, verify_presubmit_yml_change(registry, module_name, version))
+  print_and_append_result(all_results, verify_module_dot_bazel(registry, module_name, version))
 
-  print_validation_result(validation_results)
-  return validation_results
+  return all_results
 
 def main(argv=None):
   if argv is None:
