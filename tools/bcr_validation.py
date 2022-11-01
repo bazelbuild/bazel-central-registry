@@ -173,14 +173,14 @@ def verify_presubmit_yml_change(registry, module_name, version):
 def apply_patch(work_dir, patch_strip, patch_file):
   # Requries patch to be installed
   subprocess.run(
-      ["patch", "-p%d" % patch_strip, "-i", patch_file], shell=False, check=True, env=os.environ, cwd=work_dir
+      ["patch", "-p%d" % patch_strip, "-l", "-i", patch_file], shell=False, check=True, env=os.environ, cwd=work_dir
   )
 
 def remove_trailing_empty_lines(lines):
   pos = len(lines)
   while pos > 0 and not lines[pos - 1].strip():
     pos = pos - 1
-  return lines[0:pos]
+  return [line.rstrip() + "\n" for line in lines[0:pos]]
 
 def verify_module_dot_bazel(registry, module_name, version):
   validation_results = []
