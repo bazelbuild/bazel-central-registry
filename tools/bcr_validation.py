@@ -99,28 +99,30 @@ class BcrValidationException(Exception):
 
 class BcrValidator:
 
-  validation_results = []
+  def __init__(self, registry):
+    self.validation_results = []
+    self.registry = registry
 
   def report(self, type, message):
     color = COLOR[type]
     print(f"{color}{type}{RESET}: {message}\n")
     self.validation_results.append((type, message))
 
-  def verify_module_existence(self, registry, module_name, version):
+  def verify_module_existence(self, module_name, version):
     """Verify the directory exists and the version is recorded in metadata.json."""
-    if not registry.contains(module_name, version):
+    if not self.registry.contains(module_name, version):
       self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist.")
       raise BcrValidationException("The module to be validated doesn't exist!")
-    versions = registry.get_metadata(module_name)["versions"]
+    versions = self.registry.get_metadata(module_name)["versions"]
     if version not in versions:
       self.report(BcrValidationResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file.")
     else:
       self.report(BcrValidationResult.GOOD, "The module exists and is recorded in metadata.json.")
 
-  def verify_source_archive_url(self, registry, module_name, version):
+  def verify_source_archive_url(self, module_name, version):
     # Verify the source archive URL matches the github repo. For now, we only support github repositories check.
-    source_url = registry.get_source(module_name, version)["url"]
-    source_repositories = registry.get_metadata(module_name).get("repository", [])
+    source_url = self.registry.get_source(module_name, version)["url"]
+    source_repositories = self.registry.get_metadata(module_name).get("repository", [])
     matched = not source_repositories
     for source_repository in source_repositories:
       if matched:
@@ -144,10 +146,10 @@ class BcrValidator:
       self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
 
 
-  def verify_source_archive_integrity(self, registry, module_name, version):
+  def verify_source_archive_integrity(self, module_name, version):
     """Verify the integrity value of the URL is correct."""
-    source_url = registry.get_source(module_name, version)["url"]
-    expected_integrity = registry.get_source(module_name, version)["integrity"]
+    source_url = self.registry.get_source(module_name, version)["url"]
+    expected_integrity = self.registry.get_source(module_name, version)["integrity"]
     real_integrity = integrity(download(source_url))
     if real_integrity != expected_integrity:
       self.report(BcrValidationResult.FAILED, f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{real_integrity}`!")
@@ -155,18 +157,18 @@ class BcrValidator:
       self.report(BcrValidationResult.GOOD, "The source archive's integrity value matches.")
 
 
-  def verify_presubmit_yml_change(self, registry, module_name, version):
+  def verify_presubmit_yml_change(self, module_name, version):
     """Verify if the presubmit.yml is the same as the previous version."""
-    versions = registry.get_metadata(module_name)["versions"]
+    versions = self.registry.get_metadata(module_name)["versions"]
     versions.sort(key=Version)
     index = versions.index(version)
     if index == 0:
       self.report(BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW, f"Module version {module_name}@{version} is new, the presubmit.yml file should be reviewed by a BCR maintainer.")
     elif index > 0:
       pre_version = versions[index - 1]
-      previous_presubmit_yml = registry.get_presubmit_yml_path(module_name, pre_version)
+      previous_presubmit_yml = self.registry.get_presubmit_yml_path(module_name, pre_version)
       previous_presubmit_content = open(previous_presubmit_yml, "r").readlines()
-      current_presubmit_yml = registry.get_presubmit_yml_path(module_name, version)
+      current_presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
       current_presubmit_content = open(current_presubmit_yml, "r").readlines()
       diff = list(unified_diff(previous_presubmit_content, current_presubmit_content, fromfile=str(previous_presubmit_yml), tofile = str(current_presubmit_yml)))
       if diff:
@@ -176,8 +178,8 @@ class BcrValidator:
       else:
         self.report(BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version.")
 
-  def verify_module_dot_bazel(self, registry, module_name, version):
-    source = registry.get_source(module_name, version)
+  def verify_module_dot_bazel(self, module_name, version):
+    source = self.registry.get_source(module_name, version)
     source_url = source["url"]
     tmp_dir = Path(tempfile.mkdtemp())
     archive_file = tmp_dir.joinpath(source_url.split("/")[-1])
@@ -189,7 +191,7 @@ class BcrValidator:
     source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
     if "patches" in source:
         for patch_name, expected_integrity in source["patches"].items():
-            patch_file = registry.get_patch_file_path(module_name, version, patch_name)
+            patch_file = self.registry.get_patch_file_path(module_name, version, patch_name)
             actual_integrity = integrity(read(patch_file))
             if actual_integrity != expected_integrity:
               self.report(BcrValidationResult.FAILED, f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.")
@@ -200,7 +202,7 @@ class BcrValidator:
       source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
     else:
       source_module_dot_bazel_content = []
-    bcr_module_dot_bazel_content = open(registry.get_module_dot_bazel_path(module_name, version), "r").readlines()
+    bcr_module_dot_bazel_content = open(self.registry.get_module_dot_bazel_path(module_name, version), "r").readlines()
     source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
     bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
     file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
@@ -216,12 +218,13 @@ class BcrValidator:
 
     shutil.rmtree(tmp_dir)
 
-  def validate_module(self, registry, module_name, version):
+  def validate_module(self, module_name, version):
     print_expanded_group(f"Validating {module_name}@{version}")
-    self.verify_module_existence(registry, module_name, version)
-    self.verify_source_archive_url(registry, module_name, version)
-    self.verify_source_archive_integrity(registry, module_name, version)
-    self.verify_presubmit_yml_change(registry, module_name, version)
+    self.verify_module_existence(module_name, version)
+    self.verify_source_archive_url(module_name, version)
+    self.verify_source_archive_integrity(module_name, version)
+    self.verify_presubmit_yml_change(module_name, version)
+    self.verify_module_dot_bazel(module_name, version)
 
   def getValidationReturnCode(self):
     # Calculate the overall return code
@@ -273,9 +276,9 @@ def main(argv=None):
     print(f"{name}@{version}")
 
   # Validate given module version.
-  validator = BcrValidator()
+  validator = BcrValidator(registry)
   for name, version in module_versions:
-    validator.validate_module(registry, name, version)
+    validator.validate_module(name, version)
   return validator.getValidationReturnCode()
 
 if __name__ == "__main__":
