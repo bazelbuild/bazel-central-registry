@@ -93,7 +93,7 @@ def verify_module_existence(registry, module_name, version):
   if not registry.contains(module_name, version):
     validation_results.append((BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist."))
     print_validation_result(validation_results)
-    raise BcrValidationException("The module to be checked doesn't exist!")
+    raise BcrValidationException("The module to be validated doesn't exist!")
   versions = registry.get_metadata(module_name)["versions"]
   if version not in versions:
     validation_results.append((BcrValidationResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file."))
