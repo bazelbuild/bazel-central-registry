@@ -24,6 +24,7 @@ Validations performed are:
   - Verify the source archive URL is stable
   - Verify if the presubmit.yml file matches the previous version
     - If not, we should require BCR maintainer review.
+  - Verify the checked in MODULE.bazel file matches the one in the extracted and patched source tree.
 """
 
 import argparse
