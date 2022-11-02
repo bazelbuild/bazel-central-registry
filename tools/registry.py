@@ -243,6 +243,10 @@ module(
                                      "source.json")
     return json.load(source_path.open())
 
+  def get_source_path(self, module_name, version):
+    return self.root.joinpath("modules", module_name, version,
+                              "source.json")
+
   def get_presubmit_yml_path(self, module_name, version):
     return self.root.joinpath("modules", module_name, version,
                               "presubmit.yml")

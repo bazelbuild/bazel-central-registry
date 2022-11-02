@@ -28,6 +28,7 @@ Validations performed are:
 """
 
 import argparse
+import json
 import subprocess
 from pathlib import Path
 import shutil
@@ -100,9 +101,11 @@ class BcrValidationException(Exception):
 
 class BcrValidator:
 
-  def __init__(self, registry):
+  def __init__(self, registry, should_fix):
     self.validation_results = []
     self.registry = registry
+    # Whether the validator should try to fix the detected error.
+    self.should_fix = should_fix
 
   def report(self, type, message):
     color = COLOR[type]
@@ -179,6 +182,20 @@ class BcrValidator:
       else:
         self.report(BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version.")
 
+  def add_module_dot_bazel_patch(self, diff, module_name, version):
+    """Adding a patch file for MODULE.bazel according to the diff result."""
+    source = self.registry.get_source(module_name, version)
+    patch_file = self.registry.get_patch_file_path(module_name, version, "module_dot_bazel.patch")
+    patch_file.parent.mkdir(parents=True, exist_ok=True)
+    open(patch_file, "w").writelines(diff)
+    source["patch_strip"] = int(source.get("patch_strip", 0))
+    patches = source.get("patches", {})
+    patches["module_dot_bazel.patch"] = integrity(read(patch_file))
+    source["patches"] = patches
+    with open(self.registry.get_source_path(module_name, version), "w") as f:
+      json.dump(source, f, indent=4)
+      f.write("\n")
+
   def verify_module_dot_bazel(self, module_name, version):
     source = self.registry.get_source(module_name, version)
     source_url = source["url"]
@@ -214,6 +231,8 @@ class BcrValidator:
                                 "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
                                 + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
                                 + "    " + "    ".join(diff))
+      if self.should_fix:
+        self.add_module_dot_bazel_patch(diff, module_name, version)
     else:
       self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
@@ -261,6 +280,10 @@ def main(argv=None):
     "--check_all",
     action="store_true",
     help="Check all Bazel modules in the registry, ignore other --check flags.")
+  parser.add_argument(
+    "--fix",
+    action="store_true",
+    help="Should the script try to fix the detected validation errors.")
 
   args = parser.parse_args(argv)
 
@@ -277,7 +300,7 @@ def main(argv=None):
     print(f"{name}@{version}")
 
   # Validate given module version.
-  validator = BcrValidator(registry)
+  validator = BcrValidator(registry, args.fix)
   for name, version in module_versions:
     validator.validate_module(name, version)
   return validator.getValidationReturnCode()
