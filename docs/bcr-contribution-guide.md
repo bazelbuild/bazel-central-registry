@@ -2,9 +2,9 @@
 
 Contributors should follow these policies when reviewing and accepting modules to the Bazel Central Registry:
 
--   All changes to the BCR repository must be submitted and reviewed as a pull request.
--   Add-only: existing module versions must not be modified to ensure reproducible builds.
--   Every module version must have a [presubmit.yml](https://docs.google.com/document/d/1moQfNcEIttsk6vYanNKIy3ZuK53hQUFq1b1r0rmsYVg/edit#heading=h.e6t527rxhw5i) file.
+- All changes to the BCR repository must be submitted and reviewed as a pull request.
+- Add-only: existing module versions must not be modified to ensure reproducible builds.
+- Every module version must have a [presubmit.yml](https://docs.google.com/document/d/1moQfNcEIttsk6vYanNKIy3ZuK53hQUFq1b1r0rmsYVg/edit#heading=h.e6t527rxhw5i) file.
 -   BCR modules can only depend on modules already in the BCR.
 
 ## BCR maintenance policies
