@@ -104,7 +104,7 @@ class BcrValidator:
   def report(self, type, message):
     color = COLOR[type]
     print(f"{color}{type}{RESET}: {message}\n")
-    self.validation_results.append(type, message)
+    self.validation_results.append((type, message))
 
   def verify_module_existence(self, registry, module_name, version):
     """Verify the directory exists and the version is recorded in metadata.json."""
@@ -116,7 +116,6 @@ class BcrValidator:
       self.report(BcrValidationResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file.")
     else:
       self.report(BcrValidationResult.GOOD, "The module exists and is recorded in metadata.json.")
-
 
   def verify_source_archive_url(self, registry, module_name, version):
     # Verify the source archive URL matches the github repo. For now, we only support github repositories check.
