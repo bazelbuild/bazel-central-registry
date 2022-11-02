@@ -143,9 +143,9 @@ class BcrValidator:
     # Verify source archive URL is stable.
     if verify_stable_archive(source_url) == UrlStability.UNSTABLE:
       self.report(BcrValidationResult.FAILED,
-                          f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
-                          + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
-                          + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context.")
+                  f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
+                  + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
+                  + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context.")
     else:
       self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
 
@@ -177,8 +177,8 @@ class BcrValidator:
       diff = list(unified_diff(previous_presubmit_content, current_presubmit_content, fromfile=str(previous_presubmit_yml), tofile = str(current_presubmit_yml)))
       if diff:
         self.report(BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
-                            f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
-                            + "    " + "    ".join(diff))
+                    f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
+                    + "    " + "    ".join(diff))
       else:
         self.report(BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version.")
 
@@ -228,9 +228,9 @@ class BcrValidator:
 
     if diff:
       self.report(BcrValidationResult.FAILED,
-                                "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
-                                + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
-                                + "    " + "    ".join(diff))
+                  "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
+                  + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
+                  + "    " + "    ".join(diff))
       if self.should_fix:
         self.add_module_dot_bazel_patch(diff, module_name, version)
     else:
