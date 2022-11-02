@@ -17,6 +17,7 @@ Registry maintainers and module maintainers maintain the BCR. BCR maintainers ar
 - All maintainer requests will be reviewed by the [Rules Authors SIG](https://github.com/bazel-contrib/SIG-rules-authors) and the Bazel team before approval.
 
 ### Responsibilities of a BCR maintainer
+
 - Review and accept contributions made by the community that align with the BCR contribution policy. Maintainers can merge any PR they have carefully reviewed and is passing CI. BCR maintainer review is required when:
   - Raise a PR to add a new module for the first time to the BCR.
   - Raise a PR to change a presubmit.yml file for a module.
