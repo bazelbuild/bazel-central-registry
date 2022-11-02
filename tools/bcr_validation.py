@@ -180,6 +180,7 @@ def remove_trailing_empty_lines(lines):
   pos = len(lines)
   while pos > 0 and not lines[pos - 1].strip():
     pos = pos - 1
+  # Also fix the line endings
   return [line.rstrip() + "\n" for line in lines[0:pos]]
 
 def verify_module_dot_bazel(registry, module_name, version):
@@ -215,7 +216,7 @@ def verify_module_dot_bazel(registry, module_name, version):
 
   if diff:
     validation_results.append((BcrValidationResult.FAILED,
-                               "Checked in MODULE.bazel file doesn't match the extracted and patched sources.\n"
+                               "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
                                + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
                                + "    " + "    ".join(diff)))
   else:
