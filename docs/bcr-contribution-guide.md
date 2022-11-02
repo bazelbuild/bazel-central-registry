@@ -8,6 +8,7 @@ Contributors should follow these policies when reviewing and accepting modules t
 -   BCR modules can only depend on modules already in the BCR.
 
 ## BCR maintenance policies
+
 Registry maintainers and module maintainers maintain the BCR. BCR maintainers are members of the community who have restricted ability to accept Bazel-built reusable packages into the BCR.
 
 ## Become a BCR maintainer
