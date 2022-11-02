@@ -30,8 +30,8 @@ Registry maintainers and module maintainers maintain the BCR. BCR maintainers ar
 Every module must have a list of maintainers provided in its metadata.json file. The first contributor to a Bazel module is likely be appointed as the module maintainer. Anyone can apply to be a maintainer of some specific modules. Library authors / rule authors / Bazel users who have special interest on some projects can be module maintainers.
 
 ### Responsibilities of a module maintainer
--   Review and approve changes related to the designated Bazel module.
--   Update new versions for the designated Bazel module.
+- Review and approve changes related to the designated Bazel module.
+- Update new versions for the designated Bazel module.
 
 ## Contacting the repository or module maintainers
 
