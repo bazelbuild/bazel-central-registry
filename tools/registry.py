@@ -68,9 +68,9 @@ def integrity(data):
   return "sha256-" + base64.b64encode(hash_value.digest()).decode()
 
 
-def json_dump(file, data):
+def json_dump(file, data, sort_keys=True):
   with open(file, "w") as f:
-    json.dump(data, f, indent=4, sort_keys=True)
+    json.dump(data, f, indent=4, sort_keys=sort_keys)
     f.write("\n")
 
 # Translated from:
@@ -359,7 +359,7 @@ module(
         f.writelines(patch_content)
       source["patches"][patch_name] = integrity(read(patch))
 
-    json_dump(p.joinpath("source.json"), source)
+    json_dump(p.joinpath("source.json"), source, sort_keys=False)
 
     # Create presubmit.yml file
     presubmit_yml = p.joinpath("presubmit.yml")
