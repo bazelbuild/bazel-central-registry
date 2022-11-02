@@ -34,6 +34,7 @@ Every module must have a list of maintainers provided in its metadata.json file.
 -   Update new versions for the designated Bazel module.
 
 ## Contacting the repository or module maintainers
+
 Whenever possible, conduct all communication in public on GitHub. Contact maintainers via GitHub or Slack. Contact maintainers over slack group [bzlmod](https://bazelbuild.slack.com/archives/C014RARENH0) when contacting over GiHub is not possible.
 
 ### Maintenance timeline expectations
