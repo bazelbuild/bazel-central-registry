@@ -57,6 +57,9 @@ def download(url):
   with urllib.request.urlopen(req) as response:
     return response.read()
 
+def download_file(url, file):
+  with open(file, "wb") as f:
+      f.write(download(url))
 
 def read(path):
   with open(path, "rb") as file:
@@ -240,9 +243,21 @@ module(
                                      "source.json")
     return json.load(source_path.open())
 
+  def get_source_path(self, module_name, version):
+    return self.root.joinpath("modules", module_name, version,
+                              "source.json")
+
   def get_presubmit_yml_path(self, module_name, version):
     return self.root.joinpath("modules", module_name, version,
                               "presubmit.yml")
+
+  def get_patch_file_path(self, module_name, version, patch_name):
+    return self.root.joinpath("modules", module_name, version,
+                              "patches", patch_name)
+
+  def get_module_dot_bazel_path(self, module_name, version):
+    return self.root.joinpath("modules", module_name, version,
+                              "MODULE.bazel")
 
   def contains(self, module_name, version=None):
     """
