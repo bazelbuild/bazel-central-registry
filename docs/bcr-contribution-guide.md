@@ -1,5 +1,6 @@
 
 # Bazel Central Registry (BCR) contribution policy contribution policies
+
 Contributors should follow these policies when reviewing and accepting modules to the Bazel Central Registry:
 
 -   All changes to the BCR repository must be submitted and reviewed as a pull request.
