@@ -12,6 +12,7 @@ Contributors should follow these policies when reviewing and accepting modules t
 Registry maintainers and module maintainers maintain the BCR. BCR maintainers are members of the community who have restricted ability to accept Bazel-built reusable packages into the BCR.
 
 ## Become a BCR maintainer
+
 - We recommend contributing and maintaining a Bazel module before becoming a BCR Maintainer.
 - All maintainer requests will be reviewed by the [Rules Authors SIG](https://github.com/bazel-contrib/SIG-rules-authors) and the Bazel team before approval.
 
