@@ -39,4 +39,5 @@ Every module must have a list of maintainers provided in its metadata.json file.
 Whenever possible, conduct all communication in public on GitHub. Contact maintainers via GitHub or Slack. Contact maintainers over slack group [bzlmod](https://bazelbuild.slack.com/archives/C014RARENH0) when contacting over GiHub is not possible.
 
 ### Maintenance timeline expectations
+
 Maintainers are community-driven volunteers. Hence, most PRs may be addressed in 3 business days. If a PR is not marked with a label "awaiting user response", then it should be addressed by a register maintainer within 3 days.
