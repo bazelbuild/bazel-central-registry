@@ -1,4 +1,4 @@
-# Bazel Central Registry (BCR) contribution policy contribution policies
+# Bazel Central Registry (BCR) contribution policies
 
 Contributors should follow these policies when reviewing and accepting modules to the Bazel Central Registry:
 
@@ -9,7 +9,7 @@ Contributors should follow these policies when reviewing and accepting modules t
 
 ## BCR maintenance policies
 
-Registry maintainers and module maintainers maintain the BCR. BCR maintainers are members of the community who have restricted ability to accept Bazel-built reusable packages into the BCR.
+Registry maintainers and module maintainers maintain the BCR. BCR maintainers are members of the community who have restricted ability to accept Bazel modules reusable packages into the BCR.
 
 ## Become a BCR maintainer
 
@@ -33,6 +33,7 @@ Every module must have a list of maintainers provided in its metadata.json file.
 
 - Review and approve changes related to the designated Bazel module.
 - Update new versions for the designated Bazel module.
+- Serve as the contact point for issues of their assigned modul
 
 ## Contacting the repository or module maintainers
 
