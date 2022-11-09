@@ -18,7 +18,7 @@ If you are the project owner, you can set up the [Publish to BCR](https://github
 
 ## Presubmit
 
-Every module version must pass the BCR presubmit before getting merged. The presubmit validate the correctness and consistency of module information, then runs build and test targets specified in the `presubmit.yml` file. The BCR presubmit is driven by the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script on [Bazel CI](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#bazel-continuous-integration).
+Every module version must pass the BCR presubmit before getting merged. The presubmit validates the correctness and consistency of module information, then runs build and test targets specified in the `presubmit.yml` file. The BCR presubmit is driven by the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script on [Bazel CI](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#bazel-continuous-integration).
 
 ### Validations
 
@@ -39,12 +39,12 @@ Validations performed in the scripts are:
 
 Additional validations implemented in the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script:
 
-- No checked-in MODULE.bazel, source.json, patches files are not modified in the PR.
-- No files outside of `modules/` directory are not modified in the pull request if the PR is adding a new module version.
+- The checked-in MODULE.bazel, source.json, patches files are not modified in the PR.
+- The files outside of `modules/` directory are not modified in the pull request if the PR is adding a new module version.
 
 ### Anonymous module test
 
-The modules in the BCR are meant to be used as a dependency of other Bazel modules. You can specify the targets you want to expose for your dependents in the `presubmit.yml` file, and the BCR presubmit will verify those targets can be built correctly when used as a dependency of a simple anonymous module.
+The modules in the BCR are meant to be used as dependencies of other Bazel modules. You can specify the targets you want to expose for your dependents in the `presubmit.yml` file, and the BCR presubmit will verify those targets can be built correctly when used as dependencies of a simple anonymous module.
 
 For example, in `zlib@1.2.13`'s [presubmit.yml](https://github.com/bazelbuild/bazel-central-registry/blob/main/modules/zlib/1.2.13/presubmit.yml#L13):
 
@@ -70,7 +70,7 @@ In the presubmit, a simple anonymous module will be created with `MODULE.bazel`:
 bazel_dep(name="zlib", version="1.2.13")
 ```
 
-Then the presubmit will verify building `@zlib//:zlib` succeed on all specified platforms.
+Then the presubmit will verify building `@zlib//:zlib` succeeds on all specified platforms.
 
 While you can also specify `test_targets`, it may not always work since test targets can require additional dev dependencies that are not available when your project is not the root module.
 
@@ -80,7 +80,7 @@ While you can also specify `test_targets`, it may not always work since test tar
 
 It's **highly recommended** to specify a test module that includes example usages of your module, which will help verify the basic APIs and functionalities of your module work correctly.
 
-A test module is located in a subdirectory of the extracted and patched source tree of the target module (the module you want to check in). You can specify the tasks in the `presubmit.yml` file under `bcr_test_module`.
+A test module is located in a subdirectory of the extracted and patched source tree of the target module (the module you want to check in). You can specify the tasks in the `presubmit.yml` file under `bcr_test_module`. A `MODULE.bazel` file should be in the test module directory, and it can depend on the target module with `local_path_override`. With the test module, you can introduce additional dependencies for testing without affecting the target module.
 
 For example, in `rules_jvm_external@4.4.1`'s [presubmit.yml](https://github.com/bazelbuild/bazel-central-registry/blob/main/modules/rules_jvm_external/4.4.2/presubmit.yml) file:
 
@@ -102,6 +102,16 @@ bcr_test_module:
       - //java/src/com/github/rules_jvm_external/examples/bzlmod:bzlmod_example
 ```
 
+In `rules_jvm_external`'s [example/bzlmod/MODULE.bazel](https://github.com/bazelbuild/rules_jvm_external/blob/853c82772671fa4ac119c211011af5dc03b383f1/examples/bzlmod/MODULE.bazel#L6-L11):
+
+```python
+bazel_dep(name = "rules_jvm_external")
+local_path_override(
+    module_name = "rules_jvm_external",
+    path = "../..",
+)
+```
+
 **Note that** the task config syntax also follows [Bazel CI's specifications](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#configuring-a-pipeline), but just one level deeper under `bcr_test_module` and you have to specify the subdirectory of the test module via `module_path`.
 
 ## Yank a module version
@@ -117,8 +127,8 @@ For example, in `zlib`'s [metadata.json](https://github.com/bazelbuild/bazel-cen
 }
 ```
 
-A Bzlmod user's build will start to fail if the yanked version is in the resolved dependency graph, the yanked reason will be presented in the error message. The user can choose to upgrade the dependency or they can bypass the check by specifying the `--allow_yanked_versions` flag or the `BZLMOD_ALLOW_YANKED_VERSIONS` environnement variable. Check [the documentation](https://bazel.build/reference/command-line-reference#flag--allow_yanked_versions) to learn how to use them.
+A Bzlmod user's build will start to fail if the yanked version is in the resolved dependency graph, and the yanked reason will be presented in the error message. The user can choose to upgrade the dependency or they can bypass the check by specifying the `--allow_yanked_versions` flag or the `BZLMOD_ALLOW_YANKED_VERSIONS` environnement variable. Check [the documentation](https://bazel.build/reference/command-line-reference#flag--allow_yanked_versions) to learn how to use them.
 
 ## Versions format
 
-Bazel has a diverse ecosystem and projects using various versioning schemes, check [Bzlmod's version specification](https://bazel.build/build/bzlmod#version-format). If you need to update a module with only patch file changes, you can add `.bcr<N>` suffix to the version number.
+Bazel has a diverse ecosystem and projects using various versioning schemes, check [Bzlmod's version specification](https://bazel.build/build/bzlmod#version-format). If you need to update a module with only patch file changes, you can add `.bcr.<N>` suffix to the version number.
