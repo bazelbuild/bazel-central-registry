@@ -374,6 +374,16 @@ module(
         f.writelines(patch_content)
       source["patches"][patch_name] = integrity(read(patch))
 
+    module_file_content = module_dot_bazel.open().readlines()
+    module_file = "a/" * module.patch_strip + "MODULE.bazel"
+    patch_content = difflib.unified_diff(
+        [], module_file_content, "/dev/null", module_file)
+    patch_name = "add_module_file.patch"
+    patch = patch_dir.joinpath(patch_name)
+    with patch.open("w") as f:
+      f.writelines(patch_content)
+    source["patches"][patch_name] = integrity(read(patch))
+
     json_dump(p.joinpath("source.json"), source, sort_keys=False)
 
     # Create presubmit.yml file
