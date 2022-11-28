@@ -44,6 +44,8 @@ from registry import Module
 from registry import RegistryClient
 from registry import log
 
+import bcr_validation
+
 
 YELLOW = "\x1b[33m"
 RESET = "\x1b[0m"
@@ -205,6 +207,9 @@ def main(argv=None):
 
   client.add(module, override=True)
   log(f"{module.name} {module.version} is added into the registry.")
+
+  log(f"Running ./tools/bcr_validation.py --check={module.name}@{module.version} --fix")
+  bcr_validation.main([f"--check={module.name}@{module.version}", "--fix"])
 
 
 if __name__ == "__main__":
