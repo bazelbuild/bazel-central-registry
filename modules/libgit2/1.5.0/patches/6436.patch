@@ -1,0 +1,292 @@
+diff --git a/.gitignore b/.gitignore
+index 1b482f038af..839c7b054a7 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,3 +6,4 @@
+ CMakeSettings.json
+ .vs
+ .idea
++/bazel-*
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 00000000000..006d1fdc996
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,126 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++constraint_setting(
++    name = "regex",
++    default_constraint_value = ":regex_builtin",
++)
++
++constraint_value(
++    name = "regex_builtin",
++    constraint_setting = ":regex",
++)
++
++constraint_value(
++    name = "regex_pcre",
++    constraint_setting = ":regex",
++)
++
++constraint_value(
++    name = "regex_pcre2",
++    constraint_setting = ":regex",
++)
++
++constraint_value(
++    name = "regex_regcomp",
++    constraint_setting = ":regex",
++)
++
++constraint_value(
++    name = "regex_regcomp_l",
++    constraint_setting = ":regex",
++)
++
++constraint_setting(
++    name = "sha1",
++    default_constraint_value = ":sha1_collision_detection",
++)
++
++constraint_value(
++    name = "sha1_common_crypto",
++    constraint_setting = ":sha1",
++)
++
++constraint_value(
++    name = "sha1_openssl",
++    constraint_setting = ":sha1",
++)
++
++constraint_value(
++    name = "sha1_win32",
++    constraint_setting = ":sha1",
++)
++
++constraint_value(
++    name = "sha1_mbedtls",
++    constraint_setting = ":sha1",
++)
++
++constraint_value(
++    name = "sha1_collision_detection",
++    constraint_setting = ":sha1",
++)
++
++constraint_setting(
++    name = "sha256",
++    default_constraint_value = ":sha256_builtin",
++)
++
++constraint_value(
++    name = "sha256_builtin",
++    constraint_setting = ":sha256",
++)
++
++constraint_value(
++    name = "sha256_common_crypto",
++    constraint_setting = ":sha256",
++)
++
++constraint_value(
++    name = "sha256_openssl",
++    constraint_setting = ":sha256",
++)
++
++constraint_value(
++    name = "sha256_win32",
++    constraint_setting = ":sha256",
++)
++
++constraint_value(
++    name = "sha256_mbedtls",
++    constraint_setting = ":sha256",
++)
++
++cc_library(
++    name = "headers",
++    hdrs = glob(["include/**/*.h"]),
++    defines = ["LIBGIT2_NO_FEATURES_H="] + select({
++        "@platforms//cpu:x86_64": ["GIT_ARCH_64=1"],
++        "@platforms//cpu:x86_32": ["GIT_ARCH_32=1"],
++    }) + select({
++        ":regex_builtin": ["GIT_REGEX_BUILTIN=1"],
++        ":regex_pcre": ["GIT_REGEX_PCRE=1"],
++        ":regex_pcre2": ["GIT_REGEX_PCRE2=1"],
++        ":regex_regcomp": ["GIT_REGEX_REGCOMP=1"],
++        ":regex_regcomp_l": ["GIT_REGEX_REGCOMP_L=1"],
++    }) + select({
++        ":sha1_common_crypto": ["GIT_SHA1_COMMON_CRYPTO=1"],
++        ":sha1_openssl": ["GIT_SHA1_OPENSSL=1"],
++        ":sha1_win32": ["GIT_SHA1_WIN32=1"],
++        ":sha1_mbedtls": ["GIT_SHA1_MBEDTLS=1"],
++        ":sha1_collision_detection": ["GIT_SHA1_COLLISIONDETECT=1"],
++    }) + select({
++        ":sha256_builtin": ["GIT_SHA256_BUILTIN=1"],
++        ":sha256_common_crypto": ["GIT_SHA256_COMMON_CRYPTO=1"],
++        ":sha256_openssl": ["GIT_SHA256_OPENSSL=1"],
++        ":sha256_win32": ["GIT_SHA256_WIN32=1"],
++        ":sha256_mbedtls": ["GIT_SHA256_MBEDTLS=1"],
++    }),
++    strip_include_prefix = "include",
++)
++
++alias(
++    name = "libgit2",
++    actual = "//src/libgit2",
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 00000000000..64554a1d4ea
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,9 @@
++module(
++    name = "libgit2",
++    version = "1.5.0",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "zlib", version = "1.2.12")
++bazel_dep(name = "rules_cc", version = "0.0.2")
++bazel_dep(name = "platforms", version = "0.0.4")
+diff --git a/WORKSPACE.bazel b/WORKSPACE.bazel
+new file mode 100644
+index 00000000000..9a3f838bb52
+--- /dev/null
++++ b/WORKSPACE.bazel
+@@ -0,0 +1 @@
++# Empty. See MODULE.bazel
+diff --git a/deps/http-parser/BUILD.bazel b/deps/http-parser/BUILD.bazel
+new file mode 100644
+index 00000000000..73e963eccf5
+--- /dev/null
++++ b/deps/http-parser/BUILD.bazel
+@@ -0,0 +1,10 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//:__subpackages__"])
++
++cc_library(
++    name = "http-parser",
++    srcs = ["http_parser.c"],
++    hdrs = ["http_parser.h"],
++    strip_include_prefix = ".",
++)
+diff --git a/deps/pcre/BUILD.bazel b/deps/pcre/BUILD.bazel
+new file mode 100644
+index 00000000000..278c4e7b044
+--- /dev/null
++++ b/deps/pcre/BUILD.bazel
+@@ -0,0 +1,23 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//:__subpackages__"])
++
++cc_library(
++    name = "pcre",
++    srcs = glob(["*.c"]),
++    hdrs = glob(["*.h"]),
++    defines = [
++        "SUPPORT_PCRE8=1",
++        "LINK_SIZE=2",
++        "PARENS_NEST_LIMIT=250",
++        "MATCH_LIMIT=10000000",
++        "MATCH_LIMIT_RECURSION=MATCH_LIMIT",
++        "NEWLINE=10",
++        "NO_RECURSE=1",
++        "POSIX_MALLOC_THRESHOLD=10",
++        "BSR_ANYCRLF=0",
++        "MAX_NAME_SIZE=32",
++        "MAX_NAME_COUNT=10000",
++    ],
++    strip_include_prefix = ".",
++)
+diff --git a/src/libgit2/BUILD.bazel b/src/libgit2/BUILD.bazel
+new file mode 100644
+index 00000000000..11f020379f7
+--- /dev/null
++++ b/src/libgit2/BUILD.bazel
+@@ -0,0 +1,16 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//:__subpackages__"])
++
++cc_library(
++    name = "libgit2",
++    includes = ["."],
++    srcs = glob([
++        "**/*.c",
++        "**/*.h",
++    ]),
++    deps = [
++        "//:headers",
++        "//src/util",
++    ],
++)
+diff --git a/src/util/BUILD.bazel b/src/util/BUILD.bazel
+new file mode 100644
+index 00000000000..26b372c3d06
+--- /dev/null
++++ b/src/util/BUILD.bazel
+@@ -0,0 +1,56 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++package(default_visibility = ["//src:__subpackages__"])
++
++cc_library(
++    name = "util",
++    srcs = glob([
++        "*.c",
++        "*.h",
++        "allocators/*.c",
++        "allocators/*.h",
++    ]) + select({
++        "@platforms//os:windows": glob([
++            "win32/*.c",
++            "win32/*.h",
++        ]),
++        "//conditions:default": glob([
++            "unix/*.c",
++            "unix/*.h",
++        ]),
++    }) + ["hash/sha.h"] + select({
++        "//:sha1_collision_detection": [
++            "hash/collisiondetect.c",
++            "hash/collisiondetect.h",
++            "hash/sha1dc/sha1.c",
++            "hash/sha1dc/sha1.h",
++            "hash/sha1dc/ubc_check.c",
++            "hash/sha1dc/ubc_check.h",
++        ],
++    }) + select({
++        "//:sha256_builtin": [
++            "hash/builtin.c",
++            "hash/builtin.h",
++            "hash/rfc6234/sha.h",
++            "hash/rfc6234/sha224-256.c",
++        ],
++    }),
++    linkopts = select({
++	"@platforms//os:windows": ['-DEFAULTLIB:Advapi32'],
++	"//conditions:default": [],
++    }),
++    hdrs = glob(["*.h"]),
++    defines = [
++        "GIT_THREADS=1",
++    ],
++    includes = ["."],
++    strip_include_prefix = ".",
++    deps = [
++        "//:headers",
++        "//deps/http-parser",
++        "@zlib",
++    ] + select({
++        "//:regex_builtin": ["//deps/pcre"],
++        "//:regex_pcre": ["//deps/pcre"],
++    }),
++)
