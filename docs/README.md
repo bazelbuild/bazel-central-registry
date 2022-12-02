@@ -132,3 +132,7 @@ A Bzlmod user's build will start to fail if the yanked version is in the resolve
 ## Versions format
 
 Bazel has a diverse ecosystem and projects using various versioning schemes, check [Bzlmod's version specification](https://bazel.build/build/bzlmod#version-format). If you need to update a module with only patch file changes, you can add `.bcr.<N>` suffix to the version number.
+
+## Requesting to take down a module
+
+If for any reason, you think a module or a version of a module should be removed from the Bazel Central Registry, please [file a bug](https://github.com/bazelbuild/bazel-central-registry/issues/new?assignees=&labels=bug&template=bug.yaml&title=%5BBug%5D%3A+) and reach out to BCR maintainers at bcr-maintainers@bazel.build.
