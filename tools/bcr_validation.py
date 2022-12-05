@@ -250,15 +250,20 @@ class BcrValidator:
 
   def validate_all_metadata(self):
     print_expanded_group("Validating all metadata.json files")
+    has_error = False
     for module_name in self.registry.get_all_modules():
       try:
         metadata = self.registry.get_metadata(module_name)
       except json.JSONDecodeError as e:
         self.report(BcrValidationResult.FAILED, f"Failed to load {module_name}'s metadata.json file: " + str(e))
+        has_error = True
         continue
       for version in metadata["versions"]:
         if not self.registry.contains(module_name, version):
           self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist, but it's recorded in {module_name}'s metadata.json file.")
+          has_error = True
+    if not has_error:
+      self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
 
   def getValidationReturnCode(self):
     # Calculate the overall return code
