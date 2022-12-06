@@ -302,7 +302,7 @@ def main(argv=None):
   parser.add_argument(
     "--check_all_metadata",
     action="store_true",
-    help="Check all Bazel modules in the registry, ignore other --check flags.")
+    help="Check all Bazel module metadata in the registry.")
   parser.add_argument(
     "--fix",
     action="store_true",
