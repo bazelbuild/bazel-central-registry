@@ -76,6 +76,8 @@ def parse_module_versions(registry, check_all, inputs):
   """Parse module versions to be validated from input."""
   if check_all:
     return registry.get_all_module_versions()
+  if not inputs:
+    return []
   result = []
   for s in inputs:
     if "@" in s:
@@ -246,6 +248,23 @@ class BcrValidator:
     self.verify_presubmit_yml_change(module_name, version)
     self.verify_module_dot_bazel(module_name, version)
 
+  def validate_all_metadata(self):
+    print_expanded_group("Validating all metadata.json files")
+    has_error = False
+    for module_name in self.registry.get_all_modules():
+      try:
+        metadata = self.registry.get_metadata(module_name)
+      except json.JSONDecodeError as e:
+        self.report(BcrValidationResult.FAILED, f"Failed to load {module_name}'s metadata.json file: " + str(e))
+        has_error = True
+        continue
+      for version in metadata["versions"]:
+        if not self.registry.contains(module_name, version):
+          self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist, but it's recorded in {module_name}'s metadata.json file.")
+          has_error = True
+    if not has_error:
+      self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
+
   def getValidationReturnCode(self):
     # Calculate the overall return code
     # 0: All good
@@ -281,13 +300,17 @@ def main(argv=None):
     action="store_true",
     help="Check all Bazel modules in the registry, ignore other --check flags.")
   parser.add_argument(
+    "--check_all_metadata",
+    action="store_true",
+    help="Check all Bazel module metadata in the registry.")
+  parser.add_argument(
     "--fix",
     action="store_true",
     help="Should the script try to fix the detected validation errors.")
 
   args = parser.parse_args(argv)
 
-  if not args.check_all and not args.check:
+  if not args.check_all and not args.check and not args.check_all_metadata:
     parser.print_help()
     return -1
 
@@ -295,14 +318,19 @@ def main(argv=None):
 
   # Parse what module versions we should validate
   module_versions = parse_module_versions(registry, args.check_all, args.check)
-  print_expanded_group("Module versions to be validated:")
-  for name, version in module_versions:
-    print(f"{name}@{version}")
+  if module_versions:
+    print_expanded_group("Module versions to be validated:")
+    for name, version in module_versions:
+      print(f"{name}@{version}")
 
   # Validate given module version.
   validator = BcrValidator(registry, args.fix)
   for name, version in module_versions:
     validator.validate_module(name, version)
+
+  if args.check_all_metadata:
+    validator.validate_all_metadata()
+
   return validator.getValidationReturnCode()
 
 if __name__ == "__main__":
