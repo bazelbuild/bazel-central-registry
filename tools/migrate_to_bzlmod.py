@@ -31,6 +31,7 @@ REGISTRY_CLIENT = RegistryClient(pathlib.Path(__file__).parent.parent)
 
 COMMON_REPO_TO_MODULE_MAP = {
     "build_bazel_apple_support": "apple_support",
+    "build_bazel_rules_nodejs": "rules_nodejs",
     "build_bazel_rules_swift": "rules_swift",
     "com_github_cares_cares": "c-ares",
     "com_github_gflags_gflags": "gflags",
@@ -238,7 +239,7 @@ def add_repo_to_module_extension(repo, repo_def):
   """Introduce a repository via a module extension."""
   info(f"Introducing @{repo} via a module extension.")
 
-  m = re.search(r'load\(\"@([\w\d_-]+)\/\/', repo_def[0])
+  m = re.search(r'load\(\"@([\w\d-]+)\/\/', repo_def[0])
   need_separate_module_extension = m and m.group(1) != "bazel_tools"
   ext_name = f"extension_for_{m.group(1)}".replace(
       "-", "_") if need_separate_module_extension else "non_module_deps"
@@ -257,7 +258,7 @@ def add_repo_to_module_extension(repo, repo_def):
 
   # Add repo definition to the module extension's bzl file
   bzl_content = open(ext_bzl_name, "r").read()
-  if repo_def[0].startswith("load(") and repo_def[0] not in bzl_content:
+  if repo_def[0] not in bzl_content:
     write_at_given_place(ext_bzl_name, repo_def[0], LOAD_IDENTIFIER)
   write_at_given_place(
       ext_bzl_name,
