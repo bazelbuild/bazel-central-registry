@@ -4,7 +4,7 @@
 
 An interactive script for adding a module to the BCR.
 ```
-$ ./tools/add_module.py
+$ bazel run //tools:add_module
 INFO: Getting module information from user input...
 ACTION: Please enter the module name:
 ...
@@ -41,7 +41,7 @@ optional arguments:
 
 Print the list of source archive URLs of all modules in the BCR.
 ```
-$ ./tools/print_all_src_urls.py
+$ bazel run //tools:print_all_src_urls
 https://github.com/bazelbuild/rules_jvm_external/archive/refs/tags/4.4.2.zip
 https://github.com/bazelbuild/rules_jvm_external/archive/refs/tags/4.5.zip
 ...
