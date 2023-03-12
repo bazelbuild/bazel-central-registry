@@ -1,0 +1,84 @@
+--- e2e/smoke/.bazelrc
++++ /dev/null
+@@ -1 +0,0 @@
+-../../.bazelrc
+--- e2e/smoke/BUILD.bazel
++++ e2e/smoke/BUILD.bazel
+@@ -1,4 +1,4 @@
+-load("@rules_oci//oci:defs.bzl", "oci_image", "structure_test")
++load("@rules_oci//oci:defs.bzl", "oci_image", "oci_tarball", "structure_test")
+ 
+ oci_image(
+     name = "image",
+@@ -17,8 +17,15 @@ oci_image(
+     os = "linux",
+ )
+ 
++oci_tarball(
++    name = "tar",
++    image = ":image",
++    repotags = [],
++)
++
+ structure_test(
+     name = "test",
+     config = ["test.yaml"],
+-    image = ":image",
++    image = ":tar",
++    driver = "tar",
+ )
+--- oci/private/structure_test.bzl
++++ oci/private/structure_test.bzl
+@@ -1,19 +1,27 @@
+ """test rule running structure_test against an oci_image."""
+ 
+-_DOC = """Tests an oci_image in a container runtime by using GoogleContainerTools/container-structure-test.
+-
+-It relies on the container runtime already installed and running on the target. 
++_DOC = """Tests an oci_image by using GoogleContainerTools/container-structure-test.
+ 
++By default, it relies on the container runtime already installed and running on the target.
+ By default, container-structure-test uses the socket available at /var/run/docker.sock. If the installation
+ creates the socket in a different path, use --test_env=DOCKER_HOST='unix://<path_to_sock>'.
+ 
+ To avoid putting this into the commandline or to instruct bazel to read it from terminal environment, 
+ simply drop `test --test_env=DOCKER_HOST` into the .bazelrc file.
++
++Alternatively, use the `driver = "tar"` attribute to avoid the need for a container runtime, see
++https://github.com/GoogleContainerTools/container-structure-test#running-file-tests-without-docker
+ """
+ 
+ _attrs = {
+     "image": attr.label(mandatory = True, allow_single_file = True, doc = "Label to an oci_image target"),
+     "config": attr.label_list(allow_files = True, mandatory = True),
++    "driver": attr.string(
++        default = "docker",
++        # https://github.com/GoogleContainerTools/container-structure-test/blob/5e347b66fcd06325e3caac75ef7dc999f1a9b614/pkg/drivers/driver.go#L26-L28
++        values = ["docker", "tar", "host"],
++        doc = "See https://github.com/GoogleContainerTools/container-structure-test#running-file-tests-without-docker",
++    ),
+ }
+ 
+ CMD = """\
+@@ -28,10 +36,17 @@ def _structure_test_impl(ctx):
+     st_info = ctx.toolchains["@rules_oci//oci:st_toolchain_type"].st_info
+     yq_info = ctx.toolchains["@aspect_bazel_lib//lib:yq_toolchain_type"].yqinfo
+ 
+-    fixed_args = [
+-        "--image-from-oci-layout",
+-        ctx.file.image.short_path,
+-    ]
++    fixed_args = []
++    if ctx.attr.driver == "docker":
++        fixed_args.extend([
++            "--image-from-oci-layout",
++            ctx.file.image.short_path,
++        ])
++    else:
++        print(ctx.file.image.short_path)
++        fixed_args.extend(["--image", ctx.file.image.short_path])
++
++    fixed_args.extend(["--driver", ctx.attr.driver])
+ 
+     for arg in ctx.files.config:
+         fixed_args.append("--config=%s" % arg.path)
