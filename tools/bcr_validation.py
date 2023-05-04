@@ -125,8 +125,8 @@ class BcrValidator:
     else:
       self.report(BcrValidationResult.GOOD, "The module exists and is recorded in metadata.json.")
 
-  def verify_source_archive_url(self, module_name, version):
-    # Verify the source archive URL matches the github repo. For now, we only support github repositories check.
+  def verify_source_archive_url_match_github_repo(self, module_name, version):
+    """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
     source_url = self.registry.get_source(module_name, version)["url"]
     source_repositories = self.registry.get_metadata(module_name).get("repository", [])
     matched = not source_repositories
@@ -142,17 +142,20 @@ class BcrValidator:
     else:
       self.report(BcrValidationResult.GOOD, "The source URL matches one of the source repositories.")
 
-    # Verify source archive URL is stable.
+
+  def verify_source_archive_url_stability(self, module_name, version):
+    """Verify source archive URL is stable"""
+    source_url = self.registry.get_source(module_name, version)["url"]
     if verify_stable_archive(source_url) == UrlStability.UNSTABLE:
       self.report(BcrValidationResult.FAILED,
                   f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
-                  + "The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.\n"
-                  + "See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context.")
+                  + "You should use a release archive URL in the format of `https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` to ensure the archive checksum stability.\n"
+                  + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.")
     else:
       self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
 
 
-  def verify_source_archive_integrity(self, module_name, version):
+  def verify_source_archive_url_integrity(self, module_name, version):
     """Verify the integrity value of the URL is correct."""
     source_url = self.registry.get_source(module_name, version)["url"]
     expected_integrity = self.registry.get_source(module_name, version)["integrity"]
@@ -240,12 +243,15 @@ class BcrValidator:
 
     shutil.rmtree(tmp_dir)
 
-  def validate_module(self, module_name, version):
+  def validate_module(self, module_name, version, skipped_validations):
     print_expanded_group(f"Validating {module_name}@{version}")
     self.verify_module_existence(module_name, version)
-    self.verify_source_archive_url(module_name, version)
-    self.verify_source_archive_integrity(module_name, version)
-    self.verify_presubmit_yml_change(module_name, version)
+    self.verify_source_archive_url_match_github_repo(module_name, version)
+    if "url_stability" not in skipped_validations:
+      self.verify_source_archive_url_stability(module_name, version)
+    self.verify_source_archive_url_integrity(module_name, version)
+    if "presubmit_yml" not in skipped_validations:
+      self.verify_presubmit_yml_change(module_name, version)
     self.verify_module_dot_bazel(module_name, version)
 
   def validate_all_metadata(self):
@@ -307,6 +313,14 @@ def main(argv=None):
     "--fix",
     action="store_true",
     help="Should the script try to fix the detected validation errors.")
+  parser.add_argument(
+    "--skip_validation",
+    type=str,
+    default=[],
+    action = "append",
+    help="Bypass the given step for validating modules. Supported values are: \"url_stability\", "
+    + "to bypass the URL stability check; \"presubmit_yml\", to bypass the presubmit.yml check; "
+    + "This flag can be repeated to skip multiple validations.")
 
   args = parser.parse_args(argv)
 
@@ -326,7 +340,7 @@ def main(argv=None):
   # Validate given module version.
   validator = BcrValidator(registry, args.fix)
   for name, version in module_versions:
-    validator.validate_module(name, version)
+    validator.validate_module(name, version, args.skip_validation)
 
   if args.check_all_metadata:
     validator.validate_all_metadata()
