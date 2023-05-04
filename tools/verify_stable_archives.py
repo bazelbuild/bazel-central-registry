@@ -32,16 +32,6 @@ def verify_stable_archive(url):
 
   path_parts = parsed.path.split("/")
 
-  # We are putting `protocolbuffers/upb` and `google/boringssl` on a temporary allowlist until their
-  # modules have found maintainers.
-  # See https://github.com/bazelbuild/bazel-central-registry/issues/69
-  if path_parts[1] == "protocolbuffers" and path_parts[2] == "upb":
-    return UrlStability.STABLE
-  if path_parts[1] == "google" and path_parts[2] == "boringssl":
-    return UrlStability.STABLE
-
-  if path_parts[3] == "archive" and path_parts[4] == "refs" and path_parts[5] == "tags":
-    return UrlStability.STABLE
   if path_parts[3] == "releases" and path_parts[4] == "download":
     return UrlStability.STABLE
 
@@ -60,8 +50,8 @@ def main(argv=None):
     if stability == UrlStability.UNSTABLE:
       has_failure = True
       print(f'Version `{version}` of module `{module_name}` is using an unstable source url: `{source_url}`')
-      print("The source url should follow the format of `https://github.com/<ORGANIZATION>/<REPO>/archive/refs/tags/<TAG>.tar.gz` to retrieve a source archive that is guaranteed by GitHub to be stable over time.")
-      print("See https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300 for more context.")
+      print("You should use a release archive URL in the format of `https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` to ensure the archive checksum stability.")
+      print("See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.")
 
   if has_failure:
     sys.exit(1)
