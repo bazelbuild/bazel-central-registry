@@ -381,7 +381,7 @@ module(
     if module.presubmit_yml:
       shutil.copy(module.presubmit_yml, presubmit_yml)
     else:
-      PLATFORMS = ["debian10", "ubuntu2004", "macos", "windows"]
+      PLATFORMS = ["debian10", "ubuntu2004", "macos", "macos_arm64", "windows"]
       presubmit = {
           "matrix": {
               "platform": PLATFORMS.copy(),
