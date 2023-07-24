@@ -246,7 +246,8 @@ class BcrValidator:
   def validate_module(self, module_name, version, skipped_validations):
     print_expanded_group(f"Validating {module_name}@{version}")
     self.verify_module_existence(module_name, version)
-    self.verify_source_archive_url_match_github_repo(module_name, version)
+    if "source_repo" not in skipped_validations:
+      self.verify_source_archive_url_match_github_repo(module_name, version)
     if "url_stability" not in skipped_validations:
       self.verify_source_archive_url_stability(module_name, version)
     self.verify_source_archive_url_integrity(module_name, version)
@@ -320,6 +321,7 @@ def main(argv=None):
     action = "append",
     help="Bypass the given step for validating modules. Supported values are: \"url_stability\", "
     + "to bypass the URL stability check; \"presubmit_yml\", to bypass the presubmit.yml check; "
+    + "\"source_repo\", to bypass the source repo verification; "
     + "This flag can be repeated to skip multiple validations.")
 
   args = parser.parse_args(argv)
