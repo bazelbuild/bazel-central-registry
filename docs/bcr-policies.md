@@ -33,7 +33,7 @@ Every module must have a list of maintainers provided in its metadata.json file.
 
 - Review and approve changes related to the designated Bazel module.
 - Update new versions for the designated Bazel module.
-- Serve as the contact point for issues of their assigned modul
+- Serve as the contact point for issues of their assigned module
 
 ## Contacting the repository or module maintainers
 

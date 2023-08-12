@@ -312,7 +312,7 @@ module(
     # Check if the module version already exists
     if self.contains(module.name, module.version):
       if override:
-        log("Overridding module '%s' at version '%s'..." %
+        log("Overriding module '%s' at version '%s'..." %
             (module.name, module.version))
         self.delete(module.name, module.version)
       else:
