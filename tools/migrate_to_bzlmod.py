@@ -282,8 +282,8 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
   # Check if it's the original main repo name
   if repo == workspace_name:
     error(
-        f"Please remove the usages of refering your own repo via `@{repo}//`, targets should be referenced directly with `//`. ")
-    eprint("If it's used in a macro, you can use `Label(\"//foo/bar\")` to make sure it alwasy points to your repo no matter where the macro is used.")
+        f"Please remove the usages of referring your own repo via `@{repo}//`, targets should be referenced directly with `//`. ")
+    eprint("If it's used in a macro, you can use `Label(\"//foo/bar\")` to make sure it always points to your repo no matter where the macro is used.")
     eprint("You can temporarily work around this by adding `repo_name` attribute to the `module` directive in your MODULE.bazel file.")
     abort_migration()
 
@@ -315,7 +315,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     info(f"This can be introudced via a bazel_dep definition:")
     eprint(f"    {bazel_dep_line}")
 
-    if yes_or_no("Do you wish to add the bazel_dep definiton to the MODULE.bazel file?", True):
+    if yes_or_no("Do you wish to add the bazel_dep definition to the MODULE.bazel file?", True):
       info(f"Introducing @{repo} as a Bazel module.")
       write_at_given_place("MODULE.bazel", bazel_dep_line,
                            BAZEL_DEP_IDENTIFIER)

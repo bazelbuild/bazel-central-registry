@@ -16,7 +16,7 @@
 # pylint: disable=invalid-name
 # pylint: disable=line-too-long
 # pylint: disable=missing-function-docstring
-"""An interative script to add modules into a Bazel registry.
+"""An interactive script to add modules into a Bazel registry.
 
 What this script can do:
   - Initialize the Bazel Registry.
@@ -25,7 +25,7 @@ What this script can do:
   - Generate MODULE.bazel file with given module information
     - module name
     - version
-    - compatiblity level
+    - compatibility level
     - dependencies
   - Generate the source.json file with given source information
     - The archive url
