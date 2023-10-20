@@ -10,7 +10,7 @@ To contribute, check our [BCR  policies](docs/bcr-policies.md) and [contribution
 
 ## Depending on the BCR infrastructure (and how not to)
 
-The core infrastructure of the Bazel Central Registry depends on Github and Google Cloud. Bazel users who enable Bzlmod depend on the BCR by default.
+The core infrastructure of the Bazel Central Registry depends on GitHub and Google Cloud. Bazel users who enable Bzlmod depend on the BCR by default.
 While we try to keep the BCR infrastructure simple and reliable, we assume no liability for any damages caused by build failures due to potential BCR infrastructure failures.
 
 If you consider it necessary, you can do the following to avoid depending on the BCR infrastructure while still making use of the information checked into the BCR.
