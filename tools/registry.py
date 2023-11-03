@@ -30,6 +30,7 @@ import re
 import shutil
 import urllib.parse
 import urllib.request
+import yaml
 
 GREEN = "\x1b[32m"
 RESET = "\x1b[0m"
@@ -412,6 +413,9 @@ module(
                 "run_test_module": task
             }
         }
+
+      with presubmit_yml.open("w") as f:
+        yaml.dump(presubmit, f, sort_keys=False)
 
     # Add new version to metadata.json
     metadata_path = self.root.joinpath("modules", module.name,
