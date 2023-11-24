@@ -1,6 +1,9 @@
 load("@rules_python//python:defs.bzl", "py_binary", "py_library")
 load("@python_versions//3.11:defs.bzl", compile_pip_requirements_3_11 = "compile_pip_requirements")
 load("@pip//:requirements.bzl", "requirement")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+npm_link_all_packages(name = "node_modules")
 
 compile_pip_requirements_3_11(
     name = "requirements",
