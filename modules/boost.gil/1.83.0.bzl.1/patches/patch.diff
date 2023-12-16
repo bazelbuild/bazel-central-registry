@@ -31,3 +31,65 @@ index 0000000..be0754f
 +++ b/WORKSPACE.bazel
 @@ -0,0 +1 @@
 +# SEE: MODULE.bazel
+diff --git a/bazel_test/BUILD.bazel b/bazel_test/BUILD.bazel
+new file mode 100644
+index 0000000..34f0ae1
+--- /dev/null
++++ b/bazel_test/BUILD.bazel
+@@ -0,0 +1,16 @@
++load("@boost.rules.tools//:tools.bzl", "boost_test_set")
++
++DEPS = [
++    "@boost.gil//:gil",
++]
++
++test_suite(
++    name = "tests",
++    tests = boost_test_set(
++        file_extensions = ".cc",
++        names = [
++            "gil_test",
++        ],
++        deps = DEPS,
++    ),
++)
+diff --git a/bazel_test/gil_test.cc b/bazel_test/gil_test.cc
+new file mode 100644
+index 0000000..1d57221
+--- /dev/null
++++ b/bazel_test/gil_test.cc
+@@ -0,0 +1,34 @@
++#include <boost/gil.hpp>
++using namespace boost::gil;
++
++template <typename Out>
++struct halfdiff_cast_channels {
++    template <typename T> Out operator()(const T& in1, const T& in2) const {
++        return Out((in1-in2)/2);
++    }
++};
++
++template <typename SrcView, typename DstView>
++void x_gradient(const SrcView& src, const DstView& dst) {
++    typedef typename channel_type<DstView>::type dst_channel_t;
++
++    for (int y=0; y<src.height(); ++y) {
++        typename SrcView::x_iterator src_it = src.row_begin(y);
++        typename DstView::x_iterator dst_it = dst.row_begin(y);
++
++        for (int x=1; x<src.width()-1; ++x)
++            static_transform(src_it[x-1], src_it[x+1], dst_it[x], 
++                               halfdiff_cast_channels<dst_channel_t>());
++    }
++}
++
++void ComputeXGradientGray8(const unsigned char* src_pixels, ptrdiff_t src_row_bytes, int w, int h,
++                                   signed char* dst_pixels, ptrdiff_t dst_row_bytes) {
++    gray8c_view_t src = interleaved_view(w, h, (const gray8_pixel_t*)src_pixels,src_row_bytes);
++    gray8s_view_t dst = interleaved_view(w, h, (     gray8s_pixel_t*)dst_pixels,dst_row_bytes);
++    x_gradient(src,dst);
++}
++
++int main() {
++    return 0;
++}
