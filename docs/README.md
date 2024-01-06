@@ -9,7 +9,7 @@ To contribute a new module or a new version to an existing module, you can clone
 ```bash
 git clone https://github.com/bazelbuild/bazel-central-registry.git
 cd bazel-central-registry
-python3 ./tools/add_module.py
+bazel run //tools:add_module
 ```
 
 The script will generate all require changes based on your input, please review, modify and commit the change, then send a PR to the BCR repository.
