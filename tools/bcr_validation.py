@@ -137,6 +137,10 @@ class BcrValidator:
       if repo_type == "github":
         parts = urlparse(source_url)
         matched = parts.scheme == "https" and parts.netloc == "github.com" and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
+      elif repo_type == "https":
+        repo = urlparse(source_repository)
+        parts = urlparse(source_url)
+        matched = parts.scheme == repo.scheme and parts.netloc == repo.netloc and os.path.abspath(parts.path).startswith(f"{repo.path}/")
     if not matched:
       self.report(BcrValidationResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}.")
     else:
