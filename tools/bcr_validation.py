@@ -163,7 +163,8 @@ class BcrValidator:
     """Verify the integrity value of the URL is correct."""
     source_url = self.registry.get_source(module_name, version)["url"]
     expected_integrity = self.registry.get_source(module_name, version)["integrity"]
-    real_integrity = integrity(download(source_url))
+    algorithm, _ = expected_integrity.split("-", 1)
+    real_integrity = integrity(download(source_url), algorithm)
     if real_integrity != expected_integrity:
       self.report(BcrValidationResult.FAILED, f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{real_integrity}`!")
     else:
