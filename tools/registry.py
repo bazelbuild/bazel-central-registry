@@ -66,9 +66,11 @@ def read(path):
     return file.read()
 
 
-def integrity(data):
-  hash_value = hashlib.sha256(data)
-  return "sha256-" + base64.b64encode(hash_value.digest()).decode()
+def integrity(data, algorithm="sha256"):
+  assert algorithm in {"sha224", "sha256", "sha384", "sha512"}, "Unsupported SRI algorithm"
+  hash = getattr(hashlib, algorithm)(data)
+  encoded = base64.b64encode(hash.digest()).decode()
+  return f"{algorithm}-{encoded}"
 
 
 def json_dump(file, data, sort_keys=True):
