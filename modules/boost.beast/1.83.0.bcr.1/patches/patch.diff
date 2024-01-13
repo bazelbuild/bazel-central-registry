@@ -1,0 +1,211 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..086bfd4
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,48 @@
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++load("@boost.rules.tools//:tools.bzl", "boost_library")
++
++bool_flag(
++    name = "beast_use_std_string_view",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "beast_std_string_view",
++    flag_values = {
++        ":beast_use_std_string_view": "True",
++    },
++)
++
++boost_library(
++    name = "beast",
++    srcs = [
++        "build_beast.cpp",
++    ],
++    defines = [
++        "BOOST_BEAST_SEPARATE_COMPILATION",
++    ] + select({
++        ":beast_std_string_view": ["BOOST_BEAST_USE_STD_STRING_VIEW"],
++        "//conditions:default": [],
++    }),
++    deps = [
++        "@boost.asio//:asio",
++        "@boost.assert//:assert",
++        "@boost.config//:config",
++        "@boost.core//:core",
++        "@boost.detail//:detail",
++        "@boost.endian//:endian",
++        "@boost.intrusive//:intrusive",
++        "@boost.bind//:bind",
++        "@boost.mp11//:mp11",
++        "@boost.optional//:optional",
++        "@boost.preprocessor//:preprocessor",
++        "@boost.smart_ptr//:smart_ptr",
++        "@boost.static_assert//:static_assert",
++        "@boost.static_string//:static_string",
++        "@boost.system//:system",
++        "@boost.throw_exception//:throw_exception",
++        "@boost.tribool//:tribool",
++        "@boost.type_traits//:type_traits",
++        "@boost.utility//:utility",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100755
+index 0000000..86b8321
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,30 @@
++module(
++    name = "boost.beast",
++    version = "1.83.0.bcr.1",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "boost.rules.tools", version = "1.0.0")
++bazel_dep(name = "platforms", version = "0.0.8")
++bazel_dep(name = "bazel_skylib", version = "1.5.0")
++bazel_dep(name = "boost.asio", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.assert", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.bind", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.config", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.container", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.container_hash", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.core", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.endian", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.intrusive", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.logic", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.mp11", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.optional", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.preprocessor", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.smart_ptr", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.static_assert", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.static_string", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.system", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.throw_exception", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.type_index", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.type_traits", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.winapi", version = "1.83.0.bcr.1")
+diff --git a/WORKSPACE.bazel b/WORKSPACE.bazel
+new file mode 100644
+index 0000000..be0754f
+--- /dev/null
++++ b/WORKSPACE.bazel
+@@ -0,0 +1 @@
++# SEE: MODULE.bazel
+diff --git a/bazel_test/BUILD.bazel b/bazel_test/BUILD.bazel
+new file mode 100644
+index 0000000..d36730c
+--- /dev/null
++++ b/bazel_test/BUILD.bazel
+@@ -0,0 +1,16 @@
++load("@boost.rules.tools//:tools.bzl", "boost_test_set")
++
++DEPS = [
++    "@boost.beast//:beast",
++]
++
++test_suite(
++    name = "tests",
++    tests = boost_test_set(
++        file_extensions = ".cc",
++        names = [
++            "beast_test",
++        ],
++        deps = DEPS,
++    ),
++)
+diff --git a/bazel_test/beast_test.cc b/bazel_test/beast_test.cc
+new file mode 100644
+index 0000000..0f68edb
+--- /dev/null
++++ b/bazel_test/beast_test.cc
+@@ -0,0 +1,78 @@
++// from http://www.boost.org/doc/libs/1_66_0/libs/beast/example/http/client/sync/http_client_sync.cpp
++
++#include <boost/beast/core.hpp>
++#include <boost/beast/http.hpp>
++#include <boost/beast/version.hpp>
++#include <boost/beast/websocket.hpp>
++#include <boost/asio/connect.hpp>
++#include <boost/asio/ip/tcp.hpp>
++#include <cstdlib>
++#include <iostream>
++#include <string>
++
++using tcp = boost::asio::ip::tcp;       // from <boost/asio/ip/tcp.hpp>
++namespace http = boost::beast::http;    // from <boost/beast/http.hpp>
++
++// Performs an HTTP GET and prints the response
++int main(int argc, char** argv)
++{
++    try
++    {
++
++        auto const host = "example.com";
++        auto const port = "80";
++        auto const target = argc > 3 ? argv[3] : "/";
++        int version = argc == 5 && !std::strcmp("1.0", argv[4]) ? 10 : 11;
++
++        // The io_context is required for all I/O
++        boost::asio::io_context ioc;
++
++        // These objects perform our I/O
++        tcp::resolver resolver{ioc};
++        tcp::socket socket{ioc};
++
++        // Look up the domain name
++        auto const results = resolver.resolve(host, port);
++
++        // Make the connection on the IP address we get from a lookup
++        boost::asio::connect(socket, results.begin(), results.end());
++
++        // Set up an HTTP GET request message
++        http::request<http::string_body> req{http::verb::get, target, version};
++        req.set(http::field::host, host);
++        req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
++
++        // Send the HTTP request to the remote host
++        http::write(socket, req);
++
++        // This buffer is used for reading and must be persisted
++        boost::beast::flat_buffer buffer;
++
++        // Declare a container to hold the response
++        http::response<http::dynamic_body> res;
++
++        // Receive the HTTP response
++        http::read(socket, buffer, res);
++
++        // Write the message to standard out
++        std::cout << res << std::endl;
++
++        // Gracefully close the socket
++        boost::system::error_code ec;
++        socket.shutdown(tcp::socket::shutdown_both, ec);
++
++        // not_connected happens sometimes
++        // so don't bother reporting it.
++        //
++        if(ec && ec != boost::system::errc::not_connected)
++            throw boost::system::system_error{ec};
++
++        // If we get here then the connection is closed gracefully
++    }
++    catch(std::exception const& e)
++    {
++        std::cerr << "Error: " << e.what() << std::endl;
++        return EXIT_FAILURE;
++    }
++    return EXIT_SUCCESS;
++}
+diff --git a/build_beast.cpp b/build_beast.cpp
+new file mode 100644
+index 0000000..11ef613
+--- /dev/null
++++ b/build_beast.cpp
+@@ -0,0 +1,2 @@
++// https://www.boost.org/doc/libs/1_77_0/libs/beast/doc/html/beast/config/configuration_preprocessor_defin.html
++#include "boost/beast/src.hpp"
