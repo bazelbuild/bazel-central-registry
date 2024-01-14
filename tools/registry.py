@@ -42,17 +42,18 @@ def log(msg):
 
 def download(url):
   parts = urllib.parse.urlparse(url)
+  headers = {'User-Agent': 'Mozilla/5.0'}  # Set the User-Agent header
   try:
     authenticators = netrc.netrc().authenticators(parts.netloc)
   except FileNotFoundError:
     authenticators = None
   if authenticators != None:
     (login, _, password) = authenticators
-    req = urllib.request.Request(url)
+    req = urllib.request.Request(url, headers=headers)
     creds = base64.b64encode(str.encode('%s:%s' % (login, password))).decode()
     req.add_header("Authorization", "Basic %s" % creds)
   else:
-    req = url
+    req = urllib.request.Request(url, headers=headers)
 
   with urllib.request.urlopen(req) as response:
     return response.read()
