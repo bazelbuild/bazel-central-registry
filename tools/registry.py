@@ -385,14 +385,17 @@ module(
       shutil.copy(module.presubmit_yml, presubmit_yml)
     else:
       PLATFORMS = ["debian10", "ubuntu2004", "macos", "macos_arm64", "windows"]
+      BAZEL_VERSIONS = ["7.x", "6.x"]
       presubmit = {
           "matrix": {
               "platform": PLATFORMS.copy(),
+              "bazel": BAZEL_VERSIONS.copy(),
           },
           "tasks": {
               "verify_targets": {
                   "name": "Verify build targets",
                   "platform": "${{ platform }}",
+                  "bazel": "${{ bazel }}",
                   "build_targets": module.build_targets.copy()
               }
           }
@@ -402,6 +405,7 @@ module(
         task = {
             "name": "Run test module",
             "platform": "${{ platform }}",
+            "bazel": "${{ bazel }}",
         }
         if module.test_module_build_targets:
           task["build_targets"] = module.test_module_build_targets.copy()
