@@ -35,6 +35,7 @@ import shutil
 import sys
 import tempfile
 import os
+import yaml
 
 from enum import Enum
 from difflib import unified_diff
@@ -248,6 +249,28 @@ class BcrValidator:
 
     shutil.rmtree(tmp_dir)
 
+  def check_if_bazel_version_is_set(self, task_name, task):
+    if "bazel" not in task:
+      self.report(BcrValidationResult.FAILED, "Missing bazel version for task '%s' in the presubmit.yml file." % task_name)
+      return False
+    return True
+
+  def validate_presubmit_yml(self, module_name, version):
+    # Check if bazel is specified in presubmit.yml
+    presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
+    # load the yaml file
+    presubmit = yaml.safe_load(open(presubmit_yml, "r"))
+    presubmit_valid = True
+    for task_name, task_config in presubmit.get("tasks", {}).items():
+      if not self.check_if_bazel_version_is_set(task_name, task_config):
+        presubmit_valid = False
+    if "bcr_test_module" in presubmit:
+      for task_name, task_config in presubmit["bcr_test_module"].get("tasks", {}).items():
+        if not self.check_if_bazel_version_is_set(task_name, task_config):
+          presubmit_valid = False
+    if presubmit_valid:
+      self.report(BcrValidationResult.GOOD, "The presubmit.yml file is valid.")
+
   def validate_module(self, module_name, version, skipped_validations):
     print_expanded_group(f"Validating {module_name}@{version}")
     self.verify_module_existence(module_name, version)
@@ -258,6 +281,7 @@ class BcrValidator:
     self.verify_source_archive_url_integrity(module_name, version)
     if "presubmit_yml" not in skipped_validations:
       self.verify_presubmit_yml_change(module_name, version)
+    self.validate_presubmit_yml(module_name, version)
     self.verify_module_dot_bazel(module_name, version)
 
   def validate_all_metadata(self):
