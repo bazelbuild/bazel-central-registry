@@ -415,6 +415,7 @@ module(
             "module_path": module.test_module_path,
             "matrix": {
                 "platform": PLATFORMS.copy(),
+                "bazel": BAZEL_VERSIONS.copy(),
             },
             "tasks": {
                 "run_test_module": task
