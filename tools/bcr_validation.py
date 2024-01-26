@@ -256,9 +256,7 @@ class BcrValidator:
     return True
 
   def validate_presubmit_yml(self, module_name, version):
-    # Check if bazel is specified in presubmit.yml
     presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
-    # load the yaml file
     presubmit = yaml.safe_load(open(presubmit_yml, "r"))
     presubmit_valid = True
     for task_name, task_config in presubmit.get("tasks", {}).items():
