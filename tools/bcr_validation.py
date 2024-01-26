@@ -249,24 +249,20 @@ class BcrValidator:
 
     shutil.rmtree(tmp_dir)
 
-  def check_if_bazel_version_is_set(self, task_name, task):
-    if "bazel" not in task:
-      self.report(BcrValidationResult.FAILED, "Missing bazel version for task '%s' in the presubmit.yml file." % task_name)
-      return False
-    return True
+  def check_if_bazel_version_is_set(self, tasks):
+    for task_name, task_config in tasks.items():
+      if "bazel" not in task_config:
+        self.report(BcrValidationResult.FAILED, "Missing bazel version for task '%s' in the presubmit.yml file." % task_name)
 
   def validate_presubmit_yml(self, module_name, version):
     presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
     presubmit = yaml.safe_load(open(presubmit_yml, "r"))
-    presubmit_valid = True
-    for task_name, task_config in presubmit.get("tasks", {}).items():
-      if not self.check_if_bazel_version_is_set(task_name, task_config):
-        presubmit_valid = False
+    report_num_old = len(self.validation_results)
+    self.check_if_bazel_version_is_set(presubmit.get("tasks", {}))
     if "bcr_test_module" in presubmit:
-      for task_name, task_config in presubmit["bcr_test_module"].get("tasks", {}).items():
-        if not self.check_if_bazel_version_is_set(task_name, task_config):
-          presubmit_valid = False
-    if presubmit_valid:
+      self.check_if_bazel_version_is_set(presubmit["bcr_test_module"].get("tasks", {}))
+    report_num_new = len(self.validation_results)
+    if report_num_new == report_num_old:
       self.report(BcrValidationResult.GOOD, "The presubmit.yml file is valid.")
 
   def validate_module(self, module_name, version, skipped_validations):
