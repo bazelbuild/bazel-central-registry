@@ -434,6 +434,16 @@ module(
     metadata["versions"].sort(key=Version)
     json_dump(metadata_path, metadata)
 
+  def update_integrity(self, module_name, version):
+    """Update the SRI hashes of the source.json file of module at version."""
+    source = self.get_source(module_name, version)
+    source_path = self.get_source_path(module_name, version)
+    source["integrity"] = integrity(download(source["url"]))
+    patch_base = source_path.parent / "patches"
+    for patch_name in source.get("patches", []):
+        source["patches"][patch_name] = integrity(read(patch_base / patch_name))
+    json_dump(source_path, source, sort_keys=False)
+
   def delete(self, module_name, version):
     """Delete an existing module version."""
     p = self.root.joinpath("modules", module_name)
