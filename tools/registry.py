@@ -237,9 +237,10 @@ module(
     return module_versions
 
   def get_metadata(self, module_name):
-    metadata_path = self.root.joinpath("modules", module_name,
-                                       "metadata.json")
-    return json.load(metadata_path.open())
+    return json.loads(self.get_metadata_path(module_name).read_text())
+
+  def get_metadata_path(self, module_name):
+    return self.root / "modules" / module_name / "metadata.json"
 
   def get_source(self, module_name, version):
     source_path = self.root.joinpath("modules", module_name, version,
@@ -432,6 +433,16 @@ module(
     metadata["versions"].append(module.version)
     metadata["versions"] = list(set(metadata["versions"]))
     metadata["versions"].sort(key=Version)
+    json_dump(metadata_path, metadata)
+
+  def update_versions(self, module_name):
+    """Update the list of versions in the metadata.json."""
+    metadata = self.get_metadata(module_name)
+    yanked_versions = set(metadata["yanked_versions"])
+    module_path = self.root / "modules" / module_name
+    actual_versions = {v.name for v in module_path.iterdir() if v.is_dir()}
+    metadata["versions"] = sorted(actual_versions - yanked_versions, key=Version)
+    metadata_path = self.get_metadata_path(module_name)
     json_dump(metadata_path, metadata)
 
   def update_integrity(self, module_name, version):

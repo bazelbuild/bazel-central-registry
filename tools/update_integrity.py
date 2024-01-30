@@ -13,6 +13,7 @@ def update_integrity(module, version, registry):
     client = RegistryClient(registry)
     if not client.contains(module):
         raise click.BadParameter(f"{module=} not found in registry")
+    client.update_versions(module)
     versions = client.get_module_versions(module)
     version = version or versions[-1][1]
     if not client.contains(module, version):
