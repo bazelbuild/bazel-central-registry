@@ -439,9 +439,10 @@ module(
     source = self.get_source(module_name, version)
     source_path = self.get_source_path(module_name, version)
     source["integrity"] = integrity(download(source["url"]))
-    patch_base = source_path.parent / "patches"
-    for patch_name in source.get("patches", []):
-        source["patches"][patch_name] = integrity(read(patch_base / patch_name))
+    patch_dir = source_path.parent / "patches"
+    source["patches"] = {
+      patch.name: integrity(read(patch)) for patch in patch_dir.iterdir()
+    }
     json_dump(source_path, source, sort_keys=False)
 
   def delete(self, module_name, version):
