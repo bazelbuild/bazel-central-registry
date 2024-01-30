@@ -17,6 +17,7 @@ The script will generate all require changes based on your input, please review,
 If you are the project owner, you can set up the [Publish to BCR](https://github.com/apps/publish-to-bcr) Github App for your repository to automatically send a PR to the BCR when cutting a new release.
 
 When manually editing files you may find `bazel run -- //tools:update_integrity foomod` useful to update the integrity hashes in foomod's source.json file.
+The tool also accepts a `--version` option to update the source.json of a specific version of the module (instead of latest).
 
 ## Presubmit
 
