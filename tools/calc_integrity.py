@@ -14,7 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
+import pathlib
 import sys
 
 import validators
@@ -24,7 +26,15 @@ if __name__ == "__main__":
     # Under 'bazel run' we want to run within the source folder instead of the execroot.
     if os.getenv("BUILD_WORKSPACE_DIRECTORY"):
         os.chdir(os.getenv("BUILD_WORKSPACE_DIRECTORY"))
-    if validators.url(sys.argv[1]):
-        print(integrity(download(sys.argv[1])))
+    target = sys.argv[1]
+    if validators.url(target):
+        print(integrity(download(target)))
+    elif (file := pathlib.Path(target)).is_file() and file.name == "source.json":
+        source = json.loads(file.read_text())
+        source["integrity"] = integrity(download(source["url"]))
+        patch_base = file.parent / "patches"
+        for patch_name in source.get("patches", []):
+            source["patches"][patch_name] = integrity(read(patch_base / patch_name))
+        file.write_text(json.dumps(source, indent=2) + "\n")
     else:
-        print(integrity(read(sys.argv[1])))
+        print(integrity(read(target)))
