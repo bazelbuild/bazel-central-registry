@@ -16,6 +16,8 @@ The script will generate all require changes based on your input, please review,
 
 If you are the project owner, you can set up the [Publish to BCR](https://github.com/apps/publish-to-bcr) Github App for your repository to automatically send a PR to the BCR when cutting a new release.
 
+When manually editing files you may find `bazel run -- //tools:calc_integrity modules/modulename/1.2.3/source.json` useful to calculate the integrity hashes in that sources.json file.
+
 ## Presubmit
 
 Every module version must pass the BCR presubmit before getting merged. The presubmit validates the correctness and consistency of module information, then runs build and test targets specified in the `presubmit.yml` file. The BCR presubmit is driven by the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script on [Bazel CI](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#bazel-continuous-integration).
