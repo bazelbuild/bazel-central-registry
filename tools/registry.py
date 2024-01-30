@@ -437,8 +437,8 @@ module(
   def update_integrity(self, module_name, version):
     """Update the SRI hashes of the source.json file of module at version."""
     source = self.get_source(module_name, version)
-    source_path = self.get_source_path(module_name, version)
     source["integrity"] = integrity(download(source["url"]))
+    source_path = self.get_source_path(module_name, version)
     patch_dir = source_path.parent / "patches"
     source["patches"] = {
       patch.name: integrity(read(patch)) for patch in patch_dir.iterdir()
