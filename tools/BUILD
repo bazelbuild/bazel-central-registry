@@ -68,6 +68,15 @@ py_library(
     ],
 )
 
+py_binary(
+    name = "update_integrity",
+    srcs = ["update_integrity.py"],
+    deps = [
+        ":registry",
+        requirement("click"),
+    ],
+)
+
 py_test(
     name = "version_test",
     srcs = [

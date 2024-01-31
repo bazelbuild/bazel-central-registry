@@ -237,9 +237,10 @@ module(
     return module_versions
 
   def get_metadata(self, module_name):
-    metadata_path = self.root.joinpath("modules", module_name,
-                                       "metadata.json")
-    return json.load(metadata_path.open())
+    return json.loads(self.get_metadata_path(module_name).read_text())
+
+  def get_metadata_path(self, module_name):
+    return self.root / "modules" / module_name / "metadata.json"
 
   def get_source(self, module_name, version):
     source_path = self.root.joinpath("modules", module_name, version,
@@ -433,6 +434,29 @@ module(
     metadata["versions"] = list(set(metadata["versions"]))
     metadata["versions"].sort(key=Version)
     json_dump(metadata_path, metadata)
+
+  def update_versions(self, module_name):
+    """Update the list of versions in the metadata.json."""
+    module_path = self.root / "modules" / module_name
+    versions = (v.name for v in module_path.iterdir() if v.is_dir())
+    metadata = self.get_metadata(module_name)
+    metadata["versions"] = sorted(versions, key=Version)
+    metadata_path = self.get_metadata_path(module_name)
+    json_dump(metadata_path, metadata)
+
+  def update_integrity(self, module_name, version):
+    """Update the SRI hashes of the source.json file of module at version."""
+    source = self.get_source(module_name, version)
+    source["integrity"] = integrity(download(source["url"]))
+    source_path = self.get_source_path(module_name, version)
+    patch_dir = source_path.parent / "patches"
+    available = sorted(p.name for p in patch_dir.iterdir())
+    current = source.get("patches", {}).keys()
+    patch_files = [patch_dir / p for p in current if p in available]
+    patch_files.extend(patch_dir / p for p in available if p not in current)
+    patches = {patch.name: integrity(read(patch)) for patch in patch_files}
+    source["patches"] = patches
+    json_dump(source_path, source, sort_keys=False)
 
   def delete(self, module_name, version):
     """Delete an existing module version."""
