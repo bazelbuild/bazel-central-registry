@@ -437,9 +437,9 @@ module(
 
   def update_versions(self, module_name):
     """Update the list of versions in the metadata.json."""
-    metadata = self.get_metadata(module_name)
     module_path = self.root / "modules" / module_name
     versions = (v.name for v in module_path.iterdir() if v.is_dir())
+    metadata = self.get_metadata(module_name)
     metadata["versions"] = sorted(versions, key=Version)
     metadata_path = self.get_metadata_path(module_name)
     json_dump(metadata_path, metadata)
