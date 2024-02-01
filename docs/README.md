@@ -59,10 +59,12 @@ matrix:
   - ubuntu2004
   - macos
   - windows
+  bazel: [6.x, 7.x]
 tasks:
   verify_targets:
     name: Verify build targets
     platform: ${{ platform }}
+    bazel: ${{ bazel }}
     build_targets:
     - '@zlib//:zlib'
 ```
@@ -97,10 +99,12 @@ bcr_test_module:
     - ubuntu2004
     - macos
     - windows
+    bazel: [6.x, 7.x]
   tasks:
     run_test_module:
       name: Run test module
       platform: ${{ platform }}
+      bazel: ${{ bazel }}
       build_targets:
       - //java/src/com/github/rules_jvm_external/examples/bzlmod:bzlmod_example
 ```
