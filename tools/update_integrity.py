@@ -12,12 +12,18 @@ def update_integrity(module, version, registry):
     """Update the SRI hashes in source.json of MODULE."""
     client = RegistryClient(registry)
     if not client.contains(module):
-        raise click.BadParameter(f"{module=} not found in registry")
+        raise click.BadParameter(
+            f"{module=} not found in {registry=}. "
+            f"Possible modules: {', '.join(client.get_all_modules())}"
+        )
     client.update_versions(module)
-    versions = client.get_module_versions(module)
-    version = version or versions[-1][1]
+    versions = [ver for _, ver in client.get_module_versions(module)]
+    version = version or versions[-1]
     if not client.contains(module, version):
-        raise click.BadParameter(f"{version=} not found for {module=}")
+        raise click.BadParameter(
+            f"{version=} not found for {module=}. "
+            f"Possible versions: {', '.join(versions)}"
+        )
     click.echo(f"Updating integrity of {module=} {version=} in {registry=}")
     client.update_integrity(module, version)
 
