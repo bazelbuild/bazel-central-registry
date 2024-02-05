@@ -288,6 +288,12 @@ class BcrValidator:
         self.report(BcrValidationResult.FAILED, f"Failed to load {module_name}'s metadata.json file: " + str(e))
         has_error = True
         continue
+
+      sorted_versions = sorted(metadata["versions"], key=Version)
+      if sorted_versions != metadata["versions"]:
+        self.report(BcrValidationResult.FAILED, f"{module_name}'s metadata.json file is not sorted by version.\n Sorted versions: {sorted_versions}.\n Original versions: {metadata['versions']}")
+        has_error = True
+
       for version in metadata["versions"]:
         if not self.registry.contains(module_name, version):
           self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist, but it's recorded in {module_name}'s metadata.json file.")
