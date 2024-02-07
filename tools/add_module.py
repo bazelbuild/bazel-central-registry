@@ -112,7 +112,7 @@ def from_user_input():
         name, version = dep.split("@")
         module.add_dep(name, version)
 
-  presubmit_url = "https://github.com/bazelbuild/bazel-central-registry/tree/main#presubmityml"
+  presubmit_url = "https://github.com/bazelbuild/bazel-central-registry/tree/main/docs#presubmit"
   if yes_or_no(f"Do you want to specify an existing presubmit.yml file? (See {presubmit_url})", False):
     path = ask_input("Please enter the presubmit.yml file path: ").strip()
     module.set_presubmit_yml(path)
@@ -152,7 +152,7 @@ def from_user_input():
 def get_maintainers_from_input():
   maintainers = []
   prefix = "a"
-  explain = " (See https://github.com/bazelbuild/bazel-central-registry/tree/main#module-maintainer)"
+  explain = " (See https://github.com/bazelbuild/bazel-central-registry/tree/main/docs/bcr-policies.md#become-a-module-maintainer)"
   while yes_or_no(f"Do you want to add {prefix} maintainer for this module?{explain}", False):
     maintainer = {}
     name = ask_input("Please enter maintainer name: ")
