@@ -1,7 +1,7 @@
-load("@rules_python//python:defs.bzl", "py_binary", "py_library")
-load("@python_versions//3.11:defs.bzl", compile_pip_requirements_3_11 = "compile_pip_requirements")
-load("@pip//:requirements.bzl", "requirement")
 load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@pip//:requirements.bzl", "requirement")
+load("@python_versions//3.11:defs.bzl", compile_pip_requirements_3_11 = "compile_pip_requirements")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 npm_link_all_packages(name = "node_modules")
 
@@ -75,6 +75,12 @@ py_binary(
         ":registry",
         requirement("click"),
     ],
+)
+
+sh_test(
+    name = "update_integrity_test",
+    srcs = ["update_integrity_test.sh"],
+    data = [":update_integrity"],
 )
 
 py_test(
