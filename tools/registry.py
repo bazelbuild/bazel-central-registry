@@ -227,11 +227,8 @@ module(
     module_versions = []
     metadata = self.get_metadata(module_name)
     for version in metadata["versions"]:
-      module_versions.append((module_name, version))
-    if not include_yanked and "yanked_versions" in metadata:
-      for yanked in metadata["yanked_versions"].keys():
-        if yanked in metadata["versions"]:
-          module_versions.remove((module_name, yanked))
+      if include_yanked or version not in metadata.get("yanked_versions", {}):
+        module_versions.append((module_name, version))
     return module_versions
 
   def get_all_module_versions(self, include_yanked=True):
