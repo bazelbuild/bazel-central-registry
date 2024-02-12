@@ -1,0 +1,152 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..69107da
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,73 @@
++cc_library(
++    name = "xplane_sdk",
++    srcs = glob(["CHeaders/**/*.cpp"]) + select({
++        ":windows": ["windows_extras.cpp"],
++        "//conditions:default": [],
++    }),
++    hdrs = glob(["CHeaders/**/*.h"]),
++    additional_linker_inputs = select({
++        ":windows": [
++            "Libraries/Win/XPLM_64.lib",
++            "Libraries/Win/XPWidgets_64.lib",
++        ],
++        ":osx": [
++            "Libraries/Mac/XPLM.framework",
++            "Libraries/Mac/XPWidgets.framework",
++        ],
++        "//conditions:default": [],
++    }),
++    copts = select({
++        ":windows": ["/W0"],
++        ":linux": [
++            "-fvisibility=hidden",
++            "-w",
++        ],
++        "//conditions:default": ["-w"],
++    }),
++    defines = select({
++        ":osx": ["APL=1"],
++        ":windows": ["IBM=1"],
++        "//conditions:default": ["LIN=1"],
++    }) + [
++        "XPLM200",  # API 2.0 Compatible
++        "XPLM210",  # API 2.1 Compatible
++        "XPLM300",  # API 3.0 Compatible
++    ],
++    includes = [
++        "CHeaders/Widgets",
++        "CHeaders/Wrappers",
++        "CHeaders/XPLM",
++    ],
++    linkopts = select({
++        ":linux": [
++            "-shared",
++            "-rdynamic",
++            "-nodefaultlibs",
++            "-undefined_warning",
++            # "-Wl,--version-script=exports.txt",  # Linker script not needed
++        ],
++        "//conditions:default": [],
++    }),
++    visibility = ["//visibility:public"],
++)
++
++config_setting(
++    name = "osx",
++    constraint_values = [
++        "@platforms//os:osx",
++    ],
++)
++
++config_setting(
++    name = "windows",
++    constraint_values = [
++        "@platforms//os:windows",
++    ],
++)
++
++config_setting(
++    name = "linux",
++    constraint_values = [
++        "@platforms//os:linux",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..fd1f7ee
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,30 @@
++"""
++Bazel Module for X-Plane Plugins SDK
++
++This Bazel module provides a straightforward and easy-to-use interface for creating an X-Plane Plugins and linking it to the required SDKs and libraries.
++
++Features:
++- Download and linking of the X-Plane Plugins SDK to your target.
++- Seamless integration with Bazel's build system.
++- Support for common platforms used by X-Plane (Windows, macOS, Linux).
++
++Usage:
++To use this module, add this module as a dependency in your Bazel Module file and include it using "@xplane_sdk" in the deps section of your target in your BUILD file. This will give you access to all the XPlane SDK headers such as "XPLMProcessing.h" "XPLMDataAccess.h" "XPLMUtilities.h" etc. It will also link the final binary to the X-Plane SDKs. Make sure your target is a cc_binary and has the "linkstatic" and "linkshared" attributes set to True. This will ensure your plugin gets built as a dll, which you can rename to .xpl and place in the XPlane plugins folder. Make sure your plugin code has all the exported functions required [for example: PLUGIN_API int XPluginStart(char *outName, char *outSig, char *outDesc){}] as per the docs, see links below.
++
++https://developer.x-plane.com/article/developing-plugins/
++https://developer.x-plane.com/code-sample/timedprocessing/ (Get started with this example code!)
++https://developer.x-plane.com/sdk/plugin-sdk-documents/
++https://developer.x-plane.com/article/building-and-installing-plugins/ (This module manages the linking for you, so don't worry too much about section 2 & 3 in that documentation. Note that OpenGL is not linked as part of this and is not required by the SDKs, even though it's mentioned in the documentation. If you need OpenGL or other graphics libraries, you will need to get those dependencies separately.)
++
++Please Note:
++This module is community-supported and is not officially affiliated with Laminar Research or the X-Plane development team. Please refer to the X-Plane Plugins SDK documentation for detailed information on plugin development.
++
++"""
++
++module(
++    name = "xplane_sdk",
++    version = "4.0.1",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "platforms", version = "0.0.8")
+diff --git a/exports.txt b/exports.txt
+new file mode 100644
+index 0000000..2c48b97
+--- /dev/null
++++ b/exports.txt
+@@ -0,0 +1,12 @@
++{
++ global:
++  _init;
++  _fini;
++  XPluginStart;
++  XPluginStop;
++  XPluginEnable;
++  XPluginDisable;
++  XPluginReceiveMessage;
++ local:
++   *;
++};
+\ No newline at end of file
+diff --git a/windows_extras.cpp b/windows_extras.cpp
+new file mode 100644
+index 0000000..20e2b21
+--- /dev/null
++++ b/windows_extras.cpp
+@@ -0,0 +1,12 @@
++#include <windows.h>
++BOOL APIENTRY DllMain(HANDLE hModule, DWORD ul_reason_for_call,
++                      LPVOID lpReserved) {
++  switch (ul_reason_for_call) {
++  case DLL_PROCESS_ATTACH:
++  case DLL_THREAD_ATTACH:
++  case DLL_THREAD_DETACH:
++  case DLL_PROCESS_DETACH:
++    break;
++  }
++  return TRUE;
++}

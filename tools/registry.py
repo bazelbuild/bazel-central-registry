@@ -42,17 +42,18 @@ def log(msg):
 
 def download(url):
   parts = urllib.parse.urlparse(url)
+  headers = {'User-Agent': 'Mozilla/5.0'}  # Set the User-Agent header
   try:
     authenticators = netrc.netrc().authenticators(parts.netloc)
   except FileNotFoundError:
     authenticators = None
   if authenticators != None:
     (login, _, password) = authenticators
-    req = urllib.request.Request(url)
+    req = urllib.request.Request(url, headers=headers)
     creds = base64.b64encode(str.encode('%s:%s' % (login, password))).decode()
     req.add_header("Authorization", "Basic %s" % creds)
   else:
-    req = url
+    req = urllib.request.Request(url, headers=headers)
 
   with urllib.request.urlopen(req) as response:
     return response.read()
@@ -66,9 +67,11 @@ def read(path):
     return file.read()
 
 
-def integrity(data):
-  hash_value = hashlib.sha256(data)
-  return "sha256-" + base64.b64encode(hash_value.digest()).decode()
+def integrity(data, algorithm="sha256"):
+  assert algorithm in {"sha224", "sha256", "sha384", "sha512"}, "Unsupported SRI algorithm"
+  hash = getattr(hashlib, algorithm)(data)
+  encoded = base64.b64encode(hash.digest()).decode()
+  return f"{algorithm}-{encoded}"
 
 
 def json_dump(file, data, sort_keys=True):
@@ -220,23 +223,25 @@ module(
     modules_dir = self.root.joinpath("modules")
     return [path.name for path in modules_dir.iterdir()]
 
-  def get_module_versions(self, module_name):
+  def get_module_versions(self, module_name, include_yanked=True):
     module_versions = []
     metadata = self.get_metadata(module_name)
     for version in metadata["versions"]:
-      module_versions.append((module_name, version))
+      if include_yanked or version not in metadata.get("yanked_versions", {}):
+        module_versions.append((module_name, version))
     return module_versions
 
-  def get_all_module_versions(self):
+  def get_all_module_versions(self, include_yanked=True):
     module_versions = []
     for module_name in self.get_all_modules():
-      module_versions.extend(self.get_module_versions(module_name))
+      module_versions.extend(self.get_module_versions(module_name, include_yanked))
     return module_versions
 
   def get_metadata(self, module_name):
-    metadata_path = self.root.joinpath("modules", module_name,
-                                       "metadata.json")
-    return json.load(metadata_path.open())
+    return json.loads(self.get_metadata_path(module_name).read_text())
+
+  def get_metadata_path(self, module_name):
+    return self.root / "modules" / module_name / "metadata.json"
 
   def get_source(self, module_name, version):
     source_path = self.root.joinpath("modules", module_name, version,
@@ -382,14 +387,17 @@ module(
       shutil.copy(module.presubmit_yml, presubmit_yml)
     else:
       PLATFORMS = ["debian10", "ubuntu2004", "macos", "macos_arm64", "windows"]
+      BAZEL_VERSIONS = ["7.x", "6.x"]
       presubmit = {
           "matrix": {
               "platform": PLATFORMS.copy(),
+              "bazel": BAZEL_VERSIONS.copy(),
           },
           "tasks": {
               "verify_targets": {
                   "name": "Verify build targets",
                   "platform": "${{ platform }}",
+                  "bazel": "${{ bazel }}",
                   "build_targets": module.build_targets.copy()
               }
           }
@@ -399,6 +407,7 @@ module(
         task = {
             "name": "Run test module",
             "platform": "${{ platform }}",
+            "bazel": "${{ bazel }}",
         }
         if module.test_module_build_targets:
           task["build_targets"] = module.test_module_build_targets.copy()
@@ -408,6 +417,7 @@ module(
             "module_path": module.test_module_path,
             "matrix": {
                 "platform": PLATFORMS.copy(),
+                "bazel": BAZEL_VERSIONS.copy(),
             },
             "tasks": {
                 "run_test_module": task
@@ -425,6 +435,29 @@ module(
     metadata["versions"] = list(set(metadata["versions"]))
     metadata["versions"].sort(key=Version)
     json_dump(metadata_path, metadata)
+
+  def update_versions(self, module_name):
+    """Update the list of versions in the metadata.json."""
+    module_path = self.root / "modules" / module_name
+    versions = (v.name for v in module_path.iterdir() if v.is_dir())
+    metadata = self.get_metadata(module_name)
+    metadata["versions"] = sorted(versions, key=Version)
+    metadata_path = self.get_metadata_path(module_name)
+    json_dump(metadata_path, metadata)
+
+  def update_integrity(self, module_name, version):
+    """Update the SRI hashes of the source.json file of module at version."""
+    source = self.get_source(module_name, version)
+    source["integrity"] = integrity(download(source["url"]))
+    source_path = self.get_source_path(module_name, version)
+    patch_dir = source_path.parent / "patches"
+    available = sorted(p.name for p in patch_dir.iterdir())
+    current = source.get("patches", {}).keys()
+    patch_files = [patch_dir / p for p in current if p in available]
+    patch_files.extend(patch_dir / p for p in available if p not in current)
+    patches = {patch.name: integrity(read(patch)) for patch in patch_files}
+    source["patches"] = patches
+    json_dump(source_path, source, sort_keys=False)
 
   def delete(self, module_name, version):
     """Delete an existing module version."""

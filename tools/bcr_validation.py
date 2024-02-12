@@ -35,6 +35,7 @@ import shutil
 import sys
 import tempfile
 import os
+import yaml
 
 from enum import Enum
 from difflib import unified_diff
@@ -137,6 +138,10 @@ class BcrValidator:
       if repo_type == "github":
         parts = urlparse(source_url)
         matched = parts.scheme == "https" and parts.netloc == "github.com" and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
+      elif repo_type == "https":
+        repo = urlparse(source_repository)
+        parts = urlparse(source_url)
+        matched = parts.scheme == repo.scheme and parts.netloc == repo.netloc and os.path.abspath(parts.path).startswith(f"{repo.path}/")
     if not matched:
       self.report(BcrValidationResult.FAILED, f"The source URL of {module_name}@{version} ({source_url}) doesn't match any of the module's source repositories {source_repositories}.")
     else:
@@ -159,7 +164,8 @@ class BcrValidator:
     """Verify the integrity value of the URL is correct."""
     source_url = self.registry.get_source(module_name, version)["url"]
     expected_integrity = self.registry.get_source(module_name, version)["integrity"]
-    real_integrity = integrity(download(source_url))
+    algorithm, _ = expected_integrity.split("-", 1)
+    real_integrity = integrity(download(source_url), algorithm)
     if real_integrity != expected_integrity:
       self.report(BcrValidationResult.FAILED, f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{real_integrity}`!")
     else:
@@ -243,6 +249,22 @@ class BcrValidator:
 
     shutil.rmtree(tmp_dir)
 
+  def check_if_bazel_version_is_set(self, tasks):
+    for task_name, task_config in tasks.items():
+      if "bazel" not in task_config:
+        self.report(BcrValidationResult.FAILED, "Missing bazel version for task '%s' in the presubmit.yml file." % task_name)
+
+  def validate_presubmit_yml(self, module_name, version):
+    presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
+    presubmit = yaml.safe_load(open(presubmit_yml, "r"))
+    report_num_old = len(self.validation_results)
+    self.check_if_bazel_version_is_set(presubmit.get("tasks", {}))
+    if "bcr_test_module" in presubmit:
+      self.check_if_bazel_version_is_set(presubmit["bcr_test_module"].get("tasks", {}))
+    report_num_new = len(self.validation_results)
+    if report_num_new == report_num_old:
+      self.report(BcrValidationResult.GOOD, "The presubmit.yml file is valid.")
+
   def validate_module(self, module_name, version, skipped_validations):
     print_expanded_group(f"Validating {module_name}@{version}")
     self.verify_module_existence(module_name, version)
@@ -253,6 +275,7 @@ class BcrValidator:
     self.verify_source_archive_url_integrity(module_name, version)
     if "presubmit_yml" not in skipped_validations:
       self.verify_presubmit_yml_change(module_name, version)
+    self.validate_presubmit_yml(module_name, version)
     self.verify_module_dot_bazel(module_name, version)
 
   def validate_all_metadata(self):
@@ -265,6 +288,12 @@ class BcrValidator:
         self.report(BcrValidationResult.FAILED, f"Failed to load {module_name}'s metadata.json file: " + str(e))
         has_error = True
         continue
+
+      sorted_versions = sorted(metadata["versions"], key=Version)
+      if sorted_versions != metadata["versions"]:
+        self.report(BcrValidationResult.FAILED, f"{module_name}'s metadata.json file is not sorted by version.\n Sorted versions: {sorted_versions}.\n Original versions: {metadata['versions']}")
+        has_error = True
+
       for version in metadata["versions"]:
         if not self.registry.contains(module_name, version):
           self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist, but it's recorded in {module_name}'s metadata.json file.")
