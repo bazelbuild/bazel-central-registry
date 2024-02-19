@@ -91,7 +91,7 @@ def parse_module_versions(registry, check_all, inputs):
 def apply_patch(work_dir, patch_strip, patch_file):
   # Requires patch to be installed
   subprocess.run(
-      ["patch", "-p%d" % patch_strip, "-l", "-i", patch_file], shell=False, check=True, env=os.environ, cwd=work_dir
+      ["patch", "-p%d" % patch_strip, "-f", "-l", "-i", patch_file], shell=False, check=True, env=os.environ, cwd=work_dir
   )
 
 def fix_line_endings(lines):
