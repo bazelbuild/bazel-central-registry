@@ -329,7 +329,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
   # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
   elif yes_or_no("Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?", True):
     repo_def = ["", "# TODO: Migrated to Bzlmod"] + repo_def
-    info(f"Introduing @{repo} in WORKSPACE.bzlmod file.")
+    info(f"Introducing @{repo} in WORKSPACE.bzlmod file.")
     scratch_file("WORKSPACE.bzlmod", repo_def, mode="a")
   else:
     info("Please manually add this dependency ...")
