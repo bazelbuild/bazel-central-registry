@@ -323,13 +323,13 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
   else:
     info(f"{repo} isn't found in the registry.")
 
-  # ask user if the dependency should be introudced via module extension if it looks like a starlark repository rule.
+  # ask user if the dependency should be introduced via module extension if it looks like a starlark repository rule.
   if repo_def[0].startswith("load(") and yes_or_no("Do you wish to introduce the repository with a module extension?", True):
     add_repo_to_module_extension(repo, repo_def)
   # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
   elif yes_or_no("Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?", True):
     repo_def = ["", "# TODO: Migrated to Bzlmod"] + repo_def
-    info(f"Introduing @{repo} in WORKSPACE.bzlmod file.")
+    info(f"Introducing @{repo} in WORKSPACE.bzlmod file.")
     scratch_file("WORKSPACE.bzlmod", repo_def, mode="a")
   else:
     info("Please manually add this dependency ...")
