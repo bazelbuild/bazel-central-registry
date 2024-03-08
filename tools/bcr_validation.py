@@ -268,13 +268,20 @@ class BcrValidator:
   def verify_module_name_conflict(self):
     """Verify no module name conflict when ignoring case sensitivity."""
     module_names = self.registry.get_all_modules()
-    lower_module_names = [name.lower() for name in module_names]
     conflict_found = False
+    module_group = {}
     for name in module_names:
-      count = lower_module_names.count(name.lower())
-      if count > 1:
-        self.report(BcrValidationResult.FAILED, f"Module name conflict found: {name} and {count - 1} other modules have the same name when ignoring case sensitivity.")
+      lower_name = name.lower()
+      if lower_name in module_group:
+          module_group[lower_name].append(name)
+      else:
+          module_group[lower_name] = [name]
+
+    for name, modules in module_group.items():
+      if len(modules) > 1:
         conflict_found = True
+        self.report(BcrValidationResult.FAILED, f"Module name conflict found: {', '.join(modules)}")
+
     if not conflict_found:
       self.report(BcrValidationResult.GOOD, "No module name conflict found.")
 
