@@ -265,8 +265,25 @@ class BcrValidator:
     if report_num_new == report_num_old:
       self.report(BcrValidationResult.GOOD, "The presubmit.yml file is valid.")
 
+  def verify_module_name_conflict(self):
+    """Verify no module name conflict when ignoring case sensitivity."""
+    module_names = self.registry.get_all_modules()
+    conflict_found = False
+    module_group = {}
+    for name in module_names:
+      module_group.setdefault(name.lower(), []).append(name)
+
+    for name, modules in module_group.items():
+      if len(modules) > 1:
+        conflict_found = True
+        self.report(BcrValidationResult.FAILED, f"Module name conflict found: {', '.join(modules)}")
+
+    if not conflict_found:
+      self.report(BcrValidationResult.GOOD, "No module name conflict found.")
+
   def validate_module(self, module_name, version, skipped_validations):
     print_expanded_group(f"Validating {module_name}@{version}")
+    self.verify_module_name_conflict()
     self.verify_module_existence(module_name, version)
     if "source_repo" not in skipped_validations:
       self.verify_source_archive_url_match_github_repo(module_name, version)
