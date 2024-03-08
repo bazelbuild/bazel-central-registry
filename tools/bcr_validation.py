@@ -271,11 +271,7 @@ class BcrValidator:
     conflict_found = False
     module_group = {}
     for name in module_names:
-      lower_name = name.lower()
-      if lower_name in module_group:
-          module_group[lower_name].append(name)
-      else:
-          module_group[lower_name] = [name]
+      module_group.setdefault(name.lower(), []).append(name)
 
     for name, modules in module_group.items():
       if len(modules) > 1:
