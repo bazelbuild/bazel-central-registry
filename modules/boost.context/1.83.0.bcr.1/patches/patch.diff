@@ -1,0 +1,162 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..3e6142a
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,98 @@
++load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
++# Hey there! Before you start modifying this file, go check out https://github.com/dynacondev/boost.rules.tools for the tool you need!
++
++load("@boost.rules.tools//:tools.bzl", "boost_library")
++
++# Rename .asm to .S so that it will be handled with the C preprocessor.
++[copy_file(
++    name = "rename_%s" % name,
++    src = "src/asm/%s_x86_64_ms_pe_masm.asm" % name,
++    out = "src/asm/%s_x86_64_ms_pe_masm.S" % name,
++) for name in [
++    "make",
++    "jump",
++    "ontop",
++]]
++
++filegroup(
++    name = "apple_ctx_asm_sources",
++    srcs = select({
++        "@platforms//cpu:aarch64": [
++            "src/asm/jump_arm64_aapcs_macho_gas.S",
++            "src/asm/make_arm64_aapcs_macho_gas.S",
++            "src/asm/ontop_arm64_aapcs_macho_gas.S",
++        ],
++        "@platforms//cpu:arm": [
++            "src/asm/jump_arm_aapcs_macho_gas.S",
++            "src/asm/make_arm_aapcs_macho_gas.S",
++            "src/asm/ontop_arm_aapcs_macho_gas.S",
++        ],
++        "@platforms//cpu:x86_64": [
++            "src/asm/jump_x86_64_sysv_macho_gas.S",
++            "src/asm/make_x86_64_sysv_macho_gas.S",
++            "src/asm/ontop_x86_64_sysv_macho_gas.S",
++        ],
++    }),
++)
++
++boost_library(
++    name = "context",
++    srcs = selects.with_or({
++               # BOOST_CTX_ASM_SOURCES
++               ("@boost.rules.tools//:linux_aarch64", "@boost.rules.tools//:android_aarch64"): [
++                   "src/asm/jump_arm64_aapcs_elf_gas.S",
++                   "src/asm/make_arm64_aapcs_elf_gas.S",
++                   "src/asm/ontop_arm64_aapcs_elf_gas.S",
++               ],
++               ("@boost.rules.tools//:linux_arm", "@boost.rules.tools//:android_arm"): [
++                   "src/asm/jump_arm_aapcs_elf_gas.S",
++                   "src/asm/make_arm_aapcs_elf_gas.S",
++                   "src/asm/ontop_arm_aapcs_elf_gas.S",
++               ],
++               "@boost.rules.tools//:linux_ppc": [
++                   "src/asm/jump_ppc64_sysv_elf_gas.S",
++                   "src/asm/make_ppc64_sysv_elf_gas.S",
++                   "src/asm/ontop_ppc64_sysv_elf_gas.S",
++               ],
++               "@boost.rules.tools//:linux_x86_64": [
++                   "src/asm/jump_x86_64_sysv_elf_gas.S",
++                   "src/asm/make_x86_64_sysv_elf_gas.S",
++                   "src/asm/ontop_x86_64_sysv_elf_gas.S",
++               ],
++               ("@platforms//os:osx", "@platforms//os:ios", "@platforms//os:watchos", "@platforms//os:tvos"): ["apple_ctx_asm_sources"],
++               "@boost.rules.tools//:windows_x86_64": [
++                   "src/asm/make_x86_64_ms_pe_masm.S",
++                   "src/asm/jump_x86_64_ms_pe_masm.S",
++                   "src/asm/ontop_x86_64_ms_pe_masm.S",
++               ],
++               "//conditions:default": [],
++           }) +
++           selects.with_or({
++               ("@platforms//os:linux", "@platforms//os:android", "@platforms//os:osx", "@platforms//os:ios", "@platforms//os:watchos", "@platforms//os:tvos"): [
++                   "src/posix/stack_traits.cpp",
++               ],
++               "@boost.rules.tools//:windows_x86_64": [
++                   "src/windows/stack_traits.cpp",
++               ],
++               "//conditions:default": [],
++           }),
++    exclude_src = [
++        "src/fiber.cpp",
++        "src/untested.cpp",
++        "src/continuation.cpp",
++    ],
++    local_defines = select({
++        "@boost.rules.tools//:windows_x86_64": ["BOOST_CONTEXT_EXPORT="],
++        "//conditions:default": [],
++    }),
++    deps = [
++        "@boost//:assert",
++        "@boost//:config",
++        "@boost//:core",
++        "@boost//:mp11",
++        "@boost//:pool",
++        "@boost//:predef",
++        "@boost//:smart_ptr",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100755
+index 0000000..3f6d6c2
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,22 @@
++"""
++Hey there! Before editing, check out the tool at https://github.com/dynacondev/boost.rules.tools
++Note: These modules follow a circular dependency structure on the boost module https://github.com/dynacondev/boost.rules to keep boost releases from mixing!
++"""
++
++module(
++    name = "boost.context",
++    version = "1.83.0.bcr.1",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "boost", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.rules.tools", version = "1.0.0")
++bazel_dep(name = "platforms", version = "0.0.8")
++bazel_dep(name = "bazel_skylib", version = "1.5.0")
++
++
++
++
++
++
++
+diff --git a/WORKSPACE.bazel b/WORKSPACE.bazel
+new file mode 100644
+index 0000000..be0754f
+--- /dev/null
++++ b/WORKSPACE.bazel
+@@ -0,0 +1 @@
++# SEE: MODULE.bazel
+diff --git a/test/BUILD.bazel b/test/BUILD.bazel
+new file mode 100644
+index 0000000..3cb37b8
+--- /dev/null
++++ b/test/BUILD.bazel
+@@ -0,0 +1,17 @@
++load("@boost.rules.tools//:tools.bzl", "boost_test_set")
++
++DEPS = [
++    "@boost//:context",
++    "@boost//:array",
++    "@boost//:config",
++    "@boost//:lexical_cast",
++    "@boost//:utility",
++    "@boost//:variant",
++]
++
++test_suite(
++    name = "tests",
++    tests = boost_test_set(
++        deps = DEPS,
++    ),
++)
