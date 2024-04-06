@@ -80,7 +80,7 @@ def from_user_input():
   name = ask_input("Please enter the module name: ")
   version = ask_input("Please enter the module version: ")
   compatibility = ask_input(
-      "Please enter the compatibility level [default is 1]: ") or "1"
+      "Please enter the compatibility level [default is 0]: ") or "0"
   module = Module(name, version, compatibility)
 
   url = ask_input("Please enter the URL of the source archive: ")
