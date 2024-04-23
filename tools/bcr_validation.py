@@ -250,6 +250,9 @@ class BcrValidator:
     shutil.rmtree(tmp_dir)
 
   def check_if_bazel_version_is_set(self, tasks):
+    if not tasks:
+      self.report(BcrValidationResult.FAILED, "At least one task should be specified in the presubmit.yml file.")
+      return
     for task_name, task_config in tasks.items():
       if "bazel" not in task_config:
         self.report(BcrValidationResult.FAILED, "Missing bazel version for task '%s' in the presubmit.yml file." % task_name)
