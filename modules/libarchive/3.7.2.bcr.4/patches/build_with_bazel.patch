@@ -1,9 +1,22 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
 new file mode 100644
-index 00000000..d4337df3
+index 00000000..7a34e0c5
 --- /dev/null
 +++ b/BUILD.bazel
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,144 @@
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++
++bool_flag(
++    name = "use_mbedtls",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "use_mbedtls_setting",
++    flag_values = {":use_mbedtls": "true"},
++    visibility = ["//:__subpackages__"],
++)
++
 +cc_library(
 +    name = "config_h",
 +    hdrs = ["xplat_config.h"],
@@ -124,36 +137,43 @@ index 00000000..d4337df3
 +            "HAVE_SYS_CDEFS_H",
 +        ],
 +        "//conditions:default": [],
++    }) + select({
++        "//:use_mbedtls_setting": [
++            "HAVE_LIBMBEDCRYPTO",
++            "HAVE_MBEDTLS_AES_H",
++            "HAVE_MBEDTLS_MD_H",
++            "HAVE_MBEDTLS_PKCS5_H",
++        ],
++        "//conditions:default": [],
 +    }),
 +    visibility = ["//visibility:public"],
 +)
 diff --git a/MODULE.bazel b/MODULE.bazel
 new file mode 100644
-index 00000000..e6ff7d4e
+index 00000000..6435fb5d
 --- /dev/null
 +++ b/MODULE.bazel
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,14 @@
 +module(
 +    name = "libarchive",
-+    version = "3.7.2.bcr.3",
++    version = "3.7.2.bcr.4",
 +    compatibility_level = 1,
 +)
 +
++bazel_dep(name = "bazel_skylib", version = "1.5.0")
 +bazel_dep(name = "bzip2", version = "1.0.8")
 +bazel_dep(name = "lz4", version = "1.9.4")
++bazel_dep(name = "mbedtls", version = "3.6.0")
 +bazel_dep(name = "platforms", version = "0.0.9")
-+bazel_dep(name = "xz", version = "5.4.5.bcr.1")
++bazel_dep(name = "xz", version = "5.4.5.bcr.2")
 +bazel_dep(name = "zlib", version = "1.3.1.bcr.1")
 +bazel_dep(name = "zstd", version = "1.5.6")
-diff --git a/WORKSPACE b/WORKSPACE
-new file mode 100644
-index 00000000..e69de29b
 diff --git a/libarchive/BUILD.bazel b/libarchive/BUILD.bazel
 new file mode 100644
-index 00000000..9d9936f1
+index 00000000..116d46bc
 --- /dev/null
 +++ b/libarchive/BUILD.bazel
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,56 @@
 +PUBLIC_HEADERS = [
 +    "archive.h",
 +    "archive_entry.h",
@@ -205,7 +225,10 @@ index 00000000..9d9936f1
 +        "@xz//:lzma",
 +        "@zlib",
 +        "@zstd",
-+    ],
++    ] + select({
++        "//:use_mbedtls_setting": ["@mbedtls"],
++        "//conditions:default": [],
++    }),
 +)
 diff --git a/libarchive/archive_hmac_private.h b/libarchive/archive_hmac_private.h
 index d0fda7f9..e41c944d 100644
