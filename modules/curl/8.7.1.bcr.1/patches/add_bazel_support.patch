@@ -1,0 +1,642 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 000000000..eb68b2425
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,145 @@
++# Copyright The OpenTelemetry Authors
++# SPDX-License-Identifier: Apache-2.0
++
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
++load(
++    "//:config.bzl",
++    "disabled_setting_substitution",
++    "enabled_setting_substitution",
++    "get_ca_substitutions",
++    "get_os_substitutions",
++    "get_random_file_substitutions",
++    "get_substitutions",
++)
++
++package(features = ["no_copts_tokenization"])
++
++bool_flag(
++    name = "use_mbedtls",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "use_mbedtls_setting",
++    flag_values = {":use_mbedtls": "true"},
++)
++
++bool_flag(
++    name = "http_only",
++    build_setting_default = True,
++)
++
++config_setting(
++    name = "http_only_setting",
++    flag_values = {":http_only": "true"},
++)
++
++expand_template(
++    name = "curl_config",
++    out = "lib/curl_config.h",
++    substitutions = get_substitutions() |
++                    select({
++                        "@platforms//os:macos": get_ca_substitutions("/etc/ssl/cert.pem", "/etc/ssl/certs"),
++                        "@platforms//os:linux": get_ca_substitutions("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/certs"),
++                        "@platforms//os:windows": dict([
++                            disabled_setting_substitution("CURL_CA_BUNDLE"),
++                            disabled_setting_substitution("CURL_CA_PATH"),
++                        ]),
++                    }) |
++                    select({
++                        "@platforms//os:windows": dict([
++                            disabled_setting_substitution("RANDOM_FILE"),
++                        ]),
++                        "//conditions:default": get_random_file_substitutions("/dev/urandom"),
++                    }) |
++                    select({
++                        "@platforms//os:windows": dict([
++                            disabled_setting_substitution("CURL_EXTERN_SYMBOL"),
++                        ]),
++                        "//conditions:default": {
++                            "#cmakedefine CURL_EXTERN_SYMBOL ${CURL_EXTERN_SYMBOL}": '__attribute__ ((__visibility__ ("default")))',
++                        },
++                    }) |
++                    select({
++                        "@platforms//os:windows": dict([
++                            disabled_setting_substitution("_FILE_OFFSET_BITS"),
++                        ]),
++                        "//conditions:default": {
++                            "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "#define _FILE_OFFSET_BITS 64",
++                        },
++                    }) |
++                    select({
++                        "@platforms//os:macos": get_os_substitutions("Darwin"),
++                        "@platforms//os:linux": get_os_substitutions("Linux"),
++                        "@platforms//os:windows": get_os_substitutions("Windows"),
++                    }) |
++                    select({
++                        ":use_mbedtls_setting": dict([enabled_setting_substitution("USE_MBEDTLS")]),
++                        "//conditions:default": dict([disabled_setting_substitution("USE_MBEDTLS")]),
++                    }),
++    template = "lib/curl_config.h.cmake",
++)
++
++cc_library(
++    name = "curl",
++    srcs = [
++        ":curl_config",
++    ] + glob([
++        "lib/**/*.c",
++        "lib/**/*.h",
++    ]),
++    hdrs = glob(["include/curl/*.h"]),
++    defines = [
++        "BUILDING_LIBCURL",
++        "CURL_STATICLIB",
++    ],
++    includes = [
++        "include",
++        "lib",
++    ],
++    linkopts = select({
++        "@platforms//os:windows": [
++            "-DEFAULTLIB:ws2_32.lib",
++            "-DEFAULTLIB:advapi32.lib",
++            "-DEFAULTLIB:crypt32.lib",
++            "-DEFAULTLIB:Normaliz.lib",
++        ],
++        "@platforms//os:macos": [
++            "-Wl,-framework,SystemConfiguration",
++            "-lpthread",
++        ],
++        "//conditions:default": [
++            "-lpthread",
++        ],
++    }),
++    local_defines = [
++        "HAVE_CONFIG_H",
++    ] + select({
++        ":http_only_setting": ["HTTP_ONLY"],
++        "//conditions:default": [],
++    }) + select({
++        "@platforms//os:windows": [
++            "WIN32",
++        ],
++        "//conditions:default": [
++            "CURL_HIDDEN_SYMBOLS",
++        ],
++    }),
++    visibility = ["//visibility:public"],
++    deps = select({
++        ":use_mbedtls_setting": ["@mbedtls"],
++        "//conditions:default": [],
++    }),
++)
++
++cc_binary(
++    name = "linktest",
++    linkopts = select({
++        "@platforms//os:macos": ["-all_load"],
++        "//conditions:default": [],
++    }),
++    linkshared = True,
++    visibility = ["//visibility:private"],
++    deps = [":curl"],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 000000000..8991a973a
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,9 @@
++module(
++    name = "curl",
++    version = "8.7.1.bcr.1",
++    compatibility_level = 0,
++)
++
++bazel_dep(name = "bazel_skylib", version = "1.5.0")
++bazel_dep(name = "mbedtls", version = "3.6.0")
++bazel_dep(name = "platforms", version = "0.0.8")
+diff --git a/config.bzl b/config.bzl
+new file mode 100644
+index 000000000..358fc5065
+--- /dev/null
++++ b/config.bzl
+@@ -0,0 +1,470 @@
++"""Generate platform specific template substitutions for curl_config.h.cmake"""
++
++load("@bazel_skylib//lib:new_sets.bzl", "sets")
++
++_ENABLED_SETTINGS = sets.make([
++    "CURL_DISABLE_LDAP",
++    "CURL_DISABLE_OPENSSL_AUTO_LOAD_CONFIG",
++    "ENABLE_IPV6",
++    "HAVE_ALARM",
++    "HAVE_ARC4RANDOM",
++    "HAVE_ARPA_INET_H",
++    "HAVE_ATOMIC",
++    "HAVE_BASENAME",
++    "HAVE_BOOL_T",
++    "HAVE_BUILTIN_AVAILABLE",
++    "HAVE_CLOCK_GETTIME_MONOTONIC",
++    "HAVE_CLOCK_GETTIME_MONOTONIC_RAW",
++    "HAVE_DECL_FSEEKO",
++    "HAVE_FCNTL",
++    "HAVE_FCNTL_H",
++    "HAVE_FCNTL_O_NONBLOCK",
++    "HAVE_FNMATCH",
++    "HAVE_FREEADDRINFO",
++    "HAVE_FSEEKO",
++    "HAVE_FSETXATTR",
++    "HAVE_FSETXATTR_5",
++    "HAVE_FTRUNCATE",
++    "HAVE_GETADDRINFO",
++    "HAVE_GETADDRINFO_THREADSAFE",
++    "HAVE_GETEUID",
++    "HAVE_GETHOSTBYNAME_R",
++    "HAVE_GETHOSTBYNAME_R_3",
++    "HAVE_GETHOSTBYNAME_R_5",
++    "HAVE_GETHOSTBYNAME_R_6",
++    "HAVE_GETHOSTNAME",
++    "HAVE_GETIFADDRS",
++    "HAVE_GETPEERNAME",
++    "HAVE_GETPPID",
++    "HAVE_GETPWUID",
++    "HAVE_GETPWUID_R",
++    "HAVE_GETRLIMIT",
++    "HAVE_GETSOCKNAME",
++    "HAVE_GETTIMEOFDAY",
++    "HAVE_GMTIME_R",
++    "HAVE_IF_NAMETOINDEX",
++    "HAVE_IFADDRS_H",
++    "HAVE_INET_NTOP",
++    "HAVE_INET_PTON",
++    "HAVE_IOCTL_FIONBIO",
++    "HAVE_IOCTL_SIOCGIFADDR",
++    "HAVE_LBER_H",
++    "HAVE_LDAP_H",
++    "HAVE_LDAP_SSL",
++    "HAVE_LDAP_URL_PARSE",
++    "HAVE_LIBGEN_H",
++    "HAVE_LOCALE_H",
++    "HAVE_LONGLONG",
++    "HAVE_MACH_ABSOLUTE_TIME",
++    "HAVE_MEMRCHR",
++    "HAVE_MSG_NOSIGNAL",
++    "HAVE_NET_IF_H",
++    "HAVE_NETDB_H",
++    "HAVE_NETINET_IN_H",
++    "HAVE_NETINET_TCP_H",
++    "HAVE_NETINET_UDP_H",
++    "HAVE_PIPE",
++    "HAVE_POLL_FINE",
++    "HAVE_POLL_H",
++    "HAVE_POSIX_STRERROR_R",
++    "HAVE_PTHREAD_H",
++    "HAVE_PWD_H",
++    "HAVE_RECV",
++    "HAVE_SA_FAMILY_T",
++    "HAVE_SCHED_YIELD",
++    "HAVE_SELECT",
++    "HAVE_SEND",
++    "HAVE_SENDMSG",
++    "HAVE_SETLOCALE",
++    "HAVE_SETMODE",
++    "HAVE_SETRLIMIT",
++    "HAVE_SIGACTION",
++    "HAVE_SIGINTERRUPT",
++    "HAVE_SIGNAL",
++    "HAVE_SIGSETJMP",
++    "HAVE_SNPRINTF",
++    "HAVE_SOCKADDR_IN6_SIN6_SCOPE_ID",
++    "HAVE_SOCKET",
++    "HAVE_SOCKETPAIR",
++    "HAVE_STDATOMIC_H",
++    "HAVE_STDBOOL_H",
++    "HAVE_STRCASECMP",
++    "HAVE_STRDUP",
++    "HAVE_STRERROR_R",
++    "HAVE_STRINGS_H",
++    "HAVE_STRTOK_R",
++    "HAVE_STRTOLL",
++    "HAVE_STRUCT_SOCKADDR_STORAGE",
++    "HAVE_STRUCT_TIMEVAL",
++    "HAVE_SUSECONDS_T",
++    "HAVE_SYS_IOCTL_H",
++    "HAVE_SYS_PARAM_H",
++    "HAVE_SYS_POLL_H",
++    "HAVE_SYS_RESOURCE_H",
++    "HAVE_SYS_SELECT_H",
++    "HAVE_SYS_SOCKET_H",
++    "HAVE_SYS_STAT_H",
++    "HAVE_SYS_TIME_H",
++    "HAVE_SYS_TYPES_H",
++    "HAVE_SYS_UN_H",
++    "HAVE_SYS_WAIT_H",
++    "HAVE_TERMIOS_H",
++    "HAVE_UNISTD_H",
++    "HAVE_UTIME",
++    "HAVE_UTIME_H",
++    "HAVE_UTIMES",
++    "HAVE_WRITABLE_ARGV",
++    "STDC_HEADERS",
++    "USE_THREADS_POSIX",
++    "USE_UNIX_SOCKETS",
++])
++
++_DISABLED_SETTINGS = sets.make([
++    "_LARGE_FILES",
++    "_THREAD_SAFE",
++    "const",
++    "CURL_CA_FALLBACK",
++    "CURL_DEFAULT_SSL_BACKEND",
++    "CURL_DISABLE_ALTSVC",
++    "CURL_DISABLE_AWS",
++    "CURL_DISABLE_BASIC_AUTH",
++    "CURL_DISABLE_BEARER_AUTH",
++    "CURL_DISABLE_BINDLOCAL",
++    "CURL_DISABLE_COOKIES",
++    "CURL_DISABLE_DICT",
++    "CURL_DISABLE_DIGEST_AUTH",
++    "CURL_DISABLE_DOH",
++    "CURL_DISABLE_FILE",
++    "CURL_DISABLE_FORM_API",
++    "CURL_DISABLE_FTP",
++    "CURL_DISABLE_GETOPTIONS",
++    "CURL_DISABLE_GOPHER",
++    "CURL_DISABLE_HEADERS_API",
++    "CURL_DISABLE_HSTS",
++    "CURL_DISABLE_HTTP",
++    "CURL_DISABLE_IMAP",
++    "CURL_DISABLE_KERBEROS_AUTH",
++    "CURL_DISABLE_LDAPS",
++    "CURL_DISABLE_LIBCURL_OPTION",
++    "CURL_DISABLE_MIME",
++    "CURL_DISABLE_MQTT",
++    "CURL_DISABLE_NEGOTIATE_AUTH",
++    "CURL_DISABLE_NETRC",
++    "CURL_DISABLE_NTLM",
++    "CURL_DISABLE_PARSEDATE",
++    "CURL_DISABLE_POP3",
++    "CURL_DISABLE_PROGRESS_METER",
++    "CURL_DISABLE_PROXY",
++    "CURL_DISABLE_RTSP",
++    "CURL_DISABLE_SMB",
++    "CURL_DISABLE_SMTP",
++    "CURL_DISABLE_SOCKETPAIR",
++    "CURL_DISABLE_TELNET",
++    "CURL_DISABLE_TFTP",
++    "CURL_DISABLE_VERBOSE_STRINGS",
++    "CURL_WITH_MULTI_SSL",
++    "HAVE__FSEEKI64",
++    "HAVE_ADDRESS_FAMILY",
++    "HAVE_BROTLI",
++    "HAVE_CLOSESOCKET",
++    "HAVE_FSETXATTR_6",
++    "HAVE_GETPASS_R",
++    "HAVE_GLIBC_STRERROR_R",
++    "HAVE_GNUTLS_SRP",
++    "HAVE_GSSAPI",
++    "HAVE_GSSAPI_GSSAPI_GENERIC_H",
++    "HAVE_GSSAPI_GSSAPI_H",
++    "HAVE_GSSAPI_GSSAPI_KRB5_H",
++    "HAVE_GSSGNU",
++    "HAVE_IDN2_H",
++    "HAVE_IDNA_STRERROR",
++    "HAVE_IO_H",
++    "HAVE_IOCTLSOCKET",
++    "HAVE_IOCTLSOCKET_CAMEL",
++    "HAVE_IOCTLSOCKET_CAMEL_FIONBIO",
++    "HAVE_IOCTLSOCKET_FIONBIO",
++    "HAVE_LDAP_SSL_H",
++    "HAVE_LIBIDN2",
++    "HAVE_LIBSOCKET",
++    "HAVE_LIBSSH2",
++    "HAVE_LIBZ",  # TODO: Enable zlib support
++    "HAVE_LINUX_TCP_H",
++    "HAVE_OLD_GSSMIT",
++    "HAVE_OPENSSL_SRP",
++    "HAVE_QUICHE_CONN_SET_QLOG_FD",
++    "HAVE_SETSOCKOPT_SO_NONBLOCK",
++    "HAVE_SSL_SET0_WBIO",
++    "HAVE_STRCMPI",
++    "HAVE_STRICMP",
++    "HAVE_STROPTS_H",
++    "HAVE_SYS_FILIO_H",
++    "HAVE_SYS_SOCKIO_H",
++    "HAVE_SYS_UTIME_H",
++    "HAVE_TERMIO_H",
++    "HAVE_ZSTD",  # TODO: Enable zstd support
++    "in_addr_t",
++    "NEED_LBER_H",
++    "NEED_MALLOC_H",
++    "NEED_REENTRANT",
++    "PACKAGE",
++    "PACKAGE_BUGREPORT",
++    "PACKAGE_NAME",
++    "PACKAGE_STRING",
++    "PACKAGE_TARNAME",
++    "PACKAGE_VERSION",
++    "size_t",
++    "ssize_t",
++    "USE_ARES",
++    "USE_BEARSSL",
++    "USE_GNUTLS",
++    "USE_LIBPSL",
++    "USE_LIBSSH",
++    "USE_LIBSSH2",
++    "USE_MSH3",
++    "USE_NGHTTP2",
++    "USE_NGHTTP3",
++    "USE_NGTCP2",
++    "USE_OPENLDAP",
++    "USE_OPENSSL",
++    "USE_OPENSSL_QUIC",
++    "USE_QUICHE",
++    "USE_SCHANNEL",
++    "USE_SECTRANSP",
++    "USE_THREADS_WIN32",
++    "USE_TLS_SRP",
++    "USE_WEBSOCKETS",
++    "USE_WIN32_CRYPTO",
++    "USE_WIN32_IDN",
++    "USE_WIN32_LARGE_FILES",
++    "USE_WIN32_LDAP",
++    "USE_WINDOWS_SSPI",
++    "USE_WOLFSSL",
++    "VERSION",
++])
++
++_ENABLED_SETTINGS_MACOS = sets.make([
++    "HAVE_FSETXATTR_6",
++])
++
++_ENABLED_SETTINGS_LINUX = sets.make([
++    "HAVE_LINUX_TCP_H",
++])
++
++_ENABLED_SETTINGS_WINDOWS = sets.make([
++    "HAVE__FSEEKI64",
++    "HAVE_CLOSESOCKET",
++    "HAVE_IO_H",
++    "HAVE_IOCTLSOCKET",
++    "HAVE_IOCTLSOCKET_FIONBIO",
++    "HAVE_STRICMP",
++    "USE_SCHANNEL",
++    "USE_WIN32_IDN",
++    "USE_WINDOWS_SSPI",
++])
++
++_DISABLED_SETTINGS_MACOS = sets.make([
++    "HAVE_FSETXATTR_5",
++    "HAVE_GETHOSTBYNAME_R",
++    "HAVE_GETHOSTBYNAME_R_3",
++    "HAVE_GETHOSTBYNAME_R_5",
++    "HAVE_GETHOSTBYNAME_R_6",
++    "HAVE_MEMRCHR",
++    "HAVE_POLL_FINE",
++])
++
++_DISABLED_SETTINGS_LINUX = sets.make([
++])
++
++_DISABLED_SETTINGS_WINDOWS = sets.make([
++    "HAVE_ARC4RANDOM",
++    "HAVE_ARPA_INET_H",
++    "HAVE_ATOMIC",
++    "HAVE_BASENAME",
++    "HAVE_BOOL_T",
++    "HAVE_BUILTIN_AVAILABLE",
++    "HAVE_CLOCK_GETTIME_MONOTONIC",
++    "HAVE_CLOCK_GETTIME_MONOTONIC_RAW",
++    "HAVE_DECL_FSEEKO",
++    "HAVE_FCNTL",
++    "HAVE_FCNTL_O_NONBLOCK",
++    "HAVE_FNMATCH",
++    "HAVE_FSEEKO",
++    "HAVE_FSETXATTR",
++    "HAVE_FSETXATTR_5",
++    "HAVE_FTRUNCATE",
++    "HAVE_GETEUID",
++    "HAVE_GETHOSTBYNAME_R",
++    "HAVE_GETHOSTBYNAME_R_3",
++    "HAVE_GETHOSTBYNAME_R_5",
++    "HAVE_GETHOSTBYNAME_R_6",
++    "HAVE_GETIFADDRS",
++    "HAVE_GETPPID",
++    "HAVE_GETPWUID",
++    "HAVE_GETPWUID_R",
++    "HAVE_GETRLIMIT",
++    "HAVE_GETTIMEOFDAY",
++    "HAVE_GMTIME_R",
++    "HAVE_IF_NAMETOINDEX",
++    "HAVE_IFADDRS_H",
++    "HAVE_INET_NTOP",
++    "HAVE_INET_PTON",
++    "HAVE_IOCTL_FIONBIO",
++    "HAVE_IOCTL_SIOCGIFADDR",
++    "HAVE_LBER_H",
++    "HAVE_LDAP_H",
++    "HAVE_LDAP_SSL",
++    "HAVE_LDAP_URL_PARSE",
++    "HAVE_LIBGEN_H",
++    "HAVE_MACH_ABSOLUTE_TIME",
++    "HAVE_MSG_NOSIGNAL",
++    "HAVE_NET_IF_H",
++    "HAVE_NETDB_H",
++    "HAVE_NETINET_IN_H",
++    "HAVE_NETINET_TCP_H",
++    "HAVE_NETINET_UDP_H",
++    "HAVE_PIPE",
++    "HAVE_POLL_FINE",
++    "HAVE_POLL_H",
++    "HAVE_POSIX_STRERROR_R",
++    "HAVE_PWD_H",
++    "HAVE_SA_FAMILY_T",
++    "HAVE_SCHED_YIELD",
++    "HAVE_SENDMSG",
++    "HAVE_SETRLIMIT",
++    "HAVE_SIGACTION",
++    "HAVE_SIGINTERRUPT",
++    "HAVE_SIGSETJMP",
++    "HAVE_SOCKETPAIR",
++    "HAVE_STDATOMIC_H",
++    "HAVE_STDBOOL_H",
++    "HAVE_STRCASECMP",
++    "HAVE_STRERROR_R",
++    "HAVE_STRINGS_H",
++    "HAVE_STRTOK_R",
++    "HAVE_STRTOLL",
++    "HAVE_SUSECONDS_T",
++    "HAVE_SYS_IOCTL_H",
++    "HAVE_SYS_PARAM_H",
++    "HAVE_SYS_POLL_H",
++    "HAVE_SYS_RESOURCE_H",
++    "HAVE_SYS_SELECT_H",
++    "HAVE_SYS_SOCKET_H",
++    "HAVE_SYS_UN_H",
++    "HAVE_SYS_WAIT_H",
++    "HAVE_TERMIOS_H",
++    "HAVE_UNISTD_H",
++    "HAVE_UTIME_H",
++    "HAVE_UTIMES",
++    "HAVE_WRITABLE_ARGV",
++    "USE_THREADS_POSIX",
++    "USE_UNIX_SOCKETS",
++])
++
++def enabled_setting_substitution(setting):
++    return (
++        "#cmakedefine {} 1".format(setting),
++        "#define {} 1".format(setting),
++    )
++
++def disabled_setting_substitution(setting):
++    return (
++        # Add a space after to make sure the match is literal
++        "#cmakedefine {} ".format(setting),
++        # Undef the entire line even if there is trailing info
++        "// undef {}".format(setting),
++    )
++
++def get_ca_substitutions(bundle, path):
++    return {
++        '#cmakedefine CURL_CA_BUNDLE "${CURL_CA_BUNDLE}"': '#define CURL_CA_BUNDLE "{}"'.format(bundle),
++        '#cmakedefine CURL_CA_PATH "${CURL_CA_PATH}"': '#define CURL_CA_PATH "{}"'.format(path),
++    }
++
++def get_os_substitutions(os):
++    return {
++        "#cmakedefine OS ${OS}": '#define OS "{}"'.format(os),
++    }
++
++def get_random_file_substitutions(file):
++    return {
++        '#cmakedefine RANDOM_FILE "${RANDOM_FILE}"': '#define RANDOM_FILE "{}"'.format(file),
++    }
++
++def get_substitutions():
++    return {
++        "${SIZEOF_CURL_OFF_T_CODE}": "#define SIZEOF_CURL_OFF_T 8",
++        "${SIZEOF_CURL_SOCKET_T_CODE}": "#define SIZEOF_CURL_SOCKET_T 4",
++        "${SIZEOF_INT_CODE}": "#define SIZEOF_INT 4",
++        "${SIZEOF_LONG_CODE}": "#define SIZEOF_LONG 8",
++        "${SIZEOF_LONG_LONG_CODE}": "#define SIZEOF_LONG_LONG 8",
++        "${SIZEOF_OFF_T_CODE}": "#define SIZEOF_OFF_T 8",
++        "${SIZEOF_SIZE_T_CODE}": "#define SIZEOF_SIZE_T 8",
++        "${SIZEOF_TIME_T_CODE}": "#define SIZEOF_TIME_T 8",
++    } | select({
++        "@platforms//os:macos": dict([
++            enabled_setting_substitution(x)
++            for x in sets.to_list(
++                sets.union(
++                    _ENABLED_SETTINGS_MACOS,
++                    sets.difference(_ENABLED_SETTINGS, _DISABLED_SETTINGS_MACOS),
++                ),
++            )
++        ]) | dict([
++            disabled_setting_substitution(x)
++            for x in sets.to_list(
++                sets.union(
++                    sets.difference(
++                        _DISABLED_SETTINGS,
++                        _ENABLED_SETTINGS_MACOS,
++                    ),
++                    _DISABLED_SETTINGS_MACOS,
++                ),
++            )
++        ]),
++        "@platforms//os:linux": dict([
++            enabled_setting_substitution(x)
++            for x in sets.to_list(
++                sets.union(
++                    _ENABLED_SETTINGS_LINUX,
++                    sets.difference(
++                        _ENABLED_SETTINGS,
++                        _DISABLED_SETTINGS_LINUX,
++                    ),
++                ),
++            )
++        ]) | dict([
++            disabled_setting_substitution(x)
++            for x in sets.to_list(
++                sets.union(
++                    sets.difference(
++                        _DISABLED_SETTINGS,
++                        _ENABLED_SETTINGS_LINUX,
++                    ),
++                    _DISABLED_SETTINGS_LINUX,
++                ),
++            )
++        ]),
++        "@platforms//os:windows": dict([
++            enabled_setting_substitution(x)
++            for x in sets.to_list(
++                sets.union(
++                    _ENABLED_SETTINGS_WINDOWS,
++                    sets.difference(
++                        _ENABLED_SETTINGS,
++                        _DISABLED_SETTINGS_WINDOWS,
++                    ),
++                ),
++            )
++        ]) | dict([
++            disabled_setting_substitution(x)
++            for x in sets.to_list(
++                sets.union(
++                    sets.difference(
++                        _DISABLED_SETTINGS,
++                        _ENABLED_SETTINGS_WINDOWS,
++                    ),
++                    _DISABLED_SETTINGS_WINDOWS,
++                ),
++            )
++        ]),
++    })
