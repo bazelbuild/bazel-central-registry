@@ -1,9 +1,9 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
 new file mode 100644
-index 000000000..eb68b2425
+index 000000000..2ed91ba1a
 --- /dev/null
 +++ b/BUILD.bazel
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,111 @@
 +# Copyright The OpenTelemetry Authors
 +# SPDX-License-Identifier: Apache-2.0
 +
@@ -44,46 +44,12 @@ index 000000000..eb68b2425
 +expand_template(
 +    name = "curl_config",
 +    out = "lib/curl_config.h",
-+    substitutions = get_substitutions() |
-+                    select({
-+                        "@platforms//os:macos": get_ca_substitutions("/etc/ssl/cert.pem", "/etc/ssl/certs"),
-+                        "@platforms//os:linux": get_ca_substitutions("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/certs"),
-+                        "@platforms//os:windows": dict([
-+                            disabled_setting_substitution("CURL_CA_BUNDLE"),
-+                            disabled_setting_substitution("CURL_CA_PATH"),
-+                        ]),
-+                    }) |
-+                    select({
-+                        "@platforms//os:windows": dict([
-+                            disabled_setting_substitution("RANDOM_FILE"),
-+                        ]),
-+                        "//conditions:default": get_random_file_substitutions("/dev/urandom"),
-+                    }) |
-+                    select({
-+                        "@platforms//os:windows": dict([
-+                            disabled_setting_substitution("CURL_EXTERN_SYMBOL"),
-+                        ]),
-+                        "//conditions:default": {
-+                            "#cmakedefine CURL_EXTERN_SYMBOL ${CURL_EXTERN_SYMBOL}": '__attribute__ ((__visibility__ ("default")))',
-+                        },
-+                    }) |
-+                    select({
-+                        "@platforms//os:windows": dict([
-+                            disabled_setting_substitution("_FILE_OFFSET_BITS"),
-+                        ]),
-+                        "//conditions:default": {
-+                            "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "#define _FILE_OFFSET_BITS 64",
-+                        },
-+                    }) |
-+                    select({
-+                        "@platforms//os:macos": get_os_substitutions("Darwin"),
-+                        "@platforms//os:linux": get_os_substitutions("Linux"),
-+                        "@platforms//os:windows": get_os_substitutions("Windows"),
-+                    }) |
-+                    select({
-+                        ":use_mbedtls_setting": dict([enabled_setting_substitution("USE_MBEDTLS")]),
-+                        "//conditions:default": dict([disabled_setting_substitution("USE_MBEDTLS")]),
-+                    }),
++    substitutions =
++        get_substitutions() |
++        select({
++            ":use_mbedtls_setting": dict([enabled_setting_substitution("USE_MBEDTLS")]),
++            "//conditions:default": dict([disabled_setting_substitution("USE_MBEDTLS")]),
++        }),
 +    template = "lib/curl_config.h.cmake",
 +)
 +
@@ -166,10 +132,10 @@ index 000000000..8991a973a
 +bazel_dep(name = "platforms", version = "0.0.8")
 diff --git a/config.bzl b/config.bzl
 new file mode 100644
-index 000000000..78589d990
+index 000000000..5e22fef9e
 --- /dev/null
 +++ b/config.bzl
-@@ -0,0 +1,471 @@
+@@ -0,0 +1,509 @@
 +"""Generate platform specific template substitutions for curl_config.h.cmake"""
 +
 +load("@bazel_skylib//lib:new_sets.bzl", "sets")
@@ -384,8 +350,6 @@ index 000000000..78589d990
 +    "PACKAGE_STRING",
 +    "PACKAGE_TARNAME",
 +    "PACKAGE_VERSION",
-+    "size_t",
-+    "ssize_t",
 +    "USE_ARES",
 +    "USE_BEARSSL",
 +    "USE_GNUTLS",
@@ -442,9 +406,13 @@ index 000000000..78589d990
 +    "HAVE_GETHOSTBYNAME_R_6",
 +    "HAVE_MEMRCHR",
 +    "HAVE_POLL_FINE",
++    "size_t",
++    "ssize_t",
 +])
 +
 +_DISABLED_SETTINGS_LINUX = sets.make([
++    "size_t",
++    "ssize_t",
 +])
 +
 +_DISABLED_SETTINGS_WINDOWS = sets.make([
@@ -640,4 +608,40 @@ index 000000000..78589d990
 +                ),
 +            )
 +        ]),
++    }) | select({
++        "@platforms//os:macos": get_ca_substitutions("/etc/ssl/cert.pem", "/etc/ssl/certs"),
++        "@platforms//os:linux": get_ca_substitutions("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/certs"),
++        "@platforms//os:windows": dict([
++            disabled_setting_substitution("CURL_CA_BUNDLE"),
++            disabled_setting_substitution("CURL_CA_PATH"),
++        ]),
++    }) | select({
++        "@platforms//os:windows": dict([
++            disabled_setting_substitution("RANDOM_FILE"),
++        ]),
++        "//conditions:default": get_random_file_substitutions("/dev/urandom"),
++    }) | select({
++        "@platforms//os:windows": dict([
++            disabled_setting_substitution("CURL_EXTERN_SYMBOL"),
++        ]),
++        "//conditions:default": {
++            "#cmakedefine CURL_EXTERN_SYMBOL ${CURL_EXTERN_SYMBOL}": '__attribute__ ((__visibility__ ("default")))',
++        },
++    }) | select({
++        "@platforms//os:windows": dict([
++            disabled_setting_substitution("_FILE_OFFSET_BITS"),
++        ]),
++        "//conditions:default": {
++            "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "#define _FILE_OFFSET_BITS 64",
++        },
++    }) | select({
++        "@platforms//os:macos": get_os_substitutions("Darwin"),
++        "@platforms//os:linux": get_os_substitutions("Linux"),
++        "@platforms//os:windows": get_os_substitutions("Windows"),
++    }) | select({
++        "@platforms//os:windows": {
++            "#cmakedefine size_t ${size_t}": "#define size_t size_t",
++            "#cmakedefine ssize_t ${ssize_t}": "#define ssize_t ssize_t",
++        },
++        "//conditions:default": {},
 +    })
