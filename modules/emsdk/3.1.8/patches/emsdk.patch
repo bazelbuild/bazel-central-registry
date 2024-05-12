@@ -1,0 +1,118 @@
+diff --git a/BUILD b/BUILD
+index dfec803..da43b2e 100644
+--- a/BUILD
++++ b/BUILD
+@@ -45,13 +45,3 @@ alias(
+     }),
+ )
+ 
+-alias(
+-    name = "node_modules",
+-    actual = select({
+-        ":linux": "@emscripten_npm_linux//:node_modules",
+-        ":macos": "@emscripten_npm_mac//:node_modules",
+-        ":macos_arm64": "@emscripten_npm_mac//:node_modules",
+-        ":windows": "@emscripten_npm_win//:node_modules",
+-        "//conditions:default": ":empty",
+-    }),
+-)
+diff --git a/emscripten_deps.bzl b/emscripten_deps.bzl
+index 95801ba..f70749d 100644
+--- a/emscripten_deps.bzl
++++ b/emscripten_deps.bzl
+@@ -1,5 +1,4 @@
+ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+-load("@build_bazel_rules_nodejs//:index.bzl", "npm_install", "node_repositories")
+ load(":revisions.bzl", "EMSCRIPTEN_TAGS")
+ 
+ def _parse_version(v):
+@@ -24,11 +23,6 @@ def emscripten_deps(emscripten_version = "latest"):
+     # This could potentially backfire for projects with multiple emscripten
+     # dependencies that use different emscripten versions
+     excludes = native.existing_rules().keys()
+-    if "nodejs_toolchains" not in excludes:
+-        # Node 16 is the first version that supports darwin_arm64
+-        node_repositories(
+-            node_version = "16.6.2",
+-        )
+ 
+     if "emscripten_bin_linux" not in excludes:
+         http_archive(
+@@ -70,30 +64,6 @@ def emscripten_deps(emscripten_version = "latest"):
+             type = "zip",
+         )
+ 
+-    if "emscripten_npm_linux" not in excludes:
+-        npm_install(
+-            name = "emscripten_npm_linux",
+-            package_json = "@emscripten_bin_linux//:emscripten/package.json",
+-            package_lock_json = "@emscripten_bin_linux//:emscripten/package-lock.json",
+-        )
+-
+-    if "emscripten_npm_mac" not in excludes:
+-        npm_install(
+-            name = "emscripten_npm_mac",
+-            package_json = "@emscripten_bin_mac//:emscripten/package.json",
+-            package_lock_json = "@emscripten_bin_mac//:emscripten/package-lock.json",
+-        )
+-
+-    if "emscripten_npm_mac_arm64" not in excludes:
+-        npm_install(
+-            name = "emscripten_npm_mac",
+-            package_json = "@emscripten_bin_mac_arm64//:emscripten/package.json",
+-            package_lock_json = "@emscripten_bin_mac_arm64//:emscripten/package-lock.json",
+-        )
+-
+-    if "emscripten_npm_win" not in excludes:
+-        npm_install(
+-            name = "emscripten_npm_win",
+-            package_json = "@emscripten_bin_win//:emscripten/package.json",
+-            package_lock_json = "@emscripten_bin_win//:emscripten/package-lock.json",
+-        )
++emscripten_deps_ext = module_extension(
++    implementation = lambda x: emscripten_deps(),
++)
+diff --git a/emscripten_toolchain/BUILD.bazel b/emscripten_toolchain/BUILD.bazel
+index eb36959..5184d42 100644
+--- a/emscripten_toolchain/BUILD.bazel
++++ b/emscripten_toolchain/BUILD.bazel
+@@ -13,8 +13,6 @@ filegroup(
+         "env.sh",
+         "env.bat",
+         "@emsdk//:binaries",
+-        "@emsdk//:node_modules",
+-        "@nodejs//:node_files",
+     ],
+ )
+ 
+@@ -31,7 +29,6 @@ filegroup(
+         "link_wrapper.py",
+         ":common-script-includes",
+         "@emsdk//:binaries",
+-        "@nodejs//:node_files",
+     ],
+ )
+ 
+@@ -41,7 +38,6 @@ filegroup(
+         ":compile-emscripten",
+         ":link-emscripten",
+         "@emsdk//:binaries",
+-        "@nodejs//:node_files",
+     ],
+ )
+ 
+@@ -75,14 +71,6 @@ cc_toolchain(
+     toolchain_identifier = "emscripten-wasm",
+ )
+ 
+-cc_toolchain_suite(
+-    name = "everything",
+-    toolchains = {
+-        "wasm": ":cc-compiler-wasm",
+-        "wasm|emscripten": ":cc-compiler-wasm",
+-    },
+-)
+-
+ py_binary(
+     name = "wasm_binary",
+     srcs = ["wasm_binary.py"],
