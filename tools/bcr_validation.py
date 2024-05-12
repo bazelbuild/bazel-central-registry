@@ -258,15 +258,37 @@ class BcrValidator:
     presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
     presubmit = yaml.safe_load(open(presubmit_yml, "r"))
     report_num_old = len(self.validation_results)
-    self.check_if_bazel_version_is_set(presubmit.get("tasks", {}))
+    tasks = presubmit.get("tasks", {})
+    self.check_if_bazel_version_is_set(tasks)
+    test_module_tasks = {}
     if "bcr_test_module" in presubmit:
-      self.check_if_bazel_version_is_set(presubmit["bcr_test_module"].get("tasks", {}))
+      test_module_tasks = presubmit["bcr_test_module"].get("tasks", {})
+      self.check_if_bazel_version_is_set(test_module_tasks)
+    if not tasks and not test_module_tasks:
+      self.report(BcrValidationResult.FAILED, "At least one task should be specified in the presubmit.yml file.")
     report_num_new = len(self.validation_results)
     if report_num_new == report_num_old:
       self.report(BcrValidationResult.GOOD, "The presubmit.yml file is valid.")
 
+  def verify_module_name_conflict(self):
+    """Verify no module name conflict when ignoring case sensitivity."""
+    module_names = self.registry.get_all_modules()
+    conflict_found = False
+    module_group = {}
+    for name in module_names:
+      module_group.setdefault(name.lower(), []).append(name)
+
+    for name, modules in module_group.items():
+      if len(modules) > 1:
+        conflict_found = True
+        self.report(BcrValidationResult.FAILED, f"Module name conflict found: {', '.join(modules)}")
+
+    if not conflict_found:
+      self.report(BcrValidationResult.GOOD, "No module name conflict found.")
+
   def validate_module(self, module_name, version, skipped_validations):
     print_expanded_group(f"Validating {module_name}@{version}")
+    self.verify_module_name_conflict()
     self.verify_module_existence(module_name, version)
     if "source_repo" not in skipped_validations:
       self.verify_source_archive_url_match_github_repo(module_name, version)
