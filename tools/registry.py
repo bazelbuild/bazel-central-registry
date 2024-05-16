@@ -213,6 +213,9 @@ module(
     name = "{0}",
     version = "{1}",
     compatibility_level = {2},
+    bazel_compatibility = [
+        ">=7.2.0",
+    ],
 )
 """.strip()
 
