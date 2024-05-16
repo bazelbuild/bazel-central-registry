@@ -352,6 +352,10 @@ module(
         "url": module.url,
         "integrity": integrity(download(module.url)),
     }
+
+    source["overlay"] = {}
+    source["overlay"]["MODULE.bazel"] = integrity(read(module_dot_bazel))
+
     if module.strip_prefix:
       source["strip_prefix"] = module.strip_prefix
 
@@ -369,15 +373,9 @@ module(
 
     # Turn additional BUILD file into a patch
     if module.build_file:
-      build_file_content = pathlib.Path(module.build_file).open().readlines()
-      build_file = "a/" * module.patch_strip + "BUILD.bazel"
-      patch_content = difflib.unified_diff(
-          [], build_file_content, "/dev/null", build_file)
-      patch_name = "add_build_file.patch"
-      patch = patch_dir.joinpath(patch_name)
-      with patch.open("w") as f:
-        f.writelines(patch_content)
-      source["patches"][patch_name] = integrity(read(patch))
+      build_dot_bazel = p.joinpath("BUILD.bazel")
+      shutil.copy(module.build_file, build_dot_bazel)
+      source["overlay"]["BUILD.bazel"] = integrity(read(build_dot_bazel))
 
     json_dump(p.joinpath("source.json"), source, sort_keys=False)
 
