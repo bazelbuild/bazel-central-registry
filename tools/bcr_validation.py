@@ -313,7 +313,7 @@ class BcrValidator:
         continue
 
       if validators.url(metadata["homepage"]) == False:
-        self.report(BcrValidationResult.FAILED, f"{module_name} homepage attribute does not contain a valid URL {metadata["homepage"]}.")
+        self.report(BcrValidationResult.FAILED, f"{module_name}'s metadata.json file does not contain a valid URL in the homepage attribute.")
         has_error = True
 
       sorted_versions = sorted(metadata["versions"], key=Version)
