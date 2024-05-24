@@ -48,6 +48,7 @@ py_binary(
 py_library(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
+    imports = ["."],
     deps = [
         ":registry",
         ":verify_stable_archives",
