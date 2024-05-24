@@ -51,6 +51,7 @@ py_library(
     deps = [
         ":registry",
         ":verify_stable_archives",
+        requirement("validators"),
     ],
 )
 
