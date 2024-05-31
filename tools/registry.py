@@ -456,9 +456,9 @@ module(
     else:
       available = []
     current = source.get("patches", {}).keys()
-    patch_files = [patch_dir / p for p in current if p in available]
+    patch_files = [patch_dir / p for p in current]
     patch_files.extend(patch_dir / p for p in available if p not in current)
-    patches = {patch.name: integrity(read(patch)) for patch in patch_files}
+    patches = {str(patch.relative_to(patch_dir)): integrity(read(patch)) for patch in patch_files}
     source["patches"] = patches
     json_dump(source_path, source, sort_keys=False)
 
