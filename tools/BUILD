@@ -45,7 +45,7 @@ py_binary(
     ],
 )
 
-py_library(
+py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
     deps = [
