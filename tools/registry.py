@@ -450,6 +450,7 @@ module(
     source = self.get_source(module_name, version)
     source["integrity"] = integrity(download(source["url"]))
     source_path = self.get_source_path(module_name, version)
+
     patch_dir = source_path.parent / "patches"
     if patch_dir.exists():
       available = sorted(p.name for p in patch_dir.iterdir())
@@ -458,8 +459,28 @@ module(
     current = source.get("patches", {}).keys()
     patch_files = [patch_dir / p for p in current]
     patch_files.extend(patch_dir / p for p in available if p not in current)
-    patches = {str(patch.relative_to(patch_dir)): integrity(read(patch)) for patch in patch_files}
-    source["patches"] = patches
+    patches = {
+      str(patch.relative_to(patch_dir)): integrity(read(patch))
+      for patch in patch_files
+    }
+    if patches:
+      source["patches"] = patches
+    else:
+      source.pop("patches", None)
+
+    overlay_files = {
+      file
+      for file in source.get("overlay", {}).keys()
+      if (source_path.parent / file).is_file()
+    }
+    overlay_integrities = {
+      file: integrity(read(source_path.parent / file)) for file in overlay_files
+    }
+    if overlay_files:
+      source["overlay"] = overlay_integrities
+    else:
+      source.pop("overlay", None)
+
     json_dump(source_path, source, sort_keys=False)
 
   def delete(self, module_name, version):
