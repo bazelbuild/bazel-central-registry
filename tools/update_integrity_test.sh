@@ -15,6 +15,7 @@ cat <<"EOF" >"${foomod}/metadata.json"
 }
 EOF
 echo 'module(name = "foomod", version = "1.2.3")' >"${foomod}/1.2.3/MODULE.bazel"
+echo hello >"${foomod}//1.2.3/overlay.file"
 echo old >"${foomod}/1.2.3/patches/preexisting-1.patch"
 echo old >"${foomod}/1.2.3/patches/preexisting-2.patch"
 echo new >"${foomod}/1.2.3/patches/a-newly-added.patch"
@@ -23,6 +24,7 @@ cat <<"EOF" >"${foomod}/1.2.3/source.json"
     "url": "file:///dev/null",
     "integrity": "not-a-real-integrity-hash",
     "strip_prefix": "foomod-1.2.3",
+    "overlay": {"overlay.file": "outdated-sha", "removed-overlay": "outdated-sha"},
     "patches": {
         "preexisting-1.patch": "sha256-AdCdGcITmkauv7V3eA0SPXOW6XIBvH6tIQouv/gjne4=",
         "preexisting-2.patch": "sha256-AdCdGcITmkauv7V3eA0SPXOW6XIBvH6tIQouv/gjne4="
@@ -39,6 +41,9 @@ diff -u - "${foomod}/1.2.3/source.json" <<<'{
     "url": "file:///dev/null",
     "integrity": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
     "strip_prefix": "foomod-1.2.3",
+    "overlay": {
+        "overlay.file": "sha256-WJG1tSLV3whtD/CxEPvZ0hu0/HFjrzTQgoai6Eb2vgM="
+    },
     "patches": {
         "preexisting-1.patch": "sha256-AdCdGcITmkauv7V3eA0SPXOW6XIBvH6tIQouv/gjne4=",
         "preexisting-2.patch": "sha256-AdCdGcITmkauv7V3eA0SPXOW6XIBvH6tIQouv/gjne4=",
