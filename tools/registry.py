@@ -243,26 +243,23 @@ module(
   def get_metadata_path(self, module_name):
     return self.root / "modules" / module_name / "metadata.json"
 
-  def get_source(self, module_name, version):
-    source_path = self.root.joinpath("modules", module_name, version,
-                                     "source.json")
-    return json.load(source_path.open())
+  def get_version_dir(self, module_name, version):
+    return self.root.joinpath("modules", module_name, version)
 
-  def get_source_path(self, module_name, version):
-    return self.root.joinpath("modules", module_name, version,
-                              "source.json")
+  def get_source(self, module_name, version):
+    return json.load(self.get_source_json_path(module_name, version).open())
+
+  def get_source_json_path(self, module_name, version):
+    return self.get_version_dir(module_name, version) / "source.json"
 
   def get_presubmit_yml_path(self, module_name, version):
-    return self.root.joinpath("modules", module_name, version,
-                              "presubmit.yml")
+    return self.get_version_dir(module_name, version) / "presubmit.yml"
 
   def get_patch_file_path(self, module_name, version, patch_name):
-    return self.root.joinpath("modules", module_name, version,
-                              "patches", patch_name)
+    return self.get_version_dir(module_name, version) / "patches" / patch_name
 
   def get_module_dot_bazel_path(self, module_name, version):
-    return self.root.joinpath("modules", module_name, version,
-                              "MODULE.bazel")
+    return self.get_version_dir(module_name, version) / "MODULE.bazel"
 
   def contains(self, module_name, version=None):
     """
@@ -449,7 +446,7 @@ module(
     """Update the SRI hashes of the source.json file of module at version."""
     source = self.get_source(module_name, version)
     source["integrity"] = integrity(download(source["url"]))
-    source_path = self.get_source_path(module_name, version)
+    source_path = self.get_source_json_path(module_name, version)
 
     patch_dir = source_path.parent / "patches"
     if patch_dir.exists():

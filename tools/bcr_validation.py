@@ -203,7 +203,7 @@ class BcrValidator:
     patches = source.get("patches", {})
     patches["module_dot_bazel.patch"] = integrity(read(patch_file))
     source["patches"] = patches
-    with open(self.registry.get_source_path(module_name, version), "w") as f:
+    with open(self.registry.get_source_json_path(module_name, version), "w") as f:
       json.dump(source, f, indent=4)
       f.write("\n")
 
@@ -225,6 +225,15 @@ class BcrValidator:
             if actual_integrity != expected_integrity:
               self.report(BcrValidationResult.FAILED, f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.")
             apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
+    if "overlay" in source:
+      version_dir = self.registry.get_version_dir(module_name, version)
+      for overlay_file, expected_integrity in source["overlay"].items():
+        overlay_src = version_dir / overlay_file
+        overlay_dst = source_root / overlay_file
+        actual_integrity = integrity(read(overlay_src))
+        if actual_integrity != expected_integrity:
+          self.report(BcrValidationResult.FAILED, f"The overlay file `{overlay_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.")
+        shutil.copy2(overlay_src, overlay_dst)
 
     source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
     if source_module_dot_bazel.exists():
