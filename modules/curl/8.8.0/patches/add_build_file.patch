@@ -1,13 +1,13 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
 new file mode 100644
-index 000000000..1bebf2516
+index 000000000..f40364c9c
 --- /dev/null
 +++ b/BUILD.bazel
-@@ -0,0 +1,262 @@
+@@ -0,0 +1,294 @@
 +# Copyright The OpenTelemetry Authors
 +# SPDX-License-Identifier: Apache-2.0
 +
-+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 +
 +package(features = ["no_copts_tokenization"])
 +
@@ -197,6 +197,38 @@ index 000000000..1bebf2516
 +    "-DCURL_HIDDEN_SYMBOLS",
 +]
 +
++# Curl's default CA path depends on the OS. If CURL_CA_BUNDLE/CURL_CA_PATH are not set,
++# and you don't `curl_easy_setopt(curl_, CURLOPT_CAPATH, "/etc/ssl/certs");`, curl will
++# fail to verify server certificates.
++# The string_flag/config_settings below allows the user to specify the OS-specific
++# default CA path like `--@curl//:ca_bundle=Debian` on the command line or in .bazelrc
++# The values are from https://github.com/curl/curl/blob/curl-8_8_0/acinclude.m4#L1202
++_CA_BUNDLE_OSES = "Debian Redhat OldRedhat MidnightBSD OpenBSD SUSE".split(" ")
++
++string_flag(
++    name = "ca_bundle",
++    build_setting_default = "None",
++    values = ["None"] + _CA_BUNDLE_OSES,
++)
++
++[
++    config_setting(
++        name = "ca_bundle_" + os,
++        flag_values = {":ca_bundle": os},
++    )
++    for os in _CA_BUNDLE_OSES
++]
++
++_CA_BUNDLE = select({
++    ":ca_bundle_Debian": ['CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"'],
++    ":ca_bundle_Redhat": ['CURL_CA_BUNDLE=\\"/etc/pki/tls/certs/ca-bundle.crt\\"'],
++    ":ca_bundle_OldRedhat": ['CURL_CA_BUNDLE=\\"/usr/share/ssl/certs/ca-bundle.crt\\"'],
++    ":ca_bundle_MidnightBSD": ['CURL_CA_BUNDLE=\\"/usr/local/share/certs/ca-root-nss.crt\\"'],
++    ":ca_bundle_OpenBSD": ['CURL_CA_BUNDLE=\\"/etc/ssl/cert.pem\\"'],
++    ":ca_bundle_SUSE": ['CURL_CA_PATH=\\"/etc/ssl/certs\\"'],
++    "//conditions:default": [],
++})
++
 +cc_library(
 +    name = "curl",
 +    srcs = glob([
@@ -248,7 +280,7 @@ index 000000000..1bebf2516
 +    }) + select({
 +        ":http_only_setting": ["HTTP_ONLY"],
 +        "//conditions:default": [],
-+    }),
++    }) + _CA_BUNDLE,
 +    visibility = ["//visibility:public"],
 +    deps = select({
 +        ":use_mbedtls_setting": ["@mbedtls"],
