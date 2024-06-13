@@ -211,7 +211,7 @@ class BcrValidator:
     source = self.registry.get_source(module_name, version)
     source_url = source["url"]
     tmp_dir = Path(tempfile.mkdtemp())
-    archive_file = tmp_dir.joinpath(source_url.split("/")[-1])
+    archive_file = tmp_dir.joinpath(source_url.split("/")[-1].split("?")[0])
     output_dir = tmp_dir.joinpath("source_root")
     download_file(source_url, archive_file)
     shutil.unpack_archive(str(archive_file), output_dir)
