@@ -243,11 +243,14 @@ module(
   def get_metadata_path(self, module_name):
     return self.root / "modules" / module_name / "metadata.json"
 
+  def get_module_dir(self, module_name):
+    return self.root / "modules" / module_name
+
   def get_version_dir(self, module_name, version):
-    return self.root.joinpath("modules", module_name, version)
+    return self.get_module_dir(module_name) / version
 
   def get_source(self, module_name, version):
-    return json.load(self.get_source_json_path(module_name, version).open())
+    return json.loads(self.get_source_json_path(module_name, version).read_text())
 
   def get_source_json_path(self, module_name, version):
     return self.get_version_dir(module_name, version) / "source.json"
