@@ -1,9 +1,9 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
 new file mode 100644
-index 000000000..f40364c9c
+index 000000000..0eaa6df71
 --- /dev/null
 +++ b/BUILD.bazel
-@@ -0,0 +1,294 @@
+@@ -0,0 +1,301 @@
 +# Copyright The OpenTelemetry Authors
 +# SPDX-License-Identifier: Apache-2.0
 +
@@ -29,6 +29,35 @@ index 000000000..f40364c9c
 +config_setting(
 +    name = "http_only_setting",
 +    flag_values = {":http_only": "true"},
++)
++
++# Curl's default CA path depends on the OS. If CURL_CA_BUNDLE/CURL_CA_PATH are not set,
++# (and you don't `curl_easy_setopt(curl_, CURLOPT_CAPATH, "/etc/ssl/certs");`), curl
++# will fail to verify server certificates.
++# The string_flag below allows the user to specify their (OS-specific) default CA path
++# like `--@curl//:ca_bundle=/etc/ssl/certs/ca-certificates.crt` on the command line or
++# in .bazelrc. See also https://github.com/curl/curl/blob/curl-8_8_0/acinclude.m4#L1202
++
++string_flag(
++    name = "ca_bundle",
++    build_setting_default = "",
++    make_variable = "CURL_CA_BUNDLE",
++)
++
++config_setting(
++    name = "ca_bundle_is_unset",
++    flag_values = {":ca_bundle": ""},
++)
++
++string_flag(
++    name = "ca_path",
++    build_setting_default = "",
++    make_variable = "CURL_CA_PATH",
++)
++
++config_setting(
++    name = "ca_path_is_unset",
++    flag_values = {":ca_path": ""},
 +)
 +
 +_BASE_CURL_COPTS = [
@@ -197,38 +226,6 @@ index 000000000..f40364c9c
 +    "-DCURL_HIDDEN_SYMBOLS",
 +]
 +
-+# Curl's default CA path depends on the OS. If CURL_CA_BUNDLE/CURL_CA_PATH are not set,
-+# and you don't `curl_easy_setopt(curl_, CURLOPT_CAPATH, "/etc/ssl/certs");`, curl will
-+# fail to verify server certificates.
-+# The string_flag/config_settings below allows the user to specify the OS-specific
-+# default CA path like `--@curl//:ca_bundle=Debian` on the command line or in .bazelrc
-+# The values are from https://github.com/curl/curl/blob/curl-8_8_0/acinclude.m4#L1202
-+_CA_BUNDLE_OSES = "Debian Redhat OldRedhat MidnightBSD OpenBSD SUSE".split(" ")
-+
-+string_flag(
-+    name = "ca_bundle",
-+    build_setting_default = "None",
-+    values = ["None"] + _CA_BUNDLE_OSES,
-+)
-+
-+[
-+    config_setting(
-+        name = "ca_bundle_" + os,
-+        flag_values = {":ca_bundle": os},
-+    )
-+    for os in _CA_BUNDLE_OSES
-+]
-+
-+_CA_BUNDLE = select({
-+    ":ca_bundle_Debian": ['CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"'],
-+    ":ca_bundle_Redhat": ['CURL_CA_BUNDLE=\\"/etc/pki/tls/certs/ca-bundle.crt\\"'],
-+    ":ca_bundle_OldRedhat": ['CURL_CA_BUNDLE=\\"/usr/share/ssl/certs/ca-bundle.crt\\"'],
-+    ":ca_bundle_MidnightBSD": ['CURL_CA_BUNDLE=\\"/usr/local/share/certs/ca-root-nss.crt\\"'],
-+    ":ca_bundle_OpenBSD": ['CURL_CA_BUNDLE=\\"/etc/ssl/cert.pem\\"'],
-+    ":ca_bundle_SUSE": ['CURL_CA_PATH=\\"/etc/ssl/certs\\"'],
-+    "//conditions:default": [],
-+})
-+
 +cc_library(
 +    name = "curl",
 +    srcs = glob([
@@ -280,7 +277,17 @@ index 000000000..f40364c9c
 +    }) + select({
 +        ":http_only_setting": ["HTTP_ONLY"],
 +        "//conditions:default": [],
-+    }) + _CA_BUNDLE,
++    }) + select({
++        ":ca_bundle_is_unset": [],
++        "//conditions:default": ['CURL_CA_BUNDLE=\\"$(CURL_CA_BUNDLE)\\"'],
++    }) + select({
++        ":ca_path_is_unset": [],
++        "//conditions:default": ['CURL_CA_PATH=\\"$(CURL_CA_PATH)\\"'],
++    }),
++    toolchains = [
++        ":ca_bundle",
++        ":ca_path",
++    ],
 +    visibility = ["//visibility:public"],
 +    deps = select({
 +        ":use_mbedtls_setting": ["@mbedtls"],
