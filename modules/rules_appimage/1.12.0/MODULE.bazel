@@ -1,0 +1,69 @@
+"""AppImage rules for Bazel."""
+
+module(
+    name = "rules_appimage",
+    version = "1.12.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "platforms", version = "0.0.8")
+bazel_dep(name = "rules_cc", version = "0.0.9")
+bazel_dep(name = "rules_python", version = "0.33.1")
+bazel_dep(name = "squashfs-tools", version = "4.6.1")
+bazel_dep(name = "zstd", version = "1.5.6")
+
+bazel_dep(name = "with_cfg.bzl", version = "0.2.4", dev_dependency = True)
+
+rules_appimage = use_extension("//:extensions.bzl", "appimage_ext_dependencies")
+use_repo(
+    rules_appimage,
+    "appimage_runtime_aarch64",
+    "appimage_runtime_armv7e-m",
+    "appimage_runtime_i386",
+    "appimage_runtime_x86_64",
+)
+
+register_toolchains("//appimage:all")
+
+_DEFAULT_PYTHON = "3.12"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = _DEFAULT_PYTHON,
+)
+use_repo(python, "python_" + _DEFAULT_PYTHON.replace(".", "_"), "python_versions", "pythons_hub")
+
+register_toolchains("@pythons_hub//:all")
+
+dev_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+dev_pip.parse(
+    hub_name = "rules_appimage_py_deps",
+    python_version = _DEFAULT_PYTHON,
+    requirements_lock = "//:requirements.txt",
+)
+use_repo(dev_pip, "rules_appimage_py_deps")
+
+bazel_dep(name = "container_structure_test", version = "1.16.0", dev_dependency = True)
+bazel_dep(name = "rules_oci", version = "1.7.6", dev_dependency = True)
+bazel_dep(name = "rules_pycross", version = "0.5.4", dev_dependency = True)
+bazel_dep(name = "rules_pkg", version = "0.10.1", dev_dependency = True)
+
+lock_import = use_extension("@rules_pycross//pycross/extensions:lock_import.bzl", "lock_import", dev_dependency = True)
+lock_import.import_pdm(
+    lock_file = "//tests/rules_pycross:pdm.lock",
+    project_file = "//tests/rules_pycross:pyproject.toml",
+    repo = "pdm_deps",
+)
+
+lock_repos = use_extension("@rules_pycross//pycross/extensions:lock_repos.bzl", "lock_repos", dev_dependency = True)
+use_repo(lock_repos, "pdm_deps")
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci", dev_dependency = True)
+oci.pull(
+    name = "python3-slim",
+    digest = "sha256:afc139a0a640942491ec481ad8dda10f2c5b753f5c969393b12480155fe15a63",  # "3-slim" as of 2023-06-01
+    image = "docker.io/library/python",
+    platforms = ["linux/amd64"],
+)
+use_repo(oci, "python3-slim")
