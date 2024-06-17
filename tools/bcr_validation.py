@@ -203,15 +203,14 @@ class BcrValidator:
     patches = source.get("patches", {})
     patches["module_dot_bazel.patch"] = integrity(read(patch_file))
     source["patches"] = patches
-    with open(self.registry.get_source_path(module_name, version), "w") as f:
-      json.dump(source, f, indent=4)
-      f.write("\n")
+    source_json_content = json.dumps(source, indent=4) + "\n"
+    self.registry.get_source_json_path(module_name, version).write_text(source_json_content)
 
   def verify_module_dot_bazel(self, module_name, version):
     source = self.registry.get_source(module_name, version)
     source_url = source["url"]
     tmp_dir = Path(tempfile.mkdtemp())
-    archive_file = tmp_dir.joinpath(source_url.split("/")[-1])
+    archive_file = tmp_dir.joinpath(source_url.split("/")[-1].split("?")[0])
     output_dir = tmp_dir.joinpath("source_root")
     download_file(source_url, archive_file)
     shutil.unpack_archive(str(archive_file), output_dir)
@@ -225,6 +224,26 @@ class BcrValidator:
             if actual_integrity != expected_integrity:
               self.report(BcrValidationResult.FAILED, f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.")
             apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
+    if "overlay" in source:
+      version_dir = self.registry.get_version_dir(module_name, version)
+      for overlay_file, expected_integrity in source["overlay"].items():
+        overlay_src = version_dir / overlay_file
+        overlay_dst = source_root / overlay_file
+        try:
+          overlay_dst.resolve().relative_to(source_root)
+        except ValueError:
+          self.report(BcrValidationResult.FAILED, f"The overlay file path `{overlay_file}` must point inside the source archive.")
+          continue
+        try:
+          actual_integrity = integrity(read(overlay_src))
+        except FileNotFoundError:
+          self.report(BcrValidationResult.FAILED, f"The overlay file `{overlay_file}` does not exist")
+          continue
+        if actual_integrity != expected_integrity:
+          self.report(BcrValidationResult.FAILED, f"The overlay file `{overlay_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.")
+          continue
+        overlay_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(overlay_src, overlay_dst)
 
     source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
     if source_module_dot_bazel.exists():
