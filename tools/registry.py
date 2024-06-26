@@ -249,6 +249,9 @@ module(
   def get_version_dir(self, module_name, version):
     return self.get_module_dir(module_name) / version
 
+  def get_overlay_dir(self, module_name, version):
+    return self.get_version_dir(module_name, version) / "overlay"
+
   def get_source(self, module_name, version):
     return json.loads(self.get_source_json_path(module_name, version).read_text())
 
@@ -468,13 +471,14 @@ module(
     else:
       source.pop("patches", None)
 
+    overlay_dir = self.get_overlay_dir(module_name, version)
     overlay_files = {
       file
       for file in source.get("overlay", {}).keys()
-      if (source_path.parent / file).is_file()
+      if (overlay_dir / file).is_file()
     }
     overlay_integrities = {
-      file: integrity(read(source_path.parent / file)) for file in overlay_files
+      file: integrity(read(overlay_dir / file)) for file in overlay_files
     }
     if overlay_files:
       source["overlay"] = overlay_integrities

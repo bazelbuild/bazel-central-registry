@@ -225,9 +225,9 @@ class BcrValidator:
               self.report(BcrValidationResult.FAILED, f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.")
             apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
     if "overlay" in source:
-      version_dir = self.registry.get_version_dir(module_name, version)
+      overlay_dir = self.registry.get_overlay_dir(module_name, version)
       for overlay_file, expected_integrity in source["overlay"].items():
-        overlay_src = version_dir / overlay_file
+        overlay_src = overlay_dir / overlay_file
         overlay_dst = source_root / overlay_file
         try:
           overlay_dst.resolve().relative_to(source_root)

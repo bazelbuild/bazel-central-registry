@@ -5,6 +5,7 @@ set -euo pipefail
 # Set up a registry that needs some update_integrity treatment
 foomod="${TEST_TMPDIR}/registry/modules/foomod"
 mkdir -p "${foomod}/1.2.3/patches"
+mkdir -p "${foomod}/1.2.3/overlay"
 cat <<"EOF" >"${foomod}/metadata.json"
 {
   "homepage": "https://example.com/",
@@ -15,7 +16,7 @@ cat <<"EOF" >"${foomod}/metadata.json"
 }
 EOF
 echo 'module(name = "foomod", version = "1.2.3")' >"${foomod}/1.2.3/MODULE.bazel"
-echo hello >"${foomod}//1.2.3/overlay.file"
+echo hello >"${foomod}/1.2.3/overlay/overlay.file"
 echo old >"${foomod}/1.2.3/patches/preexisting-1.patch"
 echo old >"${foomod}/1.2.3/patches/preexisting-2.patch"
 echo new >"${foomod}/1.2.3/patches/a-newly-added.patch"
