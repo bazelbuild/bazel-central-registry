@@ -35,6 +35,7 @@ import shutil
 import sys
 import tempfile
 import os
+import validators
 import yaml
 
 from enum import Enum
@@ -329,6 +330,10 @@ class BcrValidator:
         self.report(BcrValidationResult.FAILED, f"Failed to load {module_name}'s metadata.json file: " + str(e))
         has_error = True
         continue
+
+      if validators.url(metadata["homepage"]) == False:
+        self.report(BcrValidationResult.FAILED, f"{module_name}'s metadata.json file does not contain a valid URL in the homepage attribute.")
+        has_error = True
 
       sorted_versions = sorted(metadata["versions"], key=Version)
       if sorted_versions != metadata["versions"]:

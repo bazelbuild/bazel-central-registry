@@ -48,9 +48,11 @@ py_binary(
 py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
+    imports = ["."],
     deps = [
         ":registry",
         ":verify_stable_archives",
+        requirement("validators"),
     ],
 )
 
