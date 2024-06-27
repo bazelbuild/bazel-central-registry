@@ -159,7 +159,9 @@ def print_repo_definition(dep):
                         rule_name = new_rule_name
                     else:
                         warning(
-                            f"A visible macro for {rule_name} is defined in a different bzl file `{new_file_name}` other than `{file_label}`, you have to find out the correct label for `{new_file_name}` manually."
+                            f"A visible macro for {rule_name} is defined in a different bzl file `{new_file_name}` "
+                            f"other than `{file_label}`, "
+                            f"you have to find out the correct label for `{new_file_name}` manually."
                         )
                     break
     else:
@@ -276,13 +278,16 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     # Check if it's the original main repo name
     if repo == workspace_name:
         error(
-            f"Please remove the usages of referring your own repo via `@{repo}//`, targets should be referenced directly with `//`. "
+            f"Please remove the usages of referring your own repo via `@{repo}//`, "
+            "targets should be referenced directly with `//`. "
         )
         eprint(
-            'If it\'s used in a macro, you can use `Label("//foo/bar")` to make sure it always points to your repo no matter where the macro is used.'
+            'If it\'s used in a macro, you can use `Label("//foo/bar")` '
+            "to make sureit always points to your repo no matter where the macro is used."
         )
         eprint(
-            "You can temporarily work around this by adding `repo_name` attribute to the `module` directive in your MODULE.bazel file."
+            "You can temporarily work around this by adding `repo_name` attribute "
+            "to the `module` directive in your MODULE.bazel file."
         )
         abort_migration()
 
@@ -294,7 +299,8 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
             break
     if not repo_def:
         error(
-            f"Repository definition for {repo} isn't found in ./resolved_deps.py file, please add `--force/-f` flag to force update it."
+            f"Repository definition for {repo} isn't found in ./resolved_deps.py file, "
+            "please add `--force/-f` flag to force update it."
         )
         abort_migration()
 
@@ -349,7 +355,8 @@ def detect_bind_issue(stderr):
 
 def address_bind_issue(bind_target, resolved_repos):
     warning(
-        f"A bind target detected: {bind_target}! `bind` is already deprecated, you should reference the actual target directly instead of using //external:<target>."
+        f"A bind target detected: {bind_target}! `bind` is already deprecated,"
+        " you should reference the actual target directly instead of using //external:<target>."
     )
 
     name = bind_target.split(":")[1]
@@ -411,7 +418,8 @@ def prepare_migration():
     elif parse_bazel_version(stdout.strip().split(" ")[1]) < (6, 0, 0):
         error(
             "Current Bazel version is older than 6.0.0, please upgrade your Bazel to at least 6.0.0. "
-            + "You can download Bazelisk from https://github.com/bazelbuild/bazelisk/releases and set env var USE_BAZEL_VERSION=6.0.0."
+            + "You can download Bazelisk from https://github.com/bazelbuild/bazelisk/releases "
+            + "and set env var USE_BAZEL_VERSION=6.0.0."
         )
         abort_migration()
 
@@ -459,7 +467,8 @@ def load_resolved_deps(targets, use_bazel_sync, force):
         generate_resolved_file(targets, use_bazel_sync)
     else:
         info(
-            "Found existing ./resolved_deps.py file, if it's out of date, please add `--force/-f` flag to force update it."
+            "Found existing ./resolved_deps.py file, "
+            "if it's out of date, please add `--force/-f` flag to force update it."
         )
 
     spec = importlib.util.spec_from_file_location("resolved_deps", "./resolved_deps.py")
@@ -481,7 +490,10 @@ def main(argv=None):
         + "For given targets, it first tries to generate a list of external dependencies for building your targets, "
         + "then tries to detect and add missing dependencies in the Bzlmod build. "
         + "You may still need to fix some problems manually.",
-        epilog="Example usage: change into your project directory and run `<path to BCR repo>/tools/migrate_to_bzlmod.py --target //foo:bar`",
+        epilog=(
+            "Example usage: change into your project directory and run "
+            "`<path to BCR repo>/tools/migrate_to_bzlmod.py --target //foo:bar`"
+        ),
     )
     parser.add_argument(
         "-s",
@@ -528,7 +540,8 @@ def main(argv=None):
             info("Things you should do next:")
             info("  - Migrate remaining dependencies in the WORKSPACE.bzlmod file to Bzlmod.")
             info(
-                "  - Run the actual build with Bzlmod enabled (with --enable_bzlmod, but without --nobuild) and fix remaining build time issues."
+                "  - Run the actual build with Bzlmod enabled (with --enable_bzlmod, but without --nobuild) "
+                "and fix remaining build time issues."
             )
             break
 

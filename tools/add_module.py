@@ -150,7 +150,10 @@ def from_user_input():
 def get_maintainers_from_input():
     maintainers = []
     prefix = "a"
-    explain = " (See https://github.com/bazelbuild/bazel-central-registry/tree/main/docs/bcr-policies.md#become-a-module-maintainer)"
+    explain = (
+        " (See https://github.com/bazelbuild/bazel-central-registry/tree/main"
+        "/docs/bcr-policies.md#become-a-module-maintainer)"
+    )
     while yes_or_no(f"Do you want to add {prefix} maintainer for this module?{explain}", False):
         maintainer = {}
         name = ask_input("Please enter maintainer name: ")

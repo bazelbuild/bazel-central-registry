@@ -178,7 +178,9 @@ class BcrValidator:
             self.report(
                 BcrValidationResult.FAILED,
                 f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
-                + "You should use a release archive URL in the format of `https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` to ensure the archive checksum stability.\n"
+                + "You should use a release archive URL in the format of "
+                + "`https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` "
+                + "to ensure the archive checksum stability.\n"
                 + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.",
             )
         else:
@@ -193,7 +195,8 @@ class BcrValidator:
         if real_integrity != expected_integrity:
             self.report(
                 BcrValidationResult.FAILED,
-                f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{real_integrity}`!",
+                f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value "
+                f"`{expected_integrity}`, but the real integrity value is `{real_integrity}`!",
             )
         else:
             self.report(BcrValidationResult.GOOD, "The source archive's integrity value matches.")
@@ -206,7 +209,8 @@ class BcrValidator:
         if index == 0:
             self.report(
                 BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
-                f"Module version {module_name}@{version} is new, the presubmit.yml file should be reviewed by a BCR maintainer.",
+                f"Module version {module_name}@{version} is new, the presubmit.yml file "
+                "should be reviewed by a BCR maintainer.",
             )
         elif index > 0:
             pre_version = versions[index - 1]
@@ -225,9 +229,9 @@ class BcrValidator:
             if diff:
                 self.report(
                     BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
-                    f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version {module_name}@{pre_version}, the following presubmit.yml file change should be reviewed by a BCR maintainer.\n"
-                    + "    "
-                    + "    ".join(diff),
+                    f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version "
+                    f"{module_name}@{pre_version}, the following presubmit.yml file change "
+                    "should be reviewed by a BCR maintainer.\n    " + "    ".join(diff),
                 )
             else:
                 self.report(BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version.")
@@ -263,7 +267,8 @@ class BcrValidator:
                 if actual_integrity != expected_integrity:
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.",
+                        f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, "
+                        f"but the real integrity value is `{actual_integrity}`.",
                     )
                 apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
@@ -287,7 +292,8 @@ class BcrValidator:
                 if actual_integrity != expected_integrity:
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"The overlay file `{overlay_file}` has expected integrity value `{expected_integrity}`, but the real integrity value is `{actual_integrity}`.",
+                        f"The overlay file `{overlay_file}` has expected integrity value `{expected_integrity}`, "
+                        f"but the real integrity value is `{actual_integrity}`.",
                     )
                     continue
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -394,7 +400,9 @@ class BcrValidator:
             if sorted_versions != metadata["versions"]:
                 self.report(
                     BcrValidationResult.FAILED,
-                    f"{module_name}'s metadata.json file is not sorted by version.\n Sorted versions: {sorted_versions}.\n Original versions: {metadata['versions']}",
+                    f"{module_name}'s metadata.json file is not sorted by version.\n "
+                    f"Sorted versions: {sorted_versions}.\n "
+                    f"Original versions: {metadata['versions']}",
                 )
                 has_error = True
 
@@ -402,7 +410,8 @@ class BcrValidator:
                 if not self.registry.contains(module_name, version):
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"{module_name}@{version} doesn't exist, but it's recorded in {module_name}'s metadata.json file.",
+                        f"{module_name}@{version} doesn't exist, "
+                        f"but it's recorded in {module_name}'s metadata.json file.",
                     )
                     has_error = True
         if not has_error:

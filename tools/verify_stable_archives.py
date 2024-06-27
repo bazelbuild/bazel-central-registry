@@ -54,7 +54,9 @@ def main(argv=None):
             has_failure = True
             print(f"Version `{version}` of module `{module_name}` is using an unstable source url: `{source_url}`")
             print(
-                "You should use a release archive URL in the format of `https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` to ensure the archive checksum stability."
+                "You should use a release archive URL in the format of "
+                "`https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` "
+                "to ensure the archive checksum stability."
             )
             print("See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.")
 
