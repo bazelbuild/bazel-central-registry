@@ -13,17 +13,13 @@ def update_integrity(module, version, registry):
     client = RegistryClient(registry)
     if not client.contains(module):
         raise click.BadParameter(
-            f"{module=} not found in {registry=}. "
-            f"Possible modules: {', '.join(client.get_all_modules())}"
+            f"{module=} not found in {registry=}. Possible modules: {', '.join(client.get_all_modules())}"
         )
     client.update_versions(module)
     versions = [ver for _, ver in client.get_module_versions(module)]
     version = version or versions[-1]
     if not client.contains(module, version):
-        raise click.BadParameter(
-            f"{version=} not found for {module=}. "
-            f"Possible versions: {', '.join(versions)}"
-        )
+        raise click.BadParameter(f"{version=} not found for {module=}. Possible versions: {', '.join(versions)}")
     click.echo(f"Updating integrity of {module=} {version=} in {registry=}")
     client.update_integrity(module, version)
 
