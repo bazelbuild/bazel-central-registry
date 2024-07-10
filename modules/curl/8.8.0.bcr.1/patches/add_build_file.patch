@@ -1,9 +1,9 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
 new file mode 100644
-index 0000000..a0578ad
+index 0000000..9b7c8c6
 --- /dev/null
 +++ b/BUILD.bazel
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,341 @@
 +# Copyright The OpenTelemetry Authors
 +# SPDX-License-Identifier: Apache-2.0
 +
@@ -30,6 +30,11 @@ index 0000000..a0578ad
 +selects.config_setting_group(
 +    name = "use_boringssl",
 +    match_all = [":not_use_mbedtls_setting", "@platforms//os:linux"],
++)
++
++selects.config_setting_group(
++    name = "use_sectransport",
++    match_all = [":not_use_mbedtls_setting", "@platforms//os:macos"],
 +)
 +
 +bool_flag(
@@ -268,6 +273,12 @@ index 0000000..a0578ad
 +        "lib/",
 +    ],
 +    linkopts = select({
++        ":use_sectransport": [
++            "-Wl,-framework,CoreFoundation",
++            "-Wl,-framework,Security",
++        ],
++        "//conditions:default": [],
++    }) + select({
 +        "@platforms//os:windows": [
 +            "-DEFAULTLIB:ws2_32.lib",
 +            "-DEFAULTLIB:advapi32.lib",
@@ -276,8 +287,6 @@ index 0000000..a0578ad
 +        ],
 +        "@platforms//os:macos": [
 +            "-Wl,-framework,SystemConfiguration",
-+            "-Wl,-framework,CoreFoundation",
-+            "-Wl,-framework,Security",
 +        ],
 +        "//conditions:default": [
 +            "-lpthread",
@@ -285,7 +294,8 @@ index 0000000..a0578ad
 +    }),
 +    local_defines = select({
 +        "@platforms//os:macos": [
-+            'USE_SECTRANSP',
++            'CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"',
++            'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
 +        ],
 +        "@platforms//os:linux": [
 +            'CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"',
@@ -294,6 +304,9 @@ index 0000000..a0578ad
 +        "//conditions:default": [],
 +    }) + select({
 +        ":use_mbedtls_setting": ["USE_MBEDTLS"],
++        "//conditions:default": [],
++    }) + select({
++        ":use_sectransport": ["USE_SECTRANSP"],
 +        "//conditions:default": [],
 +    }) + select({
 +        ":use_boringssl": ["USE_OPENSSL", "HAVE_BORING_SSL=1"],
