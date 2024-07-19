@@ -41,6 +41,31 @@ def log(msg):
 
 
 def download(url):
+    authorization_header_name = "Authorization"
+
+    class Github404ErrorProcessor(urllib.request.BaseHandler):
+        """Work around Github authorization header weirdness.
+
+        For private archives, Github requires an authorization token
+        in the initial GET, but no token on the redirected request
+        (which contains a token in the URL).  An authorization token
+        leads to a 404, which we handle here.  By default, urllib
+        includes all the original headers in the redirected request.
+
+        """
+
+        def http_error_404(self, request, fp, code, msg, hdrs):
+            # Try again without the Authorization header.
+            auth = request.headers.pop(authorization_header_name, None)
+            if auth is None:
+                raise HTTPError(req.full_url, code, msg, headers, fp)
+            new = urllib.request.Request(request.full_url, headers=request.headers)
+            fp.read()
+            fp.close()
+            return self.parent.open(new, timeout=request.timeout)
+
+    opener = urllib.request.build_opener(Github404ErrorProcessor)
+    urllib.request.install_opener(opener)
     parts = urllib.parse.urlparse(url)
     headers = {"User-Agent": "Mozilla/5.0"}  # Set the User-Agent header
     try:
@@ -51,7 +76,7 @@ def download(url):
         (login, _, password) = authenticators
         req = urllib.request.Request(url, headers=headers)
         creds = base64.b64encode(str.encode("%s:%s" % (login, password))).decode()
-        req.add_header("Authorization", "Basic %s" % creds)
+        req.add_header(authorization_header_name, "Basic %s" % creds)
     else:
         req = urllib.request.Request(url, headers=headers)
 
