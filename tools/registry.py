@@ -486,8 +486,10 @@ module(
             source.pop("patches", None)
 
         overlay_dir = self.get_overlay_dir(module_name, version)
-        overlay_files = {file for file in source.get("overlay", {}).keys() if (overlay_dir / file).is_file()}
-        overlay_integrities = {file: integrity(read(overlay_dir / file)) for file in overlay_files}
+        overlay_files = []
+        if overlay_dir.exists():
+            overlay_files = sorted([p.relative_to(overlay_dir) for p in overlay_dir.rglob("*") if p.is_file()])
+        overlay_integrities = {str(file): integrity(read(overlay_dir / file)) for file in overlay_files}
         if overlay_files:
             source["overlay"] = overlay_integrities
         else:
