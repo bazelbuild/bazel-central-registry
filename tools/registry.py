@@ -488,7 +488,13 @@ module(
         overlay_dir = self.get_overlay_dir(module_name, version)
         overlay_files = []
         if overlay_dir.exists():
-            overlay_files = sorted([p.relative_to(overlay_dir) for p in overlay_dir.rglob("*") if p.is_file()])
+            overlay_files = sorted(
+                [
+                    p.relative_to(overlay_dir)
+                    for p in overlay_dir.rglob("*")
+                    if p.is_file() and p.name != "MODULE.bazel.lock"
+                ]
+            )
         overlay_integrities = {str(file): integrity(read(overlay_dir / file)) for file in overlay_files}
         if overlay_files:
             source["overlay"] = overlay_integrities
