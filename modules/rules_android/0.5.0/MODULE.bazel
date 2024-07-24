@@ -1,0 +1,139 @@
+module(
+    name = "rules_android",
+    version = "0.5.0",
+)
+
+bazel_dep(name = "platforms", version = "0.0.5")
+bazel_dep(name = "rules_license", version = "0.0.4")
+bazel_dep(name = "rules_java", version = "7.7.0")
+
+bazel_dep(name = "stardoc", version = "0.6.2", dev_dependency = True)
+# Use a later commit until a version with table of contents, stamping, and
+# footer template is released.
+git_override(
+    module_name = "stardoc",
+    remote = "https://github.com/bazelbuild/stardoc.git",
+    commit = "91428abe5bce5517310dbbfe08b68a2d6ca529f8",
+)
+
+rules_java_toolchains = use_extension("@rules_java//java:extensions.bzl", "toolchains")
+use_repo(rules_java_toolchains, "remote_java_tools")
+
+bazel_dep(name = "protobuf", version = "3.19.0", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_jvm_external", version = "6.2")
+bazel_dep(name = "bazel_skylib", version = "1.0.3")
+bazel_dep(name = "rules_robolectric", version = "4.11.1", repo_name = "robolectric")
+
+register_toolchains("//toolchains/android:all")
+
+register_toolchains("//toolchains/android_sdk:all")
+
+# go-related dependency setup
+bazel_dep(name = "rules_go", version = "0.48.0", repo_name = "io_bazel_rules_go")
+bazel_dep(name = "gazelle", version = "0.28.0", repo_name = "bazel_gazelle")
+bazel_dep(name = "abseil-py", version = "1.4.0", repo_name = "py_absl")
+
+go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
+
+go_sdk.download(version = "1.22.4")
+
+go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_golang_glog",
+    "com_github_google_go_cmp",
+    "org_golang_google_protobuf",
+    "org_golang_x_sync",
+)
+
+# python-related dependency setup
+bazel_dep(name = "rules_python", version = "0.28.0", repo_name = "rules_python")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.11",
+)
+
+# proto-related dependency setup
+bazel_dep(name = "rules_proto", version = "6.0.0", repo_name = "rules_proto")
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "rules_android_maven",
+    artifacts = [
+        "androidx.privacysandbox.tools:tools:1.0.0-alpha06",
+        "androidx.privacysandbox.tools:tools-apigenerator:1.0.0-alpha06",
+        "androidx.privacysandbox.tools:tools-apipackager:1.0.0-alpha06",
+        "androidx.test:core:1.6.0-alpha01",
+        "androidx.test.ext:junit:1.2.0-alpha01",
+        "com.android.tools.build:apksig:8.3.0-alpha18",
+        "com.android.tools.build:bundletool:1.15.5",
+        "com.android.tools:desugar_jdk_libs_minimal:2.0.4",
+        "com.android.tools:desugar_jdk_libs_configuration_minimal:2.0.4",
+        "com.android.tools:desugar_jdk_libs_nio:2.0.4",
+        "com.android.tools:desugar_jdk_libs_configuration_nio:2.0.4",
+        "com.android.tools.build:gradle:8.2.0-alpha15",
+        "org.bouncycastle:bcprov-jdk18on:1.77",
+        "org.hamcrest:hamcrest-core:2.2",
+        "org.robolectric:robolectric:4.10.3",
+        "com.google.guava:guava:32.1.2-jre",
+        "com.google.protobuf:protobuf-java-util:3.9.2",
+        "com.google.truth:truth:1.1.5",
+        "info.picocli:picocli:4.7.4",
+        "junit:junit:4.13.2",
+    ],
+    repositories = [
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+    # To generate, run:
+    # REPIN=1 bazelisk run --enable_bzlmod @rules_android_maven//:pin
+    lock_file = "//:rules_android_maven_install.json",
+    use_starlark_android_rules = True,
+    aar_import_bzl_label = "@rules_android//rules:rules.bzl",
+)
+use_repo(
+    maven,
+    "rules_android_maven",
+)
+
+remote_android_extensions = use_extension("//bzlmod_extensions:android_extensions.bzl", "remote_android_tools_extensions")
+use_repo(remote_android_extensions, "android_gmaven_r8", "android_tools")
+
+# integration test setup
+bazel_dep(
+    name = "rules_bazel_integration_test",
+    version = "0.17.0",
+    dev_dependency = True,
+)
+bazel_dep(
+    name = "cgrindel_bazel_starlib",
+    version = "0.17.0",
+    dev_dependency = True,
+)
+
+bazel_binaries = use_extension(
+    "@rules_bazel_integration_test//:extensions.bzl",
+    "bazel_binaries",
+    dev_dependency = True,
+)
+bazel_binaries.download(version = "last_green")
+use_repo(bazel_binaries, "bazel_binaries")
+
+# extension for apksignerextensions
+apksig_extension = use_extension("//bzlmod_extensions:apksig.bzl", "apksig_extension")
+use_repo(apksig_extension, "apksig")
+
+# To include PR #92
+git_override(
+  module_name = "rules_robolectric",
+  remote = "https://github.com/robolectric/robolectric-bazel",
+  commit = "a5b25a8c27cc6add74bb01e62cd0dc72df8933ff",
+)
+
+android_sdk_repository_extension = use_extension("//rules/android_sdk_repository:rule.bzl", "android_sdk_repository_extension")
+use_repo(android_sdk_repository_extension, "androidsdk")
+
+register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
