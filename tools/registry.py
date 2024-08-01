@@ -31,6 +31,7 @@ import shutil
 import urllib.parse
 import urllib.request
 import yaml
+from urllib.error import HTTPError
 
 GREEN = "\x1b[32m"
 RESET = "\x1b[0m"
