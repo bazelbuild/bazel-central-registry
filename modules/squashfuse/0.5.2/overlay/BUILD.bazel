@@ -1,0 +1,159 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+_DEFINES = [
+    'PACKAGE_BUGREPORT=\\"dave@vasilevsky.ca\\"',
+    'PACKAGE_NAME=\\"squashfuse\\"',
+    'PACKAGE_STRING=\\"squashfuse\\ {}\\"'.format(module_version()),
+    'PACKAGE_TARNAME=\\"squashfuse\\"',
+    'PACKAGE_URL=\\"\\"',
+    'PACKAGE_VERSION=\\"{}\\"'.format(module_version()),
+    'PACKAGE=\\"squashfuse\\"',
+    'VERSION=\\"{}\\"'.format(module_version()),
+    "__STDC_WANT_IEC_60559_ATTRIBS_EXT__",
+    "__STDC_WANT_IEC_60559_BFP_EXT__",
+    "__STDC_WANT_IEC_60559_DFP_EXT__",
+    "__STDC_WANT_IEC_60559_FUNCS_EXT__",
+    "__STDC_WANT_IEC_60559_TYPES_EXT__",
+    "__STDC_WANT_LIB_EXT2__",
+    "__STDC_WANT_MATH_SPEC_FUNCS__",
+    "_GNU_SOURCE",
+    "FUSE_USE_VERSION=311",  # Not compatible with fuse_loop_config_v1 (added in 312) yet
+    "HAVE_ASM_BYTEORDER_H",
+    "HAVE_DECL_FUSE_ADD_DIRENT",
+    "HAVE_DECL_FUSE_ADD_DIRENTRY",
+    "HAVE_DECL_FUSE_CMDLINE_HELP",
+    "HAVE_DECL_FUSE_DAEMONIZE",
+    "HAVE_DECL_FUSE_SESSION_REMOVE_CHAN",
+    "HAVE_DLFCN_H",
+    "HAVE_ENDIAN_H",
+    "HAVE_FUSE_LL_FORGET_OP_64T",
+    "HAVE_INTTYPES_H",
+    "HAVE_LIBPTHREAD",
+    "HAVE_LINUX_TYPES_LE16",
+    "HAVE_NEW_FUSE_UNMOUNT",
+    "HAVE_STDINT_H",
+    "HAVE_STDIO_H",
+    "HAVE_STDLIB_H",
+    "HAVE_STRING_H",
+    "HAVE_STRINGS_H",
+    "HAVE_SYS_STAT_H",
+    "HAVE_SYS_SYSMACROS_H",
+    "HAVE_SYS_TYPES_H",
+    "HAVE_UNISTD_H",
+    "HAVE_WCHAR_H",
+    "HAVE_ZLIB_H",
+    "HAVE_ZSTD_H",
+    "SQFS_MULTITHREADED",
+    "SQFS_SIGTERM_HANDLER",
+    "STDC_HEADERS",
+]
+
+cc_library(
+    name = "squashfuse",
+    srcs = [
+        "cache.c",
+        "cache_mt.c",
+        "decompress.c",
+        "dir.c",
+        "file.c",
+        "fs.c",
+        "fuseprivate.c",
+        "hash.c",
+        "hash.h",
+        "ll.c",
+        "ll_inode.c",
+        "ls.c",
+        "nonstd.h",
+        "nonstd-daemon.c",
+        "nonstd-enoattr.c",
+        "nonstd-internal.h",
+        "nonstd-makedev.c",
+        "nonstd-pread.c",
+        "nonstd-stat.c",
+        "nonstd-symlink.c",
+        "stack.c",
+        "stat.c",
+        "stat.h",
+        "swap.c",
+        "swap.h",
+        "table.c",
+        "traverse.c",
+        "util.c",
+        "xattr.c",
+        ":config_h",
+    ],
+    hdrs = [
+        "cache.h",
+        "common.h",
+        "decompress.h",
+        "dir.h",
+        "file.h",
+        "fs.h",
+        "fuseprivate.h",
+        "ll.h",
+        "squashfs_fs.h",
+        "squashfuse.h",
+        "stack.h",
+        "table.h",
+        "traverse.h",
+        "util.h",
+        "xattr.h",
+    ],
+    defines = ["HAVE_LINUX_TYPES_LE16"],
+    include_prefix = "squashfuse",
+    local_defines = _DEFINES,
+    deps = [
+        ":swap",
+        "@libfuse",
+        "@zlib",
+        "@zstd",
+    ],
+)
+
+cc_binary(
+    name = "extract",
+    srcs = ["extract.c"],
+    local_defines = _DEFINES,
+    deps = [":squashfuse"],
+)
+
+cc_binary(
+    name = "hl",
+    srcs = ["hl.c"],
+    local_defines = _DEFINES,
+    deps = [":squashfuse"],
+)
+
+cc_binary(
+    name = "ll_main",
+    srcs = ["ll_main.c"],
+    local_defines = _DEFINES,
+    deps = [":squashfuse"],
+)
+
+genrule(
+    name = "config_h",
+    srcs = [],
+    outs = ["config.h"],
+    cmd = "touch $@",
+)
+
+cc_library(
+    name = "swap",
+    srcs = ["swap/swap.c.inc"],
+    hdrs = ["swap/swap.h.inc"],
+    includes = ["swap"],
+)
+
+genrule(
+    name = "gen_swap",
+    srcs = ["squashfs_fs.h"],
+    outs = [
+        "swap/swap.h.inc",
+        "swap/swap.c.inc",
+    ],
+    cmd = "$(execpath gen_swap.sh) $< && cp swap.h.inc swap.c.inc $(RULEDIR)/swap",
+    tools = ["gen_swap.sh"],
+)

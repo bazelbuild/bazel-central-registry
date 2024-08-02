@@ -20,41 +20,49 @@ from enum import Enum
 
 from registry import RegistryClient
 
+
 class UrlStability(Enum):
-  STABLE = 1
-  UNSTABLE = 2
-  UNKNOWN = 3
+    STABLE = 1
+    UNSTABLE = 2
+    UNKNOWN = 3
+
 
 def verify_stable_archive(url):
-  parsed = urlparse(url)
-  if parsed.scheme != "https" or parsed.hostname != "github.com":
-    return UrlStability.UNKNOWN
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "github.com":
+        return UrlStability.UNKNOWN
 
-  path_parts = parsed.path.split("/")
+    path_parts = parsed.path.split("/")
 
-  if path_parts[3] == "releases" and path_parts[4] == "download":
-    return UrlStability.STABLE
+    if len(path_parts) > 3 and path_parts[3] == "releases" and path_parts[4] == "download":
+        return UrlStability.STABLE
 
-  return UrlStability.UNSTABLE
+    return UrlStability.UNSTABLE
+
 
 def main(argv=None):
-  if argv is None:
-    argv = sys.argv[1:]
+    if argv is None:
+        argv = sys.argv[1:]
 
-  client = RegistryClient(".")
+    client = RegistryClient(".")
 
-  has_failure = False
-  for module_name, version in client.get_all_module_versions():
-    source_url = client.get_source(module_name, version)["url"]
-    stability = verify_stable_archive(source_url)
-    if stability == UrlStability.UNSTABLE:
-      has_failure = True
-      print(f'Version `{version}` of module `{module_name}` is using an unstable source url: `{source_url}`')
-      print("You should use a release archive URL in the format of `https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` to ensure the archive checksum stability.")
-      print("See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.")
+    has_failure = False
+    for module_name, version in client.get_all_module_versions():
+        source_url = client.get_source(module_name, version)["url"]
+        stability = verify_stable_archive(source_url)
+        if stability == UrlStability.UNSTABLE:
+            has_failure = True
+            print(f"Version `{version}` of module `{module_name}` is using an unstable source url: `{source_url}`")
+            print(
+                "You should use a release archive URL in the format of "
+                "`https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` "
+                "to ensure the archive checksum stability."
+            )
+            print("See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.")
 
-  if has_failure:
-    sys.exit(1)
+    if has_failure:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
-  sys.exit(main())
+    sys.exit(main())
