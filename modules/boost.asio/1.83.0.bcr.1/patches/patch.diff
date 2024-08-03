@@ -1,0 +1,180 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..c0a635c
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,89 @@
++load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++# Hey there! Before you start modifying this file, go check out https://github.com/dynacondev/boost.rules.tools for the tool you need!
++
++load("@boost.rules.tools//:tools.bzl", "boost_library")
++
++bool_flag(
++    name = "asio_disable_epoll",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "asio_no_epoll",
++    flag_values = {
++        ":asio_disable_epoll": "True",
++    },
++)
++
++bool_flag(
++    name = "asio_has_io_uring",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "asio_io_uring",
++    flag_values = {
++        ":asio_has_io_uring": "True",
++    },
++)
++
++boost_library(
++    name = "asio",
++    srcs = [
++        "//:build_asio.cpp",
++    ],
++    defines = [
++        "BOOST_ASIO_SEPARATE_COMPILATION",
++    ] + selects.with_or({
++        ("@platforms//os:osx", "@platforms//os:ios", "@platforms//os:watchos", "@platforms//os:tvos"): [
++            "BOOST_ASIO_DISABLE_STD_EXPERIMENTAL_STRING_VIEW",
++        ],
++        "//conditions:default": [],
++    }) + select({
++        ":asio_no_epoll": ["BOOST_ASIO_DISABLE_EPOLL"],
++        "//conditions:default": [],
++    }) + select({
++        ":asio_io_uring": ["BOOST_ASIO_HAS_IO_URING"],
++        "//conditions:default": [],
++    }),
++    linkopts = select({
++        "@platforms//os:android": [],
++        "//conditions:default": ["-lpthread"],
++    }) + select({
++        ":asio_io_uring": ["-luring"],
++        "//conditions:default": [],
++    }),
++    deps = [
++        "@boost//:align",
++        "@boost//:array",
++        "@boost//:assert",
++        "@boost//:bind",
++        "@boost//:chrono",
++        "@boost//:config",
++        "@boost//:context",
++        "@boost//:core",
++        "@boost//:coroutine",
++        "@boost//:date_time",
++        "@boost//:exception",
++        "@boost//:function",
++        "@boost//:regex",
++        "@boost//:smart_ptr",
++        "@boost//:system",
++        "@boost//:throw_exception",
++        "@boost//:type_traits",
++        "@boost//:utility",
++    ],
++)
++
++# cc_library(
++#     name = "asio_ssl",
++#     srcs = [
++#         "//:build_asio_ssl.cpp",
++#     ],
++#     visibility = ["//visibility:public"],
++#     deps = [
++#         ":asio",
++#         "@boringssl//:ssl",
++#     ],
++# )
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100755
+index 0000000..5811d9d
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,34 @@
++"""
++Hey there! Before editing, check out the tool at https://github.com/dynacondev/boost.rules.tools
++Note: These modules follow a circular dependency structure on the boost module https://github.com/dynacondev/boost.rules to keep boost releases from mixing!
++"""
++
++module(
++    name = "boost.asio",
++    version = "1.83.0.bcr.1",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "boost", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.rules.tools", version = "1.0.0")
++bazel_dep(name = "platforms", version = "0.0.8")
++bazel_dep(name = "bazel_skylib", version = "1.5.0")
++bazel_dep(name = "boringssl", version = "0.0.0-20230215-5c22014")
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
+diff --git a/WORKSPACE.bazel b/WORKSPACE.bazel
+new file mode 100644
+index 0000000..be0754f
+--- /dev/null
++++ b/WORKSPACE.bazel
+@@ -0,0 +1 @@
++# SEE: MODULE.bazel
+diff --git a/build_asio.cpp b/build_asio.cpp
+new file mode 100644
+index 0000000..0e8f87a
+--- /dev/null
++++ b/build_asio.cpp
+@@ -0,0 +1,7 @@
++// Per
++// https://www.boost.org/doc/libs/1_72_0/doc/html/boost_asio/using.html#boost_asio.using.optional_separate_compilation,
++// exactly one file in an ASIO project using separate compilation must
++// contain the following #include. See also
++// https://github.com/nelhage/rules_boost/issues/166 and
++// https://github.com/nelhage/rules_boost/issues/170
++#include "boost/asio/impl/src.hpp"
+diff --git a/build_asio_ssl.cpp b/build_asio_ssl.cpp
+new file mode 100644
+index 0000000..d98d7b5
+--- /dev/null
++++ b/build_asio_ssl.cpp
+@@ -0,0 +1 @@
++#include <boost/asio/ssl/impl/src.hpp>
+diff --git a/test/BUILD.bazel b/test/BUILD.bazel
+new file mode 100644
+index 0000000..c633cef
+--- /dev/null
++++ b/test/BUILD.bazel
+@@ -0,0 +1,12 @@
++load("@boost.rules.tools//:tools.bzl", "boost_test_set")
++
++DEPS = [
++    "@boost//:asio",
++]
++
++test_suite(
++    name = "tests",
++    tests = boost_test_set(
++        deps = DEPS,
++    ),
++)

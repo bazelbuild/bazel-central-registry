@@ -1,0 +1,156 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..98f8a29
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,104 @@
++load("@boost.rules.tools//:tools.bzl", "boost_library", "default_copts", "default_defines")
++
++_BOOST_TEST_DEPS = [
++    "@boost//:algorithm",
++    "@boost//:assert",
++    "@boost//:bind",
++    "@boost//:config",
++    "@boost//:core",
++    "@boost//:detail",
++    "@boost//:exception",
++    "@boost//:function",
++    "@boost//:io",
++    "@boost//:iterator",
++    "@boost//:mpl",
++    "@boost//:numeric.conversion",
++    "@boost//:optional",
++    "@boost//:preprocessor",
++    "@boost//:smart_ptr",
++    "@boost//:static_assert",
++    "@boost//:type_traits",
++    "@boost//:utility",
++]
++
++# An uncompiled Boost.Test library, to be used through boost/test/included/*.
++boost_library(
++    name = "test",
++    exclude_src = glob([
++        "src/*.cpp",
++    ]),
++    deps = _BOOST_TEST_DEPS,
++)
++
++# A statically linked Boost.Test library, used through boost/test/* and without
++# defining BOOST_TEST_DYN_LINK.
++boost_library(
++    name = "test.a",
++    exclude_hdr = glob([
++        "include/boost/test/included/*.hpp",
++    ]),
++    exclude_src = [
++        "src/test_main.cpp",
++        "src/cpp_main.cpp",
++    ],
++    linkstatic = True,
++    deps = _BOOST_TEST_DEPS,
++)
++
++# A dynamically linked Boost.Test library, used through boost/test/*.  Bazel
++# will add -DBOOST_TEST_DYN_LINK for you if you depend on this library.
++
++# Some boost libraries are not safe to use as dynamic libraries unless a
++# BOOST_*_DYN_LINK define is set when they are compiled and included, notably
++# Boost.Test. When the define is set, the libraries are not safe to use
++# statically. This is an attempt to work around that. We build an explicit .so
++# with cc_binary"s linkshared=True and then we reimport it as a C++ library and
++# expose it as a boost_library.
++
++cc_binary(
++    name = "lib_internal_test.so",
++    srcs = glob(
++        [
++            "include/boost/**",
++            "src/*.cpp",
++        ],
++        exclude = [
++            "**/*.asm",
++            "**/*.S",
++            "**/*.doc",
++            "include/boost/test/included/*.hpp",
++            "src/test_main.cpp",
++            "src/cpp_main.cpp",
++        ],
++    ),
++    copts = default_copts,
++    defines = default_defines + ["BOOST_TEST_DYN_LINK"],
++    includes = ["include"],
++    linkshared = True,
++    visibility = ["//visibility:private"],
++    deps = _BOOST_TEST_DEPS,
++)
++
++filegroup(
++    name = "test.so_dll_interface_file",
++    srcs = [":lib_internal_test.so"],
++    output_group = "interface_library",
++    visibility = ["//visibility:private"],
++)
++
++cc_import(
++    name = "_imported_test.so",
++    interface_library = ":test.so_dll_interface_file",
++    shared_library = ":lib_internal_test.so",
++    visibility = ["//visibility:private"],
++)
++
++boost_library(
++    name = "test.so",
++    defines = ["BOOST_TEST_DYN_LINK"],
++    exclude_hdr = glob([
++        "include/boost/test/included/*.hpp",
++    ]),
++    exclude_src = glob(["**"]),
++    deps = _BOOST_TEST_DEPS + [":_imported_test.so"],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100755
+index 0000000..593688b
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,14 @@
++"""
++Hey there! Before editing, check out the tool at https://github.com/dynacondev/boost.rules.tools
++Note: These modules follow a circular dependency structure on the boost module https://github.com/dynacondev/boost.rules to keep boost releases from mixing!
++"""
++
++module(
++    name = "boost.test",
++    version = "1.83.0.bcr.1",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "boost", version = "1.83.0.bcr.1")
++bazel_dep(name = "boost.rules.tools", version = "1.0.0")
++bazel_dep(name = "platforms", version = "0.0.8")
+diff --git a/WORKSPACE.bazel b/WORKSPACE.bazel
+new file mode 100644
+index 0000000..be0754f
+--- /dev/null
++++ b/WORKSPACE.bazel
+@@ -0,0 +1 @@
++# SEE: MODULE.bazel
+diff --git a/test/BUILD.bazel b/test/BUILD.bazel
+new file mode 100644
+index 0000000..e1b9596
+--- /dev/null
++++ b/test/BUILD.bazel
+@@ -0,0 +1,13 @@
++load("@boost.rules.tools//:tools.bzl", "boost_test_set")
++
++DEPS = [
++    "@boost//:test",
++    "@boost//:thread",
++]
++
++test_suite(
++    name = "tests",
++    tests = boost_test_set(
++        deps = DEPS,
++    ),
++)
