@@ -23,10 +23,10 @@ from registry import download
 from registry import integrity
 
 if __name__ == "__main__":
-  # Under 'bazel run' we want to run within the source folder instead of the execroot.
-  if os.getenv("BUILD_WORKSPACE_DIRECTORY"):
-    os.chdir(os.getenv("BUILD_WORKSPACE_DIRECTORY"))
-  if validators.url(sys.argv[1]):
-    print(integrity(download(sys.argv[1])))
-  else:
-    print(integrity(read(sys.argv[1])))
+    # Under 'bazel run' we want to run within the source folder instead of the execroot.
+    if os.getenv("BUILD_WORKSPACE_DIRECTORY"):
+        os.chdir(os.getenv("BUILD_WORKSPACE_DIRECTORY"))
+    if validators.url(sys.argv[1]):
+        print(integrity(download(sys.argv[1])))
+    else:
+        print(integrity(read(sys.argv[1])))
