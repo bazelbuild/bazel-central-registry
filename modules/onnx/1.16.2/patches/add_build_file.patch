@@ -1,0 +1,117 @@
+diff --git BUILD.bazel BUILD.bazel
+new file mode 100644
+index 00000000..2c31ba05
+--- /dev/null
++++ BUILD.bazel
+@@ -0,0 +1,111 @@
++load("@rules_proto//proto:defs.bzl", "proto_library")
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_proto_library")
++load("@rules_python//python:defs.bzl", "py_binary")
++
++py_binary(
++    name = "gen_proto",
++    srcs = ["onnx/gen_proto.py"],
++    data = [
++        "onnx/onnx.in.proto",
++        "onnx/onnx-operators.in.proto",
++        "onnx/onnx-data.in.proto",
++    ],
++)
++
++genrule(
++    name = "generate_onnx_proto",
++    outs = [
++        "onnx/onnx-ml.proto",
++    ],
++    cmd = "$(location :gen_proto) -p onnx -o $(@D) onnx -m",
++    tools = [":gen_proto"],
++)
++
++genrule(
++    name = "generate_onnx_operators_proto",
++    outs = [
++        "onnx/onnx-operators-ml.proto",
++    ],
++    cmd = "$(location :gen_proto) -p onnx -o $(@D) onnx-operators -m >/dev/null",
++    tools = [":gen_proto"],
++)
++
++genrule(
++    name = "generate_onnx_data_proto",
++    outs = [
++        "onnx/onnx-data.proto",
++    ],
++    cmd = "$(location :gen_proto) -p onnx -o $(@D) onnx-data -m >/dev/null",
++    tools = [":gen_proto"],
++)
++
++cc_library(
++    name = "onnx",
++    srcs = glob(
++        [
++            "onnx/*.cc",
++            "onnx/common/*.cc",
++            "onnx/defs/**/*.cc",
++            "onnx/shape_inference/*.cc",
++            "onnx/version_converter/*.cc",
++        ],
++        exclude = [
++            "onnx/cpp2py_export.cc",
++        ],
++    ),
++    hdrs = glob([
++        "onnx/*.h",
++        "onnx/version_converter/*.h",
++        "onnx/common/*.h",
++        "onnx/defs/**/*.h",
++        "onnx/shape_inference/*.h",
++        "onnx/version_converter/adapters/*.h",
++    ]),
++    copts = select({
++        "@platforms//os:windows": ["/std:c++17"],
++        "@platforms//os:macos": [
++            "-UDEBUG",  
++	    "--std=c++17",
++	],
++        "//conditions:default": [
++            "--std=c++17",
++        ],
++    }),
++    defines = [
++        "ONNX_ML=1",
++        "ONNX_NAMESPACE=onnx",
++    ],
++    includes = [
++        "onnx",
++    ],
++    visibility = ["//visibility:public"],
++    deps = [
++        ":onnx_proto_lib",
++    ],
++)
++
++cc_library(
++    name = "onnx_proto_headers",
++    hdrs = glob([
++        "onnx/*_pb.h",
++    ]),
++    visibility = ["//visibility:public"],
++    deps = [
++        ":onnx_proto_lib",
++    ],
++)
++
++proto_library(
++    name = "onnx_proto",
++    srcs = [
++        "onnx/onnx-operators-ml.proto",
++        "onnx/onnx-ml.proto",
++        "onnx/onnx-data.proto",
++    ],
++)
++
++cc_proto_library(
++    name = "onnx_proto_lib",
++    visibility = ["//visibility:public"],
++    deps = [":onnx_proto"],
++)
