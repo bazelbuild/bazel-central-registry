@@ -278,9 +278,7 @@ class BcrValidator:
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
             module_file = overlay_dir / "MODULE.bazel"
-            if module_file.exists() and (
-                not module_file.is_symlink() or module_file.readlink().as_posix() != "../MODULE.bazel"
-            ):
+            if module_file.exists() and (not module_file.is_symlink() or os.readlink(module_file) != "../MODULE.bazel"):
                 self.report(BcrValidationResult.FAILED, f"{module_file} should be a symlink to `../MODULE.bazel`.")
 
             for overlay_file, expected_integrity in source["overlay"].items():
