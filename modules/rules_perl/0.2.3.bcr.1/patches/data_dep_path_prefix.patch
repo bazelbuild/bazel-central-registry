@@ -1,0 +1,67 @@
+From dd80f71045c8546874757f6605edae9997b795f8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Laurenz=20Altenm=C3=BCller?=
+ <laurenz.altenmueller@fernride.com>
+Date: Sun, 18 Aug 2024 14:29:26 +0200
+Subject: [PATCH] Set `PATH_PREFIX=./` instead of failing
+
+---
+ perl/binary_wrapper.tpl |  3 +--
+ test/data_dep/BUILD     | 35 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 36 insertions(+), 2 deletions(-)
+ create mode 100644 test/data_dep/BUILD
+
+diff --git a/perl/binary_wrapper.tpl b/perl/binary_wrapper.tpl
+index 035523a..292e370 100644
+--- a/perl/binary_wrapper.tpl
++++ b/perl/binary_wrapper.tpl
+@@ -7,8 +7,7 @@ elif [ -s `dirname $0`/../../MANIFEST ]; then
+ elif [ -d $0.runfiles ]; then
+   PATH_PREFIX=`cd $0.runfiles; pwd`/{workspace_name}/
+ else
+-  echo "WARNING: it does not look to be at the .runfiles directory" >&2
+-  exit 1
++  PATH_PREFIX=./
+ fi
+ 
+ {env_vars} $PATH_PREFIX{interpreter} -I${PATH_PREFIX} ${PATH_PREFIX}{main} "$@"
+diff --git a/test/data_dep/BUILD b/test/data_dep/BUILD
+new file mode 100644
+index 0000000..00fc8a3
+--- /dev/null
++++ b/test/data_dep/BUILD
+@@ -0,0 +1,35 @@
++genrule(
++    name = "gen_program_sh",
++    srcs = ["@genhtml//:genhtml_bin"],
++    outs = ["program.sh"],
++    cmd = """\
++cat <<"EOF" >$@
++#!/bin/bash
++set -euxo pipefail
++genhtml='$(rootpath @genhtml//:genhtml_bin)'
++test "$$("$$genhtml" --version)" == "genhtml: LCOV version 1.0"
++EOF
++""",
++)
++
++sh_binary(
++    name = "program_bin",
++    srcs = ["program.sh"],
++    data = ["@genhtml//:genhtml_bin"],
++)
++
++genrule(
++    name = "gen_program_test_sh",
++    srcs = [":program_bin"],
++    outs = ["program_test.sh"],
++    cmd = """\
++echo '#!/bin/sh' >$@
++echo 'exec env --ignore-environment test/data_dep/program_bin' >>$@
++""",
++)
++
++sh_test(
++    name = "program_test",
++    srcs = ["program_test.sh"],
++    data = [":program_bin"],
++)
