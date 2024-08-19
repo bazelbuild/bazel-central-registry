@@ -1,0 +1,95 @@
+From 31269b68989d709cc12805237eb8a31348c65be8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Laurenz=20Altenm=C3=BCller?=
+ <laurenz.altenmueller@fernride.com>
+Date: Mon, 19 Aug 2024 17:00:11 +0200
+Subject: [PATCH] Extract dev deps to function and add in Bzlmod via
+ WORKSPACE.bzlmod
+
+---
+ WORKSPACE        | 23 +++--------------------
+ WORKSPACE.bzlmod |  4 ++++
+ perl/deps.bzl    | 26 ++++++++++++++++++++++++++
+ 3 files changed, 33 insertions(+), 20 deletions(-)
+ create mode 100644 WORKSPACE.bzlmod
+
+diff --git a/WORKSPACE b/WORKSPACE
+index 080a567..2e71a5d 100644
+--- a/WORKSPACE
++++ b/WORKSPACE
+@@ -1,7 +1,6 @@
+ workspace(name = "rules_perl")
+ 
+-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+-load("@rules_perl//perl:deps.bzl", "perl_register_toolchains", "perl_rules_dependencies")
++load("@rules_perl//perl:deps.bzl", "perl_register_toolchains", "perl_rules_dependencies", "perl_rules_dev_dependencies")
+ load("//:platforms.bzl", "platforms")
+ 
+ perl_rules_dependencies()
+@@ -23,21 +22,5 @@ perl_register_toolchains()
+     for platform in platforms
+ ]
+ 
+-http_archive(
+-    name = "fcgi",
+-    build_file = "//:examples/cpan_remote/fcgi.BUILD",
+-    sha256 = "8cfa4e1b14fb8d5acaa22ced672c6af68c0a8e25dc2a9697a0ed7f4a4efb34e4",
+-    strip_prefix = "FCGI-0.79",
+-    url = "https://cpan.metacpan.org/authors/id/E/ET/ETHER/FCGI-0.79.tar.gz",
+-)
+-
+-# genhtml can be used to generate HTML reports from the output of the bazel
+-# coverage command. It also serves as a natural test case for Perl scripts with
+-# no file extension.
+-http_archive(
+-    name = "genhtml",
+-    build_file = "//:examples/genhtml/genhtml.BUILD",
+-    sha256 = "d88b0718f59815862785ac379aed56974b9edd8037567347ae70081cd4a3542a",
+-    strip_prefix = "lcov-1.15/bin",
+-    url = "https://github.com/linux-test-project/lcov/archive/refs/tags/v1.15.tar.gz",
+-)
++# Testing only, do not add to your WORKSPACE
++perl_rules_dev_dependencies()
+diff --git a/WORKSPACE.bzlmod b/WORKSPACE.bzlmod
+new file mode 100644
+index 0000000..9df9567
+--- /dev/null
++++ b/WORKSPACE.bzlmod
+@@ -0,0 +1,4 @@
++# Testing only, do not add to your WORKSPACE
++load("@rules_perl//perl:deps.bzl", "perl_rules_dev_dependencies")
++
++perl_rules_dev_dependencies()
+diff --git a/perl/deps.bzl b/perl/deps.bzl
+index 4937b69..cd5dd68 100644
+--- a/perl/deps.bzl
++++ b/perl/deps.bzl
+@@ -52,3 +52,29 @@ def _maybe(rule, name, **kwargs):
+     """Declares an external repository if it hasn't been declared already."""
+     if name not in native.existing_rules():
+         rule(name = name, **kwargs)
++
++def perl_rules_dev_dependencies():
++    """Declares external repositories that rules_perl depends on for testing.
++
++    This function should not be loaded outside of rules_perl.
++    """
++    _maybe(
++        http_archive,
++        name = "fcgi",
++        build_file = "//:examples/cpan_remote/fcgi.BUILD",
++        sha256 = "8cfa4e1b14fb8d5acaa22ced672c6af68c0a8e25dc2a9697a0ed7f4a4efb34e4",
++        strip_prefix = "FCGI-0.79",
++        url = "https://cpan.metacpan.org/authors/id/E/ET/ETHER/FCGI-0.79.tar.gz",
++    )
++
++    # genhtml can be used to generate HTML reports from the output of the bazel
++    # coverage command. It also serves as a natural test case for Perl scripts with
++    # no file extension.
++    _maybe(
++        http_archive,
++        name = "genhtml",
++        build_file = "//:examples/genhtml/genhtml.BUILD",
++        sha256 = "d88b0718f59815862785ac379aed56974b9edd8037567347ae70081cd4a3542a",
++        strip_prefix = "lcov-1.15/bin",
++        url = "https://github.com/linux-test-project/lcov/archive/refs/tags/v1.15.tar.gz",
++    )
