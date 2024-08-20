@@ -31,9 +31,21 @@ perl_library(
     ]
 ]
 
+genrule(
+    name = "gen_integration_test_sh",
+    outs = ["integration_test.sh"],
+    cmd = """cat <<'EOF' >$@
+#!/bin/bash
+set -euxo pipefail
+genhtml="$(rootpath @lcov//:genhtml)"
+test "$$("$genhtml" 2>&1 --version)" == "genhtml: LCOV version 2.1-1"
+""",
+    srcs = ["@lcov//:genhtml"],
+    executable = True
+)
+
 sh_test(
     name = "integration_test",
     srcs = ["integration_test.sh"],
     data = ["@lcov//:genhtml"],
-    args = ["$(rootpath @lcov//:genhtml)"],
 )
