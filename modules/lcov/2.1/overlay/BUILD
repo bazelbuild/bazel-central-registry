@@ -38,7 +38,7 @@ genrule(
 #!/bin/bash
 set -euxo pipefail
 genhtml="$(rootpath @lcov//:genhtml)"
-test "$$("$genhtml" 2>&1 --version)" == "genhtml: LCOV version 2.1-1"
+test "$$("$$genhtml" 2>&1 --version)" == "genhtml: LCOV version 2.1-1"
 """,
     srcs = ["@lcov//:genhtml"],
     executable = True
