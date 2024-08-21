@@ -258,6 +258,10 @@ class BcrValidator:
         download_file(source_url, archive_file)
         shutil.unpack_archive(str(archive_file), output_dir)
 
+        module_file = self.registry.get_module_dot_bazel_path(module_name, version)
+        if module_file.is_symlink():
+            self.report(BcrValidationResult.FAILED, f"{module_file} must not be a symlink.")
+
         # Apply patch files if there are any, also verify their integrity values
         source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
         if "patches" in source:
@@ -273,6 +277,10 @@ class BcrValidator:
                 apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
+            module_file = overlay_dir / "MODULE.bazel"
+            if module_file.exists() and (not module_file.is_symlink() or os.readlink(module_file) != "../MODULE.bazel"):
+                self.report(BcrValidationResult.FAILED, f"{module_file} should be a symlink to `../MODULE.bazel`.")
+
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
                 overlay_dst = source_root / overlay_file
