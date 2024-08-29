@@ -1,0 +1,190 @@
+--- BUILD.bazel
++++ BUILD.bazel
+@@ -0,0 +1,176 @@
++load("@bazel_skylib//rules:write_file.bzl", "write_file")
++load("@rules_python//python:defs.bzl", "py_binary")
++
++write_file(
++    name = "configure_ac",
++    out = "configure.ac",
++    content = [
++        "AC_PREREQ([2.62])",
++        "",
++        "AC_INIT([libevdev],",
++        "        [1.13.2],",
++        "        [https://gitlab.freedesktop.org/libevdev/libevdev/issues/],",
++        "        [libevdev],",
++        "        [http://freedesktop.org/wiki/Software/libevdev/])",
++        "",
++        "AC_CONFIG_HEADERS([config.h])",
++        "AC_USE_SYSTEM_EXTENSIONS",
++        "AM_INIT_AUTOMAKE([1.11 foreign])",
++        "AC_CHECK_LIB([m], [round])",
++        "",
++        "AC_CONFIG_FILES([Makefile])",
++        "AC_OUTPUT",
++    ],
++)
++
++genrule(
++    name = "config_h",
++    srcs = [
++        ":configure_ac",
++    ],
++    outs = ["config.h"],
++    cmd = "ln -s $(location :configure_ac) ./configure.ac && touch ./Makefile.am && autoreconf -fvi && ./configure && cat config.h > $@",
++)
++
++cc_library(
++    name = "config",
++    hdrs = [":config_h"],
++    visibility = ["//libevdev:__subpackages__"],
++)
++
++genrule(
++    name = "event_names_h",
++    srcs = [
++        ":os_input_header",
++        ":os_input_event_codes_header",
++    ],
++    outs = ["event-names.h"],
++    tools = [":make-event-names"],
++    cmd = "$(location :make-event-names) $(location :os_input_header) $(location :os_input_event_codes_header) > $@",
++)
++
++cc_library(
++    name = "event_names",
++    hdrs = [
++        ":event_names_h",
++    ],
++    visibility = ["//libevdev:__subpackages__"],
++)
++
++filegroup(
++    name = "os_input_header",
++    srcs = select({
++        "@platforms//os:linux": [
++            "include/linux/linux/input.h",
++        ],
++        "@platforms//os:freebsd": [
++            "include/linux/freebsd/input.h",
++        ],
++        "//conditions:default": [],
++    }),
++)
++
++filegroup(
++    name = "os_input_event_codes_header",
++    srcs = select({
++        "@platforms//os:linux": [
++            "include/linux/linux/input-event-codes.h",
++        ],
++        "@platforms//os:freebsd": [
++            "include/linux/freebsd/input-event-codes.h",
++        ],
++        "//conditions:default": [],
++    }),
++)
++
++cc_library(
++    name = "evdev_linux_headers",
++    hdrs = [
++        "include/linux/input.h",
++        "include/linux/uinput.h",
++    ] + select({
++        "@platforms//os:linux": [
++            "include/linux/linux/input-event-codes.h",
++            "include/linux/linux/input.h",
++            "include/linux/linux/uinput.h",
++        ],
++        "@platforms//os:freebsd": [
++            "include/linux/freebsd/input-event-codes.h",
++            "include/linux/freebsd/input.h",
++            "include/linux/freebsd/uinput.h",
++        ],
++        "//conditions:default": [],
++    }),
++    strip_include_prefix = "//include",
++    deps = [],
++    copts = ["-std=c11"],
++    visibility = ["//libevdev:__subpackages__"],
++)
++
++py_binary(
++    name = "make-event-names",
++    srcs = ["libevdev/make-event-names.py"],
++    visibility = ["//:__subpackages__"],
++)
++
++filegroup(
++    name = "libevdev_sym",
++    srcs = ["libevdev/libevdev.sym"],
++)
++
++cc_library(
++    name = "evdev",
++    hdrs = [
++        "libevdev/libevdev.h",
++        "libevdev/libevdev-uinput.h",
++    ],
++    deps = [
++        ":evdev_lib",
++    ],
++    visibility = ["//visibility:public"],
++)
++
++cc_library(
++    name = "evdev_lib",
++    hdrs = [
++        "libevdev/libevdev.h",
++        "libevdev/libevdev-uinput.h",
++        "libevdev/libevdev-int.h",
++        "libevdev/libevdev-util.h",
++        "libevdev/libevdev-uinput-int.h",
++    ],
++    srcs = [
++        "libevdev/libevdev.c",
++        "libevdev/libevdev-names.c",
++        "libevdev/libevdev-uinput.c",
++    ],
++    deps = [
++        ":evdev_linux_headers",
++        ":event_names",
++        ":config",
++    ],
++    additional_linker_inputs = [
++        ":libevdev_sym",
++    ],
++    copts = [
++        "-std=c11",
++        "-fPIC",
++        "-DPIC",
++        "-fvisibility=hidden",
++        "-pipe",
++        "-fno-strict-aliasing",
++        "-ffunction-sections",
++        "-fdata-sections",
++        "-fdiagnostics-show-option",
++        "-fno-common",
++    ],
++    linkopts = [
++        "-Wl,--version-script=\"$(location :libevdev_sym)\"",
++        "-lrt",
++        "-lm",
++        "-Wl,--as-needed",
++        "-Wl,--gc-sections",
++        "-Wl,-z,relro",
++        "-Wl,-z,now",
++    ],
++)
+--- libevdev/libevdev-uinput.h
++++ libevdev/libevdev-uinput.h
+@@ -29,7 +29,7 @@
+ extern "C" {
+ #endif
+ 
+-#include <libevdev/libevdev.h>
++#include "libevdev/libevdev.h"
+ 
+ struct libevdev_uinput;
+ 
