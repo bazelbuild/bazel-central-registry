@@ -207,13 +207,7 @@ def main(argv=None):
         homepage = ask_input("Please enter the homepage url for this module: ").strip()
         maintainers = get_maintainers_from_input()
         source_repository = ""
-        source_url = module.url
-        if source_url.startswith("https://mirror.bazel.build/github.com/"):
-            source_url = source_url.replace(
-                "https://mirror.bazel.build/github.com/",
-                "https://github.com/",
-                1,
-            )
+        source_url = bcr_validation.normalize_bazel_mirror_source_url(module.url)
         if source_url.startswith("https://github.com/"):
             parts = source_url.split("/")
             source_repository = "github:" + parts[3] + "/" + parts[4]
