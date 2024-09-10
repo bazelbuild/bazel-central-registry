@@ -1,0 +1,71 @@
+--- /dev/null
++++ BUILD.bazel
+@@ -0,0 +1,19 @@
++load(":lemon.bzl", "lemon")
++
++cc_binary(
++    name = "lemon",
++    srcs = ["lemon.c"],
++)
++
++lemon(
++    name = "pikchr_c",
++    src = "pikchr.y",
++    visibility = ["//:__subpackages__"],
++)
++
++cc_library(
++    name = "pikchr",
++    srcs = [":pikchr_c"],
++    hdrs = ["pikchr.h"],
++    visibility = ["//visibility:public"],
++)
+
+--- /dev/null
++++ lemon.bzl
+@@ -0,0 +1,35 @@
++def _lemon(ctx):
++    basename = ctx.file.src.basename[:-2]
++    out_c = ctx.actions.declare_file("{}/{}.c".format(ctx.attr.name, basename))
++    ctx.actions.run(
++        outputs = [out_c],
++        inputs = ctx.files.src + ctx.files.template,
++        executable = ctx.executable._lemon,
++        arguments = [
++            "-d" + out_c.dirname,
++            "-T" + ctx.file.template.path,
++            ctx.file.src.path,
++        ] + ctx.attr.lemon_options,
++        mnemonic = "Lemon",
++    )
++    return DefaultInfo(files = depset([out_c]))
++
++lemon = rule(
++    implementation = _lemon,
++    attrs = {
++        "src": attr.label(
++            allow_single_file = ["y"],
++            mandatory = True,
++        ),
++        "template": attr.label(
++            default = "//:lempar.c",
++            allow_single_file = True,
++        ),
++        "lemon_options": attr.string_list(),
++        "_lemon": attr.label(
++            default = "//:lemon",
++            executable = True,
++            cfg = "exec",
++        ),
++    },
++)
+
+--- /dev/null
++++ bin/BUILD.bazel
+@@ -0,0 +1,6 @@
++cc_binary(
++    name = "pikchr",
++    srcs = ["//:pikchr_c"],
++    copts = ["-DPIKCHR_SHELL"],
++    visibility = ["//visibility:public"],
++)
