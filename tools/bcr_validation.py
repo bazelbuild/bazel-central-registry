@@ -108,6 +108,23 @@ def fix_line_endings(lines):
     return [line.rstrip() + "\n" for line in lines]
 
 
+def normalize_bazel_mirror_source_url(source_url):
+    # The canonical domain of the Bazel Mirror is `mirror.bazel.build`.
+    #
+    # https://bazel.googlesource.com/continuous-integration/+/refs/heads/master/docs/mirror.md
+    mirror_prefix = "https://mirror.bazel.build/"
+    if not source_url.startswith(mirror_prefix):
+        return source_url
+
+    # Normalize mirrored GitHub URLs, such as auto-generated source archives.
+    #
+    # "https://mirror.bazel.build/github.com/a/b" -> "https://github.com/a/b"
+    if source_url.startswith(mirror_prefix + "github.com/"):
+        return "https://" + source_url[len(mirror_prefix) :]
+
+    return source_url
+
+
 class BcrValidationException(Exception):
     """
     Raised whenever we should stop the validation immediately.
@@ -141,7 +158,7 @@ class BcrValidator:
 
     def verify_source_archive_url_match_github_repo(self, module_name, version):
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
-        source_url = self.registry.get_source(module_name, version)["url"]
+        source_url = normalize_bazel_mirror_source_url(self.registry.get_source(module_name, version)["url"])
         source_repositories = self.registry.get_metadata(module_name).get("repository", [])
         matched = not source_repositories
         for source_repository in source_repositories:
