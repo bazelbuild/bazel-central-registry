@@ -142,6 +142,12 @@ class BcrValidator:
     def verify_source_archive_url_match_github_repo(self, module_name, version):
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
         source_url = self.registry.get_source(module_name, version)["url"]
+        if source_url.startswith("https://mirror.bazel.build/github.com/"):
+            source_url = source_url.replace(
+                "https://mirror.bazel.build/github.com/",
+                "https://github.com/",
+                1,
+            )
         source_repositories = self.registry.get_metadata(module_name).get("repository", [])
         matched = not source_repositories
         for source_repository in source_repositories:
