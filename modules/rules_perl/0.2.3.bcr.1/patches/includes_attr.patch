@@ -1,0 +1,345 @@
+diff --git a/README.md b/README.md
+index db22f5e..f276ef0 100644
+--- a/README.md
++++ b/README.md
+@@ -95,3 +95,9 @@ Now you can specify it as a dependency to any script that requires that module:
+ ```
+ 
+ **NOTE**: at this time you need to provide the directory that Perl needs to add to @INC.
++
++### Automatic PERL5LIB
++
++`perl_binary` (and `perl_test`) sets up the `PERL5LIB` environment variable with values for `perl_library` dependencies.
++By default this will be each perl_library's "lib" directory if present in source paths, otherwise the package dir.
++You can override this with the `perl5lib_paths` attribute.
+diff --git a/examples/cpan/BUILD b/examples/cpan/BUILD
+index e3b1bc4..55074d0 100644
+--- a/examples/cpan/BUILD
++++ b/examples/cpan/BUILD
+@@ -49,7 +49,7 @@ perl_xs(
+     name = "IOTtyXS",
+     srcs = ["auto/IO/Tty/Tty.xs"],
+     defines = [
+-        "HAVE_DEV_PTMX",
++        # "HAVE_DEV_PTMX",
+         "HAVE_GETPT",
+         "HAVE_GRANTPT",
+         "HAVE_POSIX_OPENPT",
+diff --git a/examples/cpan_remote/BUILD b/examples/cpan_remote/BUILD
+index 08be70a..40feff6 100644
+--- a/examples/cpan_remote/BUILD
++++ b/examples/cpan_remote/BUILD
+@@ -19,8 +19,5 @@ package(default_visibility = ["//visibility:public"])
+ perl_test(
+     name = "fcgi_import_test",
+     srcs = ["fcgi_import_test.t"],
+-    env = {
+-        "PERL5LIB": "../fcgi/lib:../fcgi/arch",
+-    },
+     deps = ["@fcgi//:FCGI"],
+ )
+diff --git a/examples/cpan_remote/fcgi.BUILD b/examples/cpan_remote/fcgi.BUILD
+index d59bf83..dc9ca23 100644
+--- a/examples/cpan_remote/fcgi.BUILD
++++ b/examples/cpan_remote/fcgi.BUILD
+@@ -20,6 +20,10 @@ perl_library(
+         "lib/FCGI.pm",
+         ":FCGIXS",
+     ],
++    perl5lib_paths = [
++        "arch",
++        "lib",
++    ],
+     visibility = ["//visibility:public"],
+ )
+ 
+diff --git a/examples/external_module/BUILD b/examples/external_module/BUILD
+index fbf52f9..ce10cea 100644
+--- a/examples/external_module/BUILD
++++ b/examples/external_module/BUILD
+@@ -22,17 +22,11 @@ package(default_visibility = ["//visibility:public"])
+ perl_test(
+     name = "pure_perl",
+     srcs = ["pure_perl.t"],
+-    env = {
+-        "PERL5LIB": "examples/cpan/Test-Mock-Simple-0.10/lib",
+-    },
+     deps = ["//examples/cpan:TestMockSimple"],
+ )
+ 
+ perl_test(
+     name = "complex_deps",
+     srcs = ["complex_deps.t"],
+-    env = {
+-        "PERL5LIB": "examples/cpan",
+-    },
+     deps = ["//examples/cpan:IOTty"],
+ )
+diff --git a/perl/binary_wrapper.tpl b/perl/binary_wrapper.tpl
+index 035523a..f1cb98d 100644
+--- a/perl/binary_wrapper.tpl
++++ b/perl/binary_wrapper.tpl
+@@ -11,4 +11,6 @@ else
+   exit 1
+ fi
+ 
++export PERL5LIB="$PERL5LIB{PERL5LIB}"
++
+ {env_vars} $PATH_PREFIX{interpreter} -I${PATH_PREFIX} ${PATH_PREFIX}{main} "$@"
+diff --git a/perl/perl.bzl b/perl/perl.bzl
+index 574d6a2..2bb67e0 100644
+--- a/perl/perl.bzl
++++ b/perl/perl.bzl
+@@ -23,6 +23,7 @@ PerlLibrary = provider(
+     doc = "A provider containing components of a `perl_library`",
+     fields = [
+         "transitive_perl_sources",
++        "perl5lib_paths",
+     ],
+ )
+ 
+@@ -99,6 +100,32 @@ def transitive_deps(ctx, extra_files = [], extra_deps = []):
+         files = files,
+     )
+ 
++def _perl5lib_paths(ctx):
++    """Calculate the PERL5LIB paths for a perl_library rule's srcs.
++
++    Examples for perl5lib_paths ["lib"] (=default) (srcs -> perl5lib_paths):
++    * ["lib/Foo/Bar.pm", "lib/Foo/lib/Baz.pm"] -> ["lib"]
++    * ["Module-1.0/lib/Foo/Bar.pm"] -> ["Module-1.0/lib"]
++    * ["src/Foo.pm","Bar.pm"] -> ["."]
++    * ["src/Foo.pm","bar/lib/Bar.pm"] -> [".", "bar/lib"]
++    * ["@cpan_foo"] -> ["external/cpan_foo"] (WORKSPACE)
++    * ["@cpan_foo"] -> ["external/lcov~~_repo_rules~cpan_foo"] (Bzlmod)
++    * ["@cpan_foo//:lib/Foo.pm"] -> ["external/cpan_foo/lib"] (WORKSPACE)
++    * ["@cpan_foo//:lib/Foo.pm"] -> ["external/lcov~~_repo_rules~cpan_foo/lib"] (Bzlmod)
++    """
++    perl5lib_paths = []
++    for path in [src.short_path for src in ctx.files.srcs]:
++        libdir_for_src = None
++        for libdir in ctx.attr.perl5lib_paths:
++            path_parts = path.split("/")
++            if libdir in path_parts:
++                libdir_for_src = "/".join(path_parts[:path_parts.index(libdir) + 1])
++                break
++        if not libdir_for_src:
++            libdir_for_src = (ctx.label.workspace_root or ".") + "/" + ctx.label.package
++        perl5lib_paths.append(libdir_for_src)
++    return depset(direct = perl5lib_paths).to_list()
++
+ def _perl_library_implementation(ctx):
+     transitive_sources = transitive_deps(ctx)
+     return [
+@@ -107,9 +134,16 @@ def _perl_library_implementation(ctx):
+         ),
+         PerlLibrary(
+             transitive_perl_sources = transitive_sources.srcs,
++            perl5lib_paths = _perl5lib_paths(ctx),
+         ),
+     ]
+ 
++def sum(items, initial):
++    result = initial
++    for item in items:
++        result += item
++    return result
++
+ def _perl_binary_implementation(ctx):
+     toolchain = ctx.toolchains["@rules_perl//perl:toolchain_type"].perl_runtime
+     interpreter = toolchain.interpreter
+@@ -120,10 +154,14 @@ def _perl_binary_implementation(ctx):
+     if main == None:
+         main = _get_main_from_sources(ctx)
+ 
++    perl5lib_paths = sum([dep[PerlLibrary].perl5lib_paths for dep in ctx.attr.deps], [])
++    perl5lib_paths_str = ":" + ":".join(perl5lib_paths) if perl5lib_paths else ""
++
+     ctx.actions.expand_template(
+         template = ctx.file._wrapper_template,
+         output = ctx.outputs.executable,
+         substitutions = {
++            "{PERL5LIB}": perl5lib_paths_str,
+             "{env_vars}": _env_vars(ctx),
+             "{interpreter}": interpreter.short_path,
+             "{main}": main.short_path,
+@@ -273,6 +311,7 @@ perl_library = rule(
+     attrs = {
+         "data": _perl_data_attr,
+         "deps": _perl_deps_attr,
++        "perl5lib_paths": attr.string_list(default = ["lib"]),
+         "srcs": _perl_srcs_attr,
+     },
+     implementation = _perl_library_implementation,
+
+From 973efb79defe0c417aa9655ac24a09148d599e9e Mon Sep 17 00:00:00 2001
+From: Laurenz <git@laure.nz>
+Date: Sun, 4 Aug 2024 10:26:27 +0200
+Subject: [PATCH 2/3] include transitive perl5lib_paths
+
+---
+ perl/perl.bzl | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/perl/perl.bzl b/perl/perl.bzl
+index 2bb67e0..0505ea1 100644
+--- a/perl/perl.bzl
++++ b/perl/perl.bzl
+@@ -124,7 +124,10 @@ def _perl5lib_paths(ctx):
+         if not libdir_for_src:
+             libdir_for_src = (ctx.label.workspace_root or ".") + "/" + ctx.label.package
+         perl5lib_paths.append(libdir_for_src)
+-    return depset(direct = perl5lib_paths).to_list()
++    for dep in ctx.attr.deps:
++        perl5lib_paths.extend(dep[PerlLibrary].perl5lib_paths)
++    perl5lib_paths = depset(direct = perl5lib_paths).to_list()
++    return perl5lib_paths
+ 
+ def _perl_library_implementation(ctx):
+     transitive_sources = transitive_deps(ctx)
+
+From 76a9442030d885e0adc370b9a8cca749c8d19187 Mon Sep 17 00:00:00 2001
+From: Laurenz <git@laure.nz>
+Date: Wed, 7 Aug 2024 23:13:06 +0200
+Subject: [PATCH 3/3] Simplify to using `includes`
+
+---
+ README.md                       |  7 +++--
+ examples/cpan/BUILD             |  1 +
+ examples/cpan_remote/fcgi.BUILD |  2 +-
+ perl/perl.bzl                   | 47 ++++++++++-----------------------
+ 4 files changed, 19 insertions(+), 38 deletions(-)
+
+diff --git a/README.md b/README.md
+index f276ef0..dc69b55 100644
+--- a/README.md
++++ b/README.md
+@@ -96,8 +96,7 @@ Now you can specify it as a dependency to any script that requires that module:
+ 
+ **NOTE**: at this time you need to provide the directory that Perl needs to add to @INC.
+ 
+-### Automatic PERL5LIB
++### PERL5LIB includes
+ 
+-`perl_binary` (and `perl_test`) sets up the `PERL5LIB` environment variable with values for `perl_library` dependencies.
+-By default this will be each perl_library's "lib" directory if present in source paths, otherwise the package dir.
+-You can override this with the `perl5lib_paths` attribute.
++`perl_binary` (and `perl_test`) sets up the `PERL5LIB` environment variable with values for all `perl_library` dep's `includes`.
++The default includes are `[".", "lib"]`.
+diff --git a/examples/cpan/BUILD b/examples/cpan/BUILD
+index 55074d0..db5c3f7 100644
+--- a/examples/cpan/BUILD
++++ b/examples/cpan/BUILD
+@@ -20,6 +20,7 @@ package(default_visibility = ["//visibility:public"])
+ perl_library(
+     name = "TestMockSimple",
+     srcs = ["Test-Mock-Simple-0.10/lib/Test/Mock/Simple.pm"],
++    includes = ["Test-Mock-Simple-0.10/lib"],
+ )
+ 
+ # Better example of module placement with dependence
+diff --git a/examples/cpan_remote/fcgi.BUILD b/examples/cpan_remote/fcgi.BUILD
+index dc9ca23..cb9b5e5 100644
+--- a/examples/cpan_remote/fcgi.BUILD
++++ b/examples/cpan_remote/fcgi.BUILD
+@@ -20,7 +20,7 @@ perl_library(
+         "lib/FCGI.pm",
+         ":FCGIXS",
+     ],
+-    perl5lib_paths = [
++    includes = [
+         "arch",
+         "lib",
+     ],
+diff --git a/perl/perl.bzl b/perl/perl.bzl
+index 0505ea1..5115402 100644
+--- a/perl/perl.bzl
++++ b/perl/perl.bzl
+@@ -23,7 +23,7 @@ PerlLibrary = provider(
+     doc = "A provider containing components of a `perl_library`",
+     fields = [
+         "transitive_perl_sources",
+-        "perl5lib_paths",
++        "includes",
+     ],
+ )
+ 
+@@ -100,34 +100,15 @@ def transitive_deps(ctx, extra_files = [], extra_deps = []):
+         files = files,
+     )
+ 
+-def _perl5lib_paths(ctx):
+-    """Calculate the PERL5LIB paths for a perl_library rule's srcs.
+-
+-    Examples for perl5lib_paths ["lib"] (=default) (srcs -> perl5lib_paths):
+-    * ["lib/Foo/Bar.pm", "lib/Foo/lib/Baz.pm"] -> ["lib"]
+-    * ["Module-1.0/lib/Foo/Bar.pm"] -> ["Module-1.0/lib"]
+-    * ["src/Foo.pm","Bar.pm"] -> ["."]
+-    * ["src/Foo.pm","bar/lib/Bar.pm"] -> [".", "bar/lib"]
+-    * ["@cpan_foo"] -> ["external/cpan_foo"] (WORKSPACE)
+-    * ["@cpan_foo"] -> ["external/lcov~~_repo_rules~cpan_foo"] (Bzlmod)
+-    * ["@cpan_foo//:lib/Foo.pm"] -> ["external/cpan_foo/lib"] (WORKSPACE)
+-    * ["@cpan_foo//:lib/Foo.pm"] -> ["external/lcov~~_repo_rules~cpan_foo/lib"] (Bzlmod)
+-    """
+-    perl5lib_paths = []
+-    for path in [src.short_path for src in ctx.files.srcs]:
+-        libdir_for_src = None
+-        for libdir in ctx.attr.perl5lib_paths:
+-            path_parts = path.split("/")
+-            if libdir in path_parts:
+-                libdir_for_src = "/".join(path_parts[:path_parts.index(libdir) + 1])
+-                break
+-        if not libdir_for_src:
+-            libdir_for_src = (ctx.label.workspace_root or ".") + "/" + ctx.label.package
+-        perl5lib_paths.append(libdir_for_src)
++def _include_paths(ctx):
++    """Calculate the PERL5LIB paths for a perl_library rule's includes."""
++    package_root = (ctx.label.workspace_root + "/" + ctx.label.package).strip("/") or "."
++    include_paths = [package_root] if "." in ctx.attr.includes else []
++    include_paths.extend([package_root + "/" + include for include in ctx.attr.includes if include != "."])
+     for dep in ctx.attr.deps:
+-        perl5lib_paths.extend(dep[PerlLibrary].perl5lib_paths)
+-    perl5lib_paths = depset(direct = perl5lib_paths).to_list()
+-    return perl5lib_paths
++        include_paths.extend(dep[PerlLibrary].includes)
++    include_paths = depset(direct = include_paths).to_list()
++    return include_paths
+ 
+ def _perl_library_implementation(ctx):
+     transitive_sources = transitive_deps(ctx)
+@@ -137,7 +118,7 @@ def _perl_library_implementation(ctx):
+         ),
+         PerlLibrary(
+             transitive_perl_sources = transitive_sources.srcs,
+-            perl5lib_paths = _perl5lib_paths(ctx),
++            includes = _include_paths(ctx),
+         ),
+     ]
+ 
+@@ -157,14 +138,14 @@ def _perl_binary_implementation(ctx):
+     if main == None:
+         main = _get_main_from_sources(ctx)
+ 
+-    perl5lib_paths = sum([dep[PerlLibrary].perl5lib_paths for dep in ctx.attr.deps], [])
+-    perl5lib_paths_str = ":" + ":".join(perl5lib_paths) if perl5lib_paths else ""
++    include_paths = sum([dep[PerlLibrary].includes for dep in ctx.attr.deps], [])
++    perl5lib = ":" + ":".join(include_paths) if include_paths else ""
+ 
+     ctx.actions.expand_template(
+         template = ctx.file._wrapper_template,
+         output = ctx.outputs.executable,
+         substitutions = {
+-            "{PERL5LIB}": perl5lib_paths_str,
++            "{PERL5LIB}": perl5lib,
+             "{env_vars}": _env_vars(ctx),
+             "{interpreter}": interpreter.short_path,
+             "{main}": main.short_path,
+@@ -314,7 +295,7 @@ perl_library = rule(
+     attrs = {
+         "data": _perl_data_attr,
+         "deps": _perl_deps_attr,
+-        "perl5lib_paths": attr.string_list(default = ["lib"]),
++        "includes": attr.string_list(default = [".", "lib"]),
+         "srcs": _perl_srcs_attr,
+     },
+     implementation = _perl_library_implementation,
