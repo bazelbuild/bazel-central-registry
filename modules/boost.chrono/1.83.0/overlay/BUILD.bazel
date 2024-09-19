@@ -1,0 +1,90 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+_WINDOWS_HDRS = [
+    "**/win/*.hpp"
+]
+
+_POSIX_HDRS = [
+    "**/posix/*.hpp"
+]
+
+_MAC_HDRS = [
+    "**/mac/*.hpp"
+]
+
+
+cc_library(
+    name = "chrono_posix",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "@platforms//os:macos": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(_POSIX_HDRS),
+    includes = ["include"],
+    defines = ["BOOST_THREAD_DONT_USE_ATOMIC"],
+)
+
+cc_library(
+    name = "chrono_windows",
+    target_compatible_with = select({
+        "@platforms//os:windows": [],
+        "@platforms//os:macos": ["@platforms//:incompatible"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    hdrs = glob(_WINDOWS_HDRS),
+    includes = ["include"],
+    linkopts = ["-DEFAULTLIB:shell32"],
+)
+
+cc_library(
+    name = "chrono_mac",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    hdrs = glob(_MAC_HDRS),
+    includes = ["include"],
+    linkopts = ["-DEFAULTLIB:shell32"],
+)
+
+cc_library(
+    name = "boost.chrono",
+    hdrs = glob([
+        "include/**/*.hpp",
+        "include/**/*.h",
+    ], exclude = _POSIX_HDRS + _WINDOWS_HDRS + _MAC_HDRS),
+    srcs = glob(["src/**/*.cpp"]),
+    defines = ["BOOST_ALL_NO_LIB"],
+    includes = ["include"],
+    deps = [
+        "@boost.assert",
+        "@boost.config",
+        "@boost.core",
+        "@boost.integer",
+        "@boost.move",
+        "@boost.mpl",
+        "@boost.predef",
+        "@boost.ratio",
+        "@boost.static_assert",
+        "@boost.system",
+        "@boost.throw_exception",
+        "@boost.type_traits",
+        "@boost.typeof",
+        "@boost.utility",
+    ]  + select({
+        "@platforms//os:windows": [
+            ":chrono_windows",
+            "@boost.winapi",
+        ],
+        "@platforms//os:macos": [
+            ":chrono_mac",
+        ],
+        "//conditions:default": [
+            ":chrono_posix",
+        ],
+    })
+)
