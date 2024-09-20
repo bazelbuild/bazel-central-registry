@@ -306,7 +306,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         )
         eprint(
             'If it\'s used in a macro, you can use `Label("//foo/bar")` '
-            "to make sureit always points to your repo no matter where the macro is used."
+            "to make sure it always points to your repo no matter where the macro is used."
         )
         eprint(
             "You can temporarily work around this by adding `repo_name` attribute "
@@ -346,7 +346,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
             f"Found module `{found_module}` in the registry, available versions are "
             + str(metadata["versions"])
         )
-        info(f"This can be introudced via a bazel_dep definition:")
+        info(f"This can be introduced via a bazel_dep definition:")
         eprint(f"    {bazel_dep_line}")
 
         if yes_or_no(
@@ -458,11 +458,11 @@ def prepare_migration():
     eprint(stdout.strip())
     if exit_code != 0 or not stdout:
         warning(
-            "Current bazel is not a release version, we recommend using the latest Bazel LTS release for Bzlmod migration (minimal supported LTS release is Bazel 6)."
+            "Current bazel is not a release version, we recommend using Bazel 7 or newer releases for Bzlmod migration."
         )
     elif parse_bazel_version(stdout.strip().split(" ")[1]) < (6, 0, 0):
         error(
-            "Current Bazel version is too old, please upgrade your Bazel to the latest Bazel LTS release (minimal supported LTS release is Bazel 6). "
+            "Current Bazel version is too old, please upgrade to Bazel 7 or newer releases for Bzlmod migration."
         )
         abort_migration()
 
