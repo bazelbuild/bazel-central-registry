@@ -324,7 +324,12 @@ def url_match_source_repo(source_url, module_name):
             matched = (
                 parts.scheme == "https"
                 and parts.netloc == "github.com"
-                and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
+                and (
+                    os.path.abspath(parts.path).startswith(f"/{repo_path}/")
+                    or os.path.abspath(parts.path).startswith(
+                        f"/{repo_path}.git"
+                    )
+                )
             )
         elif repo_type == "https":
             repo = urlparse(source_repository)
@@ -364,6 +369,8 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
             urls = dep["original_attributes"].get("urls", [])
             if dep["original_attributes"].get("url", None):
                 urls.append(dep["original_attributes"]["url"])
+            if dep["original_attributes"].get("remote", None):
+                urls.append(dep["original_attributes"]["remote"])
             break
     if not repo_def:
         error(
@@ -373,6 +380,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         abort_migration()
 
     # Check if a module is already available in the registry.
+    info(f"Finding Bazel module based on repo name ({repo}) and URLs: {urls}")
     found_module = None
     for module_name in REGISTRY_CLIENT.get_all_modules():
         # Check if there is matching module name or a well known repo name for a matching module.
@@ -407,9 +415,14 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
 
     # Ask user if the dependency should be introduced via use_repo_rule
     # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
-    if file_label and file_label.startswith("//") or file_label.startswith("@bazel_tools//") and yes_or_no(
-        "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
-        True,
+    if (
+        file_label
+        and file_label.startswith("//")
+        or file_label.startswith("@bazel_tools//")
+        and yes_or_no(
+            "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
+            True,
+        )
     ):
         add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name)
     # Ask user if the dependency should be introduced via module extension
@@ -580,7 +593,7 @@ def generate_resolved_file(targets, use_bazel_sync):
         lines = f.readlines()
     with open("resolved_deps.py", "w") as f:
         for line in lines:
-            if "\"_action_listener\":" not in line:
+            if '"_action_listener":' not in line:
                 f.write(line)
 
 
