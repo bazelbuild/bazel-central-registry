@@ -23,26 +23,13 @@ import re
 import subprocess
 import sys
 import tempfile
+import os
 
+from urllib.parse import urlparse
 from registry import RegistryClient
 
 # The registry client points to the bazel central registry repo
 REGISTRY_CLIENT = RegistryClient(pathlib.Path(__file__).parent.parent)
-
-COMMON_REPO_TO_MODULE_MAP = {
-    "build_bazel_apple_support": "apple_support",
-    "build_bazel_rules_nodejs": "rules_nodejs",
-    "build_bazel_rules_swift": "rules_swift",
-    "com_github_cares_cares": "c-ares",
-    "com_github_gflags_gflags": "gflags",
-    "com_github_grpc_grpc": "grpc",
-    "com_google_absl": "abseil-cpp",
-    "com_google_googletest": "googletest",
-    "com_google_protobuf": "protobuf",
-    "com_googlesource_code_re2": "re2",
-    "io_bazel_rules_go": "rules_go",
-    "io_bazel_skydoc": "stardoc",
-}
 
 LOAD_IDENTIFIER = "# -- load statements -- #"
 REPO_IDENTIFIER = "# -- repo definitions -- #"
@@ -295,6 +282,32 @@ def add_repo_to_module_extension(repo, repo_def):
     )
 
 
+def url_match_source_repo(source_url, module_name):
+    source_repositories = REGISTRY_CLIENT.get_metadata(module_name).get(
+        "repository", []
+    )
+    matched = False
+    parts = urlparse(source_url)
+    for source_repository in source_repositories:
+        if matched:
+            break
+        repo_type, repo_path = source_repository.split(":")
+        if repo_type == "github":
+            matched = (
+                parts.scheme == "https"
+                and parts.netloc == "github.com"
+                and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
+            )
+        elif repo_type == "https":
+            repo = urlparse(source_repository)
+            matched = (
+                parts.scheme == repo.scheme
+                and parts.netloc == repo.netloc
+                and os.path.abspath(parts.path).startswith(f"{repo.path}/")
+            )
+    return matched
+
+
 def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     error(f"@{repo} is not visible in the Bzlmod build.")
 
@@ -316,9 +329,13 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
 
     # Print the repo definition in the original WORKSPACE file
     repo_def = []
+    urls = []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
             repo_def = print_repo_definition(dep)
+            urls = dep["original_attributes"].get("urls", [])
+            if dep["original_attributes"].get("url", None):
+                urls.append(dep["original_attributes"]["url"])
             break
     if not repo_def:
         error(
@@ -333,7 +350,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         # Check if there is matching module name or a well known repo name for a matching module.
         if (
             repo == module_name
-            or COMMON_REPO_TO_MODULE_MAP.get(repo) == module_name
+            or any(url_match_source_repo(url, module_name) for url in urls)
         ):
             found_module = module_name
 
