@@ -574,6 +574,15 @@ def generate_resolved_file(targets, use_bazel_sync):
         exit_code, 0, "Failed to run `" + " ".join(bazel_command) + "`", stderr
     )
 
+    # Remove lines containing `"_action_listener":` in the resolved_deps.py file.
+    # Avoiding https://github.com/bazelbuild/bazel-central-registry/issues/2789
+    with open("resolved_deps.py", "r") as f:
+        lines = f.readlines()
+    with open("resolved_deps.py", "w") as f:
+        for line in lines:
+            if "\"_action_listener\":" not in line:
+                f.write(line)
+
 
 def load_resolved_deps(targets, use_bazel_sync, force):
     """Generate and load the resolved file that contains external deps info."""
