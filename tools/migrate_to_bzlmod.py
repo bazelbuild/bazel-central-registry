@@ -196,6 +196,9 @@ def print_repo_definition(dep):
         eprint(line)
     eprint("-" * len(header))
 
+    if file_label and file_label.startswith("@@"):
+        file_label = file_label[1:]
+
     return repo_def, file_label, rule_name
 
 
@@ -238,7 +241,6 @@ def write_at_given_place(filename, new_content, identifier):
 def add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name):
     """Introduce a repository with use_repo_rule in the MODULE.bazel file."""
     info(f"Introducing @{repo} via use_repo_rule.")
-
     use_repo_rule = (
         f'{rule_name} = use_repo_rule("{file_label}", "{rule_name}")'
     )
@@ -258,14 +260,15 @@ def add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name):
     )
 
 
-def add_repo_to_module_extension(repo, repo_def):
+def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     """Introduce a repository via a module extension."""
     info(f"Introducing @{repo} via a module extension.")
 
-    m = re.search(r"load\(\"@([\w\d-]+)\/\/", repo_def[0])
-    need_separate_module_extension = m and m.group(1) != "bazel_tools"
+    # If the repo was not defined in @bazel_tools,
+    # we need to create a separate module extension for it to avoid cycle.
+    need_separate_module_extension = not file_label.startswith("@bazel_tools")
     ext_name = (
-        f"extension_for_{m.group(1)}".replace("-", "_")
+        f"extension_for_{rule_name}".replace("-", "_")
         if need_separate_module_extension
         else "non_module_deps"
     )
@@ -286,9 +289,10 @@ def add_repo_to_module_extension(repo, repo_def):
         )
 
     # Add repo definition to the module extension's bzl file
+    load_statement = f'load("{file_label}", "{rule_name}")'
     bzl_content = open(ext_bzl_name, "r").read()
-    if repo_def[0] not in bzl_content:
-        write_at_given_place(ext_bzl_name, repo_def[0], LOAD_IDENTIFIER)
+    if load_statement not in bzl_content:
+        write_at_given_place(ext_bzl_name, load_statement, LOAD_IDENTIFIER)
     write_at_given_place(
         ext_bzl_name,
         "\n".join(["  " + line.replace("\n", "\n  ") for line in repo_def[1:]]),
@@ -401,17 +405,19 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     else:
         info(f"{repo} isn't found in the registry.")
 
-    # Ask user if the dependency should be introduced via use_repo_rule if it looks like a starlark repository rule.
-    if repo_def[0].startswith("load(") and yes_or_no(
+    # Ask user if the dependency should be introduced via use_repo_rule
+    # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
+    if file_label and file_label.startswith("//") or file_label.startswith("@bazel_tools//") and yes_or_no(
         "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel?",
         True,
     ):
         add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name)
-    # Ask user if the dependency should be introduced via module extension if it looks like a starlark repository rule.
-    elif repo_def[0].startswith("load(") and yes_or_no(
+    # Ask user if the dependency should be introduced via module extension
+    # Only ask when file_label exists, which means it's a starlark repository rule.
+    elif file_label and yes_or_no(
         "Do you wish to introduce the repository with a module extension?", True
     ):
-        add_repo_to_module_extension(repo, repo_def)
+        add_repo_to_module_extension(repo, repo_def, file_label, rule_name)
     # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
     elif yes_or_no(
         "Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?",
