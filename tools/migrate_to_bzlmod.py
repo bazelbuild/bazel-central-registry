@@ -408,7 +408,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     # Ask user if the dependency should be introduced via use_repo_rule
     # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
     if file_label and file_label.startswith("//") or file_label.startswith("@bazel_tools//") and yes_or_no(
-        "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel?",
+        "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
         True,
     ):
         add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name)
