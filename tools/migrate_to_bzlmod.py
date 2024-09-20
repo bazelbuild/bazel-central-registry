@@ -56,7 +56,9 @@ def abort_migration():
 
 def assertExitCode(exit_code, expected_exit_code, error_message, stderr):
     if exit_code != expected_exit_code:
-        error(f"Command exited with {exit_code}, expected {expected_exit_code}:")
+        error(
+            f"Command exited with {exit_code}, expected {expected_exit_code}:"
+        )
         eprint(stderr)
         abort_migration()
 
@@ -129,7 +131,13 @@ def execute_command(args, cwd=None, env=None, shell=False, executable=None):
     with tempfile.TemporaryFile() as stdout:
         with tempfile.TemporaryFile() as stderr:
             proc = subprocess.Popen(
-                args, executable=executable, stdout=stdout, stderr=stderr, cwd=cwd, env=env, shell=shell
+                args,
+                executable=executable,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=cwd,
+                env=env,
+                shell=shell,
             )
             exit_code = proc.wait()
 
@@ -155,7 +163,9 @@ def print_repo_definition(dep):
                 s = re.match(r"^  (.+):[0-9]+:[0-9]+: in ([^\_<].+)$", line)
                 if s:
                     new_file_name, new_rule_name = s.groups()
-                    if new_file_name.endswith(file_label.split("//")[1].replace(":", "/")):
+                    if new_file_name.endswith(
+                        file_label.split("//")[1].replace(":", "/")
+                    ):
                         rule_name = new_rule_name
                     else:
                         warning(
@@ -186,7 +196,10 @@ def print_repo_definition(dep):
             repo_def.append(f"  {key} = {value_str},")
     repo_def.append(")")
 
-    header = "----- Repository information for @%s in the WORKSPACE file -----" % dep["original_attributes"]["name"]
+    header = (
+        "----- Repository information for @%s in the WORKSPACE file -----"
+        % dep["original_attributes"]["name"]
+    )
     eprint(header)
     if "definition_information" in dep:
         eprint(dep["definition_information"])
@@ -202,8 +215,12 @@ def detect_unavailable_repo_error(stderr):
     PATTERNS = [
         re.compile(r"unknown repo '([A-Za-z0-9_-]+)' requested from"),
         re.compile(r"The repository '@([A-Za-z0-9_-]+)' could not be resolved"),
-        re.compile(r"No repository visible as '@([A-Za-z0-9_-]+)' from main repository"),
-        re.compile(r"This could either mean you have to add the '@([A-Za-z0-9_-]+)' repository"),
+        re.compile(
+            r"No repository visible as '@([A-Za-z0-9_-]+)' from main repository"
+        ),
+        re.compile(
+            r"This could either mean you have to add the '@([A-Za-z0-9_-]+)' repository"
+        ),
     ]
 
     for line in stderr.split("\n"):
@@ -236,7 +253,11 @@ def add_repo_to_module_extension(repo, repo_def):
 
     m = re.search(r"load\(\"@([\w\d-]+)\/\/", repo_def[0])
     need_separate_module_extension = m and m.group(1) != "bazel_tools"
-    ext_name = f"extension_for_{m.group(1)}".replace("-", "_") if need_separate_module_extension else "non_module_deps"
+    ext_name = (
+        f"extension_for_{m.group(1)}".replace("-", "_")
+        if need_separate_module_extension
+        else "non_module_deps"
+    )
     ext_bzl_name = ext_name + ".bzl"
 
     # Generate the initial bzl file for the module extension
@@ -269,7 +290,9 @@ def add_repo_to_module_extension(repo, repo_def):
     ext_identifier = f"# End of extension `{ext_name}`"
     if use_ext not in module_bazel_content:
         scratch_file("MODULE.bazel", ["", use_ext, ext_identifier], mode="a")
-    write_at_given_place("MODULE.bazel", f'use_repo({ext_name}, "{repo}")', ext_identifier)
+    write_at_given_place(
+        "MODULE.bazel", f'use_repo({ext_name}, "{repo}")', ext_identifier
+    )
 
 
 def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
@@ -308,7 +331,10 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     found_module = None
     for module_name in REGISTRY_CLIENT.get_all_modules():
         # Check if there is matching module name or a well known repo name for a matching module.
-        if repo == module_name or COMMON_REPO_TO_MODULE_MAP.get(repo) == module_name:
+        if (
+            repo == module_name
+            or COMMON_REPO_TO_MODULE_MAP.get(repo) == module_name
+        ):
             found_module = module_name
 
     if found_module:
@@ -316,13 +342,21 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         version = metadata["versions"][-1]
         repo_name = "" if repo == found_module else f', repo_name = "{repo}"'
         bazel_dep_line = f'bazel_dep(name = "{found_module}", version = "{version}"{repo_name})'
-        info(f"Found module `{found_module}` in the registry, available versions are " + str(metadata["versions"]))
+        info(
+            f"Found module `{found_module}` in the registry, available versions are "
+            + str(metadata["versions"])
+        )
         info(f"This can be introudced via a bazel_dep definition:")
         eprint(f"    {bazel_dep_line}")
 
-        if yes_or_no("Do you wish to add the bazel_dep definition to the MODULE.bazel file?", True):
+        if yes_or_no(
+            "Do you wish to add the bazel_dep definition to the MODULE.bazel file?",
+            True,
+        ):
             info(f"Introducing @{repo} as a Bazel module.")
-            write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
+            write_at_given_place(
+                "MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER
+            )
             return True
     else:
         info(f"{repo} isn't found in the registry.")
@@ -333,7 +367,10 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     ):
         add_repo_to_module_extension(repo, repo_def)
     # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
-    elif yes_or_no("Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?", True):
+    elif yes_or_no(
+        "Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?",
+        True,
+    ):
         repo_def = ["", "# TODO: Migrated to Bzlmod"] + repo_def
         info(f"Introducing @{repo} in WORKSPACE.bzlmod file.")
         scratch_file("WORKSPACE.bzlmod", repo_def, mode="a")
@@ -362,13 +399,19 @@ def address_bind_issue(bind_target, resolved_repos):
     name = bind_target.split(":")[1]
     bind_def = None
     for dep in resolved_repos:
-        if dep["original_rule_class"] == "bind" and dep["original_attributes"]["name"] == name:
+        if (
+            dep["original_rule_class"] == "bind"
+            and dep["original_attributes"]["name"] == name
+        ):
             bind_def = print_repo_definition(dep)
             break
 
     if bind_def:
         bind_def = ["", "# TODO: Remove the following bind usage"] + bind_def
-        if yes_or_no("Do you wish to add the bind definition to WORKSPACE.bzlmod for later migration?", True):
+        if yes_or_no(
+            "Do you wish to add the bind definition to WORKSPACE.bzlmod for later migration?",
+            True,
+        ):
             info(f"Adding bind statement for {bind_target} in WORKSPACE.bzlmod")
             scratch_file("WORKSPACE.bzlmod", bind_def, mode="a")
             return True
@@ -414,12 +457,12 @@ def prepare_migration():
     exit_code, stdout, _ = execute_command(["bazel", "--version"])
     eprint(stdout.strip())
     if exit_code != 0 or not stdout:
-        warning("Current bazel is not a release version, please make sure you are running at least bazel 6.0.0")
+        warning(
+            "Current bazel is not a release version, we recommend using the latest Bazel LTS release for Bzlmod migration (minimal supported LTS release is Bazel 6)."
+        )
     elif parse_bazel_version(stdout.strip().split(" ")[1]) < (6, 0, 0):
         error(
-            "Current Bazel version is older than 6.0.0, please upgrade your Bazel to at least 6.0.0. "
-            + "You can download Bazelisk from https://github.com/bazelbuild/bazelisk/releases "
-            + "and set env var USE_BAZEL_VERSION=6.0.0."
+            "Current Bazel version is too old, please upgrade your Bazel to the latest Bazel LTS release (minimal supported LTS release is Bazel 6). "
         )
         abort_migration()
 
@@ -427,14 +470,23 @@ def prepare_migration():
     workspace_name = "main"
     with open("WORKSPACE", "r") as f:
         for line in f:
-            s = re.search(r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line)
+            s = re.search(
+                r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line
+            )
             if s:
                 workspace_name = s.groups()[0]
                 info(f"Detected original workspace name: {workspace_name}")
 
     # Create MODULE.bazel file if it doesn't exist already.
     if not pathlib.Path("MODULE.bazel").is_file():
-        scratch_file("MODULE.bazel", [f'module(name = "{workspace_name}", version="")', "", BAZEL_DEP_IDENTIFIER])
+        scratch_file(
+            "MODULE.bazel",
+            [
+                f'module(name = "{workspace_name}", version="")',
+                "",
+                BAZEL_DEP_IDENTIFIER,
+            ],
+        )
     module_bazel_content = open("MODULE.bazel", "r").read()
     if BAZEL_DEP_IDENTIFIER not in module_bazel_content:
         scratch_file("MODULE.bazel", ["", BAZEL_DEP_IDENTIFIER], mode="a")
@@ -447,17 +499,27 @@ def prepare_migration():
 
 def generate_resolved_file(targets, use_bazel_sync):
     exit_code, _, stderr = execute_command(["bazel", "clean", "--expunge"])
-    assertExitCode(exit_code, 0, "Failed to run `bazel clean --expunge`", stderr)
+    assertExitCode(
+        exit_code, 0, "Failed to run `bazel clean --expunge`", stderr
+    )
     bazel_nobuild_command = [
         "bazel",
         "build",
         "--nobuild",
         "--experimental_repository_resolved_file=resolved_deps.py",
     ] + targets
-    bazel_sync_comand = ["bazel", "sync", "--experimental_repository_resolved_file=resolved_deps.py"]
-    bazel_command = bazel_sync_comand if use_bazel_sync else bazel_nobuild_command
+    bazel_sync_comand = [
+        "bazel",
+        "sync",
+        "--experimental_repository_resolved_file=resolved_deps.py",
+    ]
+    bazel_command = (
+        bazel_sync_comand if use_bazel_sync else bazel_nobuild_command
+    )
     exit_code, _, stderr = execute_command(bazel_command)
-    assertExitCode(exit_code, 0, "Failed to run `" + " ".join(bazel_command) + "`", stderr)
+    assertExitCode(
+        exit_code, 0, "Failed to run `" + " ".join(bazel_command) + "`", stderr
+    )
 
 
 def load_resolved_deps(targets, use_bazel_sync, force):
@@ -471,12 +533,17 @@ def load_resolved_deps(targets, use_bazel_sync, force):
             "if it's out of date, please add `--force/-f` flag to force update it."
         )
 
-    spec = importlib.util.spec_from_file_location("resolved_deps", "./resolved_deps.py")
+    spec = importlib.util.spec_from_file_location(
+        "resolved_deps", "./resolved_deps.py"
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules["resolved_deps"] = module
     spec.loader.exec_module(module)
     resolved_deps = module.resolved
-    info("Found %d external repositories in the ./resolved_deps.py file." % len(resolved_deps))
+    info(
+        "Found %d external repositories in the ./resolved_deps.py file."
+        % len(resolved_deps)
+    )
     return resolved_deps
 
 
@@ -504,8 +571,18 @@ def main(argv=None):
         + "while `bazel sync` resolves and fetches all dependencies defined in your WORKSPACE file, "
         + "including bind statements and execution platform & toolchain registrations.",
     )
-    parser.add_argument("-f", "--force", action="store_true", help="ignore previously generated resolved dependencies.")
-    parser.add_argument("-i", "--interactive", action="store_true", help="ask the user interactively on what to do.")
+    parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="ignore previously generated resolved dependencies.",
+    )
+    parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="ask the user interactively on what to do.",
+    )
     parser.add_argument(
         "-t",
         "--target",
@@ -529,7 +606,12 @@ def main(argv=None):
     while True:
         # Try to build with Bzlmod enabled
         targets = args.target
-        bazel_command = ["bazel", "build", "--nobuild", "--enable_bzlmod"] + targets
+        bazel_command = [
+            "bazel",
+            "build",
+            "--nobuild",
+            "--enable_bzlmod",
+        ] + targets
         exit_code, _, stderr = execute_command(bazel_command)
         if exit_code == 0:
             info(
@@ -538,7 +620,9 @@ def main(argv=None):
                 + "` are available with Bzlmod (and the WORKSPACE.bzlmod file)!"
             )
             info("Things you should do next:")
-            info("  - Migrate remaining dependencies in the WORKSPACE.bzlmod file to Bzlmod.")
+            info(
+                "  - Migrate remaining dependencies in the WORKSPACE.bzlmod file to Bzlmod."
+            )
             info(
                 "  - Run the actual build with Bzlmod enabled (with --enable_bzlmod, but without --nobuild) "
                 "and fix remaining build time issues."
@@ -548,7 +632,9 @@ def main(argv=None):
         # 1. Detect build failure caused by unavailable repository
         repo = detect_unavailable_repo_error(stderr)
         if repo:
-            if address_unavailable_repo_error(repo, resolved_deps, workspace_name):
+            if address_unavailable_repo_error(
+                repo, resolved_deps, workspace_name
+            ):
                 continue
             else:
                 abort_migration()
