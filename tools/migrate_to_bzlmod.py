@@ -31,6 +31,7 @@ from registry import RegistryClient
 # The registry client points to the bazel central registry repo
 REGISTRY_CLIENT = RegistryClient(pathlib.Path(__file__).parent.parent)
 
+USE_REPO_RULE_IDENTIFIER = "# -- use_repo_rule statements -- #"
 LOAD_IDENTIFIER = "# -- load statements -- #"
 REPO_IDENTIFIER = "# -- repo definitions -- #"
 BAZEL_DEP_IDENTIFIER = "# -- bazel_dep definitions -- #"
@@ -195,7 +196,7 @@ def print_repo_definition(dep):
         eprint(line)
     eprint("-" * len(header))
 
-    return repo_def
+    return repo_def, file_label, rule_name
 
 
 def detect_unavailable_repo_error(stderr):
@@ -232,6 +233,29 @@ def write_at_given_place(filename, new_content, identifier):
         )
     with open(filename, "w") as f:
         f.write(file_content)
+
+
+def add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name):
+    """Introduce a repository with use_repo_rule in the MODULE.bazel file."""
+    info(f"Introducing @{repo} via use_repo_rule.")
+
+    use_repo_rule = (
+        f'{rule_name} = use_repo_rule("{file_label}", "{rule_name}")'
+    )
+
+    # Check if the use_repo_rule is already in the MODULE.bazel file
+    module_bazel_content = open("MODULE.bazel", "r").read()
+    if use_repo_rule not in module_bazel_content:
+        write_at_given_place(
+            "MODULE.bazel", use_repo_rule, USE_REPO_RULE_IDENTIFIER
+        )
+
+    # Add the repo definition to the MODULE.bazel file
+    write_at_given_place(
+        "MODULE.bazel",
+        "\n".join([""] + repo_def[1:]),
+        REPO_IDENTIFIER,
+    )
 
 
 def add_repo_to_module_extension(repo, repo_def):
@@ -328,11 +352,11 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         abort_migration()
 
     # Print the repo definition in the original WORKSPACE file
-    repo_def = []
+    repo_def, file_label, rule_name = [], None, None
     urls = []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
-            repo_def = print_repo_definition(dep)
+            repo_def, file_label, rule_name = print_repo_definition(dep)
             urls = dep["original_attributes"].get("urls", [])
             if dep["original_attributes"].get("url", None):
                 urls.append(dep["original_attributes"]["url"])
@@ -348,9 +372,8 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     found_module = None
     for module_name in REGISTRY_CLIENT.get_all_modules():
         # Check if there is matching module name or a well known repo name for a matching module.
-        if (
-            repo == module_name
-            or any(url_match_source_repo(url, module_name) for url in urls)
+        if repo == module_name or any(
+            url_match_source_repo(url, module_name) for url in urls
         ):
             found_module = module_name
 
@@ -378,8 +401,14 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     else:
         info(f"{repo} isn't found in the registry.")
 
-    # ask user if the dependency should be introduced via module extension if it looks like a starlark repository rule.
+    # Ask user if the dependency should be introduced via use_repo_rule if it looks like a starlark repository rule.
     if repo_def[0].startswith("load(") and yes_or_no(
+        "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel?",
+        True,
+    ):
+        add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name)
+    # Ask user if the dependency should be introduced via module extension if it looks like a starlark repository rule.
+    elif repo_def[0].startswith("load(") and yes_or_no(
         "Do you wish to introduce the repository with a module extension?", True
     ):
         add_repo_to_module_extension(repo, repo_def)
@@ -420,7 +449,7 @@ def address_bind_issue(bind_target, resolved_repos):
             dep["original_rule_class"] == "bind"
             and dep["original_attributes"]["name"] == name
         ):
-            bind_def = print_repo_definition(dep)
+            bind_def, _, _ = print_repo_definition(dep)
             break
 
     if bind_def:
@@ -498,15 +527,16 @@ def prepare_migration():
     if not pathlib.Path("MODULE.bazel").is_file():
         scratch_file(
             "MODULE.bazel",
-            [
-                f'module(name = "{workspace_name}", version="")',
-                "",
-                BAZEL_DEP_IDENTIFIER,
-            ],
+            [f'module(name = "{workspace_name}", version="")'],
         )
     module_bazel_content = open("MODULE.bazel", "r").read()
-    if BAZEL_DEP_IDENTIFIER not in module_bazel_content:
-        scratch_file("MODULE.bazel", ["", BAZEL_DEP_IDENTIFIER], mode="a")
+    for identifier in [
+        BAZEL_DEP_IDENTIFIER,
+        USE_REPO_RULE_IDENTIFIER,
+        REPO_IDENTIFIER,
+    ]:
+        if identifier not in module_bazel_content:
+            scratch_file("MODULE.bazel", ["", identifier], mode="a")
 
     # Create WORKSPACE.bzlmod file if it doesn't exist already.
     scratch_file("WORKSPACE.bzlmod", [], mode="a")
