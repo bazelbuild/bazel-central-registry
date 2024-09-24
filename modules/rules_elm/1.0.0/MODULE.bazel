@@ -1,0 +1,70 @@
+"rules_elm"
+
+module(
+    name = "rules_elm",
+    version = "1.0.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "aspect_rules_js", version = "2.0.0")
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "aspect_bazel_lib", version = "2.7.7")
+bazel_dep(name = "rules_nodejs", version = "6.2.0")
+bazel_dep(name = "rules_proto", version = "6.0.2")
+bazel_dep(name = "protobuf", version = "27.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_python", version = "0.35.0")
+
+bazel_dep(name = "cgrindel_bazel_starlib", version = "0.20.2", dev_dependency = True)
+bazel_dep(name = "rules_nixpkgs_core", version = "0.12.0", dev_dependency = True)
+bazel_dep(name = "rules_bazel_integration_test", version = "0.24.1", dev_dependency = True)
+
+elm = use_extension("//elm:extensions.bzl", "elm")
+elm.toolchain()
+use_repo(
+    elm,
+    "elm_compiler_toolchains",
+    # TODO: define as elm_repository and link Parser.js via rules_js
+    "com_github_rtfeldman_node_test_runner",
+)
+
+register_toolchains("@elm_compiler_toolchains//:all")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "rules_elm_npm",
+    link_workspace = "rules_elm",
+    pnpm_lock = "//tools/npm:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "rules_elm_npm")
+
+nix_repo = use_extension("@rules_nixpkgs_core//extensions:repository.bzl", "nix_repo", dev_dependency = True)
+
+nix_pkg = use_extension("@rules_nixpkgs_core//extensions:package.bzl", "nix_pkg", dev_dependency = True)
+
+nix_repo.file(
+    name = "nixpkgs",
+    file = "//:nixpkgs.nix",
+    file_deps = ["//:flake.lock"],
+)
+use_repo(nix_repo, "nixpkgs")
+
+nix_pkg.attr(
+    name = "nixpkgs_nodejs",
+    attr = "nodejs",
+    repo = "@nixpkgs",
+)
+nix_pkg.attr(
+    name = "bazel6",
+    attr = "bazel_6",
+    repo = "@nixpkgs",
+)
+nix_pkg.file(
+    name = "bazel7",
+    attr = "",
+    file = "//:nix/bazel7.nix",
+    file_deps = ["//:nix/overlays/bazel7.nix"],
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "bazel6", "bazel7", "nixpkgs_nodejs")
