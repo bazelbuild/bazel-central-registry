@@ -1,0 +1,76 @@
+module(
+    name = "rules_git",
+    version = "1.0.0-alpha.2",
+    bazel_compatibility = [
+        ">=7.1.0",
+    ],
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.5.0")
+bazel_dep(name = "toolchain_utils", version = "1.0.0-beta.9")
+bazel_dep(name = "download_utils", version = "1.0.0-beta.2")
+bazel_dep(name = "rules_coreutils", version = "1.0.0-beta.1")
+
+download_file = use_repo_rule("@download_utils//download/file:defs.bzl", "download_file")
+
+[
+    download_file(
+        name = binary.removesuffix(".exe"),
+        build = "//bazel-git:BUILD.tmpl.bazel",
+        executable = True,
+        integrity = integrity,
+        links = {
+            binary: "entrypoint",
+            "entrypoint": "git",
+        },
+        output = binary,
+        urls = ["https://gitlab.arm.com/api/v4/projects/bazel%2Fgit/packages/generic/release/1.0.0-alpha.8/{}".format(binary)],
+    )
+    for binary, integrity in (
+        ("amd64-linux-bazel-git", "sha256-krzgELhKTt+I/Wg6Vi9T+gfF1vQnRHtx61tlNmXgUAw="),
+        ("arm64-linux-bazel-git", "sha256-JgRhWkcfh72AaR0aBV/M+Bf8CL/cYrtzwcObkqx4hEs="),
+        ("amd64-darwin-bazel-git", "sha256-6audwdUyig0itmhkawBROxLdFYMog6nCkjFhPZSOTFg="),
+        ("arm64-darwin-bazel-git", "sha256-nb3pJ+ZD8xMBjUCgJ5WP52ZqtKhcuUh1kDXvHnrqBL0="),
+        ("amd64-windows-bazel-git.exe", "sha256-MI9lEjEg0kKbJhMidX9nbQY/xEmVdQ2KVnsyrR7ifbY="),
+        ("arm64-windows-bazel-git.exe", "sha256-rPFzGUiXlO2SHnw5k4/CR+sFJQt3xptUOAKIlVuh24Q="),
+    )
+]
+
+which = use_repo_rule("@toolchain_utils//toolchain/local/which:defs.bzl", "toolchain_local_which")
+
+[
+    which(
+        name = "which-{}".format(tool),
+        basename = "git",
+    )
+    for tool in ("git", "bazel-git")
+]
+
+resolved = use_repo_rule("@toolchain_utils//toolchain/resolved:defs.bzl", "toolchain_resolved")
+
+resolved(
+    name = "resolved-git",
+    toolchain_type = "//git/toolchain/git:type",
+)
+
+register_toolchains("//git/toolchain/...")
+
+select = use_repo_rule("@toolchain_utils//toolchain/local/select:defs.bzl", "toolchain_local_select")
+
+select(
+    name = "git",
+    map = {
+        couplet: "@{}-bazel-git".format(couplet)
+        for couplet in (
+            "amd64-linux",
+            "arm64-linux",
+            "amd64-darwin",
+            "arm64-darwin",
+            "amd64-windows",
+            "arm64-windows",
+        )
+    } | {
+        "//conditions:default": "@which-bazel-git",
+    },
+)
