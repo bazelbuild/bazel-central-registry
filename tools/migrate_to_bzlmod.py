@@ -44,9 +44,7 @@ def abort_migration():
 
 def assertExitCode(exit_code, expected_exit_code, error_message, stderr):
     if exit_code != expected_exit_code:
-        error(
-            f"Command exited with {exit_code}, expected {expected_exit_code}:"
-        )
+        error(f"Command exited with {exit_code}, expected {expected_exit_code}:")
         eprint(stderr)
         abort_migration()
 
@@ -151,9 +149,7 @@ def print_repo_definition(dep):
                 s = re.match(r"^  (.+):[0-9]+:[0-9]+: in ([^\_<].+)$", line)
                 if s:
                     new_file_name, new_rule_name = s.groups()
-                    if new_file_name.endswith(
-                        file_label.split("//")[1].replace(":", "/")
-                    ):
+                    if new_file_name.endswith(file_label.split("//")[1].replace(":", "/")):
                         rule_name = new_rule_name
                     else:
                         warning(
@@ -184,10 +180,7 @@ def print_repo_definition(dep):
             repo_def.append(f"  {key} = {value_str},")
     repo_def.append(")")
 
-    header = (
-        "----- Repository information for @%s in the WORKSPACE file -----"
-        % dep["original_attributes"]["name"]
-    )
+    header = "----- Repository information for @%s in the WORKSPACE file -----" % dep["original_attributes"]["name"]
     eprint(header)
     if "definition_information" in dep:
         eprint(dep["definition_information"])
@@ -206,12 +199,8 @@ def detect_unavailable_repo_error(stderr):
     PATTERNS = [
         re.compile(r"unknown repo '([A-Za-z0-9_-]+)' requested from"),
         re.compile(r"The repository '@([A-Za-z0-9_-]+)' could not be resolved"),
-        re.compile(
-            r"No repository visible as '@([A-Za-z0-9_-]+)' from main repository"
-        ),
-        re.compile(
-            r"This could either mean you have to add the '@([A-Za-z0-9_-]+)' repository"
-        ),
+        re.compile(r"No repository visible as '@([A-Za-z0-9_-]+)' from main repository"),
+        re.compile(r"This could either mean you have to add the '@([A-Za-z0-9_-]+)' repository"),
     ]
 
     for line in stderr.split("\n"):
@@ -241,16 +230,12 @@ def write_at_given_place(filename, new_content, identifier):
 def add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name):
     """Introduce a repository with use_repo_rule in the MODULE.bazel file."""
     info(f"Introducing @{repo} via use_repo_rule.")
-    use_repo_rule = (
-        f'{rule_name} = use_repo_rule("{file_label}", "{rule_name}")'
-    )
+    use_repo_rule = f'{rule_name} = use_repo_rule("{file_label}", "{rule_name}")'
 
     # Check if the use_repo_rule is already in the MODULE.bazel file
     module_bazel_content = open("MODULE.bazel", "r").read()
     if use_repo_rule not in module_bazel_content:
-        write_at_given_place(
-            "MODULE.bazel", use_repo_rule, USE_REPO_RULE_IDENTIFIER
-        )
+        write_at_given_place("MODULE.bazel", use_repo_rule, USE_REPO_RULE_IDENTIFIER)
 
     # Add the repo definition to the MODULE.bazel file
     write_at_given_place(
@@ -267,11 +252,7 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     # If the repo was not defined in @bazel_tools,
     # we need to create a separate module extension for it to avoid cycle.
     need_separate_module_extension = not file_label.startswith("@bazel_tools")
-    ext_name = (
-        f"extension_for_{rule_name}".replace("-", "_")
-        if need_separate_module_extension
-        else "non_module_deps"
-    )
+    ext_name = f"extension_for_{rule_name}".replace("-", "_") if need_separate_module_extension else "non_module_deps"
     ext_bzl_name = ext_name + ".bzl"
 
     # Generate the initial bzl file for the module extension
@@ -305,15 +286,11 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     ext_identifier = f"# End of extension `{ext_name}`"
     if use_ext not in module_bazel_content:
         scratch_file("MODULE.bazel", ["", use_ext, ext_identifier], mode="a")
-    write_at_given_place(
-        "MODULE.bazel", f'use_repo({ext_name}, "{repo}")', ext_identifier
-    )
+    write_at_given_place("MODULE.bazel", f'use_repo({ext_name}, "{repo}")', ext_identifier)
 
 
 def url_match_source_repo(source_url, module_name):
-    source_repositories = REGISTRY_CLIENT.get_metadata(module_name).get(
-        "repository", []
-    )
+    source_repositories = REGISTRY_CLIENT.get_metadata(module_name).get("repository", [])
     matched = False
     parts = urlparse(source_url)
     for source_repository in source_repositories:
@@ -326,9 +303,7 @@ def url_match_source_repo(source_url, module_name):
                 and parts.netloc == "github.com"
                 and (
                     os.path.abspath(parts.path).startswith(f"/{repo_path}/")
-                    or os.path.abspath(parts.path).startswith(
-                        f"/{repo_path}.git"
-                    )
+                    or os.path.abspath(parts.path).startswith(f"/{repo_path}.git")
                 )
             )
         elif repo_type == "https":
@@ -384,9 +359,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
     found_module = None
     for module_name in REGISTRY_CLIENT.get_all_modules():
         # Check if there is matching module name or a well known repo name for a matching module.
-        if repo == module_name or any(
-            url_match_source_repo(url, module_name) for url in urls
-        ):
+        if repo == module_name or any(url_match_source_repo(url, module_name) for url in urls):
             found_module = module_name
 
     if found_module:
@@ -394,10 +367,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         version = metadata["versions"][-1]
         repo_name = "" if repo == found_module else f', repo_name = "{repo}"'
         bazel_dep_line = f'bazel_dep(name = "{found_module}", version = "{version}"{repo_name})'
-        info(
-            f"Found module `{found_module}` in the registry, available versions are "
-            + str(metadata["versions"])
-        )
+        info(f"Found module `{found_module}` in the registry, available versions are " + str(metadata["versions"]))
         info(f"This can be introduced via a bazel_dep definition:")
         eprint(f"    {bazel_dep_line}")
 
@@ -406,9 +376,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
             True,
         ):
             info(f"Introducing @{repo} as a Bazel module.")
-            write_at_given_place(
-                "MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER
-            )
+            write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
             return True
     else:
         info(f"{repo} isn't found in the registry.")
@@ -427,9 +395,7 @@ def address_unavailable_repo_error(repo, resolved_deps, workspace_name):
         add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name)
     # Ask user if the dependency should be introduced via module extension
     # Only ask when file_label exists, which means it's a starlark repository rule.
-    elif file_label and yes_or_no(
-        "Do you wish to introduce the repository with a module extension?", True
-    ):
+    elif file_label and yes_or_no("Do you wish to introduce the repository with a module extension?", True):
         add_repo_to_module_extension(repo, repo_def, file_label, rule_name)
     # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
     elif yes_or_no(
@@ -464,10 +430,7 @@ def address_bind_issue(bind_target, resolved_repos):
     name = bind_target.split(":")[1]
     bind_def = None
     for dep in resolved_repos:
-        if (
-            dep["original_rule_class"] == "bind"
-            and dep["original_attributes"]["name"] == name
-        ):
+        if dep["original_rule_class"] == "bind" and dep["original_attributes"]["name"] == name:
             bind_def, _, _ = print_repo_definition(dep)
             break
 
@@ -526,18 +489,14 @@ def prepare_migration():
             "Current bazel is not a release version, we recommend using Bazel 7 or newer releases for Bzlmod migration."
         )
     elif parse_bazel_version(stdout.strip().split(" ")[1]) < (6, 0, 0):
-        error(
-            "Current Bazel version is too old, please upgrade to Bazel 7 or newer releases for Bzlmod migration."
-        )
+        error("Current Bazel version is too old, please upgrade to Bazel 7 or newer releases for Bzlmod migration.")
         abort_migration()
 
     # Parse the original workspace name from the WORKSPACE file
     workspace_name = "main"
     with open("WORKSPACE", "r") as f:
         for line in f:
-            s = re.search(
-                r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line
-            )
+            s = re.search(r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line)
             if s:
                 workspace_name = s.groups()[0]
                 info(f"Detected original workspace name: {workspace_name}")
@@ -565,9 +524,7 @@ def prepare_migration():
 
 def generate_resolved_file(targets, use_bazel_sync):
     exit_code, _, stderr = execute_command(["bazel", "clean", "--expunge"])
-    assertExitCode(
-        exit_code, 0, "Failed to run `bazel clean --expunge`", stderr
-    )
+    assertExitCode(exit_code, 0, "Failed to run `bazel clean --expunge`", stderr)
     bazel_nobuild_command = [
         "bazel",
         "build",
@@ -579,13 +536,9 @@ def generate_resolved_file(targets, use_bazel_sync):
         "sync",
         "--experimental_repository_resolved_file=resolved_deps.py",
     ]
-    bazel_command = (
-        bazel_sync_comand if use_bazel_sync else bazel_nobuild_command
-    )
+    bazel_command = bazel_sync_comand if use_bazel_sync else bazel_nobuild_command
     exit_code, _, stderr = execute_command(bazel_command)
-    assertExitCode(
-        exit_code, 0, "Failed to run `" + " ".join(bazel_command) + "`", stderr
-    )
+    assertExitCode(exit_code, 0, "Failed to run `" + " ".join(bazel_command) + "`", stderr)
 
     # Remove lines containing `"_action_listener":` in the resolved_deps.py file.
     # Avoiding https://github.com/bazelbuild/bazel-central-registry/issues/2789
@@ -608,17 +561,12 @@ def load_resolved_deps(targets, use_bazel_sync, force):
             "if it's out of date, please add `--force/-f` flag to force update it."
         )
 
-    spec = importlib.util.spec_from_file_location(
-        "resolved_deps", "./resolved_deps.py"
-    )
+    spec = importlib.util.spec_from_file_location("resolved_deps", "./resolved_deps.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules["resolved_deps"] = module
     spec.loader.exec_module(module)
     resolved_deps = module.resolved
-    info(
-        "Found %d external repositories in the ./resolved_deps.py file."
-        % len(resolved_deps)
-    )
+    info("Found %d external repositories in the ./resolved_deps.py file." % len(resolved_deps))
     return resolved_deps
 
 
@@ -695,9 +643,7 @@ def main(argv=None):
                 + "` are available with Bzlmod (and the WORKSPACE.bzlmod file)!"
             )
             info("Things you should do next:")
-            info(
-                "  - Migrate remaining dependencies in the WORKSPACE.bzlmod file to Bzlmod."
-            )
+            info("  - Migrate remaining dependencies in the WORKSPACE.bzlmod file to Bzlmod.")
             info(
                 "  - Run the actual build with Bzlmod enabled (with --enable_bzlmod, but without --nobuild) "
                 "and fix remaining build time issues."
@@ -707,9 +653,7 @@ def main(argv=None):
         # 1. Detect build failure caused by unavailable repository
         repo = detect_unavailable_repo_error(stderr)
         if repo:
-            if address_unavailable_repo_error(
-                repo, resolved_deps, workspace_name
-            ):
+            if address_unavailable_repo_error(repo, resolved_deps, workspace_name):
                 continue
             else:
                 abort_migration()
