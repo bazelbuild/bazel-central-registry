@@ -77,6 +77,14 @@ py_binary(
     ],
 )
 
+py_binary(
+    name = "module_selector",
+    srcs = ["module_selector.py"],
+    deps = [
+        ":registry",
+    ],
+)
+
 sh_test(
     name = "update_integrity_test",
     srcs = ["update_integrity_test.sh"],
