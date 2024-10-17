@@ -76,7 +76,7 @@ def select_modules(registry, selections, random_percentage=None):
     if not selected_modules:
         raise ValueError("No matching modules found.")
 
-    return selected_modules
+    return sorted(set(selected_modules))
 
 def main():
     parser = argparse.ArgumentParser(description='Select module versions matching given patterns.')
