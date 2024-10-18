@@ -87,7 +87,24 @@ def select_modules(registry, selections, random_percentage=None):
 def main():
     parser = argparse.ArgumentParser(description='Select module versions matching given patterns.')
     parser.add_argument("--registry", type=str, default=".", help="Specify the root path of the registry (default: the current working directory).")
-    parser.add_argument('--select', action="append", required=True, help='Module selection patterns, supporting wildcards.')
+    parser.add_argument(
+        '--select',
+        action="append",
+        required=True,
+        help=(
+            'Specify module selection patterns in the format <module_pattern>@<version_pattern>. '
+            'The <module_pattern> can include wildcards (*) to match multiple modules. '
+            'The <version_pattern> can be:\n'
+            '  - A specific version (e.g., "1.2.3")\n'
+            '  - "latest" to select the latest version\n'
+            '  - A comparison operator followed by a version (e.g., ">=1.0.0", "<2.0.0")\n'
+            'You can provide multiple --select options to combine patterns. Examples:\n'
+            '  --select "zlib@latest"\n'
+            '  --select "protobuf@>=27"\n'
+            '  --select "rules_*@<1.5.0"\n'
+            '  --select "*@latest"'
+        )
+    )
     parser.add_argument('--random-percentage', type=int, metavar='PERCENTAGE',
                         help='Percentage of modules to randomly select from the modules matching any of the patterns. Must be an integer between 1 and 100.')
 
