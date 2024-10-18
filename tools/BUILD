@@ -100,3 +100,13 @@ py_test(
         "registry",
     ],
 )
+
+py_test(
+    name = "module_selector_test",
+    srcs = [
+        "module_selector_test.py",
+    ],
+    deps = [
+        "module_selector",
+    ],
+)
