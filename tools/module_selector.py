@@ -26,9 +26,6 @@ def select_modules(registry, selections, random_percentage=None):
     """
     Select module versions matching the given patterns and optionally apply a random sample percentage.
     """
-    if not selections:
-        return []
-
     selected_modules = []
 
     for selection in selections:
