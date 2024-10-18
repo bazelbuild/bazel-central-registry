@@ -20,6 +20,7 @@ import re
 import random
 
 from registry import RegistryClient
+from registry import Version
 
 def select_modules(registry, selections, random_percentage=None):
     """
@@ -52,10 +53,15 @@ def select_modules(registry, selections, random_percentage=None):
             if version == 'latest':
                 latest_version = module_versions[-1]
                 selected_modules.append(f"{module}@{latest_version}")
+            elif version.startswith('>='):
+                selected_modules.extend([f"{module}@{v}" for v in module_versions if Version(v) >= Version(version[2:])])
+            elif version.startswith('<='):
+                selected_modules.extend([f"{module}@{v}" for v in module_versions if Version(v) <= Version(version[2:])])
+            elif version.startswith('>'):
+                selected_modules.extend([f"{module}@{v}" for v in module_versions if Version(v) > Version(version[1:])])
+            elif version.startswith('<'):
+                selected_modules.extend([f"{module}@{v}" for v in module_versions if Version(v) < Version(version[1:])])
             else:
-                if len(matching_modules) > 2:
-                    # Pattern like rules_*@1.2 should not be allowed.
-                    raise ValueError(f"Cannot specify a specific version for multiple matching modules: {module_pattern}")
                 if version in module_versions:
                     selected_modules.append(f"{module}@{version}")
                 else:
