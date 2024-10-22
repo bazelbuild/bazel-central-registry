@@ -82,7 +82,7 @@ optional arguments:
   --registry REGISTRY   Specify the root path of the registry (default: the current working directory).
   --select SELECT       Specify module selection patterns in the format <module_pattern>@<version_pattern>. The <module_pattern> can include wildcards (*) to match multiple modules. The
                         <version_pattern> can be: - A specific version (e.g., "1.2.3") - "latest" to select the latest version - A comparison operator followed by a version (e.g.,
-                        ">=1.0.0", "<2.0.0") You can provide multiple --select options to combine patterns. Examples: --select "zlib@latest" --select "protobuf@>=27" --select
+                        ">=1.0.0", "<2.0.0") You can provide multiple --select options to select multiple modules. Examples: --select "zlib@latest" --select "protobuf@>=27" --select
                         "rules_*@<1.5.0" --select "*@latest"
   --random-percentage PERCENTAGE
                         Percentage of modules to randomly select from the modules matching any of the patterns. Must be an integer between 1 and 100.
