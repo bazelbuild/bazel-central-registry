@@ -1,0 +1,300 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+
+PUBLIC_HDRS = [
+    "deprecated/gallocator.h",
+    "deprecated/gcache.h",
+    "deprecated/gcompletion.h",
+    "deprecated/gmain.h",
+    "deprecated/grel.h",
+    "deprecated/gthread.h",
+    "galloca.h",
+    "garray.h",
+    "gasyncqueue.h",
+    "gatomic.h",
+    "gbacktrace.h",
+    "gbase64.h",
+    "gbitlock.h",
+    "gbookmarkfile.h",
+    "gbytes.h",
+    "gcharset.h",
+    "gchecksum.h",
+    "gconvert.h",
+    "gdataset.h",
+    "gdate.h",
+    "gdatetime.h",
+    "gdir.h",
+    "genviron.h",
+    "gerror.h",
+    "gfileutils.h",
+    "ggettext.h",
+    "ghash.h",
+    "ghmac.h",
+    "ghook.h",
+    "ghostutils.h",
+    "gi18n-lib.h",
+    "gi18n.h",
+    "giochannel.h",
+    "gkeyfile.h",
+    "glib-autocleanups.h",
+    "glib-object.h",
+    "glib-typeof.h",
+    "glib-unix.h",
+    "glib.h",
+    "glist.h",
+    "gmacros.h",
+    "gmain.h",
+    "gmappedfile.h",
+    "gmarkup.h",
+    "gmem.h",
+    "gmessages.h",
+    "gnode.h",
+    "goption.h",
+    "gpathbuf.h",
+    "gpattern.h",
+    "gpoll.h",
+    "gprimes.h",
+    "gprintf.h",
+    "gqsort.h",
+    "gquark.h",
+    "gqueue.h",
+    "grand.h",
+    "grcbox.h",
+    "grefcount.h",
+    "grefstring.h",
+    "gregex.h",
+    "gscanner.h",
+    "gsequence.h",
+    "gshell.h",
+    "gslice.h",
+    "gslist.h",
+    "gspawn.h",
+    "gstdio.h",
+    "gstrfuncs.h",
+    "gstring.h",
+    "gstringchunk.h",
+    "gstrvbuilder.h",
+    "gtestutils.h",
+    "gthread.h",
+    "gthreadpool.h",
+    "gtimer.h",
+    "gtimezone.h",
+    "gtrashstack.h",
+    "gtree.h",
+    "gtypes.h",
+    "gunicode.h",
+    "guri.h",
+    "gutils.h",
+    "guuid.h",
+    "gvariant.h",
+    "gvarianttype.h",
+    "gversion.h",
+]
+
+PUBLIC_HDRS_WIN32 = [
+    "gwin32.h",
+]
+
+INTERNAL_HDRS = glob(["*private.h"]) + [
+    "gbsearcharray.h",
+    "gconstructor.h",
+    "glib_trace.h",
+    "glib-init.h",
+    "glibintl.h",
+    "gmain-internal.h",
+    "gmirroringtable.h",
+    "gprintfint.h",
+    "gscripttable.h",
+    "gtranslit-data.h",
+    "gunibreak.h",
+    "gunichartables.h",
+    "gunicomp.h",
+    "gunidecomp.h",
+    "gvalgrind.h",
+    "gvariant-core.h",
+    "gvariant-internal.h",
+    "gvariant-serialiser.h",
+    "gvarianttypeinfo.h",
+    "gwakeup.h",
+    "msvc_recommended_pragmas.h",
+    "valgrind.h",
+]
+
+ALL_HDRS = glob([
+    "*.h",
+    "deprecated/*.h",
+])
+
+filegroup(
+    name = "all_hdrs",
+    srcs = ALL_HDRS,
+    visibility = ["//:__subpackages__"],
+)
+
+NO_RENAME = [
+    "glib.h",
+    "glib-object.h",
+    "glib-unix.h",
+]
+
+[expand_template(
+    name = "public_hdr_" + hdr.replace("/", "_"),
+    out = "include_glib-2.0/" + (hdr if hdr in NO_RENAME else "glib/" + hdr),
+    substitutions = {},
+    template = hdr,
+) for hdr in (PUBLIC_HDRS + PUBLIC_HDRS_WIN32)]
+
+[
+    V_MAJOR,
+    V_MINOR,
+    V_MICRO,
+] = module_version().split(".", 3)
+
+expand_template(
+    name = "glibconfig_h",
+    out = "include_glib-2.0/glibconfig.h",
+    substitutions = {
+        "@GLIB_MAJOR_VERSION@": V_MAJOR,
+        "@GLIB_MINOR_VERSION@": V_MINOR,
+        "@GLIB_MICRO_VERSION@": V_MICRO,
+    },
+    template = select({
+        "@platforms//os:windows": "glibconfig.h.in-windows",  # TODO
+        "//conditions:default": "glibconfig.h.in-posix",
+    }),
+)
+
+run_binary(
+    name = "gversionmacros_h",
+    srcs = ["gversionmacros.h.in"],
+    outs = ["include_glib-2.0/glib/gversionmacros.h"],
+    args = [
+        module_version(),
+        "versions-macros",
+        "$(location gversionmacros.h.in)",
+        "$(location include_glib-2.0/glib/gversionmacros.h)",
+    ],
+    tool = "//tools:gen-visibility-macros",
+)
+
+run_binary(
+    name = "glib-visibility_h",
+    outs = ["include_glib-2.0/glib/glib-visibility.h"],
+    args = [
+        module_version(),
+        "visibility-macros",
+        "GLIB",
+        "$(location include_glib-2.0/glib/glib-visibility.h)",
+    ],
+    tool = "//tools:gen-visibility-macros",
+)
+
+cc_library(
+    name = "stub_intl",
+    hdrs = ["stub_libintl/libintl.h"],
+    includes = ["stub_libintl"],
+    visibility = [":__subpackages__"],
+)
+
+GLIB_POSIX_SRCS = [
+    "gspawn-posix.c",
+    "glib-unix.c",
+    "giounix.c",
+]
+
+GLIB_WIN32_SRCS = [
+    "giowin32.c",
+    "gwin32.c",
+    "gspawn-win32-helper.c",
+]
+
+GLIB_INTERNAL_TEXTUAL_HDRS = [
+    "gspawn-win32.c",
+    "gstdio-private.c",
+    "gthread-posix.c",
+    "gthread-win32.c",
+    "gwin32-private.c",
+    "win_iconv.c",
+]
+
+GLIB_SRCS = glob(
+    [
+        "*.c",
+        "deprecated/*.c",
+        "libcharset/*.c",
+        "libcharset/*.h",
+    ],
+    exclude = (
+        GLIB_POSIX_SRCS +
+        GLIB_WIN32_SRCS +
+        GLIB_INTERNAL_TEXTUAL_HDRS
+    ),
+)
+
+cc_library(
+    name = "glib_internal_textual_hdrs",
+    textual_hdrs = GLIB_INTERNAL_TEXTUAL_HDRS,
+)
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+cc_library(
+    name = "glib",
+    srcs = GLIB_SRCS + select({
+        "@platforms//os:windows": GLIB_WIN32_SRCS,
+        "//conditions:default": GLIB_POSIX_SRCS,
+    }) + PUBLIC_HDRS + INTERNAL_HDRS + select({
+        "@platforms//os:windows": PUBLIC_HDRS_WIN32,
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        ":public_hdr_" + hdr.replace("/", "_")
+        for hdr in PUBLIC_HDRS
+    ] + [
+        ":glib-visibility_h",
+        ":glibconfig_h",
+        ":gversionmacros_h",
+    ] + select({
+        "@platforms//os:windows": [
+            ":public_hdr_" + hdr.replace("/", "_")
+            for hdr in PUBLIC_HDRS_WIN32
+        ],
+        "//conditions:default": [],
+    }),
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+        "-I%s/glib/deprecated" % (INCLUDE_PREFIX,),
+    ],
+    implementation_deps = [
+        ":glib_internal_textual_hdrs",
+        "//:config_h",
+        "@pcre2",
+    ] + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": [":stub_intl"],
+    }),
+    includes = ["include_glib-2.0"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+        ],
+        "@platforms//os:macos": [
+            "-liconv",
+            "-framework", "Carbon",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "_FILE_OFFSET_BITS=64",
+        "G_ENABLE_DEBUG",
+        "_GNU_SOURCE",
+        "G_LOG_DOMAIN='\"GLib\"'",
+        "GLIB_COMPILATION",
+        "GLIB_CHARSETALIAS_DIR='\"/usr/lib\"'",
+    ],
+    visibility = ["//visibility:public"],
+)
