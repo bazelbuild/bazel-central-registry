@@ -67,11 +67,8 @@ def select_modules(registry, selections, random_percentage=None):
                     raise ValueError(f"Version {version} of module {module} not found.")
 
     if random_percentage is not None:
-        try:
-            percentage = int(random_percentage)
-            if not (0 < percentage <= 100):
-                raise ValueError
-        except ValueError:
+        percentage = int(random_percentage)
+        if not (0 < percentage <= 100):
             raise ValueError("Random percentage must be an integer between 1 and 100.")
 
         total_modules = len(selected_modules)
