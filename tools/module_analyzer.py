@@ -22,24 +22,34 @@ import networkx as nx
 from registry import RegistryClient
 from module_selector import select_modules
 
-def get_direct_dependencies(module_name, version, registry_dir):
-    deps = subprocess.check_output(
-        ["buildozer", "print name", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
-        cwd=registry_dir,
-    ).decode("utf-8").split()
 
-    dev_deps_stat = subprocess.check_output(
-        ["buildozer", "print dev_dependency", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
-        cwd=registry_dir,
-        stderr=subprocess.DEVNULL  # Suppress stderr
-    ).decode("utf-8").split()
+def get_direct_dependencies(module_name, version, registry_dir):
+    deps = (
+        subprocess.check_output(
+            ["buildozer", "print name", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
+            cwd=registry_dir,
+        )
+        .decode("utf-8")
+        .split()
+    )
+
+    dev_deps_stat = (
+        subprocess.check_output(
+            ["buildozer", "print dev_dependency", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
+            cwd=registry_dir,
+            stderr=subprocess.DEVNULL,  # Suppress stderr
+        )
+        .decode("utf-8")
+        .split()
+    )
 
     direct_deps = []
     for i, dep in enumerate(deps):
-      if dev_deps_stat[i] != "True":
-          direct_deps.append(dep)
+        if dev_deps_stat[i] != "True":
+            direct_deps.append(dep)
 
     return deps
+
 
 def main():
     parser = argparse.ArgumentParser(description="Select module versions matching given patterns.")
