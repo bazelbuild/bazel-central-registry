@@ -100,7 +100,7 @@ def main():
             '  - A specific version (e.g., "1.2.3")\n'
             '  - "latest" to select the latest version\n'
             '  - A comparison operator followed by a version (e.g., ">=1.0.0", "<2.0.0")\n'
-            "You can provide multiple --select options to combine patterns. Examples:\n"
+            "You can provide multiple --select options to select multiple modules. Examples:\n"
             '  --select "zlib@latest"\n'
             '  --select "protobuf@>=27"\n'
             '  --select "rules_*@<1.5.0"\n'
