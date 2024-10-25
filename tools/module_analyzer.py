@@ -24,6 +24,7 @@ from runfiles import Runfiles
 from registry import RegistryClient
 from module_selector import select_modules
 
+
 def get_buildozer_path():
     if "RUNFILES_MANIFEST_FILE" in os.environ:
         # The ".exe" suffix is *not* a typo. It is present on all platforms to support
@@ -32,6 +33,7 @@ def get_buildozer_path():
             return path
     # Fallback to use buildozer in PATH.
     return "buildozer"
+
 
 def get_direct_dependencies(module_name, version, registry_dir, buildozer):
     deps = (
