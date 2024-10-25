@@ -85,6 +85,14 @@ py_binary(
     ],
 )
 
+py_binary(
+    name = "module_analyzer",
+    srcs = ["module_analyzer.py"],
+    deps = [
+        ":module_selector",
+    ],
+)
+
 sh_test(
     name = "update_integrity_test",
     srcs = ["update_integrity_test.sh"],

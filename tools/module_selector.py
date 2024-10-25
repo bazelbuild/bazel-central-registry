@@ -16,6 +16,7 @@
 """Tool script for select module versions from BCR"""
 
 import argparse
+import os
 import re
 import random
 
@@ -126,4 +127,6 @@ def main():
 
 
 if __name__ == "__main__":
+    if "BUILD_WORKSPACE_DIRECTORY" in os.environ:
+        os.chdir(os.environ["BUILD_WORKSPACE_DIRECTORY"])
     main()
