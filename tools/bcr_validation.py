@@ -103,6 +103,7 @@ def apply_patch(work_dir, patch_strip, patch_file):
         cwd=work_dir,
     )
 
+
 def run_git(*args):
     # Requires git to be installed
     subprocess.run(
@@ -111,6 +112,7 @@ def run_git(*args):
         check=True,
         env=os.environ,
     )
+
 
 def fix_line_endings(lines):
     return [line.rstrip() + "\n" for line in lines]
@@ -154,8 +156,8 @@ class BcrValidator:
             # Preprocess the git URL to make the comparison easier.
             if source_url.startswith("git@"):
                 source_url = source_url.removeprefix("git@")
-                source_netloc, source_parts = source_url.split(':')
-                source_url = "https://" + source_netloc + '/' + source_parts
+                source_netloc, source_parts = source_url.split(":")
+                source_url = "https://" + source_netloc + "/" + source_parts
             if source_url.endswith(".git"):
                 source_url = source_url.removesuffix(".git")
                 # The asterisk here is to prevent the final slash from getting
