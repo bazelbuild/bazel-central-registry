@@ -26,6 +26,7 @@ from module_selector import select_modules
 
 def get_buildozer_path():
     if "RUNFILES_MANIFEST_FILE" in os.environ:
+        # The ".exe" suffix is *not* a typo. It is present on all platforms to support
         path = Runfiles.Create().Rlocation("buildozer_binary/buildozer.exe")
         if path:
             return path
