@@ -90,7 +90,14 @@ py_binary(
     srcs = ["module_analyzer.py"],
     deps = [
         ":module_selector",
+        requirement("networkx"),
+        requirement("numpy"),
+        requirement("scipy"),
+        requirement("bazel-runfiles"),
     ],
+    data = [
+        "@buildozer_binary//:buildozer.exe",
+    ]
 )
 
 sh_test(

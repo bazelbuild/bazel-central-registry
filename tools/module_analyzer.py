@@ -16,17 +16,26 @@
 """Tool script for analyzing BCR modules"""
 
 import argparse
+import os
 import subprocess
 import networkx as nx
 
+from runfiles import Runfiles
 from registry import RegistryClient
 from module_selector import select_modules
 
+def get_buildozer_path():
+    if "RUNFILES_MANIFEST_FILE" in os.environ:
+        path = Runfiles.Create().Rlocation("buildozer_binary/buildozer.exe")
+        if path:
+            return path
+    # Fallback to use buildozer in PATH.
+    return "buildozer"
 
-def get_direct_dependencies(module_name, version, registry_dir):
+def get_direct_dependencies(module_name, version, registry_dir, buildozer):
     deps = (
         subprocess.check_output(
-            ["buildozer", "print name", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
+            [buildozer, "print name", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
             cwd=registry_dir,
         )
         .decode("utf-8")
@@ -35,7 +44,7 @@ def get_direct_dependencies(module_name, version, registry_dir):
 
     dev_deps_stat = (
         subprocess.check_output(
-            ["buildozer", "print dev_dependency", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
+            [buildozer, "print dev_dependency", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
             cwd=registry_dir,
             stderr=subprocess.DEVNULL,  # Suppress stderr
         )
@@ -59,8 +68,17 @@ def main():
         default=".",
         help="Specify the root path of the registry (default: the current working directory).",
     )
+    parser.add_argument(
+        "--top_n",
+        type=int,
+        default=50,
+        help="Specify the top N important modules to print out (default: 50).",
+    )
 
     args = parser.parse_args()
+
+    # Find buildozer binary
+    buildozer = get_buildozer_path()
 
     registry = RegistryClient(args.registry)
 
@@ -70,18 +88,20 @@ def main():
     G = nx.DiGraph()
     for module in modules:
         module_name, version = module.split("@")
-        for dep in get_direct_dependencies(module_name, version, args.registry):
+        for dep in get_direct_dependencies(module_name, version, args.registry, buildozer):
             G.add_edge(module_name, dep)
 
     pagerank = nx.pagerank(G)
 
     sorted_modules = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)
 
-    N = 50
+    N = min(args.top_n, len(sorted_modules))
     print(f"Top {N} Modules by PageRank:")
     for module, score in sorted_modules[:N]:
         print(f"{module}: {score:.6f}")
 
 
 if __name__ == "__main__":
+    if "BUILD_WORKSPACE_DIRECTORY" in os.environ:
+        os.chdir(os.environ["BUILD_WORKSPACE_DIRECTORY"])
     main()
