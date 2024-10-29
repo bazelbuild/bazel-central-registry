@@ -69,7 +69,7 @@ def main():
         "--registry",
         type=str,
         default=".",
-        help="Specify the root path of the registry (default: the current working directory).",
+        help="Specify the root path of the registry (default: the current working directory or the workspace root if running with Bazel).",
     )
     parser.add_argument(
         "--top_n",
