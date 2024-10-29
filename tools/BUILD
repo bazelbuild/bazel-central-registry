@@ -77,6 +77,29 @@ py_binary(
     ],
 )
 
+py_binary(
+    name = "module_selector",
+    srcs = ["module_selector.py"],
+    deps = [
+        ":registry",
+    ],
+)
+
+py_binary(
+    name = "module_analyzer",
+    srcs = ["module_analyzer.py"],
+    deps = [
+        ":module_selector",
+        requirement("networkx"),
+        requirement("numpy"),
+        requirement("scipy"),
+        requirement("bazel-runfiles"),
+    ],
+    data = [
+        "@buildozer_binary//:buildozer.exe",
+    ]
+)
+
 sh_test(
     name = "update_integrity_test",
     srcs = ["update_integrity_test.sh"],
@@ -90,5 +113,15 @@ py_test(
     ],
     deps = [
         "registry",
+    ],
+)
+
+py_test(
+    name = "module_selector_test",
+    srcs = [
+        "module_selector_test.py",
+    ],
+    deps = [
+        "module_selector",
     ],
 )
