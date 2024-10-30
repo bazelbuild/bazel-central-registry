@@ -341,7 +341,7 @@ class BcrValidator:
         tree = ast.parse("".join(bcr_module_dot_bazel_content), filename=source_root)
         for node in tree.body:
             if isinstance(node, ast.Expr):
-                if isinstance(node.value, ast.Call) and node.value.func.id == "module":
+                if isinstance(node.value, ast.Call) and getattr(node.value.func, "id", None) == "module":
                     keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
                     if keywords.get("version", version) != version:
                         self.report(
