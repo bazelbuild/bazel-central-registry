@@ -286,11 +286,11 @@ class BcrValidator:
                 overlay_src = overlay_dir / overlay_file
                 overlay_dst = source_root / overlay_file
                 try:
-                    overlay_dst.resolve().relative_to(source_root)
-                except ValueError:
+                    overlay_dst.resolve().relative_to(source_root.resolve())
+                except ValueError as e:
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"The overlay file path `{overlay_file}` must point inside the source archive.",
+                        f"The overlay file path `{overlay_file}` must point inside the source archive.\n {e}",
                     )
                     continue
                 try:
