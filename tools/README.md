@@ -109,7 +109,7 @@ usage: module_analyzer.py [-h] [--registry REGISTRY] [--top_n TOP_N] [--exclude-
 
 Select module versions matching given patterns.
 
-options:
+optional arguments:
   -h, --help           show this help message and exit
   --registry REGISTRY  Specify the root path of the registry (default: the current working directory or the workspace root if running with Bazel).
   --top_n TOP_N        Specify the top N important modules to print out (default: 50).
