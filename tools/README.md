@@ -105,7 +105,7 @@ This script calculates the importance of each module in the BCR based on their P
 The graph is constructed based on dependencies of the latest version of each module.
 
 ```
-usage: module_analyzer.py [-h] [--registry REGISTRY] [--top_n TOP_N]
+usage: module_analyzer.py [-h] [--registry REGISTRY] [--top_n TOP_N] [--exclude-dev-deps] [--name-only]
 
 Select module versions matching given patterns.
 
@@ -113,6 +113,8 @@ optional arguments:
   -h, --help           show this help message and exit
   --registry REGISTRY  Specify the root path of the registry (default: the current working directory or the workspace root if running with Bazel).
   --top_n TOP_N        Specify the top N important modules to print out (default: 50).
+  --exclude-dev-deps   Exclude dev dependencies when constructing the dependency graph (default: False).
+  --name-only          Only print the module names without the scores (default: False).
 ```
 
 You can also run with Bazel, for example:
