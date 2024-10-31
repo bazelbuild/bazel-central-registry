@@ -35,7 +35,7 @@ def get_buildozer_path():
     return "buildozer"
 
 
-def get_direct_dependencies(module_name, version, registry_dir, buildozer, include_dev_deps):
+def get_direct_dependencies(module_name, version, registry_dir, buildozer, exclude_dev_deps):
     deps = (
         subprocess.check_output(
             [buildozer, "print name", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
@@ -45,7 +45,7 @@ def get_direct_dependencies(module_name, version, registry_dir, buildozer, inclu
         .split()
     )
 
-    if include_dev_deps:
+    if not exclude_dev_deps:
         return deps
 
     dev_deps_stat = (
@@ -81,9 +81,9 @@ def main():
         help="Specify the top N important modules to print out (default: 50).",
     )
     parser.add_argument(
-        "--include-dev-deps",
+        "--exclude-dev-deps",
         action="store_true",
-        help="Include dev dependencies when constructing the dependency graph (default: False).",
+        help="Exclude dev dependencies when constructing the dependency graph (default: False).",
     )
     parser.add_argument(
         "--name-only",
@@ -104,7 +104,7 @@ def main():
     G = nx.DiGraph()
     for module in modules:
         module_name, version = module.split("@")
-        for dep in get_direct_dependencies(module_name, version, args.registry, buildozer, args.include_dev_deps):
+        for dep in get_direct_dependencies(module_name, version, args.registry, buildozer, args.exclude_dev_deps):
             # It is possible for a MODULE.bazel to contain a bazel_dep with an override that is not in the registry
             if not registry.contains(dep):
                 continue
