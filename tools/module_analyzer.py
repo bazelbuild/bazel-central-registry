@@ -35,7 +35,7 @@ def get_buildozer_path():
     return "buildozer"
 
 
-def get_direct_dependencies(module_name, version, registry_dir, buildozer):
+def get_direct_dependencies(module_name, version, registry_dir, buildozer, include_dev_deps):
     deps = (
         subprocess.check_output(
             [buildozer, "print name", f"//modules/{module_name}/{version}/MODULE.bazel:%bazel_dep"],
@@ -44,6 +44,9 @@ def get_direct_dependencies(module_name, version, registry_dir, buildozer):
         .decode("utf-8")
         .split()
     )
+
+    if include_dev_deps:
+        return deps
 
     dev_deps_stat = (
         subprocess.check_output(
@@ -60,7 +63,7 @@ def get_direct_dependencies(module_name, version, registry_dir, buildozer):
         if dev_deps_stat[i] != "True":
             direct_deps.append(dep)
 
-    return deps
+    return direct_deps
 
 
 def main():
@@ -77,6 +80,16 @@ def main():
         default=50,
         help="Specify the top N important modules to print out (default: 50).",
     )
+    parser.add_argument(
+        "--include-dev-deps",
+        action="store_true",
+        help="Include dev dependencies when constructing the dependency graph (default: False).",
+    )
+    parser.add_argument(
+        "--name-only",
+        action="store_true",
+        help="Only print the module names without the scores (default: False).",
+    )
 
     args = parser.parse_args()
 
@@ -91,7 +104,10 @@ def main():
     G = nx.DiGraph()
     for module in modules:
         module_name, version = module.split("@")
-        for dep in get_direct_dependencies(module_name, version, args.registry, buildozer):
+        for dep in get_direct_dependencies(module_name, version, args.registry, buildozer, args.include_dev_deps):
+            # It is possible for a MODULE.bazel to contain a bazel_dep with an override that is not in the registry
+            if not registry.contains(dep):
+                continue
             G.add_edge(module_name, dep)
 
     pagerank = nx.pagerank(G)
@@ -99,6 +115,12 @@ def main():
     sorted_modules = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)
 
     N = min(args.top_n, len(sorted_modules))
+
+    if args.name_only:
+        for module, _ in sorted_modules[:N]:
+            print(module)
+        return
+
     print(f"Top {N} Modules by PageRank:")
     for module, score in sorted_modules[:N]:
         print(f"{module}: {score:.6f}")
