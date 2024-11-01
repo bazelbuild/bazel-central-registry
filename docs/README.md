@@ -19,6 +19,17 @@ If you are the project owner, you can set up the [Publish to BCR](https://github
 When manually editing files you may find `bazel run -- //tools:update_integrity foomod` useful to update the integrity hashes in foomod's source.json file.
 The tool also accepts a `--version` option to update the source.json of a specific version of the module (instead of latest).
 
+### Testing your change locally
+
+1. Clone BCR locally with `git clone git@github.com:bazelbuild/bazel-central-registry.git`
+2. Make the changes you want by to BCR. Make use of `bazel run //tools:add_module` and `bazel run //tools:update_integrity` etc.
+3. Update your `MODULE.bazel` file in your repository you want to use the change made in step 2.
+4. To test the changes, in your own repo that consumes the BCR Module you added, run:
+```
+bazel shutdown && bazel build --enable_bzlmod --registry="file:///path/to/bazel-central-registry" --lockfile_mode=off @module-to-build//:target
+# the target can also be your target that depends on this.
+```
+
 ## Presubmit
 
 Every module version must pass the BCR presubmit before getting merged. The presubmit validates the correctness and consistency of module information, then runs build and test targets specified in the `presubmit.yml` file. The BCR presubmit is driven by the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script on [Bazel CI](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#bazel-continuous-integration).
