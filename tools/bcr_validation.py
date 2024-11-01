@@ -179,10 +179,13 @@ class BcrValidator:
             self.report(
                 BcrValidationResult.FAILED,
                 f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
-                + "You should use a release archive URL in the format of "
+                + "If at all possible, you should use a release archive URL in the format of "
                 + "`https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` "
                 + "to ensure the archive checksum stability.\n"
-                + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.",
+                + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.\n"
+                + "If no release archives are available, please add a comment to your BCR PR with the text\n"
+                + "    @bazel-io unstable_ack\n"
+                + "and this check will be skipped.",
             )
         else:
             self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
