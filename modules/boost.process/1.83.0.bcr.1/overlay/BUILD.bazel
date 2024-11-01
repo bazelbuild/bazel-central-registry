@@ -1,0 +1,126 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+bool_flag(
+    name = "use_std_fs",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_std_fs_enabled",
+    flag_values = {":use_std_fs": "true"},
+)
+
+config_setting(
+    name = "use_std_fs_disabled",
+    flag_values = {":use_std_fs": "false"},
+)
+
+_WINDOWS_HDRS = [
+    "include/boost/process/detail/windows/*.hpp",
+    "include/boost/process/v2/windows/**/*.hpp",
+    "include/boost/process/v2/windows/**/*.ipp",
+    "include/boost/process/v2/detail/environment_win.hpp",
+    "include/boost/process/v2/detail/impl/environment_win.ipp",
+    "include/boost/process/v2/detail/impl/process_handle_windows.ipp",
+    "include/boost/process/v2/detail/process_handle_windows.hpp",
+]
+
+_POSIX_HDRS = [
+    "include/boost/process/detail/posix/*.hpp",
+    "include/boost/process/v2/posix/**/*.hpp",
+    "include/boost/process/v2/posix/**/*.ipp",
+    "include/boost/process/v2/detail/environment_posix.hpp",
+]
+
+cc_library(
+    name = "boost.process",
+    hdrs = glob(
+        [
+            "include/**/*.hpp",
+            "include/**/*.ipp",
+        ],
+        exclude = [
+            "include/boost/process/detail/*.hpp",
+            "include/boost/process/detail/traits/*.hpp",
+            "include/boost/process/locale.hpp",
+            "include/boost/process/posix.hpp",
+            "include/boost/process/start_dir.hpp",
+            "include/boost/process/v2/detail/**/*.hpp",
+            "include/boost/process/v2/detail/**/*.ipp",
+            "include/boost/process/v2/ext/cwd.hpp",
+            "include/boost/process/v2/ext/impl/cmd.ipp",
+            "include/boost/process/v2/ext/impl/cwd.ipp",
+            "include/boost/process/v2/ext/impl/env.ipp",
+            "include/boost/process/v2/impl/default_launcher.ipp",
+            "include/boost/process/v2/src.hpp",
+            "include/boost/process/windows.hpp",
+        ] + _POSIX_HDRS + _WINDOWS_HDRS,
+    ),
+    defines = select({
+        ":use_std_fs_enabled": ["BOOST_PROCESS_USE_STD_FS"],
+        ":use_std_fs_disabled": [],
+    }) + ["BOOST_PROCESS_V2_SEPARATE_COMPILATION"],
+    features = [
+        "parse_headers",
+    ],
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:windows": ["-DEFAULTLIB:shell32"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = glob(
+        [
+            "include/boost/process/detail/*.hpp",
+            "include/boost/process/detail/traits/*.hpp",
+            "include/boost/process/locale.hpp",
+            "include/boost/process/posix.hpp",
+            "include/boost/process/start_dir.hpp",
+            "include/boost/process/v2/detail/**/*.hpp",
+            "include/boost/process/v2/detail/**/*.ipp",
+            "include/boost/process/v2/ext/cwd.hpp",
+            "include/boost/process/v2/ext/impl/cmd.ipp",
+            "include/boost/process/v2/ext/impl/cwd.ipp",
+            "include/boost/process/v2/ext/impl/env.ipp",
+            "include/boost/process/v2/src.hpp",
+            "include/boost/process/windows.hpp",
+        ],
+        exclude = [
+            "include/boost/process/v2/detail/environment_*.hpp",
+            "include/boost/process/v2/detail/process_handle_windows.hpp",
+            "include/boost/process/v2/detail/impl/environment_win.ipp",
+            "include/boost/process/v2/detail/impl/process_handle_windows.ipp",
+        ],
+    ) + select({
+        "@platforms//os:windows": glob(_WINDOWS_HDRS),
+        "//conditions:default": glob(_POSIX_HDRS),
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.algorithm",
+        "@boost.asio",
+        "@boost.config",
+        "@boost.core",
+        "@boost.fusion",
+        "@boost.io",
+        "@boost.iterator",
+        "@boost.move",
+        "@boost.optional",
+        "@boost.system",
+        "@boost.throw_exception",
+        "@boost.tokenizer",
+        "@boost.type_index",
+        "@boost.type_traits",
+        "@boost.utility",
+    ] + select({
+        "@platforms//os:windows": [
+            "@boost.winapi",
+        ],
+        "//conditions:default": [
+        ],
+    }) + select({
+        ":use_std_fs_disabled": ["@boost.filesystem"],
+        ":use_std_fs_enabled": [],
+    }),
+)
