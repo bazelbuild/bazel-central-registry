@@ -184,7 +184,7 @@ class BcrValidator:
                 + "to ensure the archive checksum stability.\n"
                 + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.\n"
                 + "If no release archives are available, please add a comment to your BCR PR with the text\n"
-                + "    @bazel-io unstable_ack\n"
+                + "    @bazel-io skip_check unstable_url\n"
                 + "and this check will be skipped.",
             )
         else:
