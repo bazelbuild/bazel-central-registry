@@ -318,13 +318,13 @@ cc_library(
     }),
     includes = ["include"],
     linkopts = select({
-        ":android": ["-landroid"],
-        ":macos": [
-            "-framework",
-            "Cocoa",
-            "-framework",
-            "QuartzCore",
-        ],
+        # ":android": ["-landroid"],
+        # ":macos": [
+        #     "-framework",
+        #     "Cocoa",
+        #     "-framework",
+        #     "QuartzCore",
+        # ],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
@@ -335,9 +335,9 @@ cc_library(
         # ":threads",
         # ":vulkan",
     ] + select({
-        ":android": [],
-        ":macos": [],
-        ":windows": [],
+        # ":android": [],
+        # ":macos": [],
+        # ":windows": [],
         "//conditions:default": [],
         # "//conditions:default": [":xcb"],
     }),
