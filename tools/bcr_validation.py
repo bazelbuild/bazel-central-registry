@@ -228,6 +228,45 @@ class BcrValidator:
         else:
             self.report(BcrValidationResult.GOOD, "The source archive's integrity value matches.")
 
+    def verify_git_repo_source_stability(self, module_name, version):
+        """Verify git repositories are specified in a stable way."""
+        if self.registry.get_source(module_name, version).get("type", None) != "git_repository":
+            return
+
+        # There's a handful of failure modes here, don't fail fast.
+        error_encountered = False
+        if self.registry.get_source(module_name, version).get("branch", None):
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}@{version}'s source is a git_repository that is trying to track "
+                "a branch. Please use a specific commit instead, as branches are not stable sources.",
+            )
+            error_encountered = True
+        if self.registry.get_source(module_name, version).get("tag", None):
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}@{version}'s source is a git_repository that is trying to track "
+                "a tag. Please use a specific commit instead, as tags are not stable sources.",
+            )
+            error_encountered = True
+        commit = self.registry.get_source(module_name, version)["commit"]
+        try:
+            commit_hash_bytes = bytes.fromhex(commit)
+            if len(commit_hash_bytes) != 20:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"{module_name}@{version}'s git_repository commit hash is an unexpected length.",
+                )
+        except ValueError:
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}@{version}'s source is a git_repository with an invalid commit hash format.",
+            )
+            error_encountered = True
+
+        if not error_encountered:
+            self.report(BcrValidationResult.GOOD, "The git_repository appears stable.")
+
     def verify_presubmit_yml_change(self, module_name, version):
         """Verify if the presubmit.yml is the same as the previous version."""
         versions = self.registry.get_metadata(module_name)["versions"]
@@ -278,6 +317,7 @@ class BcrValidator:
 
     def _download_source_archive(self, source, output_dir):
         source_url = source["url"]
+        tmp_dir = Path(tempfile.mkdtemp())
         archive_file = tmp_dir.joinpath(source_url.split("/")[-1].split("?")[0])
         download_file(source_url, archive_file)
         shutil.unpack_archive(str(archive_file), output_dir)
@@ -424,6 +464,7 @@ class BcrValidator:
         print_expanded_group(f"Validating {module_name}@{version}")
         self.verify_module_name_conflict()
         self.verify_module_existence(module_name, version)
+        self.verify_git_repo_source_stability(module_name, version)
         if "source_repo" not in skipped_validations:
             self.verify_source_archive_url_match_github_repo(module_name, version)
         if "url_stability" not in skipped_validations:
