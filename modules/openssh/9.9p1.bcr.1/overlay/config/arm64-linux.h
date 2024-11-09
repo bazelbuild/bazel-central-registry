@@ -320,7 +320,7 @@
 /* #undef HAVE_CRYPTO_SHA2_H */
 
 /* Define to 1 if you have the <crypt.h> header file. */
-#define HAVE_CRYPT_H 1
+/* #undef HAVE_CRYPT_H */
 
 /* Define if you are on Cygwin */
 /* #undef HAVE_CYGWIN */
