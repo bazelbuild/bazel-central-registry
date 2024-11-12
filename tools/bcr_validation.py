@@ -28,6 +28,7 @@ Validations performed are:
 """
 
 import argparse
+import ast
 import json
 import subprocess
 from pathlib import Path
@@ -104,6 +105,16 @@ def apply_patch(work_dir, patch_strip, patch_file):
     )
 
 
+def run_git(*args):
+    # Requires git to be installed
+    subprocess.run(
+        ["git", *args],
+        shell=False,
+        check=True,
+        env=os.environ,
+    )
+
+
 def fix_line_endings(lines):
     return [line.rstrip() + "\n" for line in lines]
 
@@ -141,7 +152,20 @@ class BcrValidator:
 
     def verify_source_archive_url_match_github_repo(self, module_name, version):
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
-        source_url = self.registry.get_source(module_name, version)["url"]
+        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
+            source_url = self.registry.get_source(module_name, version)["remote"]
+            # Preprocess the git URL to make the comparison easier.
+            if source_url.startswith("git@"):
+                source_url = source_url.removeprefix("git@")
+                source_netloc, source_parts = source_url.split(":")
+                source_url = "https://" + source_netloc + "/" + source_parts
+            if source_url.endswith(".git"):
+                source_url = source_url.removesuffix(".git")
+                # The asterisk here is to prevent the final slash from getting
+                # dropped by os.path.abspath().
+                source_url = source_url + "/*"
+        else:
+            source_url = self.registry.get_source(module_name, version)["url"]
         source_repositories = self.registry.get_metadata(module_name).get("repository", [])
         matched = not source_repositories
         for source_repository in source_repositories:
@@ -173,21 +197,28 @@ class BcrValidator:
 
     def verify_source_archive_url_stability(self, module_name, version):
         """Verify source archive URL is stable"""
+        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
+            return
         source_url = self.registry.get_source(module_name, version)["url"]
         if verify_stable_archive(source_url) == UrlStability.UNSTABLE:
             self.report(
                 BcrValidationResult.FAILED,
                 f"{module_name}@{version} is using an unstable source url: `{source_url}`.\n"
-                + "You should use a release archive URL in the format of "
+                + "If at all possible, you should use a release archive URL in the format of "
                 + "`https://github.com/<ORGANIZATION>/<REPO>/releases/download/<version>/<name>.tar.gz` "
                 + "to ensure the archive checksum stability.\n"
-                + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.",
+                + "See https://blog.bazel.build/2023/02/15/github-archive-checksum.html for more context.\n"
+                + "If no release archives are available, please add a comment to your BCR PR with the text\n"
+                + "    @bazel-io skip_check unstable_url\n"
+                + "and this check will be skipped.",
             )
         else:
             self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
 
     def verify_source_archive_url_integrity(self, module_name, version):
         """Verify the integrity value of the URL is correct."""
+        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
+            return
         source_url = self.registry.get_source(module_name, version)["url"]
         expected_integrity = self.registry.get_source(module_name, version)["integrity"]
         algorithm, _ = expected_integrity.split("-", 1)
@@ -200,6 +231,45 @@ class BcrValidator:
             )
         else:
             self.report(BcrValidationResult.GOOD, "The source archive's integrity value matches.")
+
+    def verify_git_repo_source_stability(self, module_name, version):
+        """Verify git repositories are specified in a stable way."""
+        if self.registry.get_source(module_name, version).get("type", None) != "git_repository":
+            return
+
+        # There's a handful of failure modes here, don't fail fast.
+        error_encountered = False
+        if self.registry.get_source(module_name, version).get("branch", None):
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}@{version}'s source is a git_repository that is trying to track "
+                "a branch. Please use a specific commit instead, as branches are not stable sources.",
+            )
+            error_encountered = True
+        if self.registry.get_source(module_name, version).get("tag", None):
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}@{version}'s source is a git_repository that is trying to track "
+                "a tag. Please use a specific commit instead, as tags are not stable sources.",
+            )
+            error_encountered = True
+        commit = self.registry.get_source(module_name, version)["commit"]
+        try:
+            commit_hash_bytes = bytes.fromhex(commit)
+            if len(commit_hash_bytes) != 20:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"{module_name}@{version}'s git_repository commit hash is an unexpected length.",
+                )
+        except ValueError:
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}@{version}'s source is a git_repository with an invalid commit hash format.",
+            )
+            error_encountered = True
+
+        if not error_encountered:
+            self.report(BcrValidationResult.GOOD, "The git_repository appears stable.")
 
     def verify_presubmit_yml_change(self, module_name, version):
         """Verify if the presubmit.yml is the same as the previous version."""
@@ -249,14 +319,29 @@ class BcrValidator:
         source_json_content = json.dumps(source, indent=4) + "\n"
         self.registry.get_source_json_path(module_name, version).write_text(source_json_content)
 
-    def verify_module_dot_bazel(self, module_name, version):
-        source = self.registry.get_source(module_name, version)
+    def _download_source_archive(self, source, output_dir):
         source_url = source["url"]
         tmp_dir = Path(tempfile.mkdtemp())
         archive_file = tmp_dir.joinpath(source_url.split("/")[-1].split("?")[0])
-        output_dir = tmp_dir.joinpath("source_root")
         download_file(source_url, archive_file)
         shutil.unpack_archive(str(archive_file), output_dir)
+
+    def _download_git_repo(self, source, output_dir):
+        run_git("clone", "--depth=1", source["remote"], output_dir)
+        run_git("-C", output_dir, "fetch", "--depth=1", "origin", source["commit"])
+        run_git("-C", output_dir, "checkout", source["commit"])
+
+    def verify_module_dot_bazel(self, module_name, version):
+        source = self.registry.get_source(module_name, version)
+        tmp_dir = Path(tempfile.mkdtemp())
+        output_dir = tmp_dir.joinpath("source_root")
+        source_type = source.get("type", "archive")
+        if source_type == "archive":
+            self._download_source_archive(source, output_dir)
+        elif source_type == "git_repository":
+            self._download_git_repo(source, output_dir)
+        else:
+            raise BcrValidationException("Unsupported repository type")
 
         module_file = self.registry.get_module_dot_bazel_path(module_name, version)
         if module_file.is_symlink():
@@ -285,11 +370,11 @@ class BcrValidator:
                 overlay_src = overlay_dir / overlay_file
                 overlay_dst = source_root / overlay_file
                 try:
-                    overlay_dst.resolve().relative_to(source_root)
-                except ValueError:
+                    overlay_dst.resolve().relative_to(source_root.resolve())
+                except ValueError as e:
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"The overlay file path `{overlay_file}` must point inside the source archive.",
+                        f"The overlay file path `{overlay_file}` must point inside the source archive.\n {e}",
                     )
                     continue
                 try:
@@ -337,6 +422,21 @@ class BcrValidator:
         else:
             self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
+        tree = ast.parse("".join(bcr_module_dot_bazel_content), filename=source_root)
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "module"
+            ):
+                keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
+                if keywords.get("version", version) != version:
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        "Checked in MODULE.bazel version does not match the version of the module directory added.",
+                    )
+
         shutil.rmtree(tmp_dir)
 
     def check_if_bazel_version_is_set(self, tasks):
@@ -383,6 +483,7 @@ class BcrValidator:
         print_expanded_group(f"Validating {module_name}@{version}")
         self.verify_module_name_conflict()
         self.verify_module_existence(module_name, version)
+        self.verify_git_repo_source_stability(module_name, version)
         if "source_repo" not in skipped_validations:
             self.verify_source_archive_url_match_github_repo(module_name, version)
         if "url_stability" not in skipped_validations:

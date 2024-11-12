@@ -103,7 +103,7 @@ def integrity(data, algorithm="sha256"):
 
 
 def json_dump(file, data, sort_keys=True):
-    with open(file, "w") as f:
+    with open(file, "w", newline="\n") as f:
         json.dump(data, f, indent=4, sort_keys=sort_keys)
         f.write("\n")
 

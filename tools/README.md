@@ -67,3 +67,58 @@ options:
 
 Example usage: change into your project directory and run `<path to BCR repo>/tools/migrate_to_bzlmod.py --target //foo:bar`
 ```
+
+## module_selector.py
+
+This script provides a way to select specific versions of Bazel modules from the Bazel Central Registry (BCR). It supports wildcard patterns for flexible module and version matching, as well as the option to randomly sample a percentage of the matching modules.
+
+```
+usage: module_selector.py [-h] [--registry REGISTRY] --select SELECT [--random-percentage PERCENTAGE]
+
+Select module versions matching given patterns.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --registry REGISTRY   Specify the root path of the registry (default: the current working directory or the workspace
+                        root if running with Bazel).
+  --select SELECT       Specify module selection patterns in the format <module_pattern>@<version_pattern>. The
+                        <module_pattern> can include wildcards (*) to match multiple modules. The <version_pattern>
+                        can be: - A specific version (e.g., "1.2.3") - "latest" to select the latest version - A
+                        comparison operator followed by a version (e.g., ">=1.0.0", "<2.0.0") You can provide multiple
+                        --select options to select multiple modules. Examples: --select "zlib@latest" --select
+                        "protobuf@>=27" --select "rules_*@<1.5.0" --select "*@latest"
+  --random-percentage PERCENTAGE
+                        Percentage of modules to randomly select from the modules matching any of the patterns. Must
+                        be an integer between 1 and 100.
+```
+
+You can also run with Bazel, for example:
+
+```bash
+bazel run //tools:module_selector -- --select "rules_*@latest"
+```
+
+## module_analyzer.py
+
+This script calculates the importance of each module in the BCR based on their PageRank value and prints out the top N important modules.
+
+The graph is constructed based on dependencies of the latest version of each module.
+
+```
+usage: module_analyzer.py [-h] [--registry REGISTRY] [--top_n TOP_N] [--exclude-dev-deps] [--name-only]
+
+Select module versions matching given patterns.
+
+optional arguments:
+  -h, --help           show this help message and exit
+  --registry REGISTRY  Specify the root path of the registry (default: the current working directory or the workspace root if running with Bazel).
+  --top_n TOP_N        Specify the top N important modules to print out (default: 50).
+  --exclude-dev-deps   Exclude dev dependencies when constructing the dependency graph (default: False).
+  --name-only          Only print the module names without the scores (default: False).
+```
+
+You can also run with Bazel, for example:
+
+```bash
+bazel run //tools:module_analyzer -- --top_n 10
+```
