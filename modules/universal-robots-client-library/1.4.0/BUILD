@@ -1,18 +1,20 @@
-# load("//tools/build_defs/license:license.bzl", "license")
+load("@rules_license//rules:license.bzl", "license")
 
-# package(
-#     default_applicable_licenses = [":license"],
-# )
+package(
+    default_applicable_licenses = [":license"],
+)
 
-# license(name = "license")
+exports_files([
+    "LICENSE_apache_2_0",
+])
 
-# # Legacy deprecated licenses rule.
-# # Should be kept until transition to new license rules is complete.
-# licenses(["notice"])
-
-# exports_files([
-#     "LICENSE",
-# ])
+license(
+    name = "license",
+    package_name = "universal-robots-client-library",
+    license_kinds = [
+        "@rules_license//licenses/spdx:Apache-2.0",
+    ],
+)
 
 filegroup(
     name = "rtde_files",
