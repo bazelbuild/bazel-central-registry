@@ -26,7 +26,6 @@ filegroup(
 )
 
 COMMON_OPTIONS = [
-    "-I../include",
     "-Iinclude",
 ]
 
