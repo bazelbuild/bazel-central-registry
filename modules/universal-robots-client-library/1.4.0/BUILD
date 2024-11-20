@@ -27,11 +27,7 @@ filegroup(
 
 COMMON_OPTIONS = [
     "-I../include",
-    "-I../src",
     "-Iinclude",
-    "-Isrc",
-    "-Iexternal/universal-robots-client-library~/src",
-    "-Iexternal/universal-robots-client-library~/include",
 ]
 
 DEFAULT_OPTIONS = COMMON_OPTIONS + ["-fexceptions"]
