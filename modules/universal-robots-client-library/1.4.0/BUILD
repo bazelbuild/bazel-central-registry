@@ -11,7 +11,7 @@ exports_files([
 ])
 
 license(
-    name = "license-apache",
+    name = "license",
     package_name = "universal-robots-client-library",
     license_kinds = [
         "@rules_license//licenses/spdx:Apache-2.0",
