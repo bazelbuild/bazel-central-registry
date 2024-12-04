@@ -1,0 +1,325 @@
+--- /dev/null
++++ a/BUILD.bazel
+@@ -0,0 +1,322 @@
++#open62541 - open source OPC UA implementation
++
++load("@rules_python//python:py_binary.bzl", "py_binary")
++load("@rules_python//python:py_library.bzl", "py_library")
++load(":open62541.bzl", "generate_config_h", "generate_datatypes", "generate_nodeset")
++
++package(
++    # open62541 has **many** circular header dependencies, including some
++    # required for codegen steps. We disable layering check for now. Upstream
++    # is making improvements to this situation, so we can likely add the check
++    # back in the future.
++    features = ["-layering_check"],
++)
++
++licenses(["reciprocal"])
++
++exports_files(["LICENSE"])
++
++OPEN62541_HEADERS = glob([
++    "include/**/*.h",
++    "plugins/include/open62541/plugin/historydata/*.h",
++]) + [
++    "include/open62541/statuscodes.h",
++    "plugins/crypto/openssl/securitypolicy_openssl_common.h",
++    "plugins/crypto/openssl/ua_openssl_version_abstraction.h",
++    "plugins/include/open62541/client_config_default.h",
++    "plugins/include/open62541/plugin/accesscontrol_default.h",
++    "plugins/include/open62541/plugin/create_certificate.h",
++    "plugins/include/open62541/plugin/log_stdout.h",
++    "plugins/include/open62541/plugin/nodestore_default.h",
++    "plugins/include/open62541/plugin/pki_default.h",
++    "plugins/include/open62541/plugin/securitypolicy_default.h",
++    "plugins/include/open62541/server_config_default.h",
++]
++
++# Public entrypoint to open62541. Depend on this target.
++cc_library(
++    name = "open62541",
++    hdrs = [":nodeid_header"] + OPEN62541_HEADERS,
++    features = [
++        "-parse_headers",
++    ],
++    visibility = ["//visibility:public"],
++    deps = [
++        ":common",
++        ":open62541_impl",
++        ":types",
++    ],
++)
++
++cc_library(
++    name = "open62541_impl",
++    srcs = glob(
++        [
++            "src/**/*.c",
++            "src/**/*.h",
++            "src/*.h",
++            "plugins/crypto/openssl/*.c",
++            "plugins/historydata/*.c",
++            "arch/eventloop*",
++        ],
++        exclude = [
++            "src/pubsub/**/*.c",
++            "src/ua_types_encoding_json.*",
++            "src/ua_types_encoding_xml.*",
++            "arch/eventloop_mqtt.c",
++        ],
++    ) + [
++        "arch/common/ua_timer.c",
++        "arch/common/ua_timer.h",
++        "arch/posix/ua_clock.c",
++        "include/open62541/statuscodes.c",
++        "plugins/crypto/ua_pki_none.c",
++        "plugins/crypto/ua_securitypolicy_none.c",
++        "plugins/ua_accesscontrol_default.c",
++        "plugins/ua_config_default.c",
++        "plugins/ua_log_stdout.c",
++        "plugins/ua_nodestore_hashmap.c",
++        ":namespace0",
++    ],
++    hdrs = OPEN62541_HEADERS,
++    copts = [
++        "-Iplugins/crypto/openssl",
++        "-Isrc/util",
++        "-Isrc/server",
++        "-Isrc/client",
++        "-Isrc",
++        "-Ideps",
++        "-Isrc/pubsub",
++        "-Iplugins/include",
++        "-Wno-unused-variable",
++        "-Wno-incompatible-pointer-types",
++        "-Wno-missing-braces",
++        "-Wno-vla",
++        "-Wno-macro-redefined",
++        "-DHAVE_CONFIG_H",
++    ],
++    features = [
++        "-parse_headers",
++    ],
++    includes = [
++        "include",
++        "plugins/include",
++        # These should all be -Idir copts, but we can't represent that in a way that's compatible with cross-repo dependencies. See https://github.com/bazelbuild/bazel/pull/23518.
++        "src/util",
++        "src/server",
++        "src/client",
++        "src",
++        "deps",
++        "src/pubsub",
++        "plugins/include",
++    ],
++    deps = [
++        ":base64",
++        ":common",
++        ":itoa",
++        ":libc_time",
++        ":mp_printf",
++        ":open62541_queue",
++        ":parse_num",
++        ":pcg_basic",
++        ":transport",
++        ":types",
++        ":ziptree",
++        "@boringssl//:crypto",
++    ],
++)
++
++# Generates a header containing node IDs.
++genrule(
++    name = "nodeid_header",
++    srcs = ["//:tools/schema/NodeIds.csv"],
++    outs = ["include/open62541/nodeids.h"],
++    cmd = "./$(location //:generate_nodeid_header) $< $(RULEDIR)/include/open62541/nodeids NS0",
++    tools = ["//:generate_nodeid_header"],
++)
++
++# Generates config.h
++generate_config_h(
++    name = "config_h",
++    output_path = "include/open62541/config.h",
++)
++
++# Contains common dependencies required for subsequent codegen steps.
++cc_library(
++    name = "common",
++    hdrs = [
++        "arch/posix/ua_architecture.h",
++        "include/open62541/common.h",
++        ":config_h",
++        ":include/open62541/nodeids.h",
++    ],
++    copts = [
++        "-DHAVE_CONFIG_H",
++    ],
++    defines = [
++        "UA_ARCHITECTURE_POSIX",
++    ],
++    features = [
++        "-parse_headers",
++    ],
++    includes = [
++        "arch",
++        "include",
++    ],
++)
++
++generate_datatypes(
++    name = "types",
++    builtin = True,
++    file_csv = "//:tools/schema/NodeIds.csv",
++    files_bsd = ["//:tools/schema/Opc.Ua.Types.bsd"],
++    prefix = "include/open62541",
++    visibility = ["//visibility:public"],
++)
++
++generate_datatypes(
++    name = "transport",
++    builtin = True,
++    file_csv = "//:tools/schema/NodeIds.csv",
++    files_bsd = ["//:tools/schema/Custom.Opc.Ua.Transport.bsd"],
++    files_selected = "//:tools/schema/datatypes_transport.txt",
++    prefix = "include/open62541",
++    deps = [":types"],
++    visibility = ["//visibility:public"],
++)
++
++generate_nodeset(
++    name = "namespace0",
++    files = [
++        # Note that this list is ordering-dependent!
++        "//:tools/schema/Opc.Ua.NodeSet2.Reduced.xml",
++        "//:tools/schema/Opc.Ua.NodeSet2.DiagnosticsMinimal.xml",
++        "//:tools/schema/Opc.Ua.NodeSet2.EventsMinimal.xml",
++        "//:tools/schema/Opc.Ua.NodeSet2.HistorizingMinimal.xml",
++        "//:tools/schema/Opc.Ua.NodeSet2.PubSubMinimal.xml",
++        "//:tools/schema/Opc.Ua.NodeSet2.Part8_Subset.xml",
++    ],
++    ignore = "//:tools/nodeset_compiler/NodeID_NS0_Base.txt",
++    internal = True,
++    prefix = "include/open62541",
++)
++
++cc_library(
++    name = "statuscodes",
++    hdrs = [":include/open62541/statuscodes.h"],
++    deps = [":common"],
++)
++
++genrule(
++    name = "statuscodes_gen",
++    srcs = ["//:tools/schema/StatusCode.csv"],
++    outs = [
++        "include/open62541/statuscodes.h",
++        "include/open62541/statuscodes.c",
++    ],
++    cmd = "./$(location //:generate_statuscode_descriptions) $< $(RULEDIR)/include/open62541/statuscodes",
++    tools = ["//:generate_statuscode_descriptions"],
++)
++
++cc_library(
++    name = "ziptree",
++    srcs = ["deps/ziptree.c"],
++    hdrs = ["deps/ziptree.h"],
++    includes = ["deps"],
++)
++
++cc_library(
++    name = "pcg_basic",
++    srcs = ["deps/pcg_basic.c"],
++    hdrs = ["deps/pcg_basic.h"],
++    includes = ["deps"],
++    deps = [":common"],
++)
++
++cc_library(
++    name = "libc_time",
++    srcs = ["deps/libc_time.c"],
++    hdrs = ["deps/libc_time.h"],
++    includes = ["deps"],
++)
++
++cc_library(
++    name = "base64",
++    srcs = ["deps/base64.c"],
++    hdrs = ["deps/base64.h"],
++    includes = ["deps"],
++    deps = [
++        ":common",
++        ":types",
++    ],
++)
++
++cc_library(
++    name = "parse_num",
++    srcs = ["deps/parse_num.c"],
++    hdrs = ["deps/parse_num.h"],
++    includes = ["deps"],
++)
++
++cc_library(
++    name = "mp_printf",
++    srcs = ["deps/mp_printf.c"],
++    hdrs = ["deps/mp_printf.h"],
++    includes = ["deps"],
++    deps = [":dtoa"],
++)
++
++cc_library(
++    name = "dtoa",
++    srcs = ["deps/dtoa.c"],
++    hdrs = ["deps/dtoa.h"],
++    includes = ["deps"],
++)
++
++cc_library(
++    name = "itoa",
++    srcs = ["deps/itoa.c"],
++    hdrs = ["deps/itoa.h"],
++    includes = ["deps"],
++    deps = [":types"],
++)
++
++cc_library(
++    name = "open62541_queue",
++    hdrs = ["deps/open62541_queue.h"],
++)
++
++py_binary(
++    name = "generate_datatypes",
++    srcs = [
++        "tools/generate_datatypes.py",
++    ],
++    main = "tools/generate_datatypes.py",
++    deps = [":nodeset_compiler_lib"],
++)
++
++py_binary(
++    name = "generate_nodeid_header",
++    srcs = ["tools/generate_nodeid_header.py"],
++)
++
++py_library(
++    name = "nodeset_compiler_lib",
++    srcs = glob(
++        ["tools/nodeset_compiler/*.py"],
++        exclude = ["tools/nodeset_compiler/nodeset_compiler.py"],
++    ),
++    imports = ["tools", "tools/nodeset_compiler"],
++)
++
++py_binary(
++    name = "nodeset_compiler",
++    srcs = ["tools/nodeset_compiler/nodeset_compiler.py"],
++    main = "tools/nodeset_compiler/nodeset_compiler.py",
++    deps = [":nodeset_compiler_lib"],
++)
++
++py_binary(
++    name = "generate_statuscode_descriptions",
++    srcs = ["tools/generate_statuscode_descriptions.py"],
++)
