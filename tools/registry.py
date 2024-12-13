@@ -411,7 +411,7 @@ module(
             shutil.copy(module.presubmit_yml, presubmit_yml)
         else:
             PLATFORMS = ["debian10", "ubuntu2004", "macos", "macos_arm64", "windows"]
-            BAZEL_VERSIONS = ["7.x", "6.x"]
+            BAZEL_VERSIONS = ["8.x", "7.x", "6.x"]
             presubmit = {
                 "matrix": {
                     "platform": PLATFORMS.copy(),
