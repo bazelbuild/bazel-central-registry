@@ -25,10 +25,11 @@ The tool also accepts a `--version` option to update the source.json of a specif
 2. Make the changes you want by to BCR. Make use of `bazel run //tools:add_module` and `bazel run //tools:update_integrity` etc.
 3. Update your `MODULE.bazel` file in your repository you want to use the change made in step 2.
 4. To test the changes, in your own repo that consumes the BCR Module you added, run:
-```
-bazel shutdown && bazel build --enable_bzlmod --registry="file:///path/to/bazel-central-registry" --lockfile_mode=off @module-to-build//:target
-# the target can also be your target that depends on this.
-```
+
+   ```bash
+   bazel shutdown && bazel build --enable_bzlmod --registry="file:///path/to/bazel-central-registry" --lockfile_mode=off @module-to-build//:target
+   # the target can also be your target that depends on this.
+   ```
 
 ## Presubmit
 

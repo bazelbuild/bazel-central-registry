@@ -6,7 +6,7 @@ The default Bazel registry for the Bzlmod external dependency system of Bazel. I
 
 ## Contributing
 
-To contribute, check our [BCR  policies](docs/bcr-policies.md) and [contribution guidelines](docs/README.md).
+To contribute, check our [BCR policies](docs/bcr-policies.md) and [contribution guidelines](docs/README.md).
 
 ## Depending on the BCR infrastructure (and how not to)
 
