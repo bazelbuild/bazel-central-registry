@@ -17,7 +17,7 @@ The script will generate all require changes based on your input, please review,
 If you are the project owner, you can set up the [Publish to BCR](https://github.com/apps/publish-to-bcr) Github App for your repository to automatically send a PR to the BCR when cutting a new release.
 
 When manually editing files you may find `bazel run -- //tools:update_integrity foomod` useful to update the integrity hashes in foomod's source.json file.
-The tool also accepts a `--version` option to update the source.json of a specific version of the module (instead of latest).
+The tool also accepts a `--version` option to update the `source.json` of a specific version of the module (instead of latest).
 
 ### Testing your change locally
 
@@ -47,14 +47,14 @@ Validations performed in the scripts are:
 
 - Verify the module version exists in the `metadata.json` of the module.
 - Verify the source archive URL matches the source repository specified in `metadata.json`.
-- Verify the source archive URL is stable if it comes from GitHub. (See [this discussion](https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300))
+- Verify the source archive URL is stable if it comes from GitHub. (See [this discussion](https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300)). Comment `@bazel-io skip_check unstable_url` to skip this check.
 - Verify the integrity values of the source archive and patch files (if any) are correct.
-- Verify the checked-in MODULE.bazel file matches the one in the extracted and patched source tree.
+- Verify the checked-in `MODULE.bazel` file matches the one in the extracted and patched source tree.
 - Check if the module is new or the `presubmit.yml` file is changed compared to the last version, if so a BCR maintainer review will be required to run jobs specified in `presubmit.yml`.
 
 Additional validations implemented in the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script:
 
-- The checked-in MODULE.bazel, source.json, patches files are not modified in the PR.
+- The checked-in `MODULE.bazel`, `source.json`, patches files are not modified in the PR.
 - The files outside of `modules/` directory are not modified in the pull request if the PR is adding a new module version.
 
 ### Anonymous module test
