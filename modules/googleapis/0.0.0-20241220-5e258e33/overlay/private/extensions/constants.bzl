@@ -17,7 +17,7 @@ RULE_TO_FLAVOR = {
     "java_gapic_assembly_gradle_pkg": None,
     "java_gapic_library": None,
     "java_gapic_test": None,
-    "java_grpc_library": None,
+    "java_grpc_library": "grpc-java",
     "java_proto_library": "java",
     "moved_proto_library": None,
     "nodejs_gapic_assembly_pkg": None,
