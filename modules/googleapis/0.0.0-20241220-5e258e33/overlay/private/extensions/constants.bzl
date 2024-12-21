@@ -2,7 +2,7 @@
 # module or to None if the rule is not supported yet.
 RULE_TO_FLAVOR = {
     "cc_gapic_library": None,
-    "cc_grpc_library": "grpc-cc",
+    "cc_grpc_library": None,
     "cc_proto_library": "cc",
     "csharp_gapic_assembly_pkg": None,
     "csharp_gapic_library": None,
