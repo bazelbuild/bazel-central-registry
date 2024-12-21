@@ -1,5 +1,5 @@
 # Maps rules used by googleapis to <flavor> if the rule is registered by the googleapis-<flavor>
-# module or to None if the rule is not supported yet.
+# module or to None if the rule is not supported yet (some may never be).
 RULE_TO_FLAVOR = {
     "cc_gapic_library": None,
     "cc_grpc_library": None,

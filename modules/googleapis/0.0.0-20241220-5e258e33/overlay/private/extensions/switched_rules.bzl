@@ -44,6 +44,8 @@ _imports = repository_rule(
     },
 )
 
+# This hack is needed due to direct references to @io_bazel_rules_go//proto:go_grpc in build files.
+# Create an alias repo that resembles rules_go and forwards the go_grpc target to the actual target.
 def _io_bazel_rules_go_grpc_forwarder_impl(repo_ctx):
     content = ""
     if repo_ctx.attr.go_grpc_label:
