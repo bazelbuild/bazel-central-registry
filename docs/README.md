@@ -93,6 +93,8 @@ While you can also specify `test_targets`, it may not always work since test tar
 
 **Note that** the task config syntax follows [Bazel CI's specifications](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#configuring-a-pipeline). BCR requires the bazel version to be specified for each task via the `bazel` field.
 
+> 💡 **Tip:** You can reproduce the presubmit environment locally via `bazel run //tools:setup_presubmit_repos -- --module <module_name>@<version>`.
+
 ### Test module
 
 It's **highly recommended** to specify a test module that includes example usages of your module, which will help verify the basic APIs and functionalities of your module work correctly.
@@ -132,6 +134,8 @@ local_path_override(
 ```
 
 **Note that** the task config syntax also follows [Bazel CI's specifications](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#configuring-a-pipeline), but just one level deeper under `bcr_test_module` and you have to specify the subdirectory of the test module via `module_path`. BCR requires the bazel version to be specified for each task via the `bazel` field.
+
+> 💡 **Tip:** You can reproduce the presubmit environment locally via `bazel run //tools:setup_presubmit_repos -- --module <module_name>@<version>`.
 
 ## Yank a module version
 
