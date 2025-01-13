@@ -133,6 +133,16 @@ local_path_override(
 
 **Note that** the task config syntax also follows [Bazel CI's specifications](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#configuring-a-pipeline), but just one level deeper under `bcr_test_module` and you have to specify the subdirectory of the test module via `module_path`. BCR requires the bazel version to be specified for each task via the `bazel` field.
 
+### Reproduce presubmit builds locally
+
+You can reproduce the presubmit environment locally by running the following command:
+
+```bash
+bazel run //tools:setup_presubmit_repos -- --module <module_name>@<version>
+```
+
+Then follow the instructions to run the build locally.
+
 ## Yank a module version
 
 If a module version is discovered with security vulnerabilities or for any reason should no longer be used, you can yank the module version by adding it to the `yanked` map in `metadata.json` and provide a reason.
