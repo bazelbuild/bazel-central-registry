@@ -122,3 +122,18 @@ You can also run with Bazel, for example:
 ```bash
 bazel run //tools:module_analyzer -- --top_n 10
 ```
+
+## setup_presubmit_repos.py
+
+This script sets up the repos for reproducing BCR presubmit builds locally.
+It chooses the first task config that matches the current platform and print out the commands to run.
+
+```
+usage: bazel run //tools:setup_presubmit_repos -- --module foo@1.2.0
+
+Setup repos for reproducing BCR presubmit builds locally.
+
+options:
+  -h, --help       show this help message and exit
+  --module MODULE  Module name and version, e.g. foo@1.2.0
+```
