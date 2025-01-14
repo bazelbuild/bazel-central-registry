@@ -71,7 +71,9 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
         print(f"Please check {presubmit_yml} on which targets to build.\n")
         return
 
-    print(f"\nTo reproduce task \"{task_name}\" on {host_platform} with Bazel {bazel_version}, follow these steps (make sure Bazelisk is installed as bazel):\n")
+    print(
+        f"\nTo reproduce task \"{task_name}\" on {host_platform} with Bazel {bazel_version}, follow these steps (make sure Bazelisk is installed as bazel):\n"
+    )
 
     if bazel_version:
         if host_platform == "windows":
