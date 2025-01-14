@@ -48,11 +48,11 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
 
     # Find the first task that matches the host platform
     host_platform = get_host_platform()
-    task_found = False
+    task_name = None
     for task in task_configs["tasks"].values():
         platform = get_task_platform(task)
         if platform == host_platform:
-            task_found = True
+            task_name = task.get("name")
             build_flags = task.get("build_flags", [])
             build_targets = task.get("build_targets", [])
             test_flags = task.get("test_flags", [])
@@ -61,7 +61,7 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
             break
 
     presubmit_yml = bcr_presubmit.get_presubmit_yml(module_name, module_version)
-    if not task_found:
+    if not task_name:
         print("\nNo task found for the host platform: %s" % host_platform)
         print(f"Please check {presubmit_yml} on which targets to build.\n")
         return
@@ -71,7 +71,7 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
         print(f"Please check {presubmit_yml} on which targets to build.\n")
         return
 
-    print("\nTo reproduce the build, follow these steps (make sure Bazelisk is installed as bazel):\n")
+    print(f"\nTo reproduce task \"{task_name}\" on {host_platform} with Bazel {bazel_version}, follow these steps (make sure Bazelisk is installed as bazel):\n")
 
     if bazel_version:
         if host_platform == "windows":
