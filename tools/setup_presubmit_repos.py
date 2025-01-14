@@ -72,7 +72,7 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
         return
 
     print(
-        f"\nTo reproduce task \"{task_name}\" on {host_platform} with Bazel {bazel_version}, follow these steps (make sure Bazelisk is installed as bazel):\n"
+        f'\nTo reproduce task "{task_name}" on {host_platform} with Bazel {bazel_version}, follow these steps (make sure Bazelisk is installed as bazel):\n'
     )
 
     if bazel_version:
