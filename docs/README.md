@@ -158,6 +158,8 @@ For example, in `zlib`'s [metadata.json](https://github.com/bazelbuild/bazel-cen
 
 A Bzlmod user's build will start to fail if the yanked version is in the resolved dependency graph, and the yanked reason will be presented in the error message. The user can choose to upgrade the dependency or they can bypass the check by specifying the `--allow_yanked_versions` flag or the `BZLMOD_ALLOW_YANKED_VERSIONS` environment variable. Check [the documentation](https://bazel.build/reference/command-line-reference#flag--allow_yanked_versions) to learn how to use them.
 
+The latest version of a module should not be yanked. If you do need to yank the latest version because the module is deprecated, you should add `"deprecated": "<reason>"` in its `metadata.json` file.
+
 ## Versions format
 
 Bazel has a diverse ecosystem and projects using various versioning schemes, check [Bzlmod's version specification](https://bazel.build/external/module#version_format). If you need to update a module with only patch file changes, you can add `.bcr.<N>` suffix to the version number.
