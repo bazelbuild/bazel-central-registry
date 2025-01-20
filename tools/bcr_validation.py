@@ -525,7 +525,7 @@ class BcrValidator:
                     has_error = True
 
             latest_version = metadata["versions"][-1]
-            if not metadata.get("module_deprecated") and latest_version in metadata.get("yanked_versions", {}):
+            if not metadata.get("deprecated") and latest_version in metadata.get("yanked_versions", {}):
                 self.report(
                     BcrValidationResult.FAILED,
                     f"The latest version ({latest_version}) of {module_name} should not be yanked, "
