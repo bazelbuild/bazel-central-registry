@@ -1,0 +1,46 @@
+"""Bazel build file for libsodium."""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+load("//bzl:defs.bzl", "gen_version_hdr")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:ISC"],
+    license_text = "LICENSE",
+)
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+gen_version_hdr(
+    name = "version_hdr",
+    sodium_library_version_major = "26",
+    sodium_library_version_minor = "1",
+    version = module_version(),
+)
+
+cc_library(
+    name = "libsodium",
+    srcs = glob(["src/**/*.c"]),
+    hdrs = glob(["src/**/*.h"]) + [":version_hdr"],
+    copts = [
+        # Add this so version.c can include version.h without the sodium sub-directory.
+        "-I$(GENDIR)/%s/sodium" % (INCLUDE_PREFIX,),
+        "-I%s/src/libsodium/include/sodium" % (INCLUDE_PREFIX,),
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Wno-unused-but-set-variable",
+            "-Wno-unused-function",
+            "-Wno-unknown-pragmas",
+            "-Wno-unused-variable",
+        ],
+    }),
+    includes = ["src/libsodium/include"],
+    local_defines = ["CONFIGURED"],
+    visibility = ["//visibility:public"],
+)
