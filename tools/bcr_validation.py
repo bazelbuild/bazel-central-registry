@@ -523,6 +523,16 @@ class BcrValidator:
                         f"but it's recorded in {module_name}'s metadata.json file.",
                     )
                     has_error = True
+
+            latest_version = metadata["versions"][-1]
+            if not metadata.get("module_deprecated") and latest_version in metadata.get("yanked_versions", {}):
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The latest version ({latest_version}) of {module_name} should not be yanked, "
+                    f"please make sure a newer version is available before yanking it.",
+                )
+                has_error = True
+
         if not has_error:
             self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
 
