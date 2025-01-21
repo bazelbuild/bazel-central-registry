@@ -32,6 +32,8 @@ import ast
 import json
 import subprocess
 from pathlib import Path
+import re
+import requests
 import shutil
 import sys
 import tempfile
@@ -119,6 +121,56 @@ def fix_line_endings(lines):
     return [line.rstrip() + "\n" for line in lines]
 
 
+def extract_commit(repo_path, path):
+    """
+    Extracts the commit ID from a path matching the pattern /<repo_path>/archive/<commit>.zip or /<repo_path>/archive/<commit>.tar.gz
+
+    Args:
+        repo_path: The repository path.
+        path: The path to extract the commit ID from.
+
+    Returns:
+        The commit ID if found, otherwise None.
+    """
+    pattern = rf'/{re.escape(repo_path)}/archive/([a-f0-9]+)\.(zip|tar\.gz)'
+    match = re.search(pattern, path)
+    if match:
+        return match.group(1)
+    return None
+
+
+def is_commit_in_original_repo(repo_path, commit) -> bool:
+    """
+    Checks if the given commit SHA is truly part of the original GitHub repository's history.
+
+    Uses the unofficial '/latest-commit/<SHA>' endpoint, which returns JSON containing "isSpoofed".
+
+    Args:
+        repo_path: The repository path.
+        commit: The full commit hash to check
+
+    Returns:
+        True if the commit is found AND not spoofed; False otherwise
+    """
+    url = f"https://github.com/{repo_path}/latest-commit/{commit}"
+    headers = {"Accept": "application/json"}
+
+    try:
+        response = requests.get(url, headers=headers)
+    except requests.RequestException:
+        raise BcrValidationException(f"Failed to check if commit is from the original repository via {url}")
+
+    if not response.status_code == 200:
+        # Commit doesn't exist at all
+        return False
+
+    data = response.json()
+    if "isSpoofed" not in data:
+        raise BcrValidationException(f"Missing 'isSpoofed' attribute in response from {url}: {data}")
+
+    return not data.get("isSpoofed")
+
+
 class BcrValidationException(Exception):
     """
     Raised whenever we should stop the validation immediately.
@@ -174,10 +226,13 @@ class BcrValidator:
             repo_type, repo_path = source_repository.split(":")
             if repo_type == "github":
                 parts = urlparse(source_url)
+                commit = extract_commit(repo_path, parts.path)
                 matched = (
                     parts.scheme == "https"
                     and parts.netloc == "github.com"
                     and os.path.abspath(parts.path).startswith(f"/{repo_path}/")
+                    # If the URL is a source archive at a commit, then check the commit is from the original repo.
+                    and (not commit or is_commit_in_original_repo(repo_path, commit))
                 )
             elif repo_type == "https":
                 repo = urlparse(source_repository)

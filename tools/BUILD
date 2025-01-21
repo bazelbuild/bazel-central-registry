@@ -51,6 +51,7 @@ py_binary(
     deps = [
         ":registry",
         ":verify_stable_archives",
+        requirement("requests"),
     ],
 )
 
