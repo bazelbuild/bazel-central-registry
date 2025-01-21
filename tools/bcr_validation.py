@@ -132,7 +132,7 @@ def extract_commit(repo_path, path):
     Returns:
         The commit ID if found, otherwise None.
     """
-    pattern = rf'/{re.escape(repo_path)}/archive/([a-f0-9]+)\.(zip|tar\.gz)'
+    pattern = rf"/{re.escape(repo_path)}/archive/([a-f0-9]+)\.(zip|tar\.gz)"
     match = re.search(pattern, path)
     if match:
         return match.group(1)
