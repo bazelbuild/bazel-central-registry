@@ -181,7 +181,7 @@ def check_github_url(repo_path, source_url):
         return False
 
     # Allow paths under /<repo_path>/releases/download
-    if normalized_path.startswith(f"/{repo_path}/releases/download"):
+    if normalized_path.startswith(f"/{repo_path}/releases/download/"):
         return True
 
     # Otherwise, the source archive must match /<repo_path>/archive/<reference>.<extension>
