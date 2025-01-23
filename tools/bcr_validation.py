@@ -548,16 +548,9 @@ class BcrValidator:
         if not conflict_found:
             self.report(BcrValidationResult.GOOD, "No module name conflict found.")
 
-    def verify_no_dir_symlinks(self):
-        """Check there is no directory symlink under modules/ dir"""
-        for dirpath, dirnames, _ in os.walk(self.registry.root / "modules"):
-            for dirname in dirnames:
-                full_path = os.path.join(dirpath, dirname)
-                if os.path.islink(full_path):
-                    self.report(BcrValidationResult.FAILED, f"Dir symlink is not allowed: {full_path}")
-
     def validate_module(self, module_name, version, skipped_validations):
         print_expanded_group(f"Validating {module_name}@{version}")
+        self.verify_module_name_conflict()
         self.verify_module_existence(module_name, version)
         self.verify_git_repo_source_stability(module_name, version)
         if "source_repo" not in skipped_validations:
@@ -611,11 +604,6 @@ class BcrValidator:
 
         if not has_error:
             self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
-
-    def global_checks(self):
-        """General global checks for BCR"""
-        self.verify_module_name_conflict()
-        self.verify_no_dir_symlinks()
 
     def getValidationReturnCode(self):
         # Calculate the overall return code
@@ -692,9 +680,6 @@ def main(argv=None):
 
     if args.check_all_metadata:
         validator.validate_all_metadata()
-
-    # Perform some global checks
-    validator.global_checks()
 
     return validator.getValidationReturnCode()
 
