@@ -49,10 +49,10 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
     # Find the first task that matches the host platform
     host_platform = get_host_platform()
     task_name = None
-    for task in task_configs["tasks"].values():
+    for task_id, task in task_configs["tasks"].items():
         platform = get_task_platform(task)
         if platform == host_platform:
-            task_name = task.get("name")
+            task_name = task.get("name", task_id)
             build_flags = task.get("build_flags", [])
             build_targets = task.get("build_targets", [])
             test_flags = task.get("test_flags", [])
