@@ -26,7 +26,12 @@ from registry import RegistryClient
 def main():
     client = RegistryClient(".")
     for name, version in client.get_all_module_versions(include_yanked=False):
-        print(client.get_source(name, version)["url"])
+        source = client.get_source(name, version)
+        if "url" in source:
+            print(source["url"])
+        elif "urls" in source:
+            for url in source["urls"]:
+                print(url)
 
 
 if __name__ == "__main__":
