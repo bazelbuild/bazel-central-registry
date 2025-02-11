@@ -1,6 +1,8 @@
 #ifndef EVENT2_EVENT_CONFIG_H_INCLUDED_
 #define EVENT2_EVENT_CONFIG_H_INCLUDED_
 
+#include "event2-config_common.h"
+
 #if defined(__linux__)
 #include "event2-config_linux.h"
 #elif defined(__APPLE__)
