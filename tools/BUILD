@@ -49,7 +49,9 @@ py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
     deps = [
+        ":attestations",
         ":registry",
+        ":slsa",
         ":verify_stable_archives",
         requirement("requests"),
     ],
@@ -66,6 +68,21 @@ py_library(
     imports = ["."],
     deps = [
         requirement("pyyaml"),
+    ],
+)
+
+py_library(
+    name = "attestations",
+    srcs = ["attestations.py"],
+    imports = ["."],
+)
+
+py_library(
+    name = "slsa",
+    srcs = ["slsa.py"],
+    imports = ["."],
+    deps = [
+        ":attestations",
     ],
 )
 

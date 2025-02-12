@@ -26,6 +26,7 @@ import hashlib
 import json
 import netrc
 import pathlib
+import posixpath
 import re
 import shutil
 import urllib.parse
@@ -35,6 +36,8 @@ from urllib.error import HTTPError
 
 GREEN = "\x1b[32m"
 RESET = "\x1b[0m"
+
+PRESUBMIT_YML = "presubmit.yml"
 
 
 def log(msg):
@@ -105,6 +108,11 @@ def integrity(data, algorithm="sha256"):
     hash = getattr(hashlib, algorithm)(data)
     encoded = base64.b64encode(hash.digest()).decode()
     return f"{algorithm}-{encoded}"
+
+
+def integrity_for_comparison(data, expected_integrity):
+    algorithm, _ = expected_integrity.split("-", 1)
+    return integrity(data, algorithm)
 
 
 def json_dump(file, data, sort_keys=True):
@@ -292,13 +300,20 @@ module(
         return self.get_version_dir(module_name, version) / "source.json"
 
     def get_presubmit_yml_path(self, module_name, version):
-        return self.get_version_dir(module_name, version) / "presubmit.yml"
+        return self.get_version_dir(module_name, version) / PRESUBMIT_YML
 
     def get_patch_file_path(self, module_name, version, patch_name):
         return self.get_version_dir(module_name, version) / "patches" / patch_name
 
     def get_module_dot_bazel_path(self, module_name, version):
         return self.get_version_dir(module_name, version) / "MODULE.bazel"
+
+    def get_attestations(self, module_name, version):
+        path = self.get_version_dir(module_name, version) / "attestations.json"
+        if not path.exists():
+            return None
+
+        return json.loads(path.read_text())
 
     def contains(self, module_name, version=None):
         """
@@ -411,7 +426,7 @@ module(
         json_dump(p.joinpath("source.json"), source, sort_keys=False)
 
         # Create presubmit.yml file
-        presubmit_yml = p.joinpath("presubmit.yml")
+        presubmit_yml = p.joinpath(PRESUBMIT_YML)
         if module.presubmit_yml:
             shutil.copy(module.presubmit_yml, presubmit_yml)
         else:
@@ -518,3 +533,52 @@ module(
         if version in metadata["versions"]:
             metadata["versions"].remove(version)
         json_dump(metadata_path, metadata)
+
+
+def _download_if_exists(url):
+    try:
+        return download(url)
+    except urllib.error.HTTPError as ex:
+        if ex.code == 404:
+            return None
+
+        raise RegistryException(f"Failed to read {url}: {ex.reason}")
+
+
+class UpstreamRegistry:
+
+    def __init__(self, org="bazelbuild", repo="bazel-central-registry", branch="main"):
+        self._root_url = f"https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/modules"
+
+    def get_latest_module_version(self, module_name):
+        metadata_url = posixpath.join(self._root_url, module_name, "metadata.json")
+        content = _download_if_exists(metadata_url)
+        if not content:
+            return None
+
+        metadata = json.loads(content)
+        latest_version = metadata["versions"][-1]  # Presubmit ensures asc. order
+        module_root_url = posixpath.join(self._root_url, module_name, latest_version)
+        return ModuleSnapshot(latest_version, module_root_url)
+
+
+class ModuleSnapshot:
+
+    def __init__(self, version, root_url):
+        self.version = version
+        self._root_url = root_url
+
+    def _download_if_exists(self, filename):
+        return _download_if_exists(posixpath.join(self._root_url, filename))
+
+    def presubmit_yml_lines(self):
+        raw = self._download_if_exists(PRESUBMIT_YML)
+        if not raw:
+            return None
+
+        return raw.decode("utf-8").splitlines(keepends=True)
+
+    def attestations(self):
+        raw = self._download_if_exists("attestations.json")
+        if raw:
+            return json.loads(raw)
