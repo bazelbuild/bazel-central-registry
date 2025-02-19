@@ -158,9 +158,7 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
     try:
         response = requests.get(url, headers=headers)
     except requests.RequestException:
-        raise BcrValidationException(
-            f"Failed to check if reference is from the original repository via {url}"
-        )
+        raise BcrValidationException(f"Failed to check if reference is from the original repository via {url}")
 
     if not response.status_code == 200:
         # reference doesn't exist at all
@@ -168,9 +166,7 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
 
     data = response.json()
     if "isSpoofed" not in data:
-        raise BcrValidationException(
-            f"Missing 'isSpoofed' attribute in response from {url}: {data}"
-        )
+        raise BcrValidationException(f"Missing 'isSpoofed' attribute in response from {url}: {data}")
 
     return not data.get("isSpoofed")
 
@@ -181,11 +177,7 @@ def check_github_url(repo_path, source_url):
     normalized_path = os.path.abspath(parts.path)
 
     # If the URL doesn't starts with https://github.com/<repo_path>, return False
-    if (
-        parts.scheme != "https"
-        or parts.netloc != "github.com"
-        or not normalized_path.startswith(f"/{repo_path}/")
-    ):
+    if parts.scheme != "https" or parts.netloc != "github.com" or not normalized_path.startswith(f"/{repo_path}/"):
         return False
 
     # Allow paths under /<repo_path>/releases/download
@@ -219,9 +211,7 @@ class BcrValidator:
     def verify_module_existence(self, module_name, version):
         """Verify the directory exists and the version is recorded in metadata.json."""
         if not self.registry.contains(module_name, version):
-            self.report(
-                BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist."
-            )
+            self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist.")
             raise BcrValidationException("The module to be validated doesn't exist!")
         versions = self.registry.get_metadata(module_name)["versions"]
         if version not in versions:
@@ -237,10 +227,7 @@ class BcrValidator:
 
     def verify_source_archive_url_match_github_repo(self, module_name, version):
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
-        if (
-            self.registry.get_source(module_name, version).get("type", None)
-            == "git_repository"
-        ):
+        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
             source_url = self.registry.get_source(module_name, version)["remote"]
             # Preprocess the git URL to make the comparison easier.
             if source_url.startswith("git@"):
@@ -254,9 +241,7 @@ class BcrValidator:
                 source_url = source_url + "/*"
         else:
             source_url = self.registry.get_source(module_name, version)["url"]
-        source_repositories = self.registry.get_metadata(module_name).get(
-            "repository", []
-        )
+        source_repositories = self.registry.get_metadata(module_name).get("repository", [])
         matched = not source_repositories
         for source_repository in source_repositories:
             if matched:
@@ -288,10 +273,7 @@ class BcrValidator:
 
     def verify_source_archive_url_stability(self, module_name, version):
         """Verify source archive URL is stable"""
-        if (
-            self.registry.get_source(module_name, version).get("type", None)
-            == "git_repository"
-        ):
+        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
             return
         source_url = self.registry.get_source(module_name, version)["url"]
         if verify_stable_archive(source_url) == UrlStability.UNSTABLE:
@@ -307,16 +289,11 @@ class BcrValidator:
                 + "and this check will be skipped.",
             )
         else:
-            self.report(
-                BcrValidationResult.GOOD, "The source URL doesn't look unstable."
-            )
+            self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
 
     def verify_source_archive_url_integrity(self, module_name, version):
         """Verify the integrity value of the URL is correct."""
-        if (
-            self.registry.get_source(module_name, version).get("type", None)
-            == "git_repository"
-        ):
+        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
             return
         source_url = self.registry.get_source(module_name, version)["url"]
         expected_integrity = self.registry.get_source(module_name, version)["integrity"]
@@ -336,10 +313,7 @@ class BcrValidator:
 
     def verify_git_repo_source_stability(self, module_name, version):
         """Verify git repositories are specified in a stable way."""
-        if (
-            self.registry.get_source(module_name, version).get("type", None)
-            != "git_repository"
-        ):
+        if self.registry.get_source(module_name, version).get("type", None) != "git_repository":
             return
 
         # There's a handful of failure modes here, don't fail fast.
@@ -389,13 +363,9 @@ class BcrValidator:
             )
         elif index > 0:
             pre_version = versions[index - 1]
-            previous_presubmit_yml = self.registry.get_presubmit_yml_path(
-                module_name, pre_version
-            )
+            previous_presubmit_yml = self.registry.get_presubmit_yml_path(module_name, pre_version)
             previous_presubmit_content = open(previous_presubmit_yml, "r").readlines()
-            current_presubmit_yml = self.registry.get_presubmit_yml_path(
-                module_name, version
-            )
+            current_presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
             current_presubmit_content = open(current_presubmit_yml, "r").readlines()
             diff = list(
                 unified_diff(
@@ -421,9 +391,7 @@ class BcrValidator:
     def add_module_dot_bazel_patch(self, diff, module_name, version):
         """Adding a patch file for MODULE.bazel according to the diff result."""
         source = self.registry.get_source(module_name, version)
-        patch_file = self.registry.get_patch_file_path(
-            module_name, version, "module_dot_bazel.patch"
-        )
+        patch_file = self.registry.get_patch_file_path(module_name, version, "module_dot_bazel.patch")
         patch_file.parent.mkdir(parents=True, exist_ok=True)
         open(patch_file, "w").writelines(diff)
         source["patch_strip"] = int(source.get("patch_strip", 0))
@@ -431,9 +399,7 @@ class BcrValidator:
         patches["module_dot_bazel.patch"] = integrity(read(patch_file))
         source["patches"] = patches
         source_json_content = json.dumps(source, indent=4) + "\n"
-        self.registry.get_source_json_path(module_name, version).write_text(
-            source_json_content
-        )
+        self.registry.get_source_json_path(module_name, version).write_text(source_json_content)
 
     def _download_source_archive(self, source, output_dir):
         source_url = source["url"]
@@ -461,19 +427,13 @@ class BcrValidator:
 
         module_file = self.registry.get_module_dot_bazel_path(module_name, version)
         if module_file.is_symlink():
-            self.report(
-                BcrValidationResult.FAILED, f"{module_file} must not be a symlink."
-            )
+            self.report(BcrValidationResult.FAILED, f"{module_file} must not be a symlink.")
 
         # Apply patch files if there are any, also verify their integrity values
-        source_root = output_dir.joinpath(
-            source["strip_prefix"] if "strip_prefix" in source else ""
-        )
+        source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
         if "patches" in source:
             for patch_name, expected_integrity in source["patches"].items():
-                patch_file = self.registry.get_patch_file_path(
-                    module_name, version, patch_name
-                )
+                patch_file = self.registry.get_patch_file_path(module_name, version, patch_name)
                 actual_integrity = integrity(read(patch_file))
                 if actual_integrity != expected_integrity:
                     self.report(
@@ -481,16 +441,11 @@ class BcrValidator:
                         f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, "
                         f"but the real integrity value is `{actual_integrity}`.",
                     )
-                apply_patch(
-                    source_root, source["patch_strip"], str(patch_file.resolve())
-                )
+                apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
             module_file = overlay_dir / "MODULE.bazel"
-            if module_file.exists() and (
-                not module_file.is_symlink()
-                or os.readlink(module_file) != "../MODULE.bazel"
-            ):
+            if module_file.exists() and (not module_file.is_symlink() or os.readlink(module_file) != "../MODULE.bazel"):
                 self.report(
                     BcrValidationResult.FAILED,
                     f"{module_file} should be a symlink to `../MODULE.bazel`.",
@@ -527,17 +482,13 @@ class BcrValidator:
 
         source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
         if source_module_dot_bazel.exists():
-            source_module_dot_bazel_content = open(
-                source_module_dot_bazel, "r"
-            ).readlines()
+            source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
         else:
             source_module_dot_bazel_content = []
         bcr_module_dot_bazel_content = open(
             self.registry.get_module_dot_bazel_path(module_name, version), "r"
         ).readlines()
-        source_module_dot_bazel_content = fix_line_endings(
-            source_module_dot_bazel_content
-        )
+        source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
         bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
         file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
         diff = list(
@@ -560,9 +511,7 @@ class BcrValidator:
             if self.should_fix:
                 self.add_module_dot_bazel_patch(diff, module_name, version)
         else:
-            self.report(
-                BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources."
-            )
+            self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
         tree = ast.parse("".join(bcr_module_dot_bazel_content), filename=source_root)
         for node in tree.body:
@@ -572,11 +521,7 @@ class BcrValidator:
                 and isinstance(node.value.func, ast.Name)
                 and node.value.func.id == "module"
             ):
-                keywords = {
-                    k.arg: k.value.value
-                    for k in node.value.keywords
-                    if isinstance(k.value, ast.Constant)
-                }
+                keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
                 if keywords.get("version", version) != version:
                     self.report(
                         BcrValidationResult.FAILED,
@@ -590,8 +535,7 @@ class BcrValidator:
             if "bazel" not in task_config:
                 self.report(
                     BcrValidationResult.FAILED,
-                    "Missing bazel version for task '%s' in the presubmit.yml file."
-                    % task_name,
+                    "Missing bazel version for task '%s' in the presubmit.yml file." % task_name,
                 )
 
     def validate_presubmit_yml(self, module_name, version):
@@ -691,9 +635,7 @@ class BcrValidator:
                     has_error = True
 
             latest_version = metadata["versions"][-1]
-            if not metadata.get("deprecated") and latest_version in metadata.get(
-                "yanked_versions", {}
-            ):
+            if not metadata.get("deprecated") and latest_version in metadata.get("yanked_versions", {}):
                 self.report(
                     BcrValidationResult.FAILED,
                     f"The latest version ({latest_version}) of {module_name} should not be yanked, "

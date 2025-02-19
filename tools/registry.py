@@ -141,9 +141,7 @@ class Version:
         return [Version.Identifier(i) for i in s.split(".")]
 
     def __init__(self, version_str):
-        PATTERN = re.compile(
-            r"^([a-zA-Z0-9.]+)(?:-([a-zA-Z0-9.-]+))?(?:\+[a-zA-Z0-9.-]+)?$"
-        )
+        PATTERN = re.compile(r"^([a-zA-Z0-9.]+)(?:-([a-zA-Z0-9.-]+))?(?:\+[a-zA-Z0-9.-]+)?$")
         m = PATTERN.match(version_str)
         if not m:
             raise RegistryException(f"`{version_str}` is not a valid version")
@@ -269,9 +267,7 @@ module(
     def get_all_module_versions(self, include_yanked=True):
         module_versions = []
         for module_name in self.get_all_modules():
-            module_versions.extend(
-                self.get_module_versions(module_name, include_yanked)
-            )
+            module_versions.extend(self.get_module_versions(module_name, include_yanked))
         return module_versions
 
     def get_metadata(self, module_name):
@@ -357,15 +353,10 @@ module(
         # Check if the module version already exists
         if self.contains(module.name, module.version):
             if override:
-                log(
-                    "Overriding module '%s' at version '%s'..."
-                    % (module.name, module.version)
-                )
+                log("Overriding module '%s' at version '%s'..." % (module.name, module.version))
                 self.delete(module.name, module.version)
             else:
-                raise RegistryException(
-                    f"Version {module.version} for module {module.name} already exists."
-                )
+                raise RegistryException(f"Version {module.version} for module {module.name} already exists.")
 
         p = self.root.joinpath("modules", module.name, module.version)
         p.mkdir()
@@ -378,16 +369,9 @@ module(
             #   - no override is used
             shutil.copy(module.module_dot_bazel, module_dot_bazel)
         else:
-            deps = "\n".join(
-                f'bazel_dep(name = "{name}", version = "{version}")'
-                for name, version in module.deps
-            )
+            deps = "\n".join(f'bazel_dep(name = "{name}", version = "{version}")' for name, version in module.deps)
             with module_dot_bazel.open("w") as f:
-                f.write(
-                    self._MODULE_BAZEL.format(
-                        module.name, module.version, module.compatibility_level
-                    )
-                )
+                f.write(self._MODULE_BAZEL.format(module.name, module.version, module.compatibility_level))
                 if deps:
                     f.write("\n")
                     f.write(deps)
@@ -417,9 +401,7 @@ module(
         if module.build_file:
             build_file_content = pathlib.Path(module.build_file).open().readlines()
             build_file = "a/" * module.patch_strip + "BUILD.bazel"
-            patch_content = difflib.unified_diff(
-                [], build_file_content, "/dev/null", build_file
-            )
+            patch_content = difflib.unified_diff([], build_file_content, "/dev/null", build_file)
             patch_name = "add_build_file.patch"
             patch = patch_dir.joinpath(patch_name)
             with patch.open("w") as f:
@@ -503,10 +485,7 @@ module(
         current = source.get("patches", {}).keys()
         patch_files = [patch_dir / p for p in current]
         patch_files.extend(patch_dir / p for p in available if p not in current)
-        patches = {
-            str(patch.relative_to(patch_dir)): integrity(read(patch))
-            for patch in patch_files
-        }
+        patches = {str(patch.relative_to(patch_dir)): integrity(read(patch)) for patch in patch_files}
         if patches:
             source["patches"] = patches
         else:
@@ -522,9 +501,7 @@ module(
                     if p.is_file() and p.name != "MODULE.bazel.lock"
                 ]
             )
-        overlay_integrities = {
-            str(file): integrity(read(overlay_dir / file)) for file in overlay_files
-        }
+        overlay_integrities = {str(file): integrity(read(overlay_dir / file)) for file in overlay_files}
         if overlay_files:
             source["overlay"] = overlay_integrities
         else:
