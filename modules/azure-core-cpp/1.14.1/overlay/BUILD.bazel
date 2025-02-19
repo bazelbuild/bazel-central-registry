@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 bool_flag(
@@ -12,6 +13,22 @@ config_setting(
     flag_values = {":build_transport_curl": "true"},
 )
 
+config_setting(
+    name = "not_build_transport_curl_setting",
+    flag_values = {":build_transport_curl": "false"},
+)
+
+# If we're building azure_core_cpp with Curl as a transport, we must ensure curl
+# was built with OpenSSL and not another SSL lib, as azure_core_cpp only
+# supports OpenSSL.
+selects.config_setting_group(
+    name = "build_transport_curl_openssl",
+    match_all = [
+        ":build_transport_curl_setting",
+        "@curl//:use_openssl",
+    ],
+)
+
 bool_flag(
     name = "build_transport_winhttp",
     build_setting_default = False,
@@ -23,9 +40,6 @@ config_setting(
     flag_values = {":build_transport_winhttp": "true"},
 )
 
-# --@curl//:ssl_lib=openssl must be set as a build flag to use this library if
-# building with curl transport, since the BCR version of curl defaults to using
-# BoringSSL, and azure-core-cpp only supports OpenSSL.
 cc_library(
     name = "azure_core_cpp",
     hdrs = glob(
@@ -68,15 +82,15 @@ cc_library(
     deps = [
         "@openssl//:crypto",
         "@openssl//:ssl",
-    ] + select({
-        ":build_transport_curl_setting": [
-            "@curl//:curl",
-        ],
-        "//conditions:default": [],
-    }) + select({
-        ":build_transport_winhttp_setting": [
-            # TODO: wil is not in the BCR yet
-        ],
+    ] + select(
+        {
+            ":build_transport_curl_openssl": ["@curl//:curl"],
+            ":not_build_transport_curl_setting": [],
+        },
+        no_match_error = "azure_core_cpp must be built with --@curl//:ssl_lib=openssl",
+    ) + select({
+        # TODO: wil is not in the BCR yet
+        ":build_transport_winhttp_setting": [],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
