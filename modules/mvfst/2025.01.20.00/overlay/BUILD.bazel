@@ -1,0 +1,234 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# NOTE: This is one big library because some of the headers have complex circular dependencies.
+cc_library(
+    name = "quic",
+    srcs = glob(
+        ["quic/**/*.cpp"],
+        exclude = [
+            # NOTE: Use quic/server/QuicServerBackend.cpp for now instead of the io_uring version
+            # because the following folly lib currently triggers linker errors:
+            # @folly//folly/io/async:io_uring_backend
+            # TODO(kgk): Investigate this bug and switch to the io_uring version when on linux.
+            "quic/server/QuicServerBackendIoUring.cpp",
+            # Disabled because it fails to compile and doesn't appear to be used.
+            "quic/api/QuicBatchWriterFactoryMobile.cpp",
+            # TODO(kgk): Enable once libev is added to the BCR.
+            "quic/common/events/LibevQuicEventBase.cpp",
+            # TODO(kgk): Enable once libev is added to the BCR.
+            "quic/common/udpsocket/LibevQuicAsyncUDPSocket.cpp",
+            "quic/samples/**",
+            "quic/tools/**",
+            "quic/**/test/**",
+        ],
+    ),
+    hdrs = glob(
+        ["quic/**/*.h"],
+        exclude = [
+            # TODO(kgk): Enable once libev is added to the BCR.
+            "quic/common/events/LibevQuicEventBase.h",
+            # TODO(kgk): Enable once libev is added to the BCR.
+            "quic/common/udpsocket/LibevQuicAsyncUDPSocket.h",
+            "quic/common/testutil/**",
+            "quic/samples/**",
+            "quic/tools/**",
+            "quic/**/test/**",
+            "quic/**/*-inl.h",
+        ],
+    ),
+    includes = ["."],
+    textual_hdrs = glob(
+        ["quic/**/*-inl.h"],
+        exclude = ["quic/**/test/**"],
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.iterator",
+        "@fizz",
+        "@fmt",
+        "@folly//folly:benchmark",
+        "@folly//folly:chrono",
+        "@folly//folly:conv",
+        "@folly//folly:exception_wrapper",
+        "@folly//folly:expected",
+        "@folly//folly:function",
+        "@folly//folly:glog",
+        "@folly//folly:intrusive_list",
+        "@folly//folly:likely",
+        "@folly//folly:map_util",
+        "@folly//folly:maybe_managed_ptr",
+        "@folly//folly:network_address",
+        "@folly//folly:observer_container",
+        "@folly//folly:overload",
+        "@folly//folly:portability",
+        "@folly//folly:random",
+        "@folly//folly:range",
+        "@folly//folly:scope_guard",
+        "@folly//folly:small_vector",
+        "@folly//folly:string",
+        "@folly//folly:thread_local",
+        "@folly//folly:token_bucket",
+        "@folly//folly:traits",
+        "@folly//folly/chrono:clock",
+        "@folly//folly/chrono:conv",
+        "@folly//folly/compression",
+        "@folly//folly/container:evicting_cache_map",
+        "@folly//folly/container:f14_hash",
+        "@folly//folly/container:heap_vector_types",
+        "@folly//folly/functional:invoke",
+        "@folly//folly/hash",
+        "@folly//folly/io:iobuf",
+        "@folly//folly/io:socket_option_map",
+        "@folly//folly/io/async:async_base",
+        "@folly//folly/io/async:async_socket_exception",
+        "@folly//folly/io/async:async_ssl_socket",
+        "@folly//folly/io/async:async_transport",
+        "@folly//folly/io/async:async_transport_certificate",
+        "@folly//folly/io/async:async_udp_socket",
+        "@folly//folly/io/async:delayed_destruction",
+        "@folly//folly/io/async:event_base_manager",
+        "@folly//folly/io/async:scoped_event_base_thread",
+        "@folly//folly/io/async:timerfd",
+        "@folly//folly/json:dynamic",
+        "@folly//folly/lang:assume",
+        "@folly//folly/lang:bits",
+        "@folly//folly/logging",
+        "@folly//folly/memory:malloc",
+        "@folly//folly/net:net_ops",
+        "@folly//folly/net:network_socket",
+        "@folly//folly/portability:gflags",
+        "@folly//folly/portability:sockets",
+        "@folly//folly/ssl:openssl_ptr_types",
+        "@folly//folly/system:thread_id",
+        "@folly//folly/tracing:static_tracepoint",
+        "@glog",
+    ],
+)
+
+cc_binary(
+    name = "tperf",
+    srcs = ["quic/tools/tperf/tperf.cpp"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":quic_test_lib",
+        "@folly//folly/init",
+        "@folly//folly/portability:gflags",
+        "@glog",
+    ],
+)
+
+cc_library(
+    name = "quic_test_lib",
+    srcs = glob(
+        [
+            "quic/tools/tperf/*.cpp",
+            "quic/**/test/*.cpp",
+            "quic/**/test/*.cpp",
+        ],
+        exclude = [
+            "quic/common/test/CircularDequeBench.cpp",
+            "quic/common/test/TestMain.cpp",
+            "quic/tools/tperf/tperf.cpp",
+            "quic/**/test/*Benchmark.cpp",
+            "quic/**/test/*Test.cpp",
+        ],
+    ),
+    hdrs = glob([
+        "quic/**/test/*.h",
+        "quic/**/testutil/*.h",
+        "quic/samples/echo/*.h",
+        "quic/tools/tperf/*.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":quic",
+        "@fizz",
+        "@fizz//:fizz_test_lib",
+        "@folly//folly:file_util",
+        "@folly//folly:network_address",
+        "@folly//folly:string",
+        "@folly//folly:synchronized",
+        "@folly//folly/fibers:core",
+        "@folly//folly/init",
+        "@folly//folly/io/async:async_base",
+        "@folly//folly/io/async:async_udp_socket",
+        "@folly//folly/io/async:scoped_event_base_thread",
+        "@folly//folly/portability:gflags",
+        "@folly//folly/portability:gmock",
+        "@folly//folly/portability:gtest",
+        "@folly//folly/ssl:openssl_cert_utils",
+        "@folly//folly/stats:histogram",
+        "@glog",
+        "@googletest//:gtest",
+        "@libsodium",
+    ],
+)
+
+cc_library(
+    name = "quic_test_main",
+    srcs = ["quic/common/test/TestMain.cpp"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@folly//folly:portability",
+        "@folly//folly/init",
+        "@folly//folly/portability:gflags",
+        "@folly//folly/portability:gtest",
+    ],
+)
+
+[cc_test(
+    name = test_file.removesuffix(".cpp").replace("/", "_"),
+    size = "small",
+    srcs = [test_file],
+    deps = [
+        ":quic",
+        ":quic_test_lib",
+        ":quic_test_main",
+        "@fizz",
+        "@fizz//:fizz_test_lib",
+        "@folly//folly:expected",
+        "@folly//folly:fbstring",
+        "@folly//folly:file_util",
+        "@folly//folly:format",
+        "@folly//folly:move_wrapper",
+        "@folly//folly:network_address",
+        "@folly//folly:random",
+        "@folly//folly:range",
+        "@folly//folly:string",
+        "@folly//folly/container:array",
+        "@folly//folly/container:f14_hash",
+        "@folly//folly/futures:core",
+        "@folly//folly/io:iobuf",
+        "@folly//folly/io:socket_option_map",
+        "@folly//folly/io/async:async_base",
+        "@folly//folly/io/async:async_transport",
+        "@folly//folly/io/async:scoped_event_base_thread",
+        "@folly//folly/io/async:ssl_context",
+        "@folly//folly/io/async/test:mocks",
+        "@folly//folly/json:dynamic",
+        "@folly//folly/portability:filesystem",
+        "@folly//folly/portability:gmock",
+        "@folly//folly/portability:gtest",
+        "@googletest//:gtest",
+    ],
+) for test_file in glob(
+    ["quic/**/test/*Test.cpp"],
+    exclude = [
+        # TODO(kgk): Enable once libev is added to the BCR.
+        "quic/common/events/test/LibevQuicEventBaseTest.cpp",
+        # TODO(kgk): Enable once libev is added to the BCR.
+        "quic/common/udpsocket/test/LibevQuicAsyncUDPSocketTest.cpp",
+        # This test doesn't compile and seems to be intentionally disabled.
+        "quic/congestion_control/test/Copa2Test.cpp",
+    ],
+)]
