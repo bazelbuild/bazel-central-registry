@@ -216,10 +216,14 @@ class BcrValidator:
         versions = self.registry.get_metadata(module_name)["versions"]
         if version not in versions:
             self.report(
-                BcrValidationResult.FAILED, f"Version {version} is not recorded in {module_name}'s metadata.json file."
+                BcrValidationResult.FAILED,
+                f"Version {version} is not recorded in {module_name}'s metadata.json file.",
             )
         else:
-            self.report(BcrValidationResult.GOOD, "The module exists and is recorded in metadata.json.")
+            self.report(
+                BcrValidationResult.GOOD,
+                "The module exists and is recorded in metadata.json.",
+            )
 
     def verify_source_archive_url_match_github_repo(self, module_name, version):
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
@@ -262,7 +266,10 @@ class BcrValidator:
                 + "  2) https://github.com/<OWNER>/<REPO>/archive/<REF>.(tar.gz|zip) where REF must come from the original repository",
             )
         else:
-            self.report(BcrValidationResult.GOOD, "The source URL matches one of the source repositories.")
+            self.report(
+                BcrValidationResult.GOOD,
+                "The source URL matches one of the source repositories.",
+            )
 
     def verify_source_archive_url_stability(self, module_name, version):
         """Verify source archive URL is stable"""
@@ -299,7 +306,10 @@ class BcrValidator:
                 f"`{expected_integrity}`, but the real integrity value is `{real_integrity}`!",
             )
         else:
-            self.report(BcrValidationResult.GOOD, "The source archive's integrity value matches.")
+            self.report(
+                BcrValidationResult.GOOD,
+                "The source archive's integrity value matches.",
+            )
 
     def verify_git_repo_source_stability(self, module_name, version):
         """Verify git repositories are specified in a stable way."""
@@ -373,7 +383,10 @@ class BcrValidator:
                     "should be reviewed by a BCR maintainer.\n    " + "    ".join(diff),
                 )
             else:
-                self.report(BcrValidationResult.GOOD, "The presubmit.yml file matches the previous version.")
+                self.report(
+                    BcrValidationResult.GOOD,
+                    "The presubmit.yml file matches the previous version.",
+                )
 
     def add_module_dot_bazel_patch(self, diff, module_name, version):
         """Adding a patch file for MODULE.bazel according to the diff result."""
@@ -433,7 +446,10 @@ class BcrValidator:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
             module_file = overlay_dir / "MODULE.bazel"
             if module_file.exists() and (not module_file.is_symlink() or os.readlink(module_file) != "../MODULE.bazel"):
-                self.report(BcrValidationResult.FAILED, f"{module_file} should be a symlink to `../MODULE.bazel`.")
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"{module_file} should be a symlink to `../MODULE.bazel`.",
+                )
 
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
@@ -449,7 +465,10 @@ class BcrValidator:
                 try:
                     actual_integrity = integrity(read(overlay_src))
                 except FileNotFoundError:
-                    self.report(BcrValidationResult.FAILED, f"The overlay file `{overlay_file}` does not exist")
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"The overlay file `{overlay_file}` does not exist",
+                    )
                     continue
                 if actual_integrity != expected_integrity:
                     self.report(
@@ -474,7 +493,10 @@ class BcrValidator:
         file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
         diff = list(
             unified_diff(
-                source_module_dot_bazel_content, bcr_module_dot_bazel_content, fromfile=file_name, tofile=file_name
+                source_module_dot_bazel_content,
+                bcr_module_dot_bazel_content,
+                fromfile=file_name,
+                tofile=file_name,
             )
         )
 
@@ -527,7 +549,10 @@ class BcrValidator:
             test_module_tasks = presubmit["bcr_test_module"].get("tasks", {})
             self.check_if_bazel_version_is_set(test_module_tasks)
         if not tasks and not test_module_tasks:
-            self.report(BcrValidationResult.FAILED, "At least one task should be specified in the presubmit.yml file.")
+            self.report(
+                BcrValidationResult.FAILED,
+                "At least one task should be specified in the presubmit.yml file.",
+            )
         report_num_new = len(self.validation_results)
         if report_num_new == report_num_old:
             self.report(BcrValidationResult.GOOD, "The presubmit.yml file is valid.")
@@ -543,7 +568,10 @@ class BcrValidator:
         for name, modules in module_group.items():
             if len(modules) > 1:
                 conflict_found = True
-                self.report(BcrValidationResult.FAILED, f"Module name conflict found: {', '.join(modules)}")
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"Module name conflict found: {', '.join(modules)}",
+                )
 
         if not conflict_found:
             self.report(BcrValidationResult.GOOD, "No module name conflict found.")
@@ -554,7 +582,10 @@ class BcrValidator:
             for dirname in dirnames:
                 full_path = os.path.join(dirpath, dirname)
                 if os.path.islink(full_path):
-                    self.report(BcrValidationResult.FAILED, f"Dir symlink is not allowed: {full_path}")
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"Dir symlink is not allowed: {full_path}",
+                    )
 
     def validate_module(self, module_name, version, skipped_validations):
         print_expanded_group(f"Validating {module_name}@{version}")
@@ -577,7 +608,10 @@ class BcrValidator:
             try:
                 metadata = self.registry.get_metadata(module_name)
             except json.JSONDecodeError as e:
-                self.report(BcrValidationResult.FAILED, f"Failed to load {module_name}'s metadata.json file: " + str(e))
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"Failed to load {module_name}'s metadata.json file: " + str(e),
+                )
                 has_error = True
                 continue
 
@@ -651,13 +685,19 @@ def main(argv=None):
         + " This flag can be repeated to accept multiple module versions.",
     )
     parser.add_argument(
-        "--check_all", action="store_true", help="Check all Bazel modules in the registry, ignore other --check flags."
+        "--check_all",
+        action="store_true",
+        help="Check all Bazel modules in the registry, ignore other --check flags.",
     )
     parser.add_argument(
-        "--check_all_metadata", action="store_true", help="Check all Bazel module metadata in the registry."
+        "--check_all_metadata",
+        action="store_true",
+        help="Check all Bazel module metadata in the registry.",
     )
     parser.add_argument(
-        "--fix", action="store_true", help="Should the script try to fix the detected validation errors."
+        "--fix",
+        action="store_true",
+        help="Should the script try to fix the detected validation errors.",
     )
     parser.add_argument(
         "--skip_validation",

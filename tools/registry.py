@@ -96,7 +96,12 @@ def read(path):
 
 
 def integrity(data, algorithm="sha256"):
-    assert algorithm in {"sha224", "sha256", "sha384", "sha512"}, "Unsupported SRI algorithm"
+    assert algorithm in {
+        "sha224",
+        "sha256",
+        "sha384",
+        "sha512",
+    }, "Unsupported SRI algorithm"
     hash = getattr(hashlib, algorithm)(data)
     encoded = base64.b64encode(hash.digest()).decode()
     return f"{algorithm}-{encoded}"
