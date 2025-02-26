@@ -1,18 +1,61 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//:gen_test_targets.bzl", "gen_test_targets")
 
 cc_library(
     name = "lexbor",
+    srcs = glob(
+        ["source/lexbor/**/*.c"],
+        exclude = glob(["source/lexbor/ports/posix/**/*.c"]) + glob(["source/lexbor/ports/windows_nt/**/*.c"]),
+    ) + select({
+        "@platforms//os:windows": glob(["source/lexbor/ports/windows_nt/**/*.c"]),
+        "//conditions:default": glob(["source/lexbor/ports/posix/**/*.c"]),
+    }),
     hdrs = glob(["source/lexbor/**/*.h"]),
-    features = [
-        "parse_headers",
-    ],
-    includes = [],
-    srcs = glob(["source/lexbor/**/*.c"]),
+    includes = ["source"],
     visibility = ["//visibility:public"],
 )
 
-# cc_test(
-#     name = "lexbor_test",
-#     srcs = ["lexbor_test.cpp"],
-#     deps = [":lexbor"],
-# )
+cc_library(
+    name = "lexbor_test_lib",
+    testonly = True,
+    srcs = glob(["test/unit/*.c"]),
+    hdrs = glob(["test/**/*.h"]),
+    includes = ["test"],
+    deps = [":lexbor"],
+)
+
+gen_test_targets(
+    name = "gen_lexbor_test_targets",
+    # TODO: ideally include the fuzzer tests here as well, but they do not have
+    # a main function for some reason, so they don't work out of the box.
+    srcs = glob([
+        "test/lexbor/**/*.c",
+        "test/lexbor/**/*.cpp",
+    ]),
+    data = glob(["test/files/lexbor/**"], exclude_directories=0),
+    test_args = {
+        # CSS tests
+        "lexbor_css_syntax_tokenizer_test": "test/files/lexbor/css/syntax/tokenizer",
+        "lexbor_css_syntax_parser_test": "test/files/lexbor/css/syntax/parser",
+        "lexbor_css_syntax_style_test": "test/files/lexbor/css/lexbor.css",
+        "lexbor_css_declarations_test": "test/files/lexbor/css/declarations",
+        # encoding tests
+        "lexbor_encoding_buffer_big5_test": "test/files/lexbor/encoding/big5_map_decode.txt",
+        "lexbor_encoding_buffer_euc_jp_test": "test/files/lexbor/encoding/euc_jp_map_decode.txt",
+        "lexbor_encoding_buffer_euc_kr_test": "test/files/lexbor/encoding/euc_kr_map_decode.txt",
+        "lexbor_encoding_buffer_iso_2022_jp_test": "test/files/lexbor/encoding/iso_2022_jp_map_decode.txt",
+        "lexbor_encoding_buffer_shift_jis_test": "test/files/lexbor/encoding/shift_jis_map_decode.txt",
+        "lexbor_encoding_buffer_gb18030_test": "test/files/lexbor/encoding/gb18030_map_decode.txt",
+        "lexbor_encoding_single_big5_test": "test/files/lexbor/encoding/big5_map_decode.txt",
+        "lexbor_encoding_single_euc_jp_test": "test/files/lexbor/encoding/euc_jp_map_decode.txt",
+        "lexbor_encoding_single_euc_kr_test": "test/files/lexbor/encoding/euc_kr_map_decode.txt",
+        "lexbor_encoding_single_iso_2022_jp_test": "test/files/lexbor/encoding/iso_2022_jp_map_decode.txt",
+        "lexbor_encoding_single_shift_jis_test": "test/files/lexbor/encoding/shift_jis_map_decode.txt",
+        "lexbor_encoding_single_gb18030_test": "test/files/lexbor/encoding/gb18030_map_decode.txt",
+        # HTML tests
+        "lexbor_html_tokenizer_tokens_test": "test/files/lexbor/html/tokenizer",
+        "lexbor_html_tree_builder_test": "test/files/lexbor/html/html5_test",
+        # URL tests
+        "lexbor_url_parser_test": "test/files/lexbor/url",
+    }
+)
