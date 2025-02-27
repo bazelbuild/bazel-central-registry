@@ -1,0 +1,183 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "bool_setting", "string_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:cc.bzl", "COPTS")
+load("//tools:transition.bzl", "PLATFORM", "transition_default_constraints")
+
+### Notes ###
+#
+# The jemalloc build performs a number of feature detection steps in the configure script. All of which need to be
+# statically declared via platform and compiler constraints. Some of these have been made configurable under
+# //settings, but the list is not exhaustive. An attempt has been made to default to logical values assuming the most
+# common configurations.
+#
+# - Windows: An effort to was made to translate MSVC configuration but it has not been validated.
+#
+# - //settings/flags:jemalloc_prefix (--with-jemalloc-prefix): In contrast to the make build, this defaults to having
+#   no prefix. The original reasoning was that jemalloc was likely to replace malloc on linux but not MacOS or windows.
+#   In practice in Bazel, this forcibly bifurcates the API based on target platform making the cc_library more difficult
+#   to consume by cross platform downstream targets. Anyone wanting to eject jemalloc as an .so will likely want to
+#   reintroduce this behavior.
+#
+# - //settings/platform:lg_vaddr: Defaults to the hard-coded cross compilation value of 57 from the configure script.
+#   If targeting a 32 bit platform, this should be explicitly set.
+#
+# - glibc: Assumes a modern version. If jemalloc is compiled to be the default allocator on linux, it assumes glibc
+#   and some publicly exposed symbols can be wrapped: __malloc_hook, __realloc_hook, __free_hook, __memalign_hook.
+#   However, they are deprecated since glibc 2.34. The jemalloc source likely needs to be updated to reflect this.
+#
+# - Platform configurations that have defaults that are applied via transition.
+#   - //settings/flags:enable_zone_allocator
+#   - //settings/platform:glibc_overrides_support
+#   - //settings/platform:lg_page
+#   - //settings/platform:memalign_support
+#   - //settings/platform:malloc_size_support
+#   - //settings/platform:usable_size_const
+#   - //settings/platform:valloc_support
+#
+
+alias(
+    name = "jemalloc",
+    actual = ":jemalloc_with_defaults",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "jemalloc_core",
+    srcs = [
+               "src/arena.c",
+               "src/background_thread.c",
+               "src/base.c",
+               "src/bin.c",
+               "src/bin_info.c",
+               "src/bitmap.c",
+               "src/buf_writer.c",
+               "src/cache_bin.c",
+               "src/ckh.c",
+               "src/counter.c",
+               "src/ctl.c",
+               "src/decay.c",
+               "src/div.c",
+               "src/ecache.c",
+               "src/edata.c",
+               "src/edata_cache.c",
+               "src/ehooks.c",
+               "src/emap.c",
+               "src/eset.c",
+               "src/exp_grow.c",
+               "src/extent.c",
+               "src/extent_dss.c",
+               "src/extent_mmap.c",
+               "src/fxp.c",
+               "src/hook.c",
+               "src/hpa.c",
+               "src/hpa_hooks.c",
+               "src/hpdata.c",
+               "src/inspect.c",
+               "src/jemalloc.c",
+               "src/large.c",
+               "src/log.c",
+               "src/malloc_io.c",
+               "src/mutex.c",
+               "src/nstime.c",
+               "src/pa.c",
+               "src/pa_extra.c",
+               "src/pac.c",
+               "src/pages.c",
+               "src/pai.c",
+               "src/peak_event.c",
+               "src/prof.c",
+               "src/prof_data.c",
+               "src/prof_log.c",
+               "src/prof_recent.c",
+               "src/prof_stats.c",
+               "src/prof_sys.c",
+               "src/psset.c",
+               "src/rtree.c",
+               "src/safety_check.c",
+               "src/san.c",
+               "src/san_bump.c",
+               "src/sc.c",
+               "src/sec.c",
+               "src/stats.c",
+               "src/sz.c",
+               "src/tcache.c",
+               "src/test_hooks.c",
+               "src/thread_event.c",
+               "src/ticker.c",
+               "src/tsd.c",
+               "src/witness.c",
+           ] + select({
+               "//settings/flags:zone_allocator": ["src/zone.c"],
+               "//conditions:default": [],
+           }) +
+           select({
+               "//settings/compiler:msvc_compatible": [
+                   "include/msvc_compat/C99/stdbool.h",
+                   "include/msvc_compat/C99/stdint.h",
+                   "include/msvc_compat/strings.h",
+                   "include/msvc_compat/windows_extra.h",
+               ],
+               "//conditions:default": [],
+           }) + select({
+        "//settings/flags:cxx": ["src/jemalloc_cpp.cpp"],
+        "//conditions:default": [],
+    }),
+    hdrs = ["//include/jemalloc"],
+    copts = ["-Iinclude/jemalloc/internal"] + select({
+        "//settings/compiler:msvc_compatible": [
+            "-Iinclude/msvc_compat",
+            "-Iinclude/msvc_compat/C99",
+        ],
+        "//conditions:default": [],
+    }) + COPTS,
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        "//settings:jet": ["JEMALLOC_JET"],
+        "//conditions:default": [],
+    }) + select({
+        "//settings:no_private_namespace": ["JEMALLOC_NO_PRIVATE_NAMESPACE"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/jemalloc/internal"],
+)
+
+transition_default_constraints(
+    name = "jemalloc_with_defaults",
+    src = ":jemalloc_core",
+    platform = PLATFORM,
+    settings = {},
+)
+
+# C_UTIL_INTEGRATION_SRCS from the Makefile which are shared with the integration testlib
+cc_library(
+    name = "utils",
+    srcs = [
+        "src/malloc_io.c",
+        "src/nstime.c",
+        "src/ticker.c",
+    ],
+    hdrs = ["//include/jemalloc"],
+    copts = ["-Iinclude/jemalloc/internal"] + COPTS,
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+    deps = ["//include/jemalloc/internal"],
+)
