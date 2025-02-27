@@ -40,7 +40,7 @@ Every module version must pass the BCR presubmit before getting merged. The pres
 Most of presubmit validations are implemented in `./tools/bcr_validation.py`. So you can also run the following command to validate a module locally:
 
 ```bash
-python3 tools/bcr_validation.py --check=foo@1.0.0
+bazel run -- //tools:bcr_validation --check=foo@1.0.0
 ```
 
 Validations performed in the scripts are:
