@@ -15,4 +15,5 @@ def gen_test_targets(name, srcs):
             name = name,
             srcs = [src],
             deps = [":rocksdb_test_lib"],
+            linkopts = ["-ldl"],  # for Debian
         )
