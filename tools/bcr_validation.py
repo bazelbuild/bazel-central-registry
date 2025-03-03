@@ -209,7 +209,6 @@ class BcrValidationException(Exception):
 
 
 class BcrValidator:
-
     def __init__(self, registry, upstream, should_fix, slsa_verifier_version=DEFAULT_SLSA_VERIFIER_VERSION):
         self.validation_results = []
         self.registry = registry

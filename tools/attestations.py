@@ -65,7 +65,6 @@ def parse_file(attestations_json, module_name, version, registry):
 
 
 def _assert_is_dict_with_keys(candidate, keys):
-
     def format(k):
         return ", ".join(k)
 

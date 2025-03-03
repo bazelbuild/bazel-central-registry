@@ -49,7 +49,6 @@ def validate_predicate_type(value):
 
 
 class Verifier:
-
     _URL_TEMPLATE = (
         "https://github.com/slsa-framework/slsa-verifier/releases/download/{version}/slsa-verifier-{os}-{arch}{ext}"
     )
@@ -151,7 +150,6 @@ class Verifier:
         )
 
     def _read_attestation_types(self, basename, raw_attestation):
-
         def parse(pos, line):
             try:
                 data = json.loads(line)
