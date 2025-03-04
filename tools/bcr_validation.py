@@ -252,10 +252,13 @@ class BcrValidator:
             elif repo_type == "https":
                 repo = urlparse(source_repository)
                 parts = urlparse(source_url)
+                expected_path = repo.path
+                if not expected_path.endswith("/"):
+                    expected_path += "/"
                 matched = (
                     parts.scheme == repo.scheme
                     and parts.netloc == repo.netloc
-                    and os.path.abspath(parts.path).startswith(f"{repo.path}/")
+                    and os.path.abspath(parts.path).startswith(f"{}/")
                 )
         if not matched:
             self.report(
