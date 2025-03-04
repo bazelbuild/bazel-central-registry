@@ -23,4 +23,4 @@ set -e
 BUCKET_NAME=bcr.bazel.build
 gsutil cp ./bazel_registry.json gs://${BUCKET_NAME}/
 # Make sure the content is updated immediately after we upload to GCS.
-gsutil -h "Cache-Control:no-cache" -m rsync -d -r ./modules gs://${BUCKET_NAME}/modules
+gsutil -h "Cache-Control:no-cache" -m rsync -r ./modules gs://${BUCKET_NAME}/modules
