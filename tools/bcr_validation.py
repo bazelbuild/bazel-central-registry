@@ -258,7 +258,7 @@ class BcrValidator:
                 matched = (
                     parts.scheme == repo.scheme
                     and parts.netloc == repo.netloc
-                    and os.path.abspath(parts.path).startswith(f"{}/")
+                    and os.path.abspath(parts.path).startswith(expected_path)
                 )
         if not matched:
             self.report(
