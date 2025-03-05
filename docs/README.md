@@ -15,7 +15,7 @@ The BCR follows the format of a regular [Bazel registry](https://bazel.build/ext
   - `website`: a string, the URL of the project's website. Purely informational.
   - `repository`: an array of strings. This is an allowlist of source URLs; the source URL in the `source.json` file must match at least one of the entries here.
     - If the string has the format of `github:<org>/<repo>`, then source URLs from `https://github.com/<org>/<repo>` are allowed (see the [validations](#validations) section below).
-    - If the string has the format of a regular URL (such as `https://foo.com/bar/`), then source URLs beginning with the string are allowed.
+    - If the string has the format of a regular URL (such as `https://foo.com/bar`), then source URLs beginning with the string are allowed. The string can optionally end in a slash (`/`), with no difference in the semantics (for example, `https://foo.com/bar/thing.zip` would be accepted, but `https://foo.com/barthing.zip` would not).
   - `deprecated`: a string. When set, this denotes that the module should not be used. Must be set if the module's latest version is [yanked](#yank-a-module-version).
 - The `source.json` file must be of the `type` `archive` (which is the default) or `git_repository`. Other types such as `local_path` are not allowed.
 - A presubmit.yml file. See [Presubmit](#presubmit) below.
@@ -180,9 +180,9 @@ Bazel has a diverse ecosystem, and projects use a variety of versioning schemes.
 
 To ensure reproducibility, the BCR is add-only; that is, existing versions of a module cannot be modified. If an existing module version needs a fix, it should be fixed upstream and a new version can be submitted. If, however, the fix is only in patch files present in BCR (as in, there is nothing to fix upstream), the convention is to append a `.bcr.<N>` suffix for the new version. For example, if `foo` version `1.2.3` needs patches to fix a problem, you can submit a new version `1.2.3.bcr.1`.
 
-### Pre-releases
+### Pseudo-versions
 
-If upstream hasn't released a new version in a long time (for example, due to project owner inactivity), but you'd still like to submit a version based on a main branch commit, you can use the `-bcr.<N>` suffix (note the `-` to denote a pre-release). For example, if `foo`'s current version is `1.19.0`, you can submit a new version `1.20.0-bcr.1`.
+If upstream hasn't released a new version in a long time (for example, due to project owner inactivity), but you'd still like to submit a version based on a main branch commit, the convention is to use a [pseudo-version](https://go.dev/ref/mod#pseudo-versions) similar to the one in the Go module system. Unlike in Go, such pseudo-versions are not semantically significant; they're just treated normally as any other version string. For example, if `foo`'s current version is `1.19.0`, you can submit a new version `1.20.0-20250305180549-abcdef`. This can also be combined with the `.bcr.<N>` suffix if necessary.
 
 ### Yank a module version
 
