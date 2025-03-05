@@ -2,6 +2,24 @@
 
 Before contributing to the Bazel Central Registry, check the [BCR policies](bcr-policies.md) to learn how the BCR is maintained.
 
+## Structure
+
+The BCR follows the format of a regular [Bazel registry](https://bazel.build/external/registry), with some additional requirements:
+
+- Extra metadata.json fields (see [JSON schema](https://github.com/bazelbuild/bazel-central-registry/blob/main/metadata.schema.json)):
+  - `maintainers`: an array of JSON objects, each representing a module maintainer. Each object can have the following fields:
+    - `github`: a string, the maintainer's GitHub username. This is used to `@`-ping the maintainer when a PR updating the module is sent, and determines whether a GitHub user has approval rights for a PR (see [approval and submission](#approval-and-submission) below).
+    - `name`: a string, the maintainer's name. Purely informational.
+    - `email`: a string, the maintainer's email address. Purely informational.
+    - `do_not_notify`: a boolean. When set to `true`, the maintainer will still have approval rights, but will not be `@`-pinged when a PR for the module is sent.
+  - `website`: a string, the URL of the project's website. Purely informational.
+  - `repository`: an array of strings. This is an allowlist of source URLs; the source URL in the `source.json` file must match at least one of the entries here.
+    - If the string has the format of `github:<org>/<repo>`, then source URLs from `https://github.com/<org>/<repo>` are allowed (see the [validations](#validations) section below).
+    - If the string has the format of a regular URL (such as `https://foo.com/bar/`), then source URLs beginning with the string are allowed.
+  - `deprecated`: a string. When set, this denotes that the module should not be used. Must be set if the module's latest version is [yanked](#yank-a-module-version).
+- The `source.json` file must be of the `type` `archive` (which is the default) or `git_repository`. Other types such as `local_path` are not allowed.
+- A presubmit.yml file. See [Presubmit](#presubmit) below.
+
 ## Contribute a Bazel module
 
 To contribute a new module or a new version to an existing module, you can clone the BCR repository and run the interactive helper script:
@@ -143,7 +161,30 @@ bazel run //tools:setup_presubmit_repos -- --module <module_name>@<version>
 
 Then follow the instructions to run the build locally.
 
-## Yank a module version
+## Approval and submission
+
+To be submitted, a PR needs to:
+
+- Be approved by a module maintainer and/or a BCR maintainer
+  - When a PR is opened, the `bazel-io` bot will `@`-ping all module maintainers (who do not have `do_not_notify` set) and ask for a review.
+  - Note that a module maintainer can approve a PR by using the normal GitHub PR review flow, despite not having write access to the git repository; the `bazel-io` bot account will approve the PR for merge later.
+- Pass [presubmit](#presubmit) checks
+  - If you see your presubmit check stuck on "blocked", a BCR maintainer needs to explicitly unblock the presubmit run or apply the `presubmit-auto-run` label to your PR. This is to avoid abuse of our CI system. Feel free to ping `@bazelbuild/bcr-maintainers` if you're blocked on this.
+- Pass certain other checks, especially for first-time contributors, such as CLA signing or GitHub workflows that require approval from BCR maintainers.
+
+## Module versions
+
+Bazel has a diverse ecosystem, and projects use a variety of versioning schemes. Bazel modules have a fairly relaxed [version format](https://bazel.build/external/module#version_format), which covers most version strings used by open-source projects. Thus, modules submitted to the BCR are generally versioned according to their upstream project's versions.
+
+### Add-only
+
+To ensure reproducibility, the BCR is add-only; that is, existing versions of a module cannot be modified. If an existing module version needs a fix, it should be fixed upstream and a new version can be submitted. If, however, the fix is only in patch files present in BCR (as in, there is nothing to fix upstream), the convention is to append a `.bcr.<N>` suffix for the new version. For example, if `foo` version `1.2.3` needs patches to fix a problem, you can submit a new version `1.2.3.bcr.1`.
+
+### Pre-releases
+
+If upstream hasn't released a new version in a long time (for example, due to project owner inactivity), but you'd still like to submit a version based on a main branch commit, you can use the `-bcr.<N>` suffix (note the `-` to denote a pre-release). For example, if `foo`'s current version is `1.19.0`, you can submit a new version `1.20.0-bcr.1`.
+
+### Yank a module version
 
 If a module version is discovered with security vulnerabilities or for any reason should no longer be used, you can yank the module version by adding it to the `yanked` map in `metadata.json` and provide a reason.
 
@@ -160,10 +201,6 @@ A Bzlmod user's build will start to fail if the yanked version is in the resolve
 
 The latest version of a module should not be yanked. If you do need to yank the latest version because the module is deprecated, you should add `"deprecated": "<reason>"` in its `metadata.json` file.
 
-## Versions format
-
-Bazel has a diverse ecosystem and projects using various versioning schemes, check [Bzlmod's version specification](https://bazel.build/external/module#version_format). If you need to update a module with only patch file changes, you can add `.bcr.<N>` suffix to the version number.
-
-## Requesting to take down a module
+### Requesting to take down a module
 
 If for any reason, you think a module or a version of a module should be removed from the Bazel Central Registry, please [file a bug](https://github.com/bazelbuild/bazel-central-registry/issues/new?assignees=&labels=bug&template=bug.yaml&title=%5BBug%5D%3A+) and reach out to BCR maintainers at bcr-maintainers@bazel.build.
