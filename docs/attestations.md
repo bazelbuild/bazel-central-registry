@@ -6,8 +6,8 @@
 ## Introduction
 
 BCR now accepts build attestations in order to increase security for all BCR users.
-This feature is still experimental and thus optional, but eventually we'll reject all PRs without proper
-attestation.
+This feature is still experimental and thus optional, eventually we expect all
+modules that natively build with Bazel to also generate build attestation.
 
 ## How it works
 
