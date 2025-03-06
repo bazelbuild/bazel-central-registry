@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import dataclasses
+import re
 
 
 class Error(Exception):
@@ -59,10 +60,13 @@ def parse_file(attestations_json, module_name, version, registry):
         # already ensures that source_url points to the correct repository.
         # Consequently, we only need to check that all URLs start
         # with url_prefix.
-        expected_url = f"{url_prefix}/{basename}.intoto.jsonl"
         url = metadata["url"]
-        if url != expected_url:
-            raise Error(f"Expected url {expected_url}, but got {url} in {basename} attestation.")
+        # Basename can have an optional prefix since a GitHub release may
+        # contain multiple modules (and thus attestation files).
+        if not re.match(f"^{url_prefix}/[^/]*{basename}.intoto.jsonl$", url):
+            raise Error(
+                f"Expected url {url_prefix}/[prefix]{basename}.intoto.jsonl, but got {url} in {basename} attestation."
+            )
 
         integrity = metadata["integrity"]
         if not integrity:
