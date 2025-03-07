@@ -660,6 +660,7 @@ class BcrValidator:
             self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
 
     def verify_attestations(self, module_name, version):
+        print_expanded_group("Verifying attestations")
         head_snapshot = self.upstream.get_latest_module_version(module_name)
         head_attestations_json = head_snapshot.attestations() if head_snapshot else None
 
