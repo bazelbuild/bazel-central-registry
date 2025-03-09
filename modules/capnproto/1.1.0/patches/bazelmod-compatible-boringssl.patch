@@ -1,0 +1,446 @@
+From 686edd5f2a94b8a82a7acd9e14facf893987fa20 Mon Sep 17 00:00:00 2001
+From: Sebastian Bergt <sebastian@bergt.org>
+Date: Thu, 6 Mar 2025 09:00:25 +0100
+Subject: [PATCH 1/1] handcrafted changes to make all compile
+
+---
+ MODULE.bazel                       | 12 +++++++
+ c++/.bazelrc                       |  2 +-
+ c++/WORKSPACE                      | 54 ------------------------------
+ c++/build/BUILD.bazel              |  2 ++
+ c++/build/configure.bzl            | 12 +++----
+ c++/src/capnp/BUILD.bazel          | 12 +++----
+ c++/src/capnp/cc_capnp_library.bzl | 10 +++---
+ c++/src/capnp/compat/BUILD.bazel   | 14 ++++----
+ c++/src/kj/BUILD.bazel             |  6 ++--
+ c++/src/kj/compat/BUILD.bazel      | 32 +++++++++---------
+ 10 files changed, 58 insertions(+), 98 deletions(-)
+ create mode 100644 MODULE.bazel
+ delete mode 100644 c++/WORKSPACE
+ create mode 100644 c++/build/BUILD.bazel
+
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 00000000..3abbf7ed
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,12 @@
++module(
++    name = "capnproto",
++    version = "1.1.0",
++    compatibility_level = 0,
++)
++
++bazel_dep(name = "platforms", version = "0.0.11")
++bazel_dep(name = "bazel_skylib", version = "1.7.1")
++bazel_dep(name = "rules_cc", version = "0.0.17")
++bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
++bazel_dep(name = "boringssl", version = "0.20250212.0")
++bazel_dep(name = "brotli", version = "1.1.0")
+\ No newline at end of file
+diff --git a/c++/.bazelrc b/c++/.bazelrc
+index cab5c8c1..0616abca 100644
+--- a/c++/.bazelrc
++++ b/c++/.bazelrc
+@@ -23,4 +23,4 @@ build:windows --cxxopt='/wo4503' --host_cxxopt='/wo4503'
+ build:windows --cxxopt='-Wno-unused-command-line-argument' --host_cxxopt='-Wno-unused-command-line-argument'
+ 
+ # build with ssl, zlib and bazel by default
+-build --//src/kj:openssl=True --//src/kj:zlib=True --//src/kj:brotli=True
++build --//c++/src/kj:openssl=True --//c++/src/kj:zlib=True --//c++/src/kj:brotli=True
+diff --git a/c++/WORKSPACE b/c++/WORKSPACE
+deleted file mode 100644
+index 0dea9c21..00000000
+--- a/c++/WORKSPACE
++++ /dev/null
+@@ -1,54 +0,0 @@
+-workspace(name = "capnp-cpp")
+-
+-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+-load("//:build/load_br.bzl", "load_brotli")
+-
+-http_archive(
+-    name = "bazel_skylib",
+-    sha256 = "f7be3474d42aae265405a592bb7da8e171919d74c16f082a5457840f06054728",
+-    urls = [
+-        "https://mirror.bazel.build/github.com/bazelbuild/bazel-skylib/releases/download/1.2.1/bazel-skylib-1.2.1.tar.gz",
+-        "https://github.com/bazelbuild/bazel-skylib/releases/download/1.2.1/bazel-skylib-1.2.1.tar.gz",
+-    ],
+-)
+-
+-load("@bazel_skylib//:workspace.bzl", "bazel_skylib_workspace")
+-
+-bazel_skylib_workspace()
+-
+-http_archive(
+-    name = "ssl",
+-    sha256 = "873ec711658f65192e9c58554ce058d1cfa4e57e13ab5366ee16f76d1c757efc",
+-    strip_prefix = "google-boringssl-ed2e74e",
+-    type = "tgz",
+-    # from master-with-bazel branch
+-    urls = ["https://github.com/google/boringssl/tarball/ed2e74e737dc802ed9baad1af62c1514430a70d6"],
+-)
+-
+-# Based on https://github.com/bazelbuild/bazel/blob/master/third_party/zlib/BUILD.
+-_zlib_build = """
+-cc_library(
+-    name = "zlib",
+-    srcs = glob(["*.c"]),
+-    hdrs = glob(["*.h"]),
+-    # Workaround for zlib warnings and mac compilation. Some issues were resolved in v1.3, but there are still implicit function declarations.
+-    copts = [
+-        "-w",
+-        "-Dverbose=-1",
+-    ] + select({
+-        "@platforms//os:macos": [ "-Wno-implicit-function-declaration" ],
+-        "//conditions:default": [],
+-    }),
+-    visibility = ["//visibility:public"],
+-)
+-"""
+-
+-http_archive(
+-    name = "zlib",
+-    build_file_content = _zlib_build,
+-    sha256 = "ff0ba4c292013dbc27530b3a81e1f9a813cd39de01ca5e0f8bf355702efa593e",
+-    strip_prefix = "zlib-1.3",
+-    urls = ["https://zlib.net/fossils/zlib-1.3.tar.gz"],
+-)
+-
+-load_brotli()
+diff --git a/c++/build/BUILD.bazel b/c++/build/BUILD.bazel
+new file mode 100644
+index 00000000..e032d7ee
+--- /dev/null
++++ b/c++/build/BUILD.bazel
+@@ -0,0 +1,2 @@
++# empty
++
+diff --git a/c++/build/configure.bzl b/c++/build/configure.bzl
+index bafee637..09971943 100644
+--- a/c++/build/configure.bzl
++++ b/c++/build/configure.bzl
+@@ -82,22 +82,22 @@ def kj_configure():
+     native.cc_library(
+         name = "kj-defines",
+         defines = select({
+-            "//src/kj:use_openssl": ["KJ_HAS_OPENSSL"],
++            "//c++/src/kj:use_openssl": ["KJ_HAS_OPENSSL"],
+             "//conditions:default": [],
+         }) + select({
+-            "//src/kj:use_zlib": ["KJ_HAS_ZLIB"],
++            "//c++/src/kj:use_zlib": ["KJ_HAS_ZLIB"],
+             "//conditions:default": [],
+         }) + select({
+-            "//src/kj:use_brotli": ["KJ_HAS_BROTLI"],
++            "//c++/src/kj:use_brotli": ["KJ_HAS_BROTLI"],
+             "//conditions:default": [],
+         }) + select({
+-            "//src/kj:use_libdl": ["KJ_HAS_LIBDL"],
++            "//c++/src/kj:use_libdl": ["KJ_HAS_LIBDL"],
+             "//conditions:default": [],
+         }) + select({
+-            "//src/kj:use_save_acquired_lock_info": ["KJ_SAVE_ACQUIRED_LOCK_INFO=1"],
++            "//c++/src/kj:use_save_acquired_lock_info": ["KJ_SAVE_ACQUIRED_LOCK_INFO=1"],
+             "//conditions:default": ["KJ_SAVE_ACQUIRED_LOCK_INFO=0"],
+         }) + select({
+-            "//src/kj:use_track_lock_blocking": ["KJ_TRACK_LOCK_BLOCKING=1"],
++            "//c++/src/kj:use_track_lock_blocking": ["KJ_TRACK_LOCK_BLOCKING=1"],
+             "//conditions:default": ["KJ_TRACK_LOCK_BLOCKING=0"],
+         }),
+     )
+diff --git a/c++/src/capnp/BUILD.bazel b/c++/src/capnp/BUILD.bazel
+index f11a7a24..6e054118 100644
+--- a/c++/src/capnp/BUILD.bazel
++++ b/c++/src/capnp/BUILD.bazel
+@@ -1,4 +1,4 @@
+-load("@capnp-cpp//src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
++load("@capnproto//c++/src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
+ 
+ cc_library(
+     name = "capnp",
+@@ -51,7 +51,7 @@ cc_library(
+     include_prefix = "capnp",
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//src/kj:kj-async",
++        "//c++/src/kj:kj-async",
+     ],
+ )
+ 
+@@ -131,7 +131,7 @@ cc_binary(
+     visibility = ["//visibility:public"],
+     deps = [
+         ":capnpc",
+-        "//src/capnp/compat:json",
++        "//c++/src/capnp/compat:json",
+     ],
+ )
+ 
+@@ -164,7 +164,7 @@ filegroup(
+         "c++.capnp",
+         "schema.capnp",
+         "stream.capnp",
+-        "//src/capnp/compat:json.capnp",
++        "//c++/src/capnp/compat:json.capnp",
+     ],
+     visibility = ["//visibility:public"],
+ )
+@@ -176,7 +176,7 @@ cc_library(
+     # include json since it is not exposed as cc_capnp_library
+     deps = [
+         ":capnp",
+-        "//src/capnp/compat:json",
++        "//c++/src/capnp/compat:json",
+     ],
+ )
+ 
+@@ -210,7 +210,7 @@ cc_library(
+         ":capnp-rpc",
+         ":capnp_test",
+         ":capnpc",
+-        "//src/kj:kj-test",
++        "//c++/src/kj:kj-test",
+     ],
+     visibility = [":__subpackages__" ]
+ )
+diff --git a/c++/src/capnp/cc_capnp_library.bzl b/c++/src/capnp/cc_capnp_library.bzl
+index 9e4acd35..76c7f81f 100644
+--- a/c++/src/capnp/cc_capnp_library.bzl
++++ b/c++/src/capnp/cc_capnp_library.bzl
+@@ -72,10 +72,10 @@ _capnp_gen = rule(
+         "data": attr.label_list(allow_files = True),
+         "outs": attr.output_list(),
+         "src_prefix": attr.string(),
+-        "_capnpc": attr.label(executable = True, allow_single_file = True, cfg = "exec", default = "@capnp-cpp//src/capnp:capnp_tool"),
+-        "_capnpc_cxx": attr.label(executable = True, allow_single_file = True, cfg = "exec", default = "@capnp-cpp//src/capnp:capnpc-c++"),
+-        "_capnpc_capnp": attr.label(executable = True, allow_single_file = True, cfg = "exec", default = "@capnp-cpp//src/capnp:capnpc-capnp"),
+-        "_capnp_system": attr.label(default = "@capnp-cpp//src/capnp:capnp_system_library"),
++        "_capnpc": attr.label(executable = True, allow_single_file = True, cfg = "exec", default = "@capnproto//c++/src/capnp:capnp_tool"),
++        "_capnpc_cxx": attr.label(executable = True, allow_single_file = True, cfg = "exec", default = "@capnproto//c++/src/capnp:capnpc-c++"),
++        "_capnpc_capnp": attr.label(executable = True, allow_single_file = True, cfg = "exec", default = "@capnproto//c++/src/capnp:capnpc-capnp"),
++        "_capnp_system": attr.label(default = "@capnproto//c++/src/capnp:capnp_system_library"),
+     },
+     output_to_genfiles = True,
+     implementation = _capnp_gen_impl,
+@@ -121,7 +121,7 @@ def cc_capnp_library(
+         name = name,
+         srcs = srcs_cpp,
+         hdrs = hdrs,
+-        deps = deps + ["@capnp-cpp//src/capnp:capnp_runtime"],
++        deps = deps + ["@capnproto//c++/src/capnp:capnp_runtime"],
+         visibility = visibility,
+         target_compatible_with = target_compatible_with,
+         **kwargs
+diff --git a/c++/src/capnp/compat/BUILD.bazel b/c++/src/capnp/compat/BUILD.bazel
+index fcaecfa3..e028faa1 100644
+--- a/c++/src/capnp/compat/BUILD.bazel
++++ b/c++/src/capnp/compat/BUILD.bazel
+@@ -1,4 +1,4 @@
+-load("@capnp-cpp//src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
++load("@capnproto//c++/src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
+ 
+ exports_files([
+     "json.capnp",
+@@ -19,7 +19,7 @@ cc_library(
+     include_prefix = "capnp/compat",
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//src/capnp",
++        "//c++/src/capnp",
+     ],
+ )
+ 
+@@ -48,7 +48,7 @@ cc_library(
+     visibility = ["//visibility:public"],
+     deps = [
+         ":http-over-capnp_capnp",
+-        "//src/kj/compat:kj-http",
++        "//c++/src/kj/compat:kj-http",
+     ],
+ )
+ 
+@@ -63,8 +63,8 @@ cc_library(
+     include_prefix = "capnp/compat",
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//src/capnp",
+-        "//src/kj/compat:kj-http",
++        "//c++/src/capnp",
++        "//c++/src/kj/compat:kj-http",
+     ],
+ )
+ 
+@@ -74,7 +74,7 @@ cc_library(
+     deps = [
+         ":websocket-rpc",
+         ":http-over-capnp",
+-        "//src/capnp:capnp-test"
++        "//c++/src/capnp:capnp-test"
+     ],
+ ) for f in [
+     "byte-stream-test.c++",
+@@ -93,6 +93,6 @@ cc_test(
+     deps = [
+         ":http-over-capnp-test-as-header",
+         ":http-over-capnp",
+-        "//src/capnp:capnp-test"
++        "//c++/src/capnp:capnp-test"
+     ],
+ )
+diff --git a/c++/src/kj/BUILD.bazel b/c++/src/kj/BUILD.bazel
+index f5527bea..1a987eab 100644
+--- a/c++/src/kj/BUILD.bazel
++++ b/c++/src/kj/BUILD.bazel
+@@ -1,4 +1,4 @@
+-load("//:build/configure.bzl", "kj_configure")
++load("//c++/build:configure.bzl", "kj_configure")
+ 
+ kj_configure()
+ 
+@@ -125,7 +125,7 @@ cc_library(
+     visibility = ["//visibility:public"],
+     deps = [
+         ":kj",
+-        "//src/kj/compat:gtest",
++        "//c++/src/kj/compat:gtest",
+     ],
+ )
+ 
+@@ -180,7 +180,7 @@ cc_test(
+     }),
+     deps = [
+         ":kj-test",
+-        "//src/kj/compat:kj-http",
++        "//c++/src/kj/compat:kj-http",
+     ],
+ )
+ 
+diff --git a/c++/src/kj/compat/BUILD.bazel b/c++/src/kj/compat/BUILD.bazel
+index f9e31ce6..21f52bf6 100644
+--- a/c++/src/kj/compat/BUILD.bazel
++++ b/c++/src/kj/compat/BUILD.bazel
+@@ -12,13 +12,13 @@ cc_library(
+     ],
+     include_prefix = "kj/compat",
+     target_compatible_with = select({
+-        "//src/kj:use_openssl": [],
++        "//c++/src/kj:use_openssl": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//src/kj:kj-async",
+-        "@ssl",
++        "//c++/src/kj:kj-async",
++        "@boringssl//:ssl",
+     ],
+ )
+ 
+@@ -35,7 +35,7 @@ cc_library(
+     include_prefix = "kj/compat",
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//src/kj:kj-async",
++        "//c++/src/kj:kj-async",
+         "@zlib",
+     ],
+ )
+@@ -47,7 +47,7 @@ cc_library(
+     include_prefix = "kj/compat",
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//src/kj:kj-async",
++        "//c++/src/kj:kj-async",
+         "@zlib",
+     ],
+ )
+@@ -59,11 +59,11 @@ cc_library(
+     include_prefix = "kj/compat",
+     visibility = ["//visibility:public"],
+     target_compatible_with = select({
+-        "//src/kj:use_brotli": [],
++        "//c++/src/kj:use_brotli": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+     deps = [
+-        "//src/kj:kj-async",
++        "//c++/src/kj:kj-async",
+         "@brotli//:brotlienc",
+         "@brotli//:brotlidec",
+     ],
+@@ -74,7 +74,7 @@ cc_library(
+     hdrs = ["gtest.h"],
+     include_prefix = "kj/compat",
+     visibility = ["//visibility:public"],
+-    deps = ["//src/kj"],
++    deps = ["//c++/src/kj"],
+ )
+ 
+ kj_tests = [
+@@ -87,7 +87,7 @@ kj_tests = [
+     srcs = [f],
+     deps = [
+         ":kj-http",
+-        "//src/kj:kj-test",
++        "//c++/src/kj:kj-test",
+     ],
+ ) for f in kj_tests]
+ 
+@@ -102,7 +102,7 @@ cc_test(
+     deps = [
+         ":http-socketpair-test-base",
+         ":kj-http",
+-        "//src/kj:kj-test",
++        "//c++/src/kj:kj-test",
+     ],
+     target_compatible_with = [
+         "@platforms//os:linux", # TODO: Investigate why this fails on macOS
+@@ -118,13 +118,13 @@ kj_tls_tests = [
+     name = f.removesuffix(".c++"),
+     srcs = [f],
+     target_compatible_with = select({
+-        "//src/kj:use_openssl": [],
++        "//c++/src/kj:use_openssl": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+     deps = [
+         ":kj-tls",
+         ":kj-http",
+-        "//src/kj:kj-test",
++        "//c++/src/kj:kj-test",
+     ],
+ ) for f in kj_tls_tests]
+ 
+@@ -132,12 +132,12 @@ cc_test(
+     name = "gzip-test",
+     srcs = ["gzip-test.c++"],
+     target_compatible_with = select({
+-        "//src/kj:use_zlib": [],
++        "//c++/src/kj:use_zlib": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+     deps = [
+         ":kj-gzip",
+-        "//src/kj:kj-test",
++        "//c++/src/kj:kj-test",
+     ],
+ )
+ 
+@@ -145,11 +145,11 @@ cc_test(
+     name = "brotli-test",
+     srcs = ["brotli-test.c++"],
+     target_compatible_with = select({
+-        "//src/kj:use_brotli": [],
++        "//c++/src/kj:use_brotli": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+     deps = [
+         ":kj-brotli",
+-        "//src/kj:kj-test",
++        "//c++/src/kj:kj-test",
+     ],
+ )
+-- 
+2.43.0
+
