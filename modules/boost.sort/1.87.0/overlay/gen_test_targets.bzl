@@ -15,7 +15,11 @@ def gen_test_targets(name, cc_srcs):
             name = name,
             srcs = [src],
             deps = [
-              ":boost.sort",
-              "@boost.test",
+                ":boost.sort",
+                "@boost.test",
             ],
+            linkopts = select({
+                "@platforms//os:linux": ["-lpthread"],
+                "//conditions:default": [],
+            }),
         )
