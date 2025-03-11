@@ -22,5 +22,4 @@ def gen_test_targets(name, cc_srcs):
                 "@platforms//os:linux": ["-lpthread"],
                 "//conditions:default": [],
             }),
-            env = {"MALLOC_CHECK_": "0"},
         )
