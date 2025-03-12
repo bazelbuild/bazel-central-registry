@@ -34,7 +34,7 @@ def verify_stable_archive(url):
 
     path_parts = parsed.path.split("/")
 
-    if path_parts[3] == "releases" and path_parts[4] == "download":
+    if len(path_parts) > 3 and path_parts[3] == "releases" and path_parts[4] == "download":
         return UrlStability.STABLE
 
     return UrlStability.UNSTABLE

@@ -49,8 +49,11 @@ py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
     deps = [
+        ":attestations",
         ":registry",
+        ":slsa",
         ":verify_stable_archives",
+        requirement("requests"),
     ],
 )
 
@@ -68,12 +71,88 @@ py_library(
     ],
 )
 
+py_library(
+    name = "attestations",
+    srcs = ["attestations.py"],
+    imports = ["."],
+)
+
+py_library(
+    name = "slsa",
+    srcs = ["slsa.py"],
+    imports = ["."],
+    deps = [
+        ":attestations",
+    ],
+)
+
 py_binary(
     name = "update_integrity",
     srcs = ["update_integrity.py"],
     deps = [
         ":registry",
         requirement("click"),
+    ],
+)
+
+py_binary(
+    name = "module_selector",
+    srcs = ["module_selector.py"],
+    deps = [
+        ":registry",
+    ],
+)
+
+py_binary(
+    name = "module_analyzer",
+    srcs = ["module_analyzer.py"],
+    deps = [
+        ":module_selector",
+        requirement("networkx"),
+        requirement("numpy"),
+        requirement("scipy"),
+        requirement("bazel-runfiles"),
+    ],
+    data = [
+        "@buildozer_binary//:buildozer.exe",
+    ]
+)
+
+genrule(
+    name = "bazelci_py",
+    srcs = ["@bazelci_py_file//file"],
+    outs = ["bazelci.py"],
+    cmd = "cp $(location @bazelci_py_file//file) $@",
+)
+
+genrule(
+    name = "bcr_presubmit_py",
+    srcs = ["@bcr_presubmit_py_file//file"],
+    outs = ["bcr_presubmit.py"],
+    cmd = "cp $(location @bcr_presubmit_py_file//file) $@",
+)
+
+py_library(
+    name = "bazelci",
+    srcs = ["bazelci.py"],
+)
+
+py_library(
+    name = "bcr_presubmit",
+    srcs = ["bcr_presubmit.py"],
+    deps = [
+        ":bazelci",
+        requirement("requests"),
+        requirement("pyyaml"),
+    ],
+)
+
+py_binary(
+    name = "setup_presubmit_repos",
+    srcs = ["setup_presubmit_repos.py"],
+    imports = ["."],
+    deps = [
+        ":bcr_presubmit",
     ],
 )
 
@@ -90,5 +169,15 @@ py_test(
     ],
     deps = [
         "registry",
+    ],
+)
+
+py_test(
+    name = "module_selector_test",
+    srcs = [
+        "module_selector_test.py",
+    ],
+    deps = [
+        "module_selector",
     ],
 )

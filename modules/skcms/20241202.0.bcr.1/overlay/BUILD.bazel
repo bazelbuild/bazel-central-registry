@@ -1,0 +1,120 @@
+# Pruned copy of https://skia.googlesource.com/skcms/+/refs/heads/main/BUILD.bazel
+
+config_setting(
+    name = "debug_build",
+    values = {"compilation_mode": "dbg"},
+)
+config_setting(
+    name = "fast_build",
+    values = {"compilation_mode": "fastbuild"},
+)
+config_setting(
+    name = "release_build",
+    values = {"compilation_mode": "opt"},
+)
+
+#########
+# SkCMS #
+#########
+SHARED_COPTS = select({
+    ":debug_build": [
+        "--optimize=0",
+        "--debug",
+    ],
+    ":release_build": [
+        "--optimize=3",
+        # Strip dead code (in conjunction with linkopts)
+        "-fdata-sections",
+        "-ffunction-sections",
+    ],
+    ":fast_build": [
+        "--optimize=0",
+    ],
+})
+cc_library(
+    name = "skcms_public",
+    srcs = [
+        "skcms.cc",
+        "src/skcms_internals.h",
+        "src/skcms_public.h",
+    ],
+    hdrs = ["skcms.h"],
+    deps = [":skcms_TransformBaseline"] +
+           select({
+               "@platforms//cpu:x86_64": [
+                   ":skcms_TransformHsw",
+                   ":skcms_TransformSkx",
+               ],
+               "//conditions:default": [],
+           }),
+           copts = SHARED_COPTS,
+)
+cc_library(
+    name = "skcms_TransformBaseline",
+    srcs = [
+        "src/skcms_Transform.h",
+        "src/skcms_TransformBaseline.cc",
+        "src/skcms_internals.h",
+        "src/skcms_public.h",
+    ],
+    # This header does not compile on its own and is meant to be included from skcms_Transform*.cc
+    textual_hdrs = [
+        "src/Transform_inl.h",
+    ],
+              copts = SHARED_COPTS,
+)
+cc_library(
+    name = "skcms_TransformHsw",
+    srcs = [
+        "src/skcms_Transform.h",
+        "src/skcms_TransformHsw.cc",
+        "src/skcms_internals.h",
+        "src/skcms_public.h",
+    ],
+    copts = SHARED_COPTS + select({
+        "@platforms//cpu:x86_64": [
+            "-mavx2",
+            "-mf16c",
+        ],
+        "//conditions:default": [],
+    }),
+    # This header does not compile on its own and is meant to be included from skcms_Transform*.cc
+    textual_hdrs = [
+        "src/Transform_inl.h",
+    ],
+)
+cc_library(
+    name = "skcms_TransformSkx",
+    srcs = [
+        "src/skcms_Transform.h",
+        "src/skcms_TransformSkx.cc",
+        "src/skcms_internals.h",
+        "src/skcms_public.h",
+    ],
+    copts = SHARED_COPTS + select({
+        "@platforms//cpu:x86_64": [
+            "-mavx512f",
+            "-mavx512dq",
+            "-mavx512cd",
+            "-mavx512bw",
+            "-mavx512vl",
+        ],
+        "//conditions:default": [],
+    }),
+    # This header does not compile on its own and is meant to be included from skcms_Transform*.cc
+    textual_hdrs = [
+        "src/Transform_inl.h",
+    ],
+)
+cc_library(
+    name = "skcms",
+    hdrs = ["skcms.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":skcms_TransformBaseline",
+        ":skcms_TransformHsw",
+        ":skcms_TransformSkx",
+        ":skcms_public",
+    ],
+    copts = SHARED_COPTS,
+)

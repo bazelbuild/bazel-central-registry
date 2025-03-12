@@ -1,0 +1,159 @@
+# Override malloc/free with mimalloc either for an individual target:
+#
+#   cc_binary(
+#       name = "my_binary",
+#       ...
+#       malloc = "@mimalloc",
+#   )
+#
+#  or globally via a command-line flag:
+#
+#   --custom_malloc=@mimalloc
+#
+# DO NOT depend on this target directly.
+alias(
+    name = "mimalloc",
+    actual = select({
+        "@platforms//os:windows": ":mimalloc-dynamic",
+        "//conditions:default": ":mimalloc-static",
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# Additionally depend on this target to get access to the mimalloc.h API.
+cc_library(
+    name = "mimalloc-api",
+    hdrs = ["include/mimalloc.h"],
+    implementation_deps = [":mimalloc-lib"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+# TODO: Also expose the following functionality via additional targets and/or settings:
+# - overriding new/delete
+# - debug mode
+# - secure mode
+
+cc_library(
+    name = "mimalloc-static",
+    implementation_deps = [":mimalloc-lib"],
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+)
+
+cc_library(
+    name = "mimalloc-dynamic",
+    linkopts = ["/INCLUDE:mi_version"],
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+    deps = [
+        ":mimalloc-override-import",
+    ],
+)
+
+cc_import(
+    name = "mimalloc-override-import",
+    interface_library = ":mimalloc-override-interface",
+    shared_library = ":mimalloc-override",
+    deps = [":mimalloc-redirect"],
+)
+
+filegroup(
+    name = "mimalloc-override-interface",
+    srcs = [":mimalloc-override"],
+    output_group = "interface_library",
+)
+
+cc_shared_library(
+    name = "mimalloc-override",
+    deps = [":mimalloc-lib"],
+)
+
+# TODO: Find a way to expose mimalloc as a regular dep for cases in which overriding malloc/free
+# is not needed. This dep should be safe to use alongside --custom_malloc=@mimalloc, which is
+# challenging: We can't just split thistarget into one that provides all mi_* functions and one
+# that provides the overrides as the alias feature of gcc requires both to be in the same
+# translation unit.
+cc_library(
+    name = "mimalloc-lib",
+    srcs = [
+        # keep sorted
+        "include/mimalloc.h",
+        "include/mimalloc/atomic.h",
+        "include/mimalloc/internal.h",
+        "include/mimalloc/prim.h",
+        "include/mimalloc/track.h",
+        "include/mimalloc/types.h",
+        "src/alloc.c",
+        "src/alloc-aligned.c",
+        "src/alloc-posix.c",
+        "src/arena.c",
+        "src/bitmap.c",
+        "src/bitmap.h",
+        "src/heap.c",
+        "src/init.c",
+        "src/libc.c",
+        "src/options.c",
+        "src/os.c",
+        "src/page.c",
+        "src/prim/prim.c",
+        "src/random.c",
+        "src/segment.c",
+        "src/segment-map.c",
+        "src/stats.c",
+    ],
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "@platforms//os:windows": [
+            "psapi.lib",
+            "shell32.lib",
+            "user32.lib",
+            "advapi32.lib",
+            "bcrypt.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "MI_MALLOC_OVERRIDE",
+    ] + select({
+        "@platforms//os:windows": [
+            "MI_SHARED_LIB",
+            "MI_SHARED_LIB_EXPORT",
+        ],
+        "@platforms//os:macos": [
+            "MI_STATIC_LIB",
+            "MI_OSX_INTERPOSE=1",
+            "MI_OSX_ZONE=1",
+        ],
+        "//conditions:default": [
+            "MI_STATIC_LIB",
+        ],
+    }),
+    tags = ["__DONT_DEPEND_ON_DEF_PARSER__"],
+    textual_hdrs = [
+        # keep sorted
+        "src/alloc-override.c",
+        "src/free.c",
+        "src/page-queue.c",
+        "src/prim/emscripten/prim.c",
+        "src/prim/osx/prim.c",
+        "src/prim/prim.c",
+        "src/prim/unix/prim.c",
+        "src/prim/wasi/prim.c",
+        "src/prim/windows/prim.c",
+    ],
+    deps = select({
+        "@platforms//os:windows": [":mimalloc-redirect"],
+        "//conditions:default": [],
+    }),
+    alwayslink = True,
+)
+
+cc_import(
+    name = "mimalloc-redirect",
+    interface_library = "bin/mimalloc-redirect.lib",
+    shared_library = "bin/mimalloc-redirect.dll",
+)

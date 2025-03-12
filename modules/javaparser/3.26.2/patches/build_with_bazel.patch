@@ -1,0 +1,112 @@
+--- /dev/null
++++ BUILD.bazel
+@@ -0,0 +1 @@
++
+
+--- /dev/null
++++ javaparser-core/BUILD.bazel
+@@ -0,0 +1,68 @@
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++load(":gen_java_parser.bzl", "gen_java_parser")
++
++gen_java_parser(
++    name = "javacc_java_jj",
++    src = "src/main/javacc/java.jj",
++    outs = [
++        "GeneratedJavaParser.java",
++        "GeneratedJavaParserConstants.java",
++        "GeneratedJavaParserTokenManager.java",
++        "ParseException.java",
++        "Provider.java",
++        "SimpleCharStream.java",
++        "StreamProvider.java",
++        "StringProvider.java",
++        "Token.java",
++        "TokenMgrException.java",
++    ],
++    out_dir = "src/main/java/com/github/javaparser",
++)
++
++java_library(
++    name = "javaparser-core",
++    srcs = [":javacc_java_jj"] + glob([
++        "src/main/java/**/*.java",
++        "src/main/javacc-support/**/*.java",
++    ]),
++    javacopts = [
++        "-XepAllErrorsAsWarnings",
++        "-Xep:DoubleBraceInitialization:OFF",
++    ],
++    visibility = ["//visibility:public"],
++    deps = select(
++        {
++            ":skip_jdk_version_check__true": [],
++            ":remotejdk_11": [],
++            ":remotejdk_17": [],
++        },
++        no_match_error = (
++            "\n\nJavaParser is incompatible with JDK versions 21 and later." +
++            " See https://github.com/javaparser/javaparser/issues/4022" +
++            " for details."
++        ),
++    ),
++)
++
++bool_flag(
++    name = "skip_jdk_version_check",
++    build_setting_default = False,
++    visibility = ["//visibility:public"],
++)
++
++config_setting(
++    name = "skip_jdk_version_check__true",
++    flag_values = {
++        ":skip_jdk_version_check": "true",
++    },
++)
++
++config_setting(
++    name = "remotejdk_11",
++    values = {"java_runtime_version": "remotejdk_11"},
++)
++
++config_setting(
++    name = "remotejdk_17",
++    values = {"java_runtime_version": "remotejdk_17"},
++)
+
+--- /dev/null
++++ javaparser-core/gen_java_parser.bzl
+@@ -0,0 +1,32 @@
++def _gen_java_parser(ctx):
++    outs = []
++    for out_basename in ctx.attr.outs:
++        out = ctx.actions.declare_file(ctx.attr.out_dir + "/" + out_basename)
++        outs.append(out)
++    ctx.actions.run(
++        outputs = outs,
++        inputs = ctx.files.src,
++        executable = ctx.executable._javacc,
++        arguments = [
++            "-OUTPUT_DIRECTORY:" + outs[0].dirname,
++            ctx.file.src.path,
++        ],
++        mnemonic = "Javacc",
++    )
++    return DefaultInfo(files = depset(outs))
++
++gen_java_parser = rule(
++    implementation = _gen_java_parser,
++    attrs = {
++        "_javacc": attr.label(
++            default = "@javacc//:javacc",
++            executable = True,
++            cfg = "exec",
++        ),
++        "src": attr.label(
++            allow_single_file = True,
++        ),
++        "out_dir": attr.string(),
++        "outs": attr.string_list(),
++    },
++)

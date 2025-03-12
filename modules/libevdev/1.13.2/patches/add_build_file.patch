@@ -1,0 +1,148 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..875b28f
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,129 @@
++load("@rules_python//python:defs.bzl", "py_binary")
++
++# This is the public target to depend on.
++# Headers are C++ compatible.
++alias(
++    name="libevdev",
++    actual=":evdev",
++    visibility = ["//visibility:public"],
++)
++
++cc_library(
++    name = "evdev",
++    hdrs = [
++        "libevdev/libevdev.h",
++        "libevdev/libevdev-uinput.h",
++    ],
++    deps = [
++        ":evdev_lib",
++    ],
++    target_compatible_with = select({
++        "@platforms//os:linux": [],
++        "@platforms//os:freebsd": [],
++        "//conditions:default": ["@platforms//:incompatible"],
++    }),
++)
++
++# Dummy config header, not needed, but included by the code.
++genrule(
++    name = "config_h",
++    outs = ["config.h"],
++    cmd = "touch $@",
++)
++
++py_binary(
++    name = "make-event-names",
++    srcs = ["libevdev/make-event-names.py"],
++)
++
++genrule(
++    name = "event_names_h",
++    srcs = [
++        ":os-input",
++        ":os-input-event-codes",
++    ],
++    outs = ["event-names.h"],
++    tools = [":make-event-names"],
++    cmd = "$(location :make-event-names) $(location :os-input) $(location :os-input-event-codes) > $@",
++)
++
++cc_library(
++    name = "config_headers",
++    hdrs = [
++        ":config_h",
++        ":event_names_h",
++    ],
++)
++
++# Define OS-specific headers.
++[filegroup(
++    name = "os-%s" % stem_name,
++    srcs = select({
++        "@platforms//os:linux": [
++            "include/linux/linux/%s.h" % stem_name,
++        ],
++        "@platforms//os:freebsd": [
++            "include/linux/freebsd/%s.h" % stem_name,
++        ],
++        "//conditions:default": [],
++    }),
++) for stem_name in ["input", "input-event-codes", "uinput",]]
++
++cc_library(
++    name = "evdev_linux_headers",
++    hdrs = [
++        "include/linux/input.h",
++        "include/linux/uinput.h",
++        ":os-input",
++        ":os-input-event-codes",
++        ":os-uinput",
++    ],
++    strip_include_prefix = "//include",
++)
++
++cc_library(
++    name = "evdev_lib",
++    hdrs = [
++        "libevdev/libevdev.h",
++        "libevdev/libevdev-uinput.h",
++        "libevdev/libevdev-int.h",
++        "libevdev/libevdev-util.h",
++        "libevdev/libevdev-uinput-int.h",
++    ],
++    srcs = [
++        "libevdev/libevdev.c",
++        "libevdev/libevdev-names.c",
++        "libevdev/libevdev-uinput.c",
++    ],
++    deps = [
++        ":evdev_linux_headers",
++        ":config_headers",
++    ],
++    additional_linker_inputs = [
++        "libevdev/libevdev.sym",
++    ],
++    local_defines = [
++        "_GNU_SOURCE=1", # For strdup, scandir, alphasort, asprintf, O_CLOEXEC
++    ],
++    copts = [
++        "-std=c11",
++        "-fPIC",
++        "-DPIC",
++        "-fvisibility=hidden",
++        "-pipe",
++        "-fno-strict-aliasing",
++        "-ffunction-sections",
++        "-fdata-sections",
++        "-fdiagnostics-show-option",
++        "-fno-common",
++    ],
++    linkopts = [
++        "-Wl,--version-script=\"$(location libevdev/libevdev.sym)\"",
++        "-lrt",
++        "-lm",
++        "-Wl,--as-needed",
++        "-Wl,--gc-sections",
++        "-Wl,-z,relro",
++        "-Wl,-z,now",
++    ],
++)
+diff --git a/libevdev/libevdev-uinput.h b/libevdev/libevdev-uinput.h
+index b54ec02..df3d2a7 100644
+--- a/libevdev/libevdev-uinput.h
++++ b/libevdev/libevdev-uinput.h
+@@ -29,7 +29,7 @@
+ extern "C" {
+ #endif
+ 
+-#include <libevdev/libevdev.h>
++#include "libevdev/libevdev.h"
+ 
+ struct libevdev_uinput;
+ 
