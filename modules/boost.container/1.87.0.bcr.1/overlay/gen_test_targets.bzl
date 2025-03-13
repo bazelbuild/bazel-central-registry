@@ -18,4 +18,8 @@ def gen_test_targets(name, cc_srcs, header_srcs):
                 "@boost.iterator",
                 "@boost.tuple",
             ],
+            local_defines = select({
+                "@platforms//os:windows": ["BOOST_ALL_NO_LIB"],
+                "//conditions:default": [],
+            }),
         )
