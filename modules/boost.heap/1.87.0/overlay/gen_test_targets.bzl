@@ -13,4 +13,8 @@ def gen_test_targets(name, cc_srcs, header_srcs):
             name = name,
             srcs = [src] + header_srcs,
             deps = [":boost.heap_test_lib"],
+            local_defines = select({
+                "@platforms//os:windows": ["BOOST_ALL_NO_LIB"],
+                "//conditions:default": [],
+            }),
         )
