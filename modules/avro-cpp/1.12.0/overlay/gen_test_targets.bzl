@@ -15,5 +15,4 @@ def gen_test_targets(name, cc_srcs):
                 ":avro_cpp",
                 "@boost.test",
             ],
-            data = native.glob(["jsonschemas/*"]),
         )
