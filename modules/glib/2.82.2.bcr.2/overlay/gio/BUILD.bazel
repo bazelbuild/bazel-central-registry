@@ -4,9 +4,10 @@ load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
 expand_template(
     name = "gnetworking_h_in",
     out = "gnetworking.h",
-    substitutions = {
-        "@NAMESER_COMPAT_INCLUDE@": "",
-    },
+    substitutions = select({
+        "@platforms//os:macos": {"@NAMESER_COMPAT_INCLUDE@": "#include <arpa/nameser_compat.h>"},
+        "//conditions:default": {"@NAMESER_COMPAT_INCLUDE@": ""},
+    }),
     template = "gnetworking.h.in",
 )
 
@@ -199,9 +200,14 @@ GIO_UNIX_SRCS = [
     "ggtknotificationbackend.c",
 ]
 
-GIO_UNIX_SRCS += [
+GIO_LINUX_SRCS = [
+    "gdesktopappinfo.c",
     "gnetworkmonitornetlink.c",
     "gnetworkmonitornm.c",
+]
+
+GIO_OSX_SRCS = [
+    "gosxnetworkmonitor.c",
 ]
 
 GIO_WIN32_SRCS = [
@@ -539,11 +545,8 @@ INTERNAL_HDRS = [
     "thumbnail-verify.h",
 ]
 
-INTERNAL_HDRS_LINUX = [
-    "gdesktopappinfo.h",
-]
-
 INTERNAL_HDRS_UNIX = [
+    "gdesktopappinfo.h",
     "gfiledescriptorbased.h",
     "giounix-private.h",
     "gunixfdmessage.h",
@@ -555,9 +558,13 @@ INTERNAL_HDRS_UNIX = [
     "gunixvolumemonitor.h",
 ]
 
-INTERNAL_HDRS_UNIX += [
+INTERNAL_HDRS_LINUX = [
     "gnetworkmonitornetlink.h",
     "gnetworkmonitornm.h",
+]
+
+INTERNAL_HDRS_OSX = [
+    "gosxnetworkmonitor.h",
 ]
 
 UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
@@ -604,13 +611,6 @@ run_binary(
 ]
 
 [expand_template(
-    name = "%s_to_c" % target.replace(".", "_"),
-    out = "%s" % target.replace(".m", ".c"),
-    substitutions = {},
-    template = "%s" % target,
-) for target in glob(["*.m"])]
-
-[expand_template(
     name = "public_hdr_" + hdr,
     out = "include_glib-2.0/gio/" + hdr,
     substitutions = {},
@@ -624,7 +624,7 @@ cc_library(
     name = "gio_internal_textual_hdrs",
     textual_hdrs = INTERNAL_HDRS + select({
         "@platforms//os:linux": INTERNAL_HDRS_UNIX + INTERNAL_HDRS_LINUX,
-        "@platforms//os:macos": INTERNAL_HDRS_UNIX,
+        "@platforms//os:macos": INTERNAL_HDRS_UNIX + INTERNAL_HDRS_OSX,
         "//conditions:default": [],
     }) + ["strinfo.c"],
 )
@@ -637,31 +637,31 @@ cc_library(
     name = "gio",
     srcs = GIO_BASE_SOURCES + select({
         "@platforms//os:linux": ["gcontenttype-fdo.c"],
-        "@platforms//os:macos": ["gcontenttype-osx.c"],
+        "@platforms//os:macos": [],
         "@platforms//os:windows": ["gcontenttype-win32.c"],
         "//conditions:default": [],
     }) + select({
-        "@platforms//os:linux": GIO_UNIX_SRCS + ["gdesktopappinfo.c"],
-        "@platforms//os:macos": GIO_UNIX_SRCS + [
-            "gcocoanotificationbackend.c",
-            "gosxappinfo.c",
-            "gosxnetworkmonitor.c",
-        ],
+        "@platforms//os:linux": GIO_UNIX_SRCS + GIO_LINUX_SRCS,
+        "@platforms//os:macos": GIO_UNIX_SRCS + GIO_OSX_SRCS,
         "@platforms//os:windows": GIO_WIN32_SRCS + ["gwin32appinfo.c"],
         "//conditions:default": [],
-    }) + GIO_APPLICATION_SRCS + select({
-        "@platforms//os:macos": GIO_SETTINGS_SRCS + ["gnextstepsettingsbackend.c"],
-        "//conditions:default": GIO_SETTINGS_SRCS,
-    }) + GIO_GDBUS_SRCS + select({
+    }) + GIO_APPLICATION_SRCS + GIO_SETTINGS_SRCS + GIO_GDBUS_SRCS + select({
         "@platforms//os:windows": [],
         "//conditions:default": GIO_PORTAL_SRCS,
     }) + GIO_LOCAL_SRCS + PUBLIC_HDRS + select({
         "@platforms//os:macos": PUBLIC_HDRS_OSX,
         "//conditions:default": [],
-    }) + glob([
-        "inotify/*.c",
-        "inotify/*.h",
-    ]) + [
+    }) + select({
+        "@platforms//os:linux": glob([
+            "inotify/*.c",
+            "inotify/*.h",
+        ]),
+        "@platforms//os:macos": glob([
+            "kqueue/*.c",
+            "kqueue/*.h",
+        ]),
+        "//conditions:default": [],
+    }) + [
         "gdbus-daemon-generated.c",
         "gdbus-daemon-generated.h",
         "gdbusdaemon.c",
@@ -695,12 +695,13 @@ cc_library(
         ":gio_internal_textual_hdrs",
         "//:config_h",
         "//gio/xdgmime",
-    ],
+    ] + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["//glib:stub_intl"],
+    }),
     includes = ["include_glib-2.0"],
     linkopts = select({
-        "@platforms//os:linux": [
-            "-lresolv",
-        ],
+        "@platforms//os:linux": ["-lresolv"],
         "//conditions:default": [],
     }),
     linkstatic = True,
