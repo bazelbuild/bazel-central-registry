@@ -30,7 +30,7 @@ cd bazel-central-registry
 bazel run //tools:add_module
 ```
 
-The script will generate all require changes based on your input, please review, modify and commit the change, then send a PR to the BCR repository.
+The script will generate all required changes based on your input, please review, modify and commit the change, then send a PR to the BCR repository.
 
 If you are the project owner, you can set up the [Publish to BCR](https://github.com/apps/publish-to-bcr) Github App for your repository to automatically send a PR to the BCR when cutting a new release.
 
