@@ -3,17 +3,14 @@
 def _mkenums_impl(ctx):
     inputs = list(ctx.files.srcs)
     args = ctx.actions.args()
-    for key in ["fhead", "fprod", "ftail", "eprod", "vhead", "vprod", "vtail"]:
-        value = getattr(ctx.attr, key)
-        if value:
-            args.add_all(value, format_each = "--" + key + "=%s")
-    for key in ["comments", "identifier_prefix", "symbol_prefix"]:
-        value = getattr(ctx.attr, key)
-        if value:
-            args.add("--" + key.replace("_", "-"), value)
+    template = "--template"
     if ctx.attr.template:
-        args.add("--template", ctx.file.template)
         inputs.append(ctx.file.template)
+        args.add(template, ctx.file.template)
+    if ctx.attr.options:
+        if any([template in option for option in ctx.attr.options]):
+            fail("`" + template + "` must be specified via the respective rule attribute.")
+        args.add_all(ctx.attr.options)
     args.add("--output", ctx.outputs.out)
     args.add_all(ctx.files.srcs)
     ctx.actions.run(
@@ -29,17 +26,8 @@ def _mkenums_impl(ctx):
 # See https://gitlab.gnome.org/GNOME/glib/-/blob/2.82.2/docs/reference/gobject/glib-mkenums.rst
 # for the description of all options.
 _mkenums_attrs = {
-    "fhead": attr.string_list(doc = "Same as `fhead` in glib-mkenums."),
-    "fprod": attr.string_list(doc = "Same as `fprod` in glib-mkenums."),
-    "ftail": attr.string_list(doc = "Same as `ftail` in glib-mkenums."),
-    "eprod": attr.string_list(doc = "Same as `eprod` in glib-mkenums."),
-    "vhead": attr.string_list(doc = "Same as `vhead` in glib-mkenums."),
-    "vprod": attr.string_list(doc = "Same as `vprod` in glib-mkenums."),
-    "vtail": attr.string_list(doc = "Same as `vtail` in glib-mkenums."),
-    "comments": attr.string(doc = "Same as `comments` in glib-mkenums."),
-    "identifier_prefix": attr.string(doc = "Same as `identifier-prefix` in glib-mkenums."),
-    "symbol_prefix": attr.string(doc = "Same as `symbol-prefix` in glib-mkenums."),
-    "template": attr.label(allow_single_file = True, doc = "Same as `fhead` in glib-mkenums."),
+    "template": attr.label(allow_single_file = True, doc = "See `template` in the glib-mkenums command."),
+    "options": attr.string_list(doc = "Additional options to pass to the glib-mkenums command, must not contain `--template`."),
     "srcs": attr.label_list(
         mandatory = True,
         allow_files = True,
