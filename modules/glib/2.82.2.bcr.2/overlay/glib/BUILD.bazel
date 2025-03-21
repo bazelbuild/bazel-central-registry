@@ -254,14 +254,7 @@ REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
 INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
 
 cc_library(
-    name = "glib",
-    srcs = GLIB_SRCS + select({
-        "@platforms//os:windows": GLIB_WIN32_SRCS,
-        "//conditions:default": GLIB_POSIX_SRCS,
-    }) + PUBLIC_HDRS + INTERNAL_HDRS + select({
-        "@platforms//os:windows": PUBLIC_HDRS_WIN32,
-        "//conditions:default": [],
-    }),
+    name = "glib_headers",
     hdrs = [
         ":public_hdr_" + hdr.replace("/", "_")
         for hdr in PUBLIC_HDRS
@@ -274,6 +267,18 @@ cc_library(
             ":public_hdr_" + hdr.replace("/", "_")
             for hdr in PUBLIC_HDRS_WIN32
         ],
+        "//conditions:default": [],
+    }),
+    includes = ["include_glib-2.0"],
+)
+
+cc_library(
+    name = "glib",
+    srcs = GLIB_SRCS + select({
+        "@platforms//os:windows": GLIB_WIN32_SRCS,
+        "//conditions:default": GLIB_POSIX_SRCS,
+    }) + PUBLIC_HDRS + INTERNAL_HDRS + select({
+        "@platforms//os:windows": PUBLIC_HDRS_WIN32,
         "//conditions:default": [],
     }),
     copts = [
@@ -289,7 +294,6 @@ cc_library(
         "@platforms//os:linux": [],
         "//conditions:default": [":stub_intl"],
     }),
-    includes = ["include_glib-2.0"],
     linkopts = select({
         "@platforms//os:linux": [
             "-lpthread",
@@ -311,4 +315,23 @@ cc_library(
         "GLIB_CHARSETALIAS_DIR='\"/usr/lib\"'",
     ],
     visibility = ["//visibility:public"],
+    deps = [":glib_headers"],
+)
+
+cc_shared_library(
+    name = "glib_shared",
+    shared_lib_name = select({
+        "@platforms//os:macos": "libglib-2.0.dylib",
+        "@platforms//os:windows": "libglib-2.0.dll",
+        "//conditions:default": "libglib-2.0.so",
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":glib"],
+)
+
+cc_import(
+    name = "glib_import",
+    shared_library = ":glib_shared",
+    visibility = ["//visibility:public"],
+    deps = [":glib_headers"],
 )

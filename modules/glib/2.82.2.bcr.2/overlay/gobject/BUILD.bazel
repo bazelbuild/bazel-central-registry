@@ -107,6 +107,12 @@ REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
 INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
 
 cc_library(
+    name = "gobject_headers",
+    hdrs = [":public_hdr_" + hdr for hdr in (PUBLIC_HDRS + ["glib-enumtypes.h"])] + [":gobject-visibility_h"],
+    includes = ["include_glib-2.0"],
+)
+
+cc_library(
     name = "gobject",
     srcs = GOBJECT_SRCS + PUBLIC_HDRS + [
         "gatomicarray.h",
@@ -115,7 +121,6 @@ cc_library(
         "gobject_trace.h",
         "gtype-private.h",
     ],
-    hdrs = [":public_hdr_" + hdr for hdr in (PUBLIC_HDRS + ["glib-enumtypes.h"])] + [":gobject-visibility_h"],
     copts = [
         "-I" + INCLUDE_PREFIX,
         "-I%s/glib" % (INCLUDE_PREFIX,),
@@ -124,7 +129,6 @@ cc_library(
         "@platforms//os:linux": [],
         "//conditions:default": ["//glib:stub_intl"],
     }),
-    includes = ["include_glib-2.0"],
     linkstatic = True,
     local_defines = [
         "G_LOG_DOMAIN='\"GLib-GObject\"'",
@@ -132,7 +136,30 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":gobject_headers",
         "//glib",
         "@libffi",
+    ],
+)
+
+cc_shared_library(
+    name = "gobject_shared",
+    dynamic_deps = ["//glib:glib_shared"],
+    shared_lib_name = select({
+        "@platforms//os:macos": "libgobject-2.0.dylib",
+        "@platforms//os:windows": "libgobject-2.0.dll",
+        "//conditions:default": "libgobject-2.0.so",
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":gobject"],
+)
+
+cc_import(
+    name = "gobject_import",
+    shared_library = ":gobject_shared",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gobject_headers",
+        "//glib:glib_import",
     ],
 )

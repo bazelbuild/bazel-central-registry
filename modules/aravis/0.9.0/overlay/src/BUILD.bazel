@@ -1,6 +1,5 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@glib//gobject:gobject.bzl", "mkenums")
-load("//:variables.bzl", "ARAVIS_API_VERSION")
 
 library_sources = [
     "arvenums.c",
@@ -294,21 +293,23 @@ expand_template(
     template = "arvparamsprivate.h.in",
 )
 
+ARAVIS_VERSION = module_version()
+
 [
     V_MAJOR,
     V_MINOR,
     V_MICRO,
-] = module_version().split(".", 3)
+] = ARAVIS_VERSION.split(".", 3)
 
 expand_template(
     name = "arvversion_h_in",
     out = "arvversion.h",
     substitutions = {
-        "@ARAVIS_VERSION@": "%s" % module_version(),
-        "@ARAVIS_API_VERSION@": ARAVIS_API_VERSION,
-        "@ARAVIS_MAJOR_VERSION@": "%s" % V_MAJOR,
-        "@ARAVIS_MINOR_VERSION@": "%s" % V_MINOR,
-        "@ARAVIS_MICRO_VERSION@": "%s" % V_MICRO,
+        "@ARAVIS_VERSION@": ARAVIS_VERSION,
+        "@ARAVIS_API_VERSION@": "0.10",
+        "@ARAVIS_MAJOR_VERSION@": V_MAJOR,
+        "@ARAVIS_MINOR_VERSION@": V_MINOR,
+        "@ARAVIS_MICRO_VERSION@": V_MICRO,
     },
     template = "arvversion.h.in",
 )
@@ -321,9 +322,7 @@ filegroup(
 
 cc_library(
     name = "aravis_headers",
-    defines = ["ARAVIS_COMPILATION"],
-    includes = ["."],
-    textual_hdrs = library_headers + library_private_headers + library_no_introspection_headers + [
+    hdrs = library_headers + library_private_headers + library_no_introspection_headers + [
         "GenTL_v1_5.h",
         "arvapi.h",
         "arvenumtypes.h",
@@ -332,15 +331,19 @@ cc_library(
         "arvparamsprivate.h",
         "arvversion.h",
     ],
+    includes = ["."],
 )
 
 cc_library(
-    name = "aravis-%s" % ARAVIS_API_VERSION,
+    name = "aravis",
     srcs = library_sources + library_no_introspection_sources + [
         "arvenumtypes.c",
         "arvenumtypesprivate.c",
     ],
-    defines = ["ARAVIS_DATA_DIR=\\\"/tmp/\\\""],
+    defines = [
+        "ARAVIS_COMPILATION",
+        "ARAVIS_DATA_DIR=\\\"/tmp/\\\"",
+    ],
     visibility = ["//:__subpackages__"],
     deps = [
         ":aravis_headers",
@@ -354,11 +357,37 @@ cc_library(
     ],
 )
 
+cc_shared_library(
+    name = "aravis_shared",
+    dynamic_deps = [
+        "@glib//gio:gio_shared",
+        "@glib//glib:glib_shared",
+        "@glib//gmodule:gmodule_shared",
+        "@glib//gobject:gobject_shared",
+    ],
+    shared_lib_name = "libaravis-%s.%s.so" % (V_MAJOR, V_MINOR),
+    visibility = ["//:__subpackages__"],
+    deps = [":aravis"],
+)
+
+cc_import(
+    name = "aravis_import",
+    shared_library = ":aravis_shared",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":aravis_headers",
+        "@glib//gio:gio_import",
+        "@glib//glib:glib_import",
+        "@glib//gmodule:gmodule_import",
+        "@glib//gobject:gobject_import",
+    ],
+)
+
 [
     cc_binary(
-        name = "%s" % target,
+        name = target,
         srcs = ["%s.c" % target.replace("-", "")],
-        deps = ["@aravis"],
+        deps = [":aravis"],
     )
     for target in [
         "arv-tool",

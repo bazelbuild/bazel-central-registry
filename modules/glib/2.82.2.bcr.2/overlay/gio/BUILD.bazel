@@ -622,6 +622,21 @@ REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
 INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
 
 cc_library(
+    name = "gio_headers",
+    hdrs = [":public_hdr_" + hdr for hdr in (PUBLIC_HDRS + [
+               "gioenumtypes.h",
+               "gnetworking.h",
+           ])] +
+           select({
+               "@platforms//os:macos": [":public_hdr_" + hdr for hdr in PUBLIC_HDRS_OSX],
+               "//conditions:default": [],
+           }) + [
+        ":gio-visibility_h",
+    ],
+    includes = ["include_glib-2.0"],
+)
+
+cc_library(
     name = "gio",
     srcs = GIO_BASE_SOURCES + select({
         "@platforms//os:linux": ["gcontenttype-fdo.c"],
@@ -661,16 +676,6 @@ cc_library(
         "xdp-dbus.h",
         "//subprojects/gvdb",
     ],
-    hdrs = [":public_hdr_" + hdr for hdr in (PUBLIC_HDRS + [
-               "gioenumtypes.h",
-               "gnetworking.h",
-           ])] +
-           select({
-               "@platforms//os:macos": [":public_hdr_" + hdr for hdr in PUBLIC_HDRS_OSX],
-               "//conditions:default": [],
-           }) + [
-        ":gio-visibility_h",
-    ],
     copts = [
         "-I" + INCLUDE_PREFIX,
         "-I%s/gio" % (INCLUDE_PREFIX,),
@@ -687,7 +692,6 @@ cc_library(
         "@platforms//os:linux": [],
         "//conditions:default": ["//glib:stub_intl"],
     }),
-    includes = ["include_glib-2.0"],
     linkopts = select({
         "@platforms//os:linux": ["-lresolv"],
         "//conditions:default": [],
@@ -702,8 +706,37 @@ cc_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        ":gio_headers",
         "//glib",
         "//gmodule",
         "//gobject",
+    ],
+)
+
+cc_shared_library(
+    name = "gio_shared",
+    dynamic_deps = [
+        "//glib:glib_shared",
+        "//gmodule:gmodule_shared",
+        "//gobject:gobject_shared",
+    ],
+    shared_lib_name = select({
+        "@platforms//os:macos": "libgio-2.0.dylib",
+        "@platforms//os:windows": "libgio-2.0.dll",
+        "//conditions:default": "libgio-2.0.so",
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":gio"],
+)
+
+cc_import(
+    name = "gio_import",
+    shared_library = ":gio_shared",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gio_headers",
+        "//glib:glib_import",
+        "//gmodule:gmodule_import",
+        "//gobject:gobject_import",
     ],
 )
