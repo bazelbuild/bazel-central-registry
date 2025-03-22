@@ -47,16 +47,21 @@ REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
 INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
 
 cc_library(
+    name = "gmodule_headers",
+    hdrs = [
+        ":gmodule-visibility_h",
+        ":public_hdr_gmodule.h",
+    ],
+    includes = ["include_glib-2.0"],
+)
+
+cc_library(
     name = "gmodule",
     srcs = [
         "gmodule.c",
         "gmodule-deprecated.c",
         ":gmodule-visibility_h",
         ":gmoduleconf_h",
-    ],
-    hdrs = [
-        ":gmodule-visibility_h",
-        ":public_hdr_gmodule.h",
     ],
     copts = [
         "-I%s/glib" % (INCLUDE_PREFIX,),
@@ -67,7 +72,6 @@ cc_library(
         "//conditions:default": [],
     }),
     implementation_deps = ["//:config_h"],
-    includes = ["include_glib-2.0"],
     linkstatic = True,
     local_defines = [
         "G_LOG_DOMAIN='\"GModule\"'",
@@ -79,5 +83,30 @@ cc_library(
         "gmodule-win32.c",
     ],
     visibility = ["//visibility:public"],
-    deps = ["//glib"],
+    deps = [
+        ":gmodule_headers",
+        "//glib",
+    ],
+)
+
+cc_shared_library(
+    name = "gmodule_shared",
+    dynamic_deps = ["//glib:glib_shared"],
+    shared_lib_name = select({
+        "@platforms//os:macos": "libgmodule-2.0.dylib",
+        "@platforms//os:windows": "libgmodule-2.0.dll",
+        "//conditions:default": "libgmodule-2.0.so",
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":gmodule"],
+)
+
+cc_import(
+    name = "gmodule_import",
+    shared_library = ":gmodule_shared",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gmodule_headers",
+        "//glib:glib_import",
+    ],
 )
