@@ -1,0 +1,1 @@
+../../../../2.82.2.bcr.1/overlay/glib/stub_libintl/libintl.h
