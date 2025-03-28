@@ -42,6 +42,7 @@ Here are steps that a BCR maintainer should keep in mind when reviewing PRs:
   - For modules whose name start with `lib` (for example, `libfoo`), ask for a target named `foo` with an alias named `libfoo` pointing to `foo` ([example](https://github.com/bazelbuild/bazel-central-registry/pull/3821#discussion_r1959200504)).
 - When a PR contains C++ modules with BUILD patches or overlays, double check visibility specifications.
   - PR authors sometimes forget `//visibility:public`, and this is often not caught unless the presubmit.yml has a test module.
+  - Encourage PR authors to keep the set of publicly visible targets small.
 - When a PR contains C++ modules with large BUILD overlays, ask for some documentation on how these BUILD files are created.
   - Such documentation can either be in a `README.md` file under the module directory, or simply be some comments in the BUILD overlays.
 - When a PR's CI checks are blocked because its presubmit.yml has changed, review those changes before applying the `presubmit-auto-run` label to unblock CI.
