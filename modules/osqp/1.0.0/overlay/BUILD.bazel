@@ -1,0 +1,212 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load(
+    "@cmake_configure_file//:cmake_configure_file.bzl",
+    "cmake_configure_file",
+)
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+string_flag(
+    name = "algebra_backend",
+    build_setting_default = "builtin",
+    values = [
+        "builtin",
+        "cuda",
+        "mkl",
+    ],
+)
+
+config_setting(
+    name = "osqp_algebra_builtin",
+    flag_values = {
+        ":algebra_backend": "builtin",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_algebra_cuda",
+    flag_values = {
+        ":algebra_backend": "cuda",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_algebra_mkl",
+    flag_values = {
+        ":algebra_backend": "mkl",
+        ":use_float": "true",
+    },
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "use_float",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "osqp_use_float",
+    flag_values = {
+        ":use_float": "true",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_use_long",
+    flag_values = {
+        ":use_float": "false",
+    },
+    visibility = ["//visibility:public"],
+)
+
+# Generates osqp_configure.h based on the defines= we want in Drake.
+cmake_configure_file(
+    name = "configure_file",
+    src = "configure/osqp_configure.h.in",
+    out = "include/private/osqp_configure.h",
+    defines = select({
+        "@platforms//os:windows": [
+            "IS_WINDOWS",
+        ],
+        "@platforms//os:osx": [
+            "IS_MAC",
+        ],
+        "//conditions:default": [
+            "IS_LINUX",
+        ],
+    }) + select({
+        ":osqp_algebra_builtin": [
+            "OSQP_ALGEBRA_BUILTIN",
+        ],
+        ":osqp_algebra_cuda": [
+            "OSQP_ALGEBRA_CUDA",
+        ],
+        ":osqp_algebra_mkl": [
+            "OSQP_ALGEBRA_MKL",
+        ],
+    }) + select({
+        ":osqp_use_float": [
+            "OSQP_USE_FLOAT",
+        ],
+        ":osqp_use_long": [
+            "OSQP_USE_LONG",
+        ],
+    }),
+    undefines = [
+        "OSQP_CUSTOM_MEMORY",
+    ],
+)
+
+cc_library(
+    name = "osqp_private_headers",
+    hdrs = glob(["include/private/*.h"]) + [":configure_file"],
+    includes = ["include/private"],
+)
+
+_LIN_SYS_QDLDL_NON_EMBEDDED_SRC_FILES = glob([
+    "algebra/_common/lin_sys/qdldl/amd/src/*.c",
+    "algebra/_common/lin_sys/qdldl/amd/include/*.h",
+])
+
+_LIN_SYS_QDLDL_EMBEDDED_SRC_FILES = [
+    "algebra/_common/kkt.h",
+    "algebra/_common/kkt.c",
+    "algebra/_common/lin_sys/qdldl/qdldl_interface.h",
+    "algebra/_common/lin_sys/qdldl/qdldl_interface.c",
+]
+
+cc_library(
+    name = "osqp",
+    srcs = glob(
+               [
+                   "src/*.c",
+                   "algebra/_common/csc_math.h",
+                   "algebra/_common/csc_math.c",
+                   "algebra/_common/csc_utils.h",
+                   "algebra/_common/csc_utils.c",
+                   #    "algebra/_common/kkt.h",
+                   #    "algebra/_common/kkt.c",
+                   #    "algebra/_common/reduced_kkt.h",
+                   #    "algebra/_common/reduced_kkt.c",
+               ],
+               exclude = [
+                   "src/codegen.c",
+                   "src/derivative.c",
+                   "src/interrupt_*",
+                   "src/profilers_*",
+                   "src/timing_*",
+               ],
+           ) + select({
+               "@platforms//os:windows": [
+                   "src/interrupt_win.c",
+                   "src/timing_win.c",
+               ],
+               "@platforms//os:osx": [
+                   "src/interrupt_unix.c",
+                   "src/timing_macos.c",
+               ],
+               "//conditions:default": [
+                   "src/interrupt_unix.c",
+                   "src/timing_linux.c",
+               ],
+           }) +
+           select({
+               ":osqp_algebra_builtin": glob([
+                   "algebra/builtin/*.c",
+               ]) + _LIN_SYS_QDLDL_EMBEDDED_SRC_FILES,
+               ":osqp_algebra_cuda": glob([
+                   "algebra/cuda/*.cu",
+               ]),
+               ":osqp_algebra_mkl": glob([
+                   "algebra/mkl/*.c",
+               ]),
+           }),
+    hdrs = glob([
+        "include/public/*.h",
+    ]) + select({
+        ":osqp_algebra_builtin": glob([
+            "algebra/builtin/*.h",
+        ]),
+        ":osqp_algebra_cuda": glob([
+            "algebra/cuda/*.h",
+        ]),
+        ":osqp_algebra_mkl": glob([
+            "algebra/mkl/*.h",
+        ]),
+    }),
+    copts = [
+        "-fvisibility=hidden",
+        "-w",
+        "-Werror=incompatible-pointer-types",
+    ],
+    includes = [
+        "algebra/_common",
+        "include/public",
+    ] + select({
+        ":osqp_algebra_builtin": [
+            "algebra/_common/lin_sys/qdldl",
+            "algebra/builtin",
+        ],
+        ":osqp_algebra_cuda": [
+            "algebra/cuda",
+        ],
+        ":osqp_algebra_mkl": [
+            "algebra/mkl",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":osqp_private_headers",
+    ] + select({
+        ":osqp_algebra_builtin": [
+            "@qdldl",
+            "@suitesparse//:amd",
+        ],
+        ":osqp_algebra_cuda": [
+        ],
+        ":osqp_algebra_mkl": [
+        ],
+    }),
+)
