@@ -13,6 +13,10 @@ The prebuilt `.dat` files are only available via the release `src` asset and don
 But the ICU `BUILD.bazel` files are only available in the repo, but not the `src` release asset.
 Thus we pull from the repo in `sources.json` to obtain the code with the `BUILD.bazel` files and in `MODULE.bazel` we use `http_archive` to get the prebuilt `.dat` file that comes with each ICU release.
 
+Normally in order to tell ICU where the prebuilt `.dat` file is located, you can set the define directive [`ICU_DATA_DIR`](https://unicode-org.github.io/icu/userguide/icu_data/#icu-data-directory).
+However, since we're passing this data file in with Bazel, we need to use the Bazel C++ runfiles library to look up its actual location.
+The patches we've added allows for this.
+
 ## Tests
 
 The ICU tests are not Bazelfied, so we've just added a simple test file to excercise that the data loading works correctly at runtime.
