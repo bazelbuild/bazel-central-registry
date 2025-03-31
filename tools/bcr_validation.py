@@ -501,12 +501,11 @@ class BcrValidator:
             version_dir = self.registry.get_version_dir(module_name, version)
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
-                try:
-                    overlay_src.resolve().relative_to(version_dir.resolve())
-                except ValueError as e:
+                if overlay_src != module_file and overlay_src.is_symlink():
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"The overlay file path `{overlay_file}` must point to a file inside the same module version dir.\n {e}",
+                        f"The overlay file path `{overlay_file}` is a symlink to `{overlay_src.readlink()}`, "
+                        "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
                     )
                     continue
                 overlay_dst = source_root / overlay_file
