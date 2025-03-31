@@ -498,8 +498,17 @@ class BcrValidator:
                     f"{module_file} should be a symlink to `../MODULE.bazel`.",
                 )
 
+            version_dir = self.registry.get_version_dir(module_name, version)
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
+                try:
+                    overlay_src.resolve().relative_to(version_dir.resolve())
+                except ValueError as e:
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"The overlay file path `{overlay_file}` must point to a file inside the same module version dir.\n {e}",
+                    )
+                    continue
                 overlay_dst = source_root / overlay_file
                 try:
                     overlay_dst.resolve().relative_to(source_root.resolve())
