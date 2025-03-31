@@ -9,7 +9,8 @@ So if something you need is missing, you will either need to patch it in to an e
 ICU requires [data files to function correctly](https://unicode-org.github.io/icu/userguide/icu_data/).
 It can either use a prebuilt `.dat` file or link a shared object file that wraps the data generated using `icu4c/source/tools/genccode`.
 Since `genccode` isn't Bazelfied, it was easier to use the prebuilt `.dat` file that comes with each ICU release.
-The prebuilt `.dat` files are only available via the release `src` asset and doesn't exist in the repo and the ICU `BUILD.bazel` files are only available in the repo, but not the `src` release asset.
+The prebuilt `.dat` files are only available via the release `src` asset and don't exist in the repo.
+But the ICU `BUILD.bazel` files are only available in the repo, but not the `src` release asset.
 Thus we pull from the repo in `sources.json` to obtain the code with the `BUILD.bazel` files and in `MODULE.bazel` we use `http_archive` to get the prebuilt `.dat` file that comes with each ICU release.
 
 ## Tests
