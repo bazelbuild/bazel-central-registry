@@ -1,3 +1,46 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..5a43c5c
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,37 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
++config_setting(
++    name = "enable_dr1467_canary",
++    values = {"define": "JSON11_ENABLE_DR1467_CANARY=1"},
++)
++
++COPTS = select({
++    "@platforms//os:windows": [
++        "/GR-",  # Disable RTTI (equivalent to -fno-rtti)
++    ],
++    "//conditions:default": [
++        "-std=c++11",
++        "-fno-rtti",
++        "-fno-exceptions",
++    ],
++})
++
++cc_library(
++    name = "json11",
++    srcs = ["json11.cpp"],
++    hdrs = ["json11.hpp"],
++    copts = COPTS,
++    visibility = ["//visibility:public"],
++)
++
++cc_test(
++    name = "json11_test",
++    size = "small",
++    srcs = ["test.cpp"],
++    copts = COPTS,
++    defines = select({
++        ":enable_dr1467_canary": ["JSON11_ENABLE_DR1467_CANARY=1"],
++        "//conditions:default": ["JSON11_ENABLE_DR1467_CANARY=0"],
++    }),
++    deps = [":json11"],
++)
 diff --git a/MODULE.bazel b/MODULE.bazel
 new file mode 100644
 index 0000000..298bf40
@@ -18,37 +61,29 @@ index 0000000..298bf40
 +
 +bazel_dep(name = "rules_cc", version = "0.1.1")
 diff --git a/test.cpp b/test.cpp
-index 3712d10..7ce1714 100644
+index 3712d10..75fb1be 100644
 --- a/test.cpp
 +++ b/test.cpp
-@@ -11,4 +11,4 @@
- #define JSON11_TEST_STANDALONE_MAIN 1
+@@ -12,2 +12,2 @@
 -#define JSON11_TEST_CASE(name) static void name()
 -#define JSON11_TEST_ASSERT(b) assert(b)
 +#define JSON11_TEST_CASE(name) static int name()
 +#define JSON11_TEST_ASSERT(b) do { if (!(b)) { std::cerr << "Assertion failed: " #b " at " << __FILE__ << ":" << __LINE__ << "\n"; return 1; } } while (0)
- #ifdef NDEBUG
-@@ -67,2 +67,6 @@ JSON11_TEST_CASE(json11_test) {
-     const auto json = Json::parse(simple_test, err);
+@@ -67,0 +68,4 @@ JSON11_TEST_CASE(json11_test) {
 +    if (!err.empty()) {
 +        std::cerr << "Simple test parse failed: " << err << "\n";
 +        return 1;
 +    }
- 
-@@ -256,3 +260,3 @@ JSON11_TEST_CASE(json11_test) {
- 
+@@ -252,0 +257 @@ JSON11_TEST_CASE(json11_test) {
++    return 0;
+@@ -257 +262 @@ JSON11_TEST_CASE(json11_test) {
 -static void parse_from_stdin() {
 +static int parse_from_stdin() {
-     string buf;
-@@ -267,4 +271,6 @@ static void parse_from_stdin() {
-         printf("Failed: %s\n", err.c_str());
+@@ -267,0 +273 @@ static void parse_from_stdin() {
 +        return 1;
-     } else {
-         printf("Result: %s\n", json.dump().c_str());
+@@ -269,0 +276 @@ static void parse_from_stdin() {
 +        return 0;
-     }
-@@ -274,7 +280,13 @@ int main(int argc, char **argv) {
-     if (argc == 2 && argv[1] == string("--stdin")) {
+@@ -275,2 +282,7 @@ int main(int argc, char **argv) {
 -        parse_from_stdin();
 -        return 0;
 +      return parse_from_stdin();
@@ -58,9 +93,7 @@ index 3712d10..7ce1714 100644
 +    if (test_result != 0) {
 +        std::cerr << "Tests failed with " << test_result << " errors\n";
 +        return 1;
-     }
- 
+@@ -279 +291,2 @@ int main(int argc, char **argv) {
 -    json11_test();
 +    std::cout << "All tests passed\n";
 +    return 0;
- }
