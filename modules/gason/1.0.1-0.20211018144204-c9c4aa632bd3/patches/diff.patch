@@ -109,36 +109,32 @@ diff --git a/src/benchmark.cpp b/src/benchmark.cpp
 index f4e01c4..54360ad 100644
 --- a/src/benchmark.cpp
 +++ b/src/benchmark.cpp
-@@ -230,2 +230,7 @@ int main(int argc, const char **argv) {
-     size_t iterations = 10;
+@@ -230,0 +231,5 @@ int main(int argc, const char **argv) {
 +    if (argc < 2) {
 +        fprintf(stderr, "Error: No input file specified\n");
 +        return 1;
 +    }
 +
-     for (int i = 1; i < argc; ++i) {
 diff --git a/src/test-suite.cpp b/src/test-suite.cpp
 index c52e2c9..8f73403 100644
 --- a/src/test-suite.cpp
 +++ b/src/test-suite.cpp
-@@ -140,7 +140,7 @@ break"])json");
-     if (failed)
+@@ -141 +141,2 @@ break"])json");
 -        fprintf(stderr, "%d/%d TESTS FAILED\n", failed, parsed);
 +       { fprintf(stderr, "%d/%d TESTS FAILED\n", failed, parsed);
 +        return 1;}
-     else
+@@ -143,3 +144,2 @@ break"])json");
 -        fprintf(stderr, "ALL TESTS PASSED\n");
 -
 -    return 0;
 +        {fprintf(stderr, "ALL TESTS PASSED\n");
 +        return 0;}
- }
 diff --git a/tools.bzl b/tools.bzl
 new file mode 100644
-index 0000000..467a82e
+index 0000000..48b86dd
 --- /dev/null
 +++ b/tools.bzl
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,64 @@
 +"""Rule for downloading and verifying test data"""
 +
 +def _download_data_impl(ctx):
@@ -148,28 +144,40 @@ index 0000000..467a82e
 +    output_file = ctx.actions.declare_file(ctx.label.name + ".json")  # Downloaded file
 +    hash_output = ctx.actions.declare_file(ctx.label.name + ".sha256")  # File to store computed hash
 +
-+    # Download the file and compute its SHA-256 hash
-+    download_command = "curl -s %s > %s" % (url, output_file.path)
-+    hash_command = "openssl dgst -sha256 %s | cut -d' ' -f2 > %s" % (output_file.path, hash_output.path)
-+    verify_command = """
-+        computed=$(cat {hash_output})
-+        if [ "$computed" != "{expected_sha256}" ]; then
-+            echo "SHA-256 mismatch!"
-+            echo "Expected: {expected_sha256}"
-+            echo "Got:      $computed"
-+            exit 1
-+        fi
-+    """.format(
-+        hash_output = hash_output.path,
-+        expected_sha256 = expected_sha256,
-+    )
++    # Determine if we're on Windows based on the host platform
++    is_windows = ctx.var.get("HOST_OS", "linux").lower() == "windows"
 +
-+    # Combine all commands into a single shell script
-+    full_command = " && ".join([
-+        download_command,
-+        hash_command,
-+        verify_command,
-+    ])
++    if is_windows:
++        # Windows-specific commands
++        download_command = 'powershell -Command "Invoke-WebRequest -Uri \\"%s\\" -OutFile \\"%s\\""' % (url, output_file.path)
++
++        # Use certutil for SHA256 on Windows
++        hash_command = 'certutil -hashfile "%s" SHA256 | findstr /v "hash" > "%s"' % (output_file.path, hash_output.path)
++        verify_command = """
++            set /p computed=<"%s"
++            set "computed=!computed: =!"
++            if /i "!computed!" NEQ "%s" (
++                echo SHA-256 mismatch!
++                echo Expected: %s
++                echo Got:      !computed!
++                exit /b 1
++            )
++        """ % (hash_output.path, expected_sha256, expected_sha256)
++        full_command = " && ".join([download_command, hash_command, verify_command])
++    else:
++        # Unix-specific commands
++        download_command = "curl -s %s -o %s" % (url, output_file.path)
++        hash_command = "openssl dgst -sha256 %s | cut -d' ' -f2 > %s" % (output_file.path, hash_output.path)
++        verify_command = """
++            computed=$(cat %s)
++            if [ "$computed" != "%s" ]; then
++                echo "SHA-256 mismatch!"
++                echo "Expected: %s"
++                echo "Got:      $computed"
++                exit 1
++            fi
++        """ % (hash_output.path, expected_sha256, expected_sha256)
++        full_command = " && ".join([download_command, hash_command, verify_command])
 +
 +    # Execute the download and verification
 +    ctx.actions.run_shell(
@@ -178,6 +186,7 @@ index 0000000..467a82e
 +        command = full_command,
 +        mnemonic = "DownloadAndVerify",
 +        progress_message = "Downloading and verifying test data from %s" % url,
++        arguments = ["/C" if is_windows else "-c", full_command],  # Specify the shell to use
 +    )
 +
 +    # Return the downloaded file as a provider
