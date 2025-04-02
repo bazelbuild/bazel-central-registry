@@ -698,7 +698,7 @@ class BcrValidator:
                     self.report(
                         BcrValidationResult.FAILED,
                         f"{module_name}'s metadata.json file has an invalid GitHub user ID for {github_username}\n"
-                        + f"Please add `\"github_user_id\": {github_user_id}` to the maintainer entry.",
+                        + f"Please add `\"github_user_id\": {github_user_id}` to the maintainer entry by running `bazel run //tools:bcr_validation -- --check_metadata={module_name} --fix`.",
                     )
                     if self.should_fix:
                         maintainer["github_user_id"] = github_user_id
