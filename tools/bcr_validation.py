@@ -164,6 +164,12 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
     Returns:
         True if the reference is found AND not spoofed; False otherwise
     """
+
+    # Make sure the reference is not a pull request
+    # e.g. refs/pull/1234/head
+    if re.match(r"^pull/\d+/head$", reference):
+        return False
+
     url = f"https://github.com/{repo_path}/latest-commit/{reference}"
     headers = {"Accept": "application/json"}
 
