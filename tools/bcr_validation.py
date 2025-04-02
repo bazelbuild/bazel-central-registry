@@ -641,12 +641,10 @@ class BcrValidator:
         self.verify_module_dot_bazel(module_name, version)
         self.verify_attestations(module_name, version)
 
-
     def validate_metadata(self, modules):
         print_expanded_group(f"Validating metadata.json files for {modules}")
         for module_name in modules:
             self.verify_metadata_json(module_name)
-
 
     def verify_metadata_json(self, module_name):
         """Verify the metadata.json file is valid."""
@@ -698,7 +696,7 @@ class BcrValidator:
                     self.report(
                         BcrValidationResult.FAILED,
                         f"{module_name}'s metadata.json file has an invalid GitHub user ID for {github_username}\n"
-                        + f"Please add `\"github_user_id\": {github_user_id}` to the maintainer entry by running `bazel run //tools:bcr_validation -- --check_metadata={module_name} --fix`.",
+                        + f'Please add `"github_user_id": {github_user_id}` to the maintainer entry by running `bazel run //tools:bcr_validation -- --check_metadata={module_name} --fix`.',
                     )
                     if self.should_fix:
                         maintainer["github_user_id"] = github_user_id
@@ -708,7 +706,6 @@ class BcrValidator:
                         BcrValidationResult.GOOD,
                         f"{module_name}'s metadata.json file has a valid GitHub user ID for {github_username}",
                     )
-
 
     def verify_attestations(self, module_name, version):
         print_expanded_group("Verifying attestations")
