@@ -1,9 +1,9 @@
 diff --git a/BUILD.bazel b/BUILD.bazel
 new file mode 100644
-index 0000000..d664911
+index 0000000..4bdf3a9
 --- /dev/null
 +++ b/BUILD.bazel
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,73 @@
 +load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 +
 +CJSON_COPTS = select({
@@ -15,7 +15,7 @@ index 0000000..d664911
 +    "@bazel_tools//src/conditions:linux": [
 +        "-std=c89",  # Standards compliance
 +        "-Wc++-compat",  # C++ compatibility
-+        "-fstack-protect-strong",  # Security (GCC/Clang on Linux supports this)
++        "-fstack-protector-strong",  # Security (GCC/Clang on Linux supports this)
 +        "-fvisibility=hidden",  # Symbol visibility
 +    ],
 +    "@bazel_tools//src/conditions:windows": [
@@ -59,7 +59,12 @@ index 0000000..d664911
 +    name = "cjson_test",
 +    size = "small",
 +    srcs = ["test.c"],
-+    copts = CJSON_COPTS + ["-fno-sanitize=float-divide-by-zero"],
++    copts = CJSON_COPTS + select({
++        "@platforms//os:windows": [],
++        "//conditions:default": [
++            "-fno-sanitize=float-divide-by-zero",
++        ],
++    }),
 +    deps = [":cjson"],
 +)
 +
@@ -246,22 +251,27 @@ index 0000000..6098b6c
 +    return test_targets
 diff --git a/tests/unity/BUILD.bazel b/tests/unity/BUILD.bazel
 new file mode 100644
-index 0000000..83faea1
+index 0000000..e8c4d59
 --- /dev/null
 +++ b/tests/unity/BUILD.bazel
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,27 @@
 +load("@rules_cc//cc:defs.bzl", "cc_library")
 +
 +cc_library(
 +    name = "unity",
 +    srcs = glob(["src/*.c"]),
 +    hdrs = glob(["src/*.h"]),
-+    copts = [
-+        "-Wno-error",  # Disable -Werror
-+        "-fvisibility=default",  # Disable -fvisibility=hidden
-+        "-fno-sanitize=float-divide-by-zero",  # GCC bug workaround
-+        "-Wno-switch-enum",  # Disable -Wswitch-enum
-+    ],
++    copts = select({
++        "@platforms//os:windows": [
++            "/wd4100",  # Disable warning C4100: unreferenced formal parameter (similar to -Wno-error)
++            "/wd4065",  # Disable warning C4065: switch statement contains default but no case (similar to -Wno-switch-enum)
++        ],
++        "//conditions:default": [
++            "-fvisibility=default",
++            "-fno-sanitize=float-divide-by-zero",
++            "-Wno-switch-enum",
++        ],
++    }),
 +    includes = ["src"],
 +    visibility = ["//tests:__pkg__"],
 +    deps = [":unity-examples"],
