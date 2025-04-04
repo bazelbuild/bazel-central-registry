@@ -33,6 +33,8 @@ from registry import integrity_for_comparison
 
 
 # TODO: Read these settings from a config file
+_GH_RELEASE_BUILDER_ID = "https://github.com/bazel-contrib/.github/.github/workflows/release_ruleset.yaml"
+_GH_PUBLISH_BUILDER_ID = "https://github.com/bazel-contrib/publish-to-bcr/.github/workflows/publish.yaml"
 _VSA_VERIFIER_ID = "https://bcid.corp.google.com/verifier/bcid_package_enforcer/v0.1"
 _VSA_VERIFIED_LEVEL = "SLSA_BUILD_LEVEL_2"
 _VSA_KEY_ID = "keystore://76574:prod:vsa_signing_public_key"
@@ -125,7 +127,6 @@ class Verifier:
                     ]
                 )
             )
-        # TODO: --builder-id, check blessed GHA action?
 
     def _download_binary_if_necessary(self):
         if self._executable.exists():
@@ -202,21 +203,21 @@ class Verifier:
         return result
 
     def _get_args(self, validated_type, attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
-        fname = "_get_vsa_args" if validated_type == PredicateType.VSA else "_get_provenance_args"
+        fname = "_get_vsa_args" if validated_type == PredicateType.VSA else "_get_github_att_args"
         return getattr(self, fname)(attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir)
 
-    def _get_provenance_args(self, provenance_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
+    def _get_github_att_args(self, attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
         artifact_path = self._download_artifact_if_required(artifact_url_or_path, tmp_dir)
         args = [
-            "--provenance-path",
-            provenance_path,
+            "--attestation-path",
+            attestation_path,
             "--source-uri",
             source_uri,
-            "--source-tag",
-            source_tag,
+            "--builder-id",
+            self._get_builder_id(artifact_path),
             artifact_path,
         ]
-        return "verify-artifact", args
+        return "verify-github-attestation", args
 
     def _download_artifact_if_required(self, url_or_path, tmp_dir):
         if not self._PROTOCOL_RE.match(url_or_path):
@@ -225,6 +226,13 @@ class Verifier:
         dest = os.path.join(tmp_dir, os.path.basename(url_or_path))
         download_file(url_or_path, dest)
         return dest
+
+    def _get_builder_id(self, artifact_path):
+        base = os.path.basename(artifact_path)
+        if base == "MODULE.bazel" or base == "source.json":
+            return _GH_PUBLISH_BUILDER_ID
+
+        return _GH_RELEASE_BUILDER_ID
 
     def _get_vsa_args(self, attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
         self._ensure_vsa_key_exists()
