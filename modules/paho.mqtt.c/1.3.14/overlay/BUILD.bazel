@@ -1,0 +1,162 @@
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cmake_configure_file(
+    name = "configure_version_info",
+    src = "src/VersionInfo.h.in",
+    out = "VersionInfo.h",
+    cmakelists = ["src/CMakeLists.txt"],
+    defines = [
+        "BUILD_TIMESTAMP=redacted",
+        "PROJECT_VERSION=" + module_version(),
+        "PROJECT_VERSION_MAJOR=" + module_version().split(".")[0],
+        "PROJECT_VERSION_MINOR=" + module_version().split(".")[1],
+        "PROJECT_VERSION_PATCH=" + module_version().split(".")[2],
+    ],
+    visibility = ["//visibility:private"],
+)
+
+_LINKOPTS = select({
+    "@platforms//os:linux": [
+        "-lpthread",
+        "-lrt",
+        "-ldl",
+    ],
+    "@platforms//os:macos": [
+        "-lpthread",
+        "-lm",
+    ],
+    "@platforms//os:windows": [
+        "-lws2_32",
+        "-lcrypt32",
+    ],
+    "//conditions:default": [],
+})
+
+_COPTS = select({
+    "@platforms//os:linux": [
+        "-D_GNU_SOURCE",
+        "-fvisibility=hidden",
+    ],
+    "@platforms//os:macos": ["-DOSX"],
+    "@platforms//os:windows": [
+        "-D_CRT_SECURE_NO_DEPRECATE",
+        "-DWIN32_LEAN_AND_MEAN",
+    ],
+    "//conditions:default": [],
+})
+
+_LOCAL_DEFINES = [
+    "OPENSSL",
+    "PAHO_MQTT_EXPORTS=1",
+]
+
+cc_library(
+    name = "common",
+    srcs = glob(
+        [
+            "src/*.c",
+            "src/*.h",
+        ],
+        exclude = [
+            "src/MQTTClient.c",
+            "src/MQTTAsync.c",
+            "src/MQTTAsyncUtils.c",
+            "src/MQTTVersion.c",
+            "src/MQTTAsync.h",
+            "src/MQTTAsyncUtils.h",
+            "src/SHA1.c",
+            "src/SSLSocket.c",
+        ],
+    ),
+    hdrs = [
+        "src/MQTTClientPersistence.h",
+        "src/MQTTExportDeclarations.h",
+        "src/MQTTProperties.h",
+        "src/MQTTReasonCodes.h",
+        "src/MQTTSubscribeOpts.h",
+    ],
+    local_defines = _LOCAL_DEFINES + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["USE_LIBUUID"],
+    }),
+    deps = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@libuuid"],
+    }) + [
+        "@boringssl//:crypto",
+        "@boringssl//:ssl",
+    ],
+)
+
+cc_library(
+    name = "mqtt3cs",
+    srcs = [
+        "VersionInfo.h",
+        "src/MQTTClient.c",
+        "src/SSLSocket.c",
+    ],
+    hdrs = [
+        "src/MQTTClient.h",
+        "src/SSLSocket.h",
+    ],
+    copts = _COPTS,
+    includes = ["src"],
+    linkopts = _LINKOPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        "@boringssl//:crypto",
+        "@boringssl//:ssl",
+    ],
+)
+
+alias(
+    name = "mqtt3c",
+    actual = ":mqtt3cs",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "mqtt3as",
+    srcs = [
+        "VersionInfo.h",
+        "src/MQTTAsync.c",
+        "src/MQTTAsyncUtils.c",
+        "src/SSLSocket.c",
+    ],
+    hdrs = [
+        "src/MQTTAsync.h",
+        "src/MQTTAsyncUtils.h",
+        "src/SSLSocket.h",
+    ],
+    copts = _COPTS,
+    includes = ["src"],
+    linkopts = _LINKOPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        "@boringssl//:crypto",
+        "@boringssl//:ssl",
+    ],
+)
+
+alias(
+    name = "mqtt3a",
+    actual = ":mqtt3as",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "MQTTVersion",
+    srcs = ["src/MQTTVersion.c"],
+    linkshared = True,
+    linkstatic = False,
+    local_defines = ["PAHO_MQTT_IMPORTS=1"],
+    deps = [
+        ":mqtt3as",
+        ":mqtt3cs",
+    ],
+)
