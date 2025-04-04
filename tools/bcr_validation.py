@@ -208,9 +208,12 @@ def check_github_url(repo_path, source_url):
     return reference and is_ref_in_original_repo(repo_path, reference)
 
 
+# Global cache for GitHub user IDs
+GITHUB_USER_ID_CACHE = {}
+
 def get_github_user_id(github_username):
     """
-    Get the GitHub user ID for a given GitHub username.
+    Get the GitHub user ID for a given GitHub username, with caching.
 
     Args:
         github_username: The GitHub username to look up.
@@ -218,6 +221,9 @@ def get_github_user_id(github_username):
     Returns:
         The GitHub user ID if found, otherwise None.
     """
+    if github_username in GITHUB_USER_ID_CACHE:
+        return GITHUB_USER_ID_CACHE[github_username]
+
     url = f"https://api.github.com/users/{github_username}"
     headers = {}
     github_token = os.getenv("GITHUB_TOKEN")
@@ -225,7 +231,9 @@ def get_github_user_id(github_username):
         headers["Authorization"] = f"token {github_token}"
     response = requests.get(url, headers=headers)
     if response.status_code == 200:
-        return response.json().get("id")
+        user_id = response.json().get("id")
+        GITHUB_USER_ID_CACHE[github_username] = user_id
+        return user_id
     return None
 
 
