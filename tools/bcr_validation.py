@@ -889,7 +889,8 @@ def main(argv=None):
         validator.validate_metadata(validator.registry.get_all_modules())
     else:
         # Validate metadata.json for given modules and all modified modules.
-        modules_to_validate = set(args.check_metadata + [name for name, _ in module_versions])
+        modules = [] if not args.check_metadata else args.check_metadata
+        modules_to_validate = set(modules + [name for name, _ in module_versions])
         validator.validate_metadata(list(modules_to_validate))
 
     # Perform some global checks
