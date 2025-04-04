@@ -208,6 +208,27 @@ def check_github_url(repo_path, source_url):
     return reference and is_ref_in_original_repo(repo_path, reference)
 
 
+def get_github_user_id(github_username):
+    """
+    Get the GitHub user ID for a given GitHub username.
+
+    Args:
+        github_username: The GitHub username to look up.
+
+    Returns:
+        The GitHub user ID if found, otherwise None.
+    """
+    url = f"https://api.github.com/users/{github_username}"
+    headers = {}
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token:
+        headers["Authorization"] = f"token {github_token}"
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.json().get("id")
+    return None
+
+
 class BcrValidationException(Exception):
     """
     Raised whenever we should stop the validation immediately.
@@ -620,50 +641,71 @@ class BcrValidator:
         self.verify_module_dot_bazel(module_name, version)
         self.verify_attestations(module_name, version)
 
-    def validate_all_metadata(self):
-        print_expanded_group("Validating all metadata.json files")
-        has_error = False
-        for module_name in self.registry.get_all_modules():
-            try:
-                metadata = self.registry.get_metadata(module_name)
-            except json.JSONDecodeError as e:
+    def validate_metadata(self, modules):
+        print_expanded_group(f"Validating metadata.json files for {modules}")
+        for module_name in modules:
+            self.verify_metadata_json(module_name)
+
+    def verify_metadata_json(self, module_name):
+        """Verify the metadata.json file is valid."""
+        try:
+            metadata = self.registry.get_metadata(module_name)
+        except json.JSONDecodeError as e:
+            self.report(
+                BcrValidationResult.FAILED,
+                f"Failed to load {module_name}'s metadata.json file: " + str(e),
+            )
+            return
+
+        sorted_versions = sorted(metadata["versions"], key=Version)
+        if sorted_versions != metadata["versions"]:
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}'s metadata.json file is not sorted by version.\n "
+                f"Sorted versions: {sorted_versions}.\n "
+                f"Original versions: {metadata['versions']}",
+            )
+
+        for version in metadata["versions"]:
+            if not self.registry.contains(module_name, version):
                 self.report(
                     BcrValidationResult.FAILED,
-                    f"Failed to load {module_name}'s metadata.json file: " + str(e),
+                    f"{module_name}@{version} doesn't exist, "
+                    f"but it's recorded in {module_name}'s metadata.json file.",
                 )
-                has_error = True
-                continue
 
-            sorted_versions = sorted(metadata["versions"], key=Version)
-            if sorted_versions != metadata["versions"]:
-                self.report(
-                    BcrValidationResult.FAILED,
-                    f"{module_name}'s metadata.json file is not sorted by version.\n "
-                    f"Sorted versions: {sorted_versions}.\n "
-                    f"Original versions: {metadata['versions']}",
-                )
-                has_error = True
+        latest_version = metadata["versions"][-1]
+        if not metadata.get("deprecated") and latest_version in metadata.get("yanked_versions", {}):
+            self.report(
+                BcrValidationResult.FAILED,
+                f"The latest version ({latest_version}) of {module_name} should not be yanked, "
+                f"please make sure a newer version is available before yanking it.",
+            )
 
-            for version in metadata["versions"]:
-                if not self.registry.contains(module_name, version):
+        maintainers = metadata.get("maintainers", [])
+        for maintainer in maintainers:
+            if "github" in maintainer:
+                github_username = maintainer["github"]
+                print("checking github user id for %s" % github_username)
+                github_user_id = get_github_user_id(github_username)
+                if github_user_id is None:
+                    raise BcrValidationException(
+                        f"Failed to get GitHub user ID for {github_username}. Please check the username."
+                    )
+                if github_user_id != maintainer.get("github_user_id"):
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"{module_name}@{version} doesn't exist, "
-                        f"but it's recorded in {module_name}'s metadata.json file.",
+                        f"{module_name}'s metadata.json file has an invalid GitHub user ID for {github_username}\n"
+                        + f'Please add `"github_user_id": {github_user_id}` to the maintainer entry by running `bazel run //tools:bcr_validation -- --check_metadata={module_name} --fix`.',
                     )
-                    has_error = True
-
-            latest_version = metadata["versions"][-1]
-            if not metadata.get("deprecated") and latest_version in metadata.get("yanked_versions", {}):
-                self.report(
-                    BcrValidationResult.FAILED,
-                    f"The latest version ({latest_version}) of {module_name} should not be yanked, "
-                    f"please make sure a newer version is available before yanking it.",
-                )
-                has_error = True
-
-        if not has_error:
-            self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
+                    if self.should_fix:
+                        maintainer["github_user_id"] = github_user_id
+                        self.registry.get_metadata_path(module_name).write_text(json.dumps(metadata, indent=4) + "\n")
+                else:
+                    self.report(
+                        BcrValidationResult.GOOD,
+                        f"{module_name}'s metadata.json file has a valid GitHub user ID for {github_username}",
+                    )
 
     def verify_attestations(self, module_name, version):
         print_expanded_group("Verifying attestations")
@@ -774,6 +816,11 @@ def main(argv=None):
         help="Check all Bazel modules in the registry, ignore other --check flags.",
     )
     parser.add_argument(
+        "--check_metadata",
+        action="append",
+        help="Check metadata for given modules in the registry.",
+    )
+    parser.add_argument(
         "--check_all_metadata",
         action="store_true",
         help="Check all Bazel module metadata in the registry.",
@@ -796,7 +843,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    if not args.check_all and not args.check and not args.check_all_metadata:
+    if not args.check_all and not args.check and not args.check_all_metadata and not args.check_metadata:
         parser.print_help()
         return -1
 
@@ -818,7 +865,12 @@ def main(argv=None):
         validator.validate_module(name, version, args.skip_validation)
 
     if args.check_all_metadata:
-        validator.validate_all_metadata()
+        # Validate all metadata.json
+        validator.validate_metadata(validator.registry.get_all_modules())
+    else:
+        # Validate metadata.json for given modules and all modified modules.
+        modules_to_validate = set(args.check_metadata + [name for name, _ in module_versions])
+        validator.validate_metadata(list(modules_to_validate))
 
     # Perform some global checks
     validator.global_checks()

@@ -9,6 +9,7 @@ The BCR follows the format of a regular [Bazel registry](https://bazel.build/ext
 - Extra metadata.json fields (see [JSON schema](https://github.com/bazelbuild/bazel-central-registry/blob/main/metadata.schema.json)):
   - `maintainers`: an array of JSON objects, each representing a module maintainer. Each object can have the following fields:
     - `github`: a string, the maintainer's GitHub username. This is used to `@`-ping the maintainer when a PR updating the module is sent, and determines whether a GitHub user has approval rights for a PR (see [approval and submission](#approval-and-submission) below).
+    - `github_user_id`: a number, the maintainer's GitHub ID number. This is used to verify the maintainer's identity in case of GitHub username change or deletion. Run `bazel run //tools:bcr_validation -- --check_metadata=foo --fix` to update it for the module `foo`.
     - `name`: a string, the maintainer's name. Purely informational.
     - `email`: a string, the maintainer's email address. Purely informational.
     - `do_not_notify`: a boolean. When set to `true`, the maintainer will still have approval rights, but will not be `@`-pinged when a PR for the module is sent.
