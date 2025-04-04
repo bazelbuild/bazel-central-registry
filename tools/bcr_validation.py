@@ -83,6 +83,9 @@ ATTESTATIONS_DOCS_URL = "https://github.com/bazelbuild/bazel-central-registry/bl
 
 GITHUB_REPO_RE = re.compile(r"^(https://github.com/|github:)([^/]+/[^/]+)$")
 
+# Global cache for GitHub user IDs
+GITHUB_USER_ID_CACHE = {}
+
 
 def print_collapsed_group(name):
     print("\n\n--- {0}\n\n".format(name))
@@ -207,9 +210,6 @@ def check_github_url(repo_path, source_url):
     reference = extract_reference(repo_path, normalized_path)
     return reference and is_ref_in_original_repo(repo_path, reference)
 
-
-# Global cache for GitHub user IDs
-GITHUB_USER_ID_CACHE = {}
 
 def get_github_user_id(github_username):
     """
