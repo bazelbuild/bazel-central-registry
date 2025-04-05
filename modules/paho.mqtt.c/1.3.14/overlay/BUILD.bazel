@@ -15,136 +15,76 @@ cmake_configure_file(
     ],
 )
 
-_LINKOPTS = select({
-    "@platforms//os:linux": [
-        "-lpthread",
-        "-lrt",
-        "-ldl",
+_COMMON_SRCS = ["VersionInfo.h"] + glob(
+    [
+        "src/*.c",
+        "src/*.h",
     ],
-    "@platforms//os:macos": [
-        "-lpthread",
-        "-lm",
+    exclude = [
+        "src/MQTTClient.c",
+        "src/MQTTAsync.c",
+        "src/MQTTAsyncUtils.c",
+        "src/MQTTVersion.c",
+        "src/MQTTAsync.h",
+        "src/MQTTAsyncUtils.h",
     ],
-    "@platforms//os:windows": [
-        "-lws2_32",
-        "-lcrypt32",
-    ],
-    "//conditions:default": [],
-})
+)
 
-_COPTS = select({
-    "@platforms//os:linux": [
-        "-D_GNU_SOURCE",
-        "-fvisibility=hidden",
-    ],
-    "@platforms//os:macos": ["-DOSX"],
-    "@platforms//os:windows": [
-        "-D_CRT_SECURE_NO_DEPRECATE",
-        "-DWIN32_LEAN_AND_MEAN",
-    ],
-    "//conditions:default": [],
-})
+_COMMON_HDRS = [
+    "src/MQTTClientPersistence.h",
+    "src/MQTTExportDeclarations.h",
+    "src/MQTTProperties.h",
+    "src/MQTTReasonCodes.h",
+    "src/MQTTSubscribeOpts.h",
+    "src/MQTTClient.h",
+]
 
 _LOCAL_DEFINES = [
     "OPENSSL",
     "PAHO_MQTT_EXPORTS=1",
-]
+] + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["USE_LIBUUID"],
+})
 
-cc_library(
-    name = "common",
-    srcs = glob(
-        [
-            "src/*.c",
-            "src/*.h",
-        ],
-        exclude = [
-            "src/MQTTClient.c",
-            "src/MQTTAsync.c",
-            "src/MQTTAsyncUtils.c",
-            "src/MQTTVersion.c",
-            "src/MQTTAsync.h",
-            "src/MQTTAsyncUtils.h",
-            "src/SHA1.c",
-            "src/SSLSocket.c",
-        ],
-    ),
-    hdrs = [
-        "src/MQTTClientPersistence.h",
-        "src/MQTTExportDeclarations.h",
-        "src/MQTTProperties.h",
-        "src/MQTTReasonCodes.h",
-        "src/MQTTSubscribeOpts.h",
-    ],
-    local_defines = _LOCAL_DEFINES + select({
-        "@platforms//os:windows": [],
-        "//conditions:default": ["USE_LIBUUID"],
-    }),
-    deps = select({
-        "@platforms//os:windows": [],
-        "//conditions:default": ["@libuuid"],
-    }) + [
-        "@boringssl//:crypto",
-        "@boringssl//:ssl",
-    ],
-)
+_DEPS = [
+    "@boringssl//:crypto",
+    "@boringssl//:ssl",
+] + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["@libuuid"],
+})
 
 cc_library(
     name = "mqtt3cs",
-    srcs = [
-        "VersionInfo.h",
-        "src/MQTTClient.c",
-        "src/SSLSocket.c",
-    ],
-    hdrs = [
-        "src/MQTTClient.h",
-        "src/SSLSocket.h",
-    ],
-    copts = _COPTS,
+    srcs = _COMMON_SRCS + ["src/MQTTClient.c"],
+    hdrs = _COMMON_HDRS,
     includes = ["src"],
-    linkopts = _LINKOPTS,
     local_defines = _LOCAL_DEFINES,
     visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        "@boringssl//:crypto",
-        "@boringssl//:ssl",
-    ],
-)
-
-alias(
-    name = "mqtt3c",
-    actual = ":mqtt3cs",
-    visibility = ["//visibility:public"],
+    deps = _DEPS,
 )
 
 cc_library(
     name = "mqtt3as",
-    srcs = [
-        "VersionInfo.h",
+    srcs = _COMMON_SRCS + [
         "src/MQTTAsync.c",
         "src/MQTTAsyncUtils.c",
-        "src/SSLSocket.c",
     ],
-    hdrs = [
+    hdrs = _COMMON_HDRS + [
         "src/MQTTAsync.h",
         "src/MQTTAsyncUtils.h",
-        "src/SSLSocket.h",
     ],
-    copts = _COPTS,
     includes = ["src"],
-    linkopts = _LINKOPTS,
     local_defines = _LOCAL_DEFINES,
     visibility = ["//visibility:public"],
-    deps = [
-        ":common",
-        "@boringssl//:crypto",
-        "@boringssl//:ssl",
-    ],
+    deps = _DEPS,
 )
 
 alias(
-    name = "mqtt3a",
+    name = "paho.mqtt.c",
     actual = ":mqtt3as",
+    visibility = ["//visibility:public"],
 )
 
 # TODO: this doesn't seem to work yet...
@@ -154,7 +94,6 @@ cc_binary(
     linkshared = True,
     linkstatic = False,
     local_defines = ["PAHO_MQTT_IMPORTS=1"],
-    visibility = ["//visibility:public"],
     deps = [
         ":mqtt3as",
         ":mqtt3cs",
