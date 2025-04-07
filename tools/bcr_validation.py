@@ -488,6 +488,12 @@ class BcrValidator:
                         f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, "
                         f"but the real integrity value is `{actual_integrity}`.",
                     )
+                if patch_file.is_symlink():
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"The patch file `{patch_name}` is a symlink to `{patch_file.readlink()}`, "
+                        "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
+                    )
                 apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
@@ -500,6 +506,12 @@ class BcrValidator:
 
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
+                if overlay_src != module_file and overlay_src.is_symlink():
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"The overlay file `{overlay_file}` is a symlink to `{overlay_src.readlink()}`, "
+                        "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
+                    )
                 overlay_dst = source_root / overlay_file
                 try:
                     overlay_dst.resolve().relative_to(source_root.resolve())
@@ -877,7 +889,8 @@ def main(argv=None):
         validator.validate_metadata(validator.registry.get_all_modules())
     else:
         # Validate metadata.json for given modules and all modified modules.
-        modules_to_validate = set(args.check_metadata + [name for name, _ in module_versions])
+        modules = [] if not args.check_metadata else args.check_metadata
+        modules_to_validate = set(modules + [name for name, _ in module_versions])
         validator.validate_metadata(list(modules_to_validate))
 
     # Perform some global checks
