@@ -185,6 +185,8 @@ Flags matching the current Bazel version being used will be tested in the same j
 
 To temporarily skip the incompatible flags testing, you can add `@bazel-io skip_check incompatible_flags` in the PR comment and then a `skip-incompatible-flags-test` label will be attached to the PR. This will skip the incompatible flags testing for all jobs in the presubmit and allow you to migrate in the future.
 
+For a more comprehensive result of testing top BCR modules with incompatible flags, you can check the nightly build of [BCR Bazel Compatibility Test](https://buildkite.com/bazel/bcr-bazel-compatibility-test).
+
 ## Approval and submission
 
 To be submitted, a PR needs to:
