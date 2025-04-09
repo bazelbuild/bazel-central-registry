@@ -162,6 +162,29 @@ bazel run //tools:setup_presubmit_repos -- --module <module_name>@<version>
 
 Then follow the instructions to run the build locally.
 
+### Testing incompatible flags
+
+Major breaking changes are guarded by [incompatible flags](https://bazel.build/release/backward-compatibility) in Bazel. To help the community migrate, we test new modules with those flags with Bazelisk's [--migrate](https://github.com/bazelbuild/bazelisk/tree/master?tab=readme-ov-file#--migrate) feature in BCR presubmit by default.
+
+The flags to be tested are fetched from [incompatible_flag.yml](/incompatible_flags.yml) by default, but can be overridden by the `presubmit.yml` file of a specify module version.
+
+In the YAML files, you can specify an `incompatible_flags` field in the format of:
+
+```yaml
+incompatible_flags:
+  "--incompatible_config_setting_private_default_visibility":
+    - 6.x
+    - 7.x
+    - 8.x
+  "--incompatible_autoload_externally=":
+    - 7.x
+    - 8.x
+```
+
+Flags matching the current Bazel version being used will be tested in the same job in presubmit. This applies to both the [anonymous module](#anonymous-module-test) and the [test module](#test-module).
+
+To temporarily skip the incompatible flags testing, you can add `@bazel-io skip_check incompatible_flags` in the PR comment and then a `skip-incompatible-flags-test` label will be attached to the PR. This will skip the incompatible flags testing for all jobs in the presubmit and allow you to migrate in the future.
+
 ## Approval and submission
 
 To be submitted, a PR needs to:
