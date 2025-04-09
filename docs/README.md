@@ -168,7 +168,7 @@ Major breaking changes are guarded by [incompatible flags](https://bazel.build/r
 
 The flags to be tested are fetched from [incompatible_flag.yml](/incompatible_flags.yml) by default, but can be overridden by the `presubmit.yml` file of a specify module version.
 
-In the YAML files, you can specify an top-level `incompatible_flags` field in the format of:
+In the YAML files, you can specify a top-level `incompatible_flags` field in the format of:
 
 ```yaml
 incompatible_flags:
