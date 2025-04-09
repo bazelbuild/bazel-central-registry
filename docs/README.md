@@ -164,7 +164,7 @@ Then follow the instructions to run the build locally.
 
 ### Testing incompatible flags
 
-Major breaking changes are guarded by [incompatible flags](https://bazel.build/release/backward-compatibility) in Bazel. To help the community migrate, we test new modules with those flags with Bazelisk's [--migrate](https://github.com/bazelbuild/bazelisk/tree/master?tab=readme-ov-file#--migrate) feature in BCR presubmit by default.
+Major breaking changes in Bazel are guarded by [incompatible flags](https://bazel.build/release/backward-compatibility). To help the community migrate, we test new modules against incompatible flags with Bazelisk's [--migrate](https://github.com/bazelbuild/bazelisk/tree/master?tab=readme-ov-file#--migrate) feature in BCR presubmit to give module maintainers a heads-up.
 
 The flags to be tested are fetched from [incompatible_flag.yml](/incompatible_flags.yml) by default, but can be overridden by the `presubmit.yml` file of a specify module version.
 
