@@ -1,3 +1,4 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load(
     "@cmake_configure_file//:cmake_configure_file.bzl",
@@ -53,14 +54,6 @@ config_setting(
     visibility = ["//visibility:public"],
 )
 
-config_setting(
-    name = "osqp_use_long",
-    flag_values = {
-        ":use_float": "false",
-    },
-    visibility = ["//visibility:public"],
-)
-
 string_flag(
     name = "embedded_mode",
     build_setting_default = "0",
@@ -83,6 +76,7 @@ config_setting(
     name = "osqp_embedded_mode_vector_update",
     flag_values = {
         ":embedded_mode": "1",
+        ":algebra_backend": "builtin",
     },
     visibility = ["//visibility:public"],
 )
@@ -91,8 +85,117 @@ config_setting(
     name = "osqp_embedded_mode_vector_matrix_update",
     flag_values = {
         ":embedded_mode": "2",
+        ":algebra_backend": "builtin",
     },
     visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "printing",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "osqp_enable_printing",
+    flag_values = {
+        "embedded_mode": "0",
+        ":printing": "true",
+    },
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "profiling",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "osqp_enable_profiling",
+    flag_values = {
+        "embedded_mode": "0",
+        ":profiling": "true",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_enable_profiling_windows",
+    constraint_values = [
+        "@platforms//os:windows",
+    ],
+    flag_values = {
+        "embedded_mode": "0",
+        ":profiling": "true",
+    },
+)
+
+config_setting(
+    name = "osqp_enable_profiling_macos",
+    constraint_values = [
+        "@platforms//os:macos",
+    ],
+    flag_values = {
+        "embedded_mode": "0",
+        ":profiling": "true",
+    },
+)
+
+config_setting(
+    name = "osqp_enable_profiling_linux",
+    constraint_values = [
+        "@platforms//os:linux",
+    ],
+    flag_values = {
+        "embedded_mode": "0",
+        ":profiling": "true",
+    },
+)
+
+bool_flag(
+    name = "interrupt",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "osqp_enable_interrupt",
+    flag_values = {
+        "embedded_mode": "0",
+        ":interrupt": "true",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_enable_interrupt_windows",
+    constraint_values = [
+        "@platforms//os:windows",
+    ],
+    flag_values = {
+        "embedded_mode": "0",
+        ":interrupt": "true",
+    },
+)
+
+config_setting(
+    name = "osqp_enable_interrupt_macos",
+    constraint_values = [
+        "@platforms//os:macos",
+    ],
+    flag_values = {
+        "embedded_mode": "0",
+        ":interrupt": "true",
+    },
+)
+
+config_setting(
+    name = "osqp_enable_interrupt_linux",
+    constraint_values = [
+        "@platforms//os:linux",
+    ],
+    flag_values = {
+        "embedded_mode": "0",
+        ":interrupt": "true",
+    },
 )
 
 # Generates osqp_configure.h based on the defines= we want in Drake.
@@ -104,7 +207,7 @@ cmake_configure_file(
         "@platforms//os:windows": [
             "IS_WINDOWS",
         ],
-        "@platforms//os:osx": [
+        "@platforms//os:macos": [
             "IS_MAC",
         ],
         "//conditions:default": [
@@ -124,17 +227,29 @@ cmake_configure_file(
         ":osqp_use_float": [
             "OSQP_USE_FLOAT",
         ],
-        ":osqp_use_long": [
+        "//conditions:default": [
             "OSQP_USE_LONG",
         ],
     }) + select({
-        ":osqp_embedded_mode_disable": [
-        ],
         ":osqp_embedded_mode_vector_update": [
             "OSQP_EMBEDDED_MODE=1",
         ],
         ":osqp_embedded_mode_vector_matrix_update": [
             "OSQP_EMBEDDED_MODE=2",
+        ],
+        "//conditions:default": [
+        ],
+    }) + select({
+        ":osqp_enable_printing": [
+            "OSQP_ENABLE_PRINTING",
+        ],
+        "//conditions:default": [
+        ],
+    }) + select({
+        ":osqp_enable_profiling": [
+            "OSQP_ENABLE_PROFILING",
+        ],
+        "//conditions:default": [
         ],
     }),
     undefines = [
@@ -181,17 +296,25 @@ cc_library(
             "src/timing_*",
         ],
     ) + select({
-        "@platforms//os:windows": [
-            "src/interrupt_windows.c",
+        ":osqp_enable_profiling_windows": [
             "src/timing_windows.c",
         ],
-        "@platforms//os:osx": [
-            "src/interrupt_unix.c",
+        ":osqp_enable_profiling_macos": [
             "src/timing_macos.c",
         ],
-        "//conditions:default": [
-            "src/interrupt_unix.c",
+        ":osqp_enable_profiling_linux": [
             "src/timing_linux.c",
+        ],
+        "//conditions:default": [
+        ],
+    }) + selects.with_or({
+        ":osqp_enable_interrupt_windows": [
+            "src/interrupt_windows.c",
+        ],
+        ("osqp_enable_interrupt_linux", ":osqp_enable_interrupt_macos"): [
+            "src/interrupt_unix.c",
+        ],
+        "//conditions:default": [
         ],
     }) + select({
         ":osqp_algebra_builtin": glob([
@@ -203,11 +326,11 @@ cc_library(
         ":osqp_algebra_mkl": glob([
             "algebra/mkl/*.c",
         ]),
-    }) + select({
-        ":osqp_embedded_mode_disable": [
+    }) + selects.with_or({
+        (":osqp_embedded_mode_vector_update", ":osqp_embedded_mode_vector_matrix_update"): [],
+        "//conditions:default": [
             "src/polish.c",
         ] + _LIN_SYS_QDLDL_NON_EMBEDDED_SRC_FILES,
-        "//conditions:default": [],
     }),
     hdrs = glob([
         "include/public/*.h",
@@ -225,7 +348,6 @@ cc_library(
     copts = select({
         "@platforms//os:windows": [],
         "//conditions:default": [
-            # "-fvisibility=hidden",
             "-w",
             "-Werror=incompatible-pointer-types",
         ],
@@ -253,9 +375,6 @@ cc_library(
         ":osqp_algebra_builtin": [
             "@qdldl",
         ],
-        ":osqp_algebra_cuda": [
-        ],
-        ":osqp_algebra_mkl": [
-        ],
+        "//conditions:default": [],
     }),
 )
