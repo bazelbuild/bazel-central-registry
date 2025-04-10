@@ -187,6 +187,8 @@ If you need to temporarily skip incompatible flags testing, you can comment `@ba
 
 For an overview result of testing top BCR modules with incompatible flags, you can check the nightly build of [BCR Bazel Compatibility Test](https://buildkite.com/bazel/bcr-bazel-compatibility-test).
 
+Before adding a flag in [incompatible_flag.yml](/incompatible_flags.yml), please make sure the most commonly used modules are fixed, otherwise migration for other modules will be blocked without any workaround.
+
 ## Approval and submission
 
 To be submitted, a PR needs to:
