@@ -11,7 +11,6 @@ license(
     license_kinds = ["@rules_license//licenses/spdx:0BSD"],
 )
 
-
 COPTS = [
     "-I.",
     "-funsigned-char",
@@ -55,22 +54,28 @@ cc_library(
     name = "toybox_toys_lib",
     srcs = [
         "generated/tags.h",
-    ] + glob([
-        "toys/lsb/*.c",
-        "toys/net/*.c",
-        "toys/other/*.c",
-        "toys/posix/*.c",
-    ], exclude=["toys/lsb/passwd.c", "toys/other/chcon.c",],),
+    ] + glob(
+        [
+            "toys/lsb/*.c",
+            "toys/net/*.c",
+            "toys/other/*.c",
+            "toys/posix/*.c",
+        ],
+        exclude = [
+            "toys/lsb/passwd.c",
+            "toys/other/chcon.c",
+        ],
+    ),
     copts = COPTS,
-    #includes = INCLUDES,
-    alwayslink = 1,
+    linkopts = ["-lresolv"],
     textual_hdrs = [
         "toys.h",
     ],
-    linkopts = ["-lresolv",],
     deps = [
         ":toybox_helper_lib",
     ],
+    #includes = INCLUDES,
+    alwayslink = 1,
 )
 
 cc_binary(
@@ -96,4 +101,3 @@ cc_binary(
         ":toybox_toys_lib",
     ],
 )
-
