@@ -136,7 +136,9 @@ class Verifier:
 
         url = self._get_url()
         raw_content = download(url)
-        self._check_sha256sum(raw_content, os.path.basename(url))
+
+        # TODO(fweikert): Re-enable once we use a stable release.
+        # self._check_sha256sum(raw_content, os.path.basename(url))
 
         with open(self._executable, "wb") as f:
             f.write(raw_content)
