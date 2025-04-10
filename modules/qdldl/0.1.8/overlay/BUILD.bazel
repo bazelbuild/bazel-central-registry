@@ -3,6 +3,7 @@
 # All components of Drake are licensed under the BSD 3-Clause License.
 # See LICENSE.TXT or https://drake.mit.edu/ for details.
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load(
     "@cmake_configure_file//:cmake_configure_file.bzl",
     "cmake_configure_file",
@@ -11,8 +12,28 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 licenses(["notice"])
 
-package(
-    default_visibility = ["//visibility:public"],
+bool_flag(
+    name = "use_float",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "qdldl_use_float",
+    flag_values = {
+        ":use_float": "true",
+    },
+)
+
+bool_flag(
+    name = "use_long",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "qdldl_use_long",
+    flag_values = {
+        ":use_long": "true",
+    },
 )
 
 cmake_configure_file(
@@ -22,17 +43,27 @@ cmake_configure_file(
     # https://github.com/osqp/qdldl/blob/v0.1.6/README.md#custom-types-for-integer-floats-and-booleans
     defines = [
         "QDLDL_BOOL_TYPE=unsigned char",
-        # Keep the `int` type sync'd with the build of @osqp_internal and
-        # @scs_internal. See drake/tools/workspace/qdldl_internal/README.md.
-        "QDLDL_INT_TYPE=long long",
-        # Keep the `int` type sync'd with the build of @osqp_internal and
-        # @scs_internal. See drake/tools/workspace/qdldl_internal/README.md.
-        "QDLDL_FLOAT_TYPE=double",
-        "QDLDL_FLOAT=0",
-        # Match this to QDLDL_INT_TYPE above.
-        "QDLDL_INT_TYPE_MAX=LLONG_MAX",
-    ],
-    visibility = ["//visibility:private"],
+    ] + select({
+        ":qdldl_use_float": [
+            "QDLDL_FLOAT_TYPE=float",
+            "QDLDL_FLOAT=1",
+        ],
+        "//conditions:default": [
+            "QDLDL_FLOAT_TYPE=double",
+            "QDLDL_FLOAT=0",
+        ],
+    }) + select({
+        ":qdldl_use_long": [
+            "QDLDL_INT_TYPE=long long",
+            "QDLDL_INT_TYPE_MAX=LLONG_MAX",
+            "QDLDL_LONG=1",
+        ],
+        "//conditions:default": [
+            "QDLDL_INT_TYPE=int",
+            "QDLDL_INT_TYPE_MAX=INT_MAX",
+            "QDLDL_LONG=0",
+        ],
+    }),
 )
 
 cmake_configure_file(
@@ -69,4 +100,5 @@ cc_library(
     includes = [
         "include",
     ],
+    visibility = ["//visibility:public"],
 )
