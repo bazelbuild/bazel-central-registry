@@ -42,7 +42,7 @@ config_setting(
 
 bool_flag(
     name = "use_float",
-    build_setting_default = True,
+    build_setting_default = False,
 )
 
 config_setting(
@@ -57,6 +57,40 @@ config_setting(
     name = "osqp_use_long",
     flag_values = {
         ":use_float": "false",
+    },
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "embedded_mode",
+    build_setting_default = "0",
+    values = [
+        "0",
+        "1",
+        "2",
+    ],
+)
+
+config_setting(
+    name = "osqp_embedded_mode_disable",
+    flag_values = {
+        ":embedded_mode": "0",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_embedded_mode_vector_update",
+    flag_values = {
+        ":embedded_mode": "1",
+    },
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "osqp_embedded_mode_vector_matrix_update",
+    flag_values = {
+        ":embedded_mode": "2",
     },
     visibility = ["//visibility:public"],
 )
@@ -93,6 +127,15 @@ cmake_configure_file(
         ":osqp_use_long": [
             "OSQP_USE_LONG",
         ],
+    }) + select({
+        ":osqp_embedded_mode_disable": [
+        ],
+        ":osqp_embedded_mode_vector_update": [
+            "OSQP_EMBEDDED_MODE=1",
+        ],
+        ":osqp_embedded_mode_vector_matrix_update": [
+            "OSQP_EMBEDDED_MODE=2",
+        ],
     }),
     undefines = [
         "OSQP_CUSTOM_MEMORY",
@@ -120,47 +163,52 @@ _LIN_SYS_QDLDL_EMBEDDED_SRC_FILES = [
 cc_library(
     name = "osqp",
     srcs = glob(
-               [
-                   "src/*.c",
-                   "algebra/_common/csc_math.h",
-                   "algebra/_common/csc_math.c",
-                   "algebra/_common/csc_utils.h",
-                   "algebra/_common/csc_utils.c",
-                   "algebra/_common/reduced_kkt.h",
-                   "algebra/_common/reduced_kkt.c",
-               ],
-               exclude = [
-                   "src/codegen.c",
-                   "src/derivative.c",
-                   "src/interrupt_*",
-                   "src/profilers_*",
-                   "src/timing_*",
-               ],
-           ) + select({
-               "@platforms//os:windows": [
-                   "src/interrupt_windows.c",
-                   "src/timing_windows.c",
-               ],
-               "@platforms//os:osx": [
-                   "src/interrupt_unix.c",
-                   "src/timing_macos.c",
-               ],
-               "//conditions:default": [
-                   "src/interrupt_unix.c",
-                   "src/timing_linux.c",
-               ],
-           }) +
-           select({
-               ":osqp_algebra_builtin": glob([
-                   "algebra/builtin/*.c",
-               ]) + _LIN_SYS_QDLDL_EMBEDDED_SRC_FILES,
-               ":osqp_algebra_cuda": glob([
-                   "algebra/cuda/*.cu",
-               ]),
-               ":osqp_algebra_mkl": glob([
-                   "algebra/mkl/*.c",
-               ]),
-           }),
+        [
+            "src/*.c",
+            "algebra/_common/csc_math.h",
+            "algebra/_common/csc_math.c",
+            "algebra/_common/csc_utils.h",
+            "algebra/_common/csc_utils.c",
+            "algebra/_common/reduced_kkt.h",
+            "algebra/_common/reduced_kkt.c",
+        ],
+        exclude = [
+            "src/codegen.c",
+            "src/derivative.c",
+            "src/polish.c",
+            "src/interrupt_*",
+            "src/profilers_*",
+            "src/timing_*",
+        ],
+    ) + select({
+        "@platforms//os:windows": [
+            "src/interrupt_windows.c",
+            "src/timing_windows.c",
+        ],
+        "@platforms//os:osx": [
+            "src/interrupt_unix.c",
+            "src/timing_macos.c",
+        ],
+        "//conditions:default": [
+            "src/interrupt_unix.c",
+            "src/timing_linux.c",
+        ],
+    }) + select({
+        ":osqp_algebra_builtin": glob([
+            "algebra/builtin/*.c",
+        ]) + _LIN_SYS_QDLDL_EMBEDDED_SRC_FILES,
+        ":osqp_algebra_cuda": glob([
+            "algebra/cuda/*.cu",
+        ]),
+        ":osqp_algebra_mkl": glob([
+            "algebra/mkl/*.c",
+        ]),
+    }) + select({
+        ":osqp_embedded_mode_disable": [
+            "src/polish.c",
+        ] + _LIN_SYS_QDLDL_NON_EMBEDDED_SRC_FILES,
+        "//conditions:default": [],
+    }),
     hdrs = glob([
         "include/public/*.h",
     ]) + select({
@@ -177,7 +225,7 @@ cc_library(
     copts = select({
         "@platforms//os:windows": [],
         "//conditions:default": [
-            "-fvisibility=hidden",
+            # "-fvisibility=hidden",
             "-w",
             "-Werror=incompatible-pointer-types",
         ],
@@ -188,6 +236,7 @@ cc_library(
     ] + select({
         ":osqp_algebra_builtin": [
             "algebra/_common/lin_sys/qdldl",
+            "algebra/_common/lin_sys/qdldl/amd/include",
             "algebra/builtin",
         ],
         ":osqp_algebra_cuda": [
@@ -203,7 +252,6 @@ cc_library(
     ] + select({
         ":osqp_algebra_builtin": [
             "@qdldl",
-            "@suitesparse//:amd",
         ],
         ":osqp_algebra_cuda": [
         ],
