@@ -22,6 +22,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 import textwrap
 
 from enum import Enum
@@ -109,6 +110,8 @@ class Verifier:
             attestation.artifact_url_or_path,
             tmp_dir,
         )
+        eprint(self.format_cmd(cmd, args))
+
         result = subprocess.run(
             [self._executable, cmd] + args,
             capture_output=True,
@@ -122,13 +125,12 @@ class Verifier:
                 "\n".join(
                     [
                         f"SLSA verifier failed for {attestation_basename}:",
-                        "Command:",
-                        self._pretty_print(cmd, args),
-                        "Output:",
                         f"\t{result.stderr}",
                     ]
                 )
             )
+
+        eprint(f"Result:\n\t{result.stdout}")
 
     def _download_binary_if_necessary(self):
         if self._executable.exists():
@@ -273,8 +275,8 @@ class Verifier:
         with open(url_or_path, "rb") as f:
             return f.read()
 
-    def _pretty_print(self, cmd, args):
-        parts = [f"\tslsa-verifier {cmd}"]
+    def format_cmd(self, cmd, args):
+        parts = [f"slsa-verifier {cmd}"]
 
         i = 0
         while i < len(args):
@@ -287,4 +289,11 @@ class Verifier:
 
             i += 1
 
-        return " \\\n\t".join(parts)
+        return " \\\n".join(parts)
+
+
+def eprint(*args, **kwargs):
+    """
+    Print to stderr and flush (just in case).
+    """
+    print(*args, flush=True, file=sys.stderr, **kwargs)
