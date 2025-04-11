@@ -28,12 +28,20 @@ COPTS = [
 ]
 
 cc_library(
+    name = "generated_lib",
+    # Headers generated following: https://github.com/landley/toybox/blob/master/README
+    # make defconfig
+    # make
+    hdrs = glob([
+        "generated/*.h",
+    ]),
+    visibility = ["//visibility:private"],
+    includes = ["."],
+)
+
+cc_library(
     name = "helper_lib",
     srcs = glob([
-        # Headers generated following: https://github.com/landley/toybox/blob/master/README
-        # make defconfig
-        # make
-        "generated/*.h",
         "lib/*.c",
         "lib/*.h",
     ]) + [
@@ -43,6 +51,7 @@ cc_library(
     features = [
         "-parse_headers",
     ],
+    deps = [":generated_lib"],
     textual_hdrs = [
         "lib/lib.h",
         "lib/portability.h",
@@ -67,14 +76,15 @@ cc_library(
         ],
     ),
     copts = COPTS,
+    deps = [
+        ":generated_lib",
+        ":helper_lib",
+    ],
     linkopts = ["-lresolv"],
     textual_hdrs = [
         "toys.h",
     ],
     visibility = ["//visibility:private"],
-    deps = [
-        ":helper_lib",
-    ],
 )
 
 cc_binary(
@@ -95,7 +105,6 @@ cc_binary(
         "-lm",
     ],
     deps = [
-        ":helper_lib",
         ":toys_lib",
     ],
 )
