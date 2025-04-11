@@ -15,7 +15,6 @@ license(
 )
 
 COPTS = [
-    "-I.",
     "-funsigned-char",
     "-w",
     "-Wundef",
@@ -35,8 +34,8 @@ cc_library(
     hdrs = glob([
         "generated/*.h",
     ]),
-    visibility = ["//visibility:private"],
     includes = ["."],
+    visibility = ["//visibility:private"],
 )
 
 cc_library(
@@ -51,19 +50,17 @@ cc_library(
     features = [
         "-parse_headers",
     ],
-    deps = [":generated_lib"],
     textual_hdrs = [
         "lib/lib.h",
         "lib/portability.h",
     ],
     visibility = ["//visibility:private"],
+    deps = [":generated_lib"],
 )
 
 cc_library(
     name = "toys_lib",
-    srcs = [
-        "generated/tags.h",
-    ] + glob(
+    srcs = glob(
         [
             "toys/lsb/*.c",
             "toys/net/*.c",
@@ -76,15 +73,15 @@ cc_library(
         ],
     ),
     copts = COPTS,
-    deps = [
-        ":generated_lib",
-        ":helper_lib",
-    ],
     linkopts = ["-lresolv"],
     textual_hdrs = [
         "toys.h",
     ],
     visibility = ["//visibility:private"],
+    deps = [
+        ":generated_lib",
+        ":helper_lib",
+    ],
 )
 
 cc_binary(
