@@ -113,6 +113,8 @@ class Verifier:
             [self._executable, cmd] + args,
             capture_output=True,
             encoding="utf-8",
+            # TODO(fweikert): remove once GH attestation support is stable.
+            env={"SLSA_VERIFIER_EXPERIMENTAL": "1", **os.environ},
         )
 
         if result.returncode:
