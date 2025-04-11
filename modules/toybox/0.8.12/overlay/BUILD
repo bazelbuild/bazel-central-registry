@@ -1,3 +1,4 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_license//rules:license.bzl", "license")
 
 package(
@@ -9,12 +10,14 @@ license(
     name = "license",
     package_name = "toybox",
     license_kinds = ["@rules_license//licenses/spdx:0BSD"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/landley/toybox",
 )
 
 COPTS = [
     "-I.",
     "-funsigned-char",
-    "-w",  # const qualifiers are dropped all over the place
+    "-w",
     "-Wundef",
     "-Wno-char-subscripts",
     "-Os",
@@ -25,33 +28,30 @@ COPTS = [
 ]
 
 cc_library(
-    name = "toybox_helper_lib",
+    name = "helper_lib",
     srcs = glob([
+        # Headers generated following: https://github.com/landley/toybox/blob/master/README
+        # make defconfig
+        # make
+        "generated/*.h",
         "lib/*.c",
         "lib/*.h",
     ]) + [
-        "generated/config.h",
-        "generated/flags.h",
-        "generated/globals.h",
-        "generated/help.h",
-        "generated/newtoys.h",
-        "generated/tags.h",
-        "generated/zhelp.h",
         "toys.h",
     ],
     copts = COPTS,
     features = [
         "-parse_headers",
     ],
-    #includes = INCLUDES,
     textual_hdrs = [
         "lib/lib.h",
         "lib/portability.h",
     ],
+    visibility = ["//visibility:private"],
 )
 
 cc_library(
-    name = "toybox_toys_lib",
+    name = "toys_lib",
     srcs = [
         "generated/tags.h",
     ] + glob(
@@ -71,11 +71,10 @@ cc_library(
     textual_hdrs = [
         "toys.h",
     ],
+    visibility = ["//visibility:private"],
     deps = [
-        ":toybox_helper_lib",
+        ":helper_lib",
     ],
-    #includes = INCLUDES,
-    alwayslink = 1,
 )
 
 cc_binary(
@@ -83,7 +82,7 @@ cc_binary(
     srcs = ["main.c"],
     copts = COPTS,
     features = [
-        "fully_static_link",  # link libc statically
+        "fully_static_link",
         "static_pie",
     ],
     linkopts = [
@@ -95,9 +94,8 @@ cc_binary(
         "-lutil",
         "-lm",
     ],
-    output_licenses = ["notice"],
     deps = [
-        ":toybox_helper_lib",
-        ":toybox_toys_lib",
+        ":helper_lib",
+        ":toys_lib",
     ],
 )
