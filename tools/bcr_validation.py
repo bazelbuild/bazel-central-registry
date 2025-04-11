@@ -77,7 +77,8 @@ COLOR = {
     BcrValidationResult.FAILED: RED,
 }
 
-DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.0"
+# TODO(fweikert): switch to a stable release that contains https://github.com/slsa-framework/slsa-verifier/pull/840
+DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1-rc.1"
 
 ATTESTATIONS_DOCS_URL = "https://github.com/bazelbuild/bazel-central-registry/blob/main/docs/attestations.md"
 
