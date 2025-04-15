@@ -462,18 +462,19 @@ class BcrValidator:
         run_git("-C", output_dir, "checkout", source["commit"])
 
     @staticmethod
-    def extract_attribute_from_module(module_dot_bazel_content, attribute):
+    def extract_attribute_from_module(module_dot_bazel_file, attribute, default=None):
         """Extract the value of the given attribute from `module()` call in the MODULE.bazel file content"""
-        tree = ast.parse(module_dot_bazel_content)
-        for node in tree.body:
-            if (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-                and node.value.func.id == "module"
-            ):
-                keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
-                return keywords.get(attribute)
+        with open(module_dot_bazel_file, "r") as file:
+            tree = ast.parse(file.read(), filename=module_dot_bazel_file)
+            for node in tree.body:
+                if (
+                    isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "module"
+                ):
+                    keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
+                    return keywords.get(attribute, default)
 
     def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
         source = self.registry.get_source(module_name, version)
@@ -587,8 +588,7 @@ class BcrValidator:
             self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
         # Check the version in MODULE.bazel matches the version in directory name
-        bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").read()
-        version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel_content, "version")
+        version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "version")
         if version_in_module_dot_bazel != version:
             self.report(
                 BcrValidationResult.FAILED,
@@ -596,17 +596,20 @@ class BcrValidator:
             )
 
         # Check the compatibility_level in MODULE.bazel matches the previous version
-        if check_compatibility_level:
-            latest_snapshot = self.upstream.get_latest_module_version(module_name)
-            if check_compatibility_level and latest_snapshot:
-                current_compatibility_level = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel_content, "compatibility_level")
-                previous_compatibility_level = BcrValidator.extract_attribute_from_module(latest_snapshot.module_dot_bazel(), "compatibility_level")
-                if current_compatibility_level != previous_compatibility_level:
-                    self.report(
-                        BcrValidationResult.FAILED,
-                        "The compatibility_level in the new module version doesn't match the previous version. " \
-                        "If this is intentional, please add label `skip-compatibility-level-check` for the PR",
-                    )
+        versions = self.registry.get_metadata(module_name)["versions"]
+        versions.sort(key=Version)
+        index = versions.index(version)
+        if check_compatibility_level and index > 0:
+            pre_version = versions[index - 1]
+            previous_module_dot_bazel = self.registry.get_module_dot_bazel(module_name, pre_version)
+            current_compatibility_level = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "compatibility_level", 0)
+            previous_compatibility_level = BcrValidator.extract_attribute_from_module(previous_module_dot_bazel, "compatibility_level", 0)
+            if current_compatibility_level != previous_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    "The compatibility_level in the new module version doesn't match the previous version. " \
+                    "If this is intentional, please add label `skip-compatibility-level-check` for the PR",
+                )
 
         shutil.rmtree(tmp_dir)
 
