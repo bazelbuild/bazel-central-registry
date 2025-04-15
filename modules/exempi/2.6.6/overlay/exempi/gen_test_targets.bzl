@@ -17,5 +17,4 @@ def gen_test_targets(name, cc_srcs):
                 "TEST_DIR": "$(rootpath :test_dir)",
                 "srcdir": "$(rootpath :test_dir)/../",
             },
-            linkopts = ["-lpthread", "-ldl"],
         )
