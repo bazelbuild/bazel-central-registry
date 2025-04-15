@@ -602,12 +602,16 @@ class BcrValidator:
         if check_compatibility_level and index > 0:
             pre_version = versions[index - 1]
             previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, pre_version)
-            current_compatibility_level = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "compatibility_level", 0)
-            previous_compatibility_level = BcrValidator.extract_attribute_from_module(previous_module_dot_bazel, "compatibility_level", 0)
+            current_compatibility_level = BcrValidator.extract_attribute_from_module(
+                bcr_module_dot_bazel, "compatibility_level", 0
+            )
+            previous_compatibility_level = BcrValidator.extract_attribute_from_module(
+                previous_module_dot_bazel, "compatibility_level", 0
+            )
             if current_compatibility_level != previous_compatibility_level:
                 self.report(
                     BcrValidationResult.FAILED,
-                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). " \
+                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). ",
                 )
 
         shutil.rmtree(tmp_dir)
