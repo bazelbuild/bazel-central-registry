@@ -461,7 +461,21 @@ class BcrValidator:
         run_git("-C", output_dir, "fetch", "--depth=1", "origin", source["commit"])
         run_git("-C", output_dir, "checkout", source["commit"])
 
-    def verify_module_dot_bazel(self, module_name, version):
+    @staticmethod
+    def extract_attribute_from_module(module_dot_bazel_content, attribute):
+        """Extract the value of the given attribute from `module()` call in the MODULE.bazel file content"""
+        tree = ast.parse(module_dot_bazel_content)
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id == "module"
+            ):
+                keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
+                return keywords.get(attribute)
+
+    def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
         source = self.registry.get_source(module_name, version)
         tmp_dir = Path(tempfile.mkdtemp())
         output_dir = tmp_dir.joinpath("source_root")
@@ -545,9 +559,8 @@ class BcrValidator:
             source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
         else:
             source_module_dot_bazel_content = []
-        bcr_module_dot_bazel_content = open(
-            self.registry.get_module_dot_bazel_path(module_name, version), "r"
-        ).readlines()
+        bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
+        bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
         source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
         bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
         file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
@@ -573,19 +586,26 @@ class BcrValidator:
         else:
             self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
-        tree = ast.parse("".join(bcr_module_dot_bazel_content), filename=source_root)
-        for node in tree.body:
-            if (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-                and node.value.func.id == "module"
-            ):
-                keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
-                if keywords.get("version", version) != version:
+        # Check the version in MODULE.bazel matches the version in directory name
+        bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").read()
+        version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel_content, "version")
+        if version_in_module_dot_bazel != version:
+            self.report(
+                BcrValidationResult.FAILED,
+                "Checked in MODULE.bazel version does not match the version of the module directory added.",
+            )
+
+        # Check the compatibility_level in MODULE.bazel matches the previous version
+        if check_compatibility_level:
+            latest_snapshot = self.upstream.get_latest_module_version(module_name)
+            if check_compatibility_level and latest_snapshot:
+                current_compatibility_level = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel_content, "compatibility_level")
+                previous_compatibility_level = BcrValidator.extract_attribute_from_module(latest_snapshot.module_dot_bazel(), "compatibility_level")
+                if current_compatibility_level != previous_compatibility_level:
                     self.report(
                         BcrValidationResult.FAILED,
-                        "Checked in MODULE.bazel version does not match the version of the module directory added.",
+                        "The compatibility_level in the new module version doesn't match the previous version. " \
+                        "If this is intentional, please add label `skip-compatibility-level-check` for the PR",
                     )
 
         shutil.rmtree(tmp_dir)
@@ -659,7 +679,7 @@ class BcrValidator:
         if "presubmit_yml" not in skipped_validations:
             self.verify_presubmit_yml_change(module_name, version)
         self.validate_presubmit_yml(module_name, version)
-        self.verify_module_dot_bazel(module_name, version)
+        self.verify_module_dot_bazel(module_name, version, "compatibility_level" not in skipped_validations)
         self.verify_attestations(module_name, version)
 
     def validate_metadata(self, modules):
