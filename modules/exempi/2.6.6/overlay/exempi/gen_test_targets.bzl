@@ -12,8 +12,9 @@ def gen_test_targets(name, cc_srcs):
             name = name,
             srcs = [src],
             deps = [":exempi_test_lib"],
+            data = [":test_dir"],
             env = {
-                "TEST_DIR": "external/exempi~/exempi/tests",
-                "srcdir": "external/exempi~/exempi",
+                "TEST_DIR": "$(rootpath :test_dir)",
+                "srcdir": "$(rootpath :test_dir)/../",
             },
         )
