@@ -1,0 +1,42 @@
+matrix:
+  platform:
+    - debian11
+    - ubuntu2004
+    - ubuntu2204
+    - ubuntu2404
+    - macos
+    - macos_arm64
+    - windows
+  bazel: [7.x, 8.x, rolling]
+tasks:
+  verify_targets:
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@boost.test//..."
+    test_targets:
+      - "@boost.test//..."
+  # boost.test has a header-only version and a source version. If you include
+  # boost.test using "boost/test/included" and link the source version, you will
+  # get an odr-violation if compiling with ASan. Without ASan it will compile,
+  # but the BCR CI tests seem to run with some form of ASan. These tests ensure
+  # the BCR boost.test library always provides both a header-only target and a
+  # sources target.
+  verify_targets_asan:
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_flags:
+      - --copt=-fsanitize=address
+      - -c dbg
+      - --copt=-fno-omit-frame-pointer
+      - --linkopt=-fsanitize=address
+    build_targets:
+      - "@boost.test//..."
+    test_flags:
+      - --copt=-fsanitize=address
+      - -c dbg
+      - --copt=-fno-omit-frame-pointer
+      - --linkopt=-fsanitize=address
+    test_targets:
+      # The macro_global_fixture_test has memory leaks, so skip it for ASan.
+      - "@boost.test//... -@boost.test//test/framework-ts:macro_global_fixture_test"
