@@ -1,3 +1,5 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
 def gen_test_targets(name, cc_srcs):
     """Generates a cc_test target for each source file.
 
@@ -8,7 +10,7 @@ def gen_test_targets(name, cc_srcs):
 
     for src in cc_srcs:
         name = src.removeprefix("tests/test-").removeprefix("tests/test").removesuffix(".cpp").replace("/", "_").replace("-", "_") + "_test"
-        native.cc_test(
+        cc_test(
             name = name,
             srcs = [src],
             deps = [":exempi_test_lib"],
