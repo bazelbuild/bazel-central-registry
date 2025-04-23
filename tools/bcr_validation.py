@@ -376,10 +376,10 @@ class BcrValidator:
                 all_good = False
 
         if all_good:
-             self.report(
-                 BcrValidationResult.GOOD,
-                 "The source archive's integrity value matches all provided URLs.",
-             )
+            self.report(
+                BcrValidationResult.GOOD,
+                "The source archive's integrity value matches all provided URLs.",
+            )
 
     def verify_git_repo_source_stability(self, module_name, version):
         """Verify git repositories are specified in a stable way."""
