@@ -38,6 +38,7 @@ GREEN = "\x1b[32m"
 RESET = "\x1b[0m"
 
 PRESUBMIT_YML = "presubmit.yml"
+MODULE_DOT_BAZEL = "MODULE.bazel"
 
 
 def log(msg):
@@ -580,3 +581,10 @@ class ModuleSnapshot:
         raw = self._download_if_exists("attestations.json")
         if raw:
             return json.loads(raw)
+
+    def module_dot_bazel(self):
+        raw = self._download_if_exists(MODULE_DOT_BAZEL)
+        if not raw:
+            return None
+
+        return raw.decode("utf-8")

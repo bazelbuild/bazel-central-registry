@@ -1,1 +1,2 @@
-../../3.3.1.bcr.0/overlay/utils.bzl
+def get_repo_name():
+    return Label("//:BUILD.bazel").workspace_name

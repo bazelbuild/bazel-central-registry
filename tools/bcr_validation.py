@@ -77,11 +77,15 @@ COLOR = {
     BcrValidationResult.FAILED: RED,
 }
 
-DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.0"
+# TODO(fweikert): switch to a stable release that contains https://github.com/slsa-framework/slsa-verifier/pull/840
+DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1-rc.1"
 
 ATTESTATIONS_DOCS_URL = "https://github.com/bazelbuild/bazel-central-registry/blob/main/docs/attestations.md"
 
 GITHUB_REPO_RE = re.compile(r"^(https://github.com/|github:)([^/]+/[^/]+)$")
+
+# Global cache for GitHub user IDs
+GITHUB_USER_ID_CACHE = {}
 
 
 def print_collapsed_group(name):
@@ -164,6 +168,12 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
     Returns:
         True if the reference is found AND not spoofed; False otherwise
     """
+
+    # Make sure the reference is not a pull request
+    # e.g. refs/pull/1234/head
+    if re.match(r"^pull/\d+/head$", reference):
+        return False
+
     url = f"https://github.com/{repo_path}/latest-commit/{reference}"
     headers = {"Accept": "application/json"}
 
@@ -200,6 +210,32 @@ def check_github_url(repo_path, source_url):
     # And we check if the reference does come from the original repository.
     reference = extract_reference(repo_path, normalized_path)
     return reference and is_ref_in_original_repo(repo_path, reference)
+
+
+def get_github_user_id(github_username):
+    """
+    Get the GitHub user ID for a given GitHub username, with caching.
+
+    Args:
+        github_username: The GitHub username to look up.
+
+    Returns:
+        The GitHub user ID if found, otherwise None.
+    """
+    if github_username in GITHUB_USER_ID_CACHE:
+        return GITHUB_USER_ID_CACHE[github_username]
+
+    url = f"https://api.github.com/users/{github_username}"
+    headers = {}
+    github_token = os.getenv("GITHUB_TOKEN")
+    if github_token:
+        headers["Authorization"] = f"token {github_token}"
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        user_id = response.json().get("id")
+        GITHUB_USER_ID_CACHE[github_username] = user_id
+        return user_id
+    return None
 
 
 class BcrValidationException(Exception):
@@ -425,7 +461,22 @@ class BcrValidator:
         run_git("-C", output_dir, "fetch", "--depth=1", "origin", source["commit"])
         run_git("-C", output_dir, "checkout", source["commit"])
 
-    def verify_module_dot_bazel(self, module_name, version):
+    @staticmethod
+    def extract_attribute_from_module(module_dot_bazel_file, attribute, default=None):
+        """Extract the value of the given attribute from `module()` call in the MODULE.bazel file content"""
+        with open(module_dot_bazel_file, "r") as file:
+            tree = ast.parse(file.read(), filename=module_dot_bazel_file)
+            for node in tree.body:
+                if (
+                    isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "module"
+                ):
+                    keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
+                    return keywords.get(attribute, default)
+
+    def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
         source = self.registry.get_source(module_name, version)
         tmp_dir = Path(tempfile.mkdtemp())
         output_dir = tmp_dir.joinpath("source_root")
@@ -453,6 +504,12 @@ class BcrValidator:
                         f"The patch file `{patch_file}` has expected integrity value `{expected_integrity}`, "
                         f"but the real integrity value is `{actual_integrity}`.",
                     )
+                if patch_file.is_symlink():
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"The patch file `{patch_name}` is a symlink to `{patch_file.readlink()}`, "
+                        "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
+                    )
                 apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
@@ -465,6 +522,12 @@ class BcrValidator:
 
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
+                if overlay_src != module_file and overlay_src.is_symlink():
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"The overlay file `{overlay_file}` is a symlink to `{overlay_src.readlink()}`, "
+                        "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
+                    )
                 overlay_dst = source_root / overlay_file
                 try:
                     overlay_dst.resolve().relative_to(source_root.resolve())
@@ -497,9 +560,8 @@ class BcrValidator:
             source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
         else:
             source_module_dot_bazel_content = []
-        bcr_module_dot_bazel_content = open(
-            self.registry.get_module_dot_bazel_path(module_name, version), "r"
-        ).readlines()
+        bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
+        bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
         source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
         bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
         file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
@@ -525,20 +587,32 @@ class BcrValidator:
         else:
             self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
-        tree = ast.parse("".join(bcr_module_dot_bazel_content), filename=source_root)
-        for node in tree.body:
-            if (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-                and node.value.func.id == "module"
-            ):
-                keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
-                if keywords.get("version", version) != version:
-                    self.report(
-                        BcrValidationResult.FAILED,
-                        "Checked in MODULE.bazel version does not match the version of the module directory added.",
-                    )
+        # Check the version in MODULE.bazel matches the version in directory name
+        version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "version")
+        if version_in_module_dot_bazel != version:
+            self.report(
+                BcrValidationResult.FAILED,
+                "Checked in MODULE.bazel version does not match the version of the module directory added.",
+            )
+
+        # Check the compatibility_level in MODULE.bazel matches the previous version
+        versions = self.registry.get_metadata(module_name)["versions"]
+        versions.sort(key=Version)
+        index = versions.index(version)
+        if check_compatibility_level and index > 0:
+            pre_version = versions[index - 1]
+            previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, pre_version)
+            current_compatibility_level = BcrValidator.extract_attribute_from_module(
+                bcr_module_dot_bazel, "compatibility_level", 0
+            )
+            previous_compatibility_level = BcrValidator.extract_attribute_from_module(
+                previous_module_dot_bazel, "compatibility_level", 0
+            )
+            if current_compatibility_level != previous_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). ",
+                )
 
         shutil.rmtree(tmp_dir)
 
@@ -611,53 +685,74 @@ class BcrValidator:
         if "presubmit_yml" not in skipped_validations:
             self.verify_presubmit_yml_change(module_name, version)
         self.validate_presubmit_yml(module_name, version)
-        self.verify_module_dot_bazel(module_name, version)
+        self.verify_module_dot_bazel(module_name, version, "compatibility_level" not in skipped_validations)
         self.verify_attestations(module_name, version)
 
-    def validate_all_metadata(self):
-        print_expanded_group("Validating all metadata.json files")
-        has_error = False
-        for module_name in self.registry.get_all_modules():
-            try:
-                metadata = self.registry.get_metadata(module_name)
-            except json.JSONDecodeError as e:
+    def validate_metadata(self, modules):
+        print_expanded_group(f"Validating metadata.json files for {modules}")
+        for module_name in modules:
+            self.verify_metadata_json(module_name)
+
+    def verify_metadata_json(self, module_name):
+        """Verify the metadata.json file is valid."""
+        try:
+            metadata = self.registry.get_metadata(module_name)
+        except json.JSONDecodeError as e:
+            self.report(
+                BcrValidationResult.FAILED,
+                f"Failed to load {module_name}'s metadata.json file: " + str(e),
+            )
+            return
+
+        sorted_versions = sorted(metadata["versions"], key=Version)
+        if sorted_versions != metadata["versions"]:
+            self.report(
+                BcrValidationResult.FAILED,
+                f"{module_name}'s metadata.json file is not sorted by version.\n "
+                f"Sorted versions: {sorted_versions}.\n "
+                f"Original versions: {metadata['versions']}",
+            )
+
+        for version in metadata["versions"]:
+            if not self.registry.contains(module_name, version):
                 self.report(
                     BcrValidationResult.FAILED,
-                    f"Failed to load {module_name}'s metadata.json file: " + str(e),
+                    f"{module_name}@{version} doesn't exist, "
+                    f"but it's recorded in {module_name}'s metadata.json file.",
                 )
-                has_error = True
-                continue
 
-            sorted_versions = sorted(metadata["versions"], key=Version)
-            if sorted_versions != metadata["versions"]:
-                self.report(
-                    BcrValidationResult.FAILED,
-                    f"{module_name}'s metadata.json file is not sorted by version.\n "
-                    f"Sorted versions: {sorted_versions}.\n "
-                    f"Original versions: {metadata['versions']}",
-                )
-                has_error = True
+        latest_version = metadata["versions"][-1]
+        if not metadata.get("deprecated") and latest_version in metadata.get("yanked_versions", {}):
+            self.report(
+                BcrValidationResult.FAILED,
+                f"The latest version ({latest_version}) of {module_name} should not be yanked, "
+                f"please make sure a newer version is available before yanking it.",
+            )
 
-            for version in metadata["versions"]:
-                if not self.registry.contains(module_name, version):
+        maintainers = metadata.get("maintainers", [])
+        for maintainer in maintainers:
+            if "github" in maintainer:
+                github_username = maintainer["github"]
+                print("checking github user id for %s" % github_username)
+                github_user_id = get_github_user_id(github_username)
+                if github_user_id is None:
+                    raise BcrValidationException(
+                        f"Failed to get GitHub user ID for {github_username}. Please check the username."
+                    )
+                if github_user_id != maintainer.get("github_user_id"):
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"{module_name}@{version} doesn't exist, "
-                        f"but it's recorded in {module_name}'s metadata.json file.",
+                        f"{module_name}'s metadata.json file has an invalid GitHub user ID for {github_username}\n"
+                        + f'Please add `"github_user_id": {github_user_id}` to the maintainer entry by running `bazel run //tools:bcr_validation -- --check_metadata={module_name} --fix`.',
                     )
-                    has_error = True
-
-            latest_version = metadata["versions"][-1]
-            if not metadata.get("deprecated") and latest_version in metadata.get("yanked_versions", {}):
-                self.report(
-                    BcrValidationResult.FAILED,
-                    f"The latest version ({latest_version}) of {module_name} should not be yanked, "
-                    f"please make sure a newer version is available before yanking it.",
-                )
-                has_error = True
-
-        if not has_error:
-            self.report(BcrValidationResult.GOOD, "All metadata.json files are valid.")
+                    if self.should_fix:
+                        maintainer["github_user_id"] = github_user_id
+                        self.registry.get_metadata_path(module_name).write_text(json.dumps(metadata, indent=4) + "\n")
+                else:
+                    self.report(
+                        BcrValidationResult.GOOD,
+                        f"{module_name}'s metadata.json file has a valid GitHub user ID for {github_username}",
+                    )
 
     def verify_attestations(self, module_name, version):
         print_expanded_group("Verifying attestations")
@@ -768,6 +863,11 @@ def main(argv=None):
         help="Check all Bazel modules in the registry, ignore other --check flags.",
     )
     parser.add_argument(
+        "--check_metadata",
+        action="append",
+        help="Check metadata for given modules in the registry.",
+    )
+    parser.add_argument(
         "--check_all_metadata",
         action="store_true",
         help="Check all Bazel module metadata in the registry.",
@@ -790,7 +890,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    if not args.check_all and not args.check and not args.check_all_metadata:
+    if not args.check_all and not args.check and not args.check_all_metadata and not args.check_metadata:
         parser.print_help()
         return -1
 
@@ -812,7 +912,13 @@ def main(argv=None):
         validator.validate_module(name, version, args.skip_validation)
 
     if args.check_all_metadata:
-        validator.validate_all_metadata()
+        # Validate all metadata.json
+        validator.validate_metadata(validator.registry.get_all_modules())
+    else:
+        # Validate metadata.json for given modules and all modified modules.
+        modules = [] if not args.check_metadata else args.check_metadata
+        modules_to_validate = set(modules + [name for name, _ in module_versions])
+        validator.validate_metadata(list(modules_to_validate))
 
     # Perform some global checks
     validator.global_checks()

@@ -1,0 +1,163 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+load(":libffi.bzl", "substitutions")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    package_name = "libffi",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/libffi/libffi",
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:macos",
+    ],
+)
+
+expand_template(
+    name = "ffi_h",
+    out = "ffi.h",
+    substitutions = selects.with_or({
+        "@platforms//cpu:aarch64": {
+            "@VERSION@": module_version(),
+            "@TARGET@": "AARCH64",
+            "@HAVE_LONG_DOUBLE@": "0",
+            "@FFI_EXEC_TRAMPOLINE_TABLE@": "1",
+        },
+        ("@platforms//cpu:x86_32", "@platforms//cpu:x86_64"): {
+            "@VERSION@": module_version(),
+            "@TARGET@": "X86_64",
+            "@HAVE_LONG_DOUBLE@": "1",
+            "@FFI_EXEC_TRAMPOLINE_TABLE@": "0",
+        },
+        "//conditions:default": {},
+    }),
+    template = "include/ffi.h.in",
+)
+
+copy_file(
+    name = "ffitarget_h",
+    src = selects.with_or({
+        "@platforms//cpu:aarch64": "src/aarch64/ffitarget.h",
+        ("@platforms//cpu:x86_32", "@platforms//cpu:x86_64"): "src/x86/ffitarget.h",
+        "//conditions:default": "@platforms//:incompatible",
+    }),
+    out = "ffitarget.h",
+)
+
+expand_template(
+    name = "fficonfig_h",
+    out = "include/fficonfig.h",
+    substitutions = selects.with_or({
+        ":macos_x86_64": substitutions({
+            "FFI_EXEC_STATIC_TRAMP": None,
+            "FFI_EXEC_TRAMPOLINE_TABLE": None,
+            "FFI_MMAP_EXEC_WRIT": "1",
+            "HAVE_AS_X86_64_UNWIND_SECTION_TYPE": None,
+            "HAVE_AS_X86_PCREL": "1",
+            "HAVE_LONG_DOUBLE": "1",
+            "HAVE_MEMFD_CREATE": None,
+            "LIBFFI_GNU_SYMBOL_VERSIONING": None,
+            "SIZEOF_LONG_DOUBLE": "16",
+            "SYMBOL_UNDERSCORE": "1",
+        }),
+        "@platforms//cpu:aarch64": substitutions({
+            "FFI_EXEC_STATIC_TRAMP": None,
+            "FFI_EXEC_TRAMPOLINE_TABLE": "1",
+            "FFI_MMAP_EXEC_WRIT": None,
+            "HAVE_AS_X86_64_UNWIND_SECTION_TYPE": None,
+            "HAVE_AS_X86_PCREL": None,
+            "HAVE_LONG_DOUBLE": None,
+            "HAVE_MEMFD_CREATE": None,
+            "LIBFFI_GNU_SYMBOL_VERSIONING": None,
+            "SIZEOF_LONG_DOUBLE": "8",
+            "SYMBOL_UNDERSCORE": "1",
+        }),
+        ("@platforms//cpu:x86_32", "@platforms//cpu:x86_64"): substitutions({
+            "FFI_EXEC_STATIC_TRAMP": "1",
+            "FFI_EXEC_TRAMPOLINE_TABLE": None,
+            "FFI_MMAP_EXEC_WRIT": None,
+            "HAVE_AS_X86_64_UNWIND_SECTION_TYPE": "1",
+            "HAVE_AS_X86_PCREL": "1",
+            "HAVE_LONG_DOUBLE": "1",
+            "HAVE_MEMFD_CREATE": "1",
+            "LIBFFI_GNU_SYMBOL_VERSIONING": "1",
+            "SIZEOF_LONG_DOUBLE": "16",
+            "SYMBOL_UNDERSCORE": None,
+        }),
+        "//conditions:default": {},
+    }),
+    template = "fficonfig.h.in",
+)
+
+cc_library(
+    name = "libffi_include_headers",
+    hdrs = [
+        "include/ffi_cfi.h",
+        "include/ffi_common.h",
+        "include/fficonfig.h",
+        "include/tramp.h",
+    ],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libffi_src_headers",
+    hdrs = ["src/dlmalloc.c"],
+    strip_include_prefix = "src",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libffi",
+    srcs = [
+        "src/closures.c",
+        "src/debug.c",
+        "src/java_raw_api.c",
+        "src/prep_cif.c",
+        "src/raw_api.c",
+        "src/tramp.c",
+        "src/types.c",
+    ] + selects.with_or({
+        "@platforms//cpu:aarch64": [
+            "src/aarch64/ffi.c",
+            "src/aarch64/internal.h",
+            "src/aarch64/sysv.S",
+        ],
+        ("@platforms//cpu:x86_32", "@platforms//cpu:x86_64"): [
+            "src/x86/asmnames.h",
+            "src/x86/ffi.c",
+            "src/x86/ffi64.c",
+            "src/x86/ffiw64.c",
+            "src/x86/internal.h",
+            "src/x86/internal64.h",
+            "src/x86/sysv.S",
+            "src/x86/unix64.S",
+            "src/x86/win64.S",
+        ],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    hdrs = [
+        "ffi.h",
+        "ffitarget.h",
+    ],
+    implementation_deps = [
+        ":libffi_include_headers",
+        ":libffi_src_headers",
+    ],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
