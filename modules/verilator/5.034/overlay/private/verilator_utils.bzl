@@ -311,33 +311,3 @@ verilator_build_template = rule(
         ),
     },
 )
-
-def _currrent_flex_lexer_header_impl(ctx):
-    flex_toolchain = ctx.toolchains["@rules_flex//flex:toolchain_type"].flex_toolchain
-
-    output = ctx.outputs.out
-    if output.basename != "FlexLexer.h":
-        fail("The output file must be a file named `FlexLexer.h`")
-
-    ctx.actions.symlink(
-        output = output,
-        target_file = flex_toolchain.flex_lexer_h,
-    )
-
-    return [DefaultInfo(
-        files = depset([output]),
-    )]
-
-current_flex_lexer_header = rule(
-    doc = "Access `FlexLexer.h` from the current toolchain.",
-    implementation = _currrent_flex_lexer_header_impl,
-    attrs = {
-        "out": attr.output(
-            doc = "The location in which to write the header file to.",
-            mandatory = True,
-        ),
-    },
-    toolchains = [
-        "@rules_flex//flex:toolchain_type",
-    ],
-)
