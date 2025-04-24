@@ -345,22 +345,40 @@ class BcrValidator:
             self.report(BcrValidationResult.GOOD, "The source URL doesn't look unstable.")
 
     def verify_source_archive_url_integrity(self, module_name, version):
-        """Verify the integrity value of the URL is correct."""
-        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
+        """Verify the integrity value of the URL and mirror URLs is correct."""
+        source = self.registry.get_source(module_name, version)
+        if source.get("type", None) == "git_repository":
             return
-        source_url = self.registry.get_source(module_name, version)["url"]
-        expected_integrity = self.registry.get_source(module_name, version)["integrity"]
-        real_integrity = integrity_for_comparison(download(source_url), expected_integrity)
-        if real_integrity != expected_integrity:
-            self.report(
-                BcrValidationResult.FAILED,
-                f"{module_name}@{version}'s source archive `{source_url}` has expected integrity value "
-                f"`{expected_integrity}`, but the real integrity value is `{real_integrity}`!",
-            )
-        else:
+
+        expected_integrity = source["integrity"]
+        urls_to_check = [(source["url"], "main source archive URL")]
+
+        mirror_urls = source.get("mirror_urls", [])
+        for i, mirror_url in enumerate(mirror_urls):
+            urls_to_check.append((mirror_url, f"mirror URL #{i+1}"))
+
+        all_good = True
+        for url, description in urls_to_check:
+            try:
+                real_integrity = integrity_for_comparison(download(url), expected_integrity)
+                if real_integrity != expected_integrity:
+                    self.report(
+                        BcrValidationResult.FAILED,
+                        f"{module_name}@{version}'s {description} `{url}` has expected integrity value "
+                        f"`{expected_integrity}`, but the real integrity value is `{real_integrity}`!",
+                    )
+                    all_good = False
+            except Exception as e:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"Failed to download or verify integrity for {description} `{url}` of {module_name}@{version}: {e}",
+                )
+                all_good = False
+
+        if all_good:
             self.report(
                 BcrValidationResult.GOOD,
-                "The source archive's integrity value matches.",
+                "The source archive's integrity value matches all provided URLs.",
             )
 
     def verify_git_repo_source_stability(self, module_name, version):
