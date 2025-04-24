@@ -1,4 +1,4 @@
-"""A tool for generating Verilator source files required for compilation"""
+"""A tool for generating Verilator source files required for compilation."""
 
 import argparse
 import json
