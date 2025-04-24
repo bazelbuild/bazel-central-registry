@@ -159,18 +159,14 @@ verilator_bisonpre = rule(
 )
 
 def _find_flex_src(ctx):
-    # TODO: https://github.com/jmillikin/rules_flex/issues/12
-    src = None
-    for file in ctx.files.src:
-        if file.basename.endswith((".c", ".cc", ".cpp")):
-            if src:
-                fail("Multiple source files matched:\n{}\n{}".format(src, file))
-            src = file
+    cc_srcs = ctx.attr.src[OutputGroupInfo].cc_srcs.to_list()
+    if len(cc_srcs) != 1:
+        fail("Unexpected number of cc sources generated in `{}`: {}".format(
+            ctx.attr.src.label,
+            cc_srcs,
+        ))
 
-    if src == None:
-        fail("No source file found in {}\nFound: {}".format(ctx.attr.src, ctx.files.src))
-
-    return src
+    return cc_srcs[0]
 
 def _verilator_flexfix_impl(ctx):
     src = _find_flex_src(ctx)
