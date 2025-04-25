@@ -1,0 +1,364 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_flex//flex:flex.bzl", "flex")
+load(
+    "//private:verilator_utils.bzl",
+    "verilator_astgen",
+    "verilator_bisonpre",
+    "verilator_build_template",
+    "verilator_flexfix",
+    "verilator_version",
+)
+
+package(default_visibility = ["//visibility:private"])
+
+licenses(["notice"])
+
+exports_files([
+    "Artistic",
+    "COPYING",
+    "COPYING.LESSER",
+])
+
+verilator_version(
+    name = "version",
+    changelog = "Changes",
+)
+
+verilator_build_template(
+    name = "config_package",
+    out = "src/config_package.h",
+    substitutions = {
+        "#define PACKAGE_STRING \"\"": "#define PACKAGE_STRING \"Verilator v{VERILATOR_VERSION}\"",
+    },
+    template = "src/config_package.h.in",
+    version = ":version",
+)
+
+write_file(
+    name = "config_rev_template",
+    out = "src/config_rev.h.in",
+    content = """\
+static const char* const DTVERSION_rev = "";
+
+""".splitlines(),
+    newline = "unix",
+)
+
+verilator_build_template(
+    name = "config_rev",
+    out = "src/config_rev.h",
+    substitutions = {
+        "DTVERSION_rev = \"\"": "DTVERSION_rev = \"v{VERILATOR_VERSION}\"",
+    },
+    template = "src/config_rev.h.in",
+    version = ":version",
+)
+
+verilator_build_template(
+    name = "verilated_config",
+    out = "include/verilated_config.h",
+    substitutions = {
+        "@PACKAGE_NAME@": "Verilator",
+        "@PACKAGE_VERSION@": "{VERILATOR_VERSION}",
+    },
+    template = "include/verilated_config.h.in",
+    version = ":version",
+)
+
+verilator_astgen(
+    name = "verilator_astgen",
+    srcs = [
+        "src/V3Ast.h",
+        "src/V3AstNodeDType.h",
+        "src/V3AstNodeExpr.h",
+        "src/V3AstNodeOther.h",
+        "src/V3DfgVertices.h",
+        "src/Verilator.cpp",
+    ],
+    outs = [
+        "V3Ast__gen_forward_class_decls.h",
+        "V3Ast__gen_impl.h",
+        "V3Ast__gen_macros.h",
+        "V3Ast__gen_report.txt",
+        "V3Ast__gen_type_enum.h",
+        "V3Ast__gen_type_info.h",
+        "V3Ast__gen_type_tests.h",
+        "V3Ast__gen_visitor_decls.h",
+        "V3Ast__gen_visitor_defns.h",
+        "V3Ast__gen_yystype.h",
+        "V3Dfg__gen_ast_to_dfg.h",
+        "V3Dfg__gen_auto_classes.h",
+        "V3Dfg__gen_dfg_to_ast.h",
+        "V3Dfg__gen_forward_class_decls.h",
+        "V3Dfg__gen_macros.h",
+        "V3Dfg__gen_type_enum.h",
+        "V3Dfg__gen_type_tests.h",
+        "V3Dfg__gen_visitor_decls.h",
+        "V3Dfg__gen_visitor_defns.h",
+    ],
+    args = [
+        "--astdef",
+        "V3AstNodeDType.h",
+        "--astdef",
+        "V3AstNodeExpr.h",
+        "--astdef",
+        "V3AstNodeOther.h",
+        "--dfgdef",
+        "V3DfgVertices.h",
+        "--classes",
+    ],
+    astgen = "src/astgen",
+)
+
+verilator_astgen(
+    name = "verilator_astgen_const",
+    srcs = [
+        "src/V3Ast.h",
+        "src/V3AstNodeDType.h",
+        "src/V3AstNodeExpr.h",
+        "src/V3AstNodeOther.h",
+        "src/V3Const.cpp",
+        "src/V3DfgVertices.h",
+        "src/Verilator.cpp",
+    ],
+    outs = [
+        "V3Const__gen.cpp",
+    ],
+    args = [
+        "--astdef",
+        "V3AstNodeDType.h",
+        "--astdef",
+        "V3AstNodeExpr.h",
+        "--astdef",
+        "V3AstNodeOther.h",
+        "--dfgdef",
+        "V3DfgVertices.h",
+        "V3Const.cpp",
+    ],
+    astgen = "src/astgen",
+)
+
+flex(
+    name = "verilator_lex_flex",
+    src = "src/verilog.l",
+)
+
+verilator_flexfix(
+    name = "verilator_lex_flexfix",
+    src = ":verilator_lex_flex",
+    out = "V3Lexer.yy.cpp",
+    args = ["V3Lexer"],
+    flexfix = "src/flexfix",
+)
+
+flex(
+    name = "verilator_prelex_pregen",
+    src = "src/V3PreLex.l",
+)
+
+verilator_flexfix(
+    name = "verilator_prelex_flexfix",
+    src = ":verilator_prelex_pregen",
+    out = "V3PreLex.yy.cpp",
+    args = ["V3PreLex"],
+    flexfix = "src/flexfix",
+)
+
+verilator_bisonpre(
+    name = "verilator_bison",
+    bisonpre = "src/bisonpre",
+    out_hdr = "V3ParseBison.h",
+    out_src = "V3ParseBison.c",
+    yacc_src = "src/verilog.y",
+)
+
+cc_library(
+    name = "verilatedos",
+    hdrs = [
+        "include/verilatedos.h",
+        "include/verilatedos_c.h",
+    ],
+    strip_include_prefix = "include/",
+)
+
+# TODO(kkiningh): Verilator also supports multithreading, should we enable it?
+cc_library(
+    name = "verilator_libV3",
+    srcs = glob(
+        ["src/V3*.cpp"],
+        exclude = [
+            "src/V3*_test.cpp",
+            "src/V3Const.cpp",
+        ],
+    ) + [
+        ":V3Ast__gen_forward_class_decls.h",
+        ":V3Ast__gen_impl.h",
+        ":V3Ast__gen_macros.h",
+        ":V3Ast__gen_type_enum.h",
+        ":V3Ast__gen_type_info.h",
+        ":V3Ast__gen_type_tests.h",
+        ":V3Ast__gen_visitor_decls.h",
+        ":V3Ast__gen_visitor_defns.h",
+        ":V3Ast__gen_yystype.h",
+        ":V3Const__gen.cpp",
+        ":V3Dfg__gen_ast_to_dfg.h",
+        ":V3Dfg__gen_auto_classes.h",
+        ":V3Dfg__gen_dfg_to_ast.h",
+        ":V3Dfg__gen_forward_class_decls.h",
+        ":V3Dfg__gen_macros.h",
+        ":V3Dfg__gen_type_enum.h",
+        ":V3Dfg__gen_type_tests.h",
+        ":V3Dfg__gen_visitor_decls.h",
+        ":V3Dfg__gen_visitor_defns.h",
+        ":V3ParseBison.h",
+    ],
+    hdrs = glob(["src/V3*.h"]) + [
+        "src/config_build.h",
+        "src/config_package.h",
+        "src/config_rev.h",
+    ],
+    copts = [
+        # TODO: We should probably set this later
+        "-DDEFENV_SYSTEMC_INCLUDE=\\\"@invalid@\\\"",
+        "-DDEFENV_SYSTEMC_LIBDIR=\\\"@invalid@\\\"",
+        "-DDEFENV_VERILATOR_ROOT=\\\"@invalid@\\\"",
+        # TODO: Remove these once upstream fixes these warnings
+        "-Wno-unneeded-internal-declaration",
+    ],
+    defines = ["YYDEBUG"],
+    strip_include_prefix = "src/",
+    textual_hdrs = [
+        # These are included directly by other C++ files
+        # See https://github.com/bazelbuild/bazel/issues/680
+        ":V3Lexer.yy.cpp",
+        ":V3PreLex.yy.cpp",
+        ":V3ParseBison.c",
+    ],
+    deps = [
+        ":verilatedos",
+        "@rules_flex//flex:current_flex_toolchain",
+    ],
+)
+
+cc_library(
+    name = "vltstd",
+    hdrs = [
+        "include/vltstd/sv_vpi_user.h",
+        "include/vltstd/svdpi.h",
+        "include/vltstd/vpi_user.h",
+    ],
+    strip_include_prefix = "include/vltstd",
+)
+
+cc_library(
+    name = "verilator",
+    srcs = [
+        "include/gtkwave/fastlz.h",
+        "include/gtkwave/fst_config.h",
+        "include/gtkwave/fstapi.h",
+        "include/gtkwave/lz4.h",
+        "include/gtkwave/wavealloca.h",
+        "include/verilated.cpp",
+        "include/verilated_fst_c.cpp",
+        "include/verilated_imp.h",
+        "include/verilated_syms.h",
+        "include/verilated_threads.cpp",
+        "include/verilated_vcd_c.cpp",
+        "include/verilated_vpi.cpp",
+    ],
+    hdrs = [
+        "include/verilated_config.h",
+        "include/verilated_dpi.h",
+        "include/verilated_fst_c.h",
+        "include/verilated_funcs.h",
+        "include/verilated_intrinsics.h",
+        "include/verilated_sc.h",
+        "include/verilated_sym_props.h",
+        "include/verilated_threads.h",
+        "include/verilated_timing.h",
+        # Needed for verilated_vcd_c.cpp and verilated_fst_c.cpp
+        "include/verilated_trace_imp.h",
+        "include/verilated_trace.h",
+        "include/verilated_types.h",
+        "include/verilated_vcd_c.h",
+        "include/verilated_vpi.h",
+        "include/verilated.h",
+    ],
+    # TODO: Remove these once upstream fixes these warnings
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Wno-unused-const-variable",
+            "-std=c++17",
+            "-ffp-contract=off",
+        ],
+    }),
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lpthread",
+        ],
+    }),
+    strip_include_prefix = "include/",
+    textual_hdrs = [
+        "include/gtkwave/fastlz.c",
+        "include/gtkwave/fstapi.c",
+        "include/gtkwave/lz4.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":verilatedos",
+        ":vltstd",
+        "@zlib",
+    ],
+)
+
+# This alias is for supporting the legacy name but while allowing the
+# `cc_library` target to be renamed to avoid a `liblibverilator.a`
+# output name.
+alias(
+    name = "libverilator",
+    actual = "verilator",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "svdpi",
+    hdrs = [
+        "include/vltstd/svdpi.h",
+    ],
+    strip_include_prefix = "include/vltstd",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "verilator_bin",
+    srcs = ["src/Verilator.cpp"],
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-std=c++17",
+            "-ffp-contract=off",
+        ],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-latomic",
+        ],
+        "@platforms//os:macos": [
+            "-lpthread",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":verilator_libV3"],
+)
+
+alias(
+    name = "verilator_executable",
+    actual = ":verilator_bin",
+    visibility = ["//visibility:public"],
+)
