@@ -1,6 +1,3 @@
---- a/open62541.bzl	2024-11-09 19:33:02.596000226 -0800
-+++ b/open62541.bzl	2024-11-11 19:51:55.406977506 -0800
-@@ -0,0 +1,244 @@
 +"""Code generation tools for open62541."""
 +
 +load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
@@ -244,4 +241,4 @@
 +    },
 +    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
 +    fragments = ["cpp"],
-+)
+)
