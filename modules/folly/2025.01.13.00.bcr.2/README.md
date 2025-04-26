@@ -33,3 +33,13 @@ python3 ./tools/update_integrity.py folly --version="[VERSION]"
 Folly uses a build system called BUCK2 which is very similar to bazel.
 
 The BUCK files in the folly source tree can be mostly copied to a file in the same directory called BUILD.bazel, and then modified from there to support bazel.
+
+
+# PUT THIS IN README:
+# Checkout Folly repo at the version you want to Bazelfy. git checkout -b tag...
+# TODO: to use this create another folder and do (otherwise the include won't work):
+# bazel_dep(name = "folly")
+# local_path_override(
+#     module_name = "folly",
+#     path = "../folly",
+# )

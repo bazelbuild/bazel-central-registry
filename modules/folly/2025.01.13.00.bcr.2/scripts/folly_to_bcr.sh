@@ -1,16 +1,23 @@
 #!/bin/bash
+#
+# Copies all Bazel files from a Folly repo to BCR Folly. Meant to be run from
+# this directory.
+#
+# Example usage:
+#   ./folly_to_bcr.sh /path/to/folly/repo
+
 set -eou pipefail
 
 if [ "$#" -ne 1 ]; then
-  echo "Missing required arg: folly_src_path"
+  echo "usage: $0 <path_to_folly_repo>" >&2
   exit 1
 fi
 
-folly_src_path="$1"
+folly_repo="$1"
 
-if [ ! -d "${folly_src_path}" ]; then
-  echo "folly_src_path is not a valid directory: ${folly_src_path}"
-  exit 1
+if [[ ! -d $folly_repo ]]; then
+  echo "error: folly repo dir \"${folly_repo}\" does not exist or is not a directory" >&2
+  exit 2
 fi
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
@@ -18,7 +25,7 @@ overlay_dir="${dir}/../overlay"
 
 mkdir -p "${overlay_dir}"
 
-cd "${folly_src_path}"
+cd "${folly_repo}"
 find . -name "BUILD.bazel" | rsync -av --files-from=- . "${overlay_dir}"
 rsync -avR bzl/ "${overlay_dir}"
 rsync -av MODULE.bazel "${dir}/../MODULE.bazel"
