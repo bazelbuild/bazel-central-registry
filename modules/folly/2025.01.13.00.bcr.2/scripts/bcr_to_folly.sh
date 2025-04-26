@@ -2,7 +2,7 @@
 #
 # Copies all files under the overlay dir in BCR Folly to a Folly repo and
 # applies all BCR patches. This script is not idempotent, it should only be run
-# once on a clean Folly repo.
+# once on a clean Folly repo. Meant to be run from this directory.
 #
 # Example usage:
 #   ./bcr_to_folly.sh /path/to/folly/repo

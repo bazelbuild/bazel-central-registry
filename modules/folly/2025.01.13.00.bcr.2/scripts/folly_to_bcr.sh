@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Copies all Bazel files from a Folly repo to BCR Folly. Meant to be run from
-# this directory.
+# this directory. This script can be run multiple times.
 #
 # Example usage:
 #   ./folly_to_bcr.sh /path/to/folly/repo

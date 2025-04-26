@@ -1,45 +1,66 @@
-## Notes on bazelifying a folly release
+## Steps to Bazelfying a Folly release
 
-First clone the folly repository from https://github.com/facebook/folly
+1.  Clone the Folly repo:
 
-Cd into the folly source and checkout the release branch that you would like to bazelify.
+    ```shell
+    git clone https://github.com/facebook/folly.git
+    ```
 
-First, create a BUILD.bazel file for every BUCK file in the repo.
+1.  Create a Git branch at the release you want to Bazelfy.
+    For example:
 
-Use our cpp_library macro written for bazel instead of the folly cpp_library macro:
+    ```shell
+    git checkout -b bazel v2025.01.13.00
+    ```
 
-```bash
-find . -name BUILD.bazel | xargs sed -i -e 's;load("@fbcode_macros//build_defs:cpp_library.bzl", "cpp_library");load("//bzl:cpp_library.bzl", "cpp_library");g'
-```
+1.  Create a new BCR Folly version.
 
-Add any custom bzl files under a directory called `//bzl` in the folly source tree.
+1.  Run the `bcr_to_folly.sh` script, which will bootstrap your Folly repo by copying all the `BUILD` files from the BCR Folly to your repo.
+    This script is only meant to be run once on a clean Folly repo.
+    For example:
 
-After creating BUILD.bazel files, they can be copied here using the sync_overlay_build_files.sh helper script:
+    ```shell
+    cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.2/scripts
+    ./bcr_to_folly.sh /path/to/your/folly/repo
+    ```
 
-```bash
-./sync_bazel_files.sh /path/to/folly
-```
+1.  Update and/or add `BUILD` files in your Folly repo as needed.
 
-Then you can update the hashes in sources.json with the following command.
+1.  Because of the way the `includes` work for Folly BCR, you won't actually be able to build/test targets correctly from inside the Folly repo.
+    The Folly repo must be tested as an external dep.
+    The easiest way to do this is to create another folder with its own Bazel module, use `local_path_override` to depend on Folly, and run all Bazel commands from that module.
+    For example in another folder's `MODULE.bazel` file:
 
-NOTE: This must be run from the root of the bazel-central-registry workspace:
+    ```python
+    bazel_dep(name = "folly")
+    local_path_override(
+        module_name = "folly",
+        path = "../folly",  # assuming this folder is beside the Folly repo
+    )
+    ```
 
-```bash
-python3 ./tools/update_integrity.py folly --version="[VERSION]"
-```
+    Then build/test Folly with `@folly`.
+    E.g., `bazel build @folly//...`.
 
-### Tips for creating BUILD.bazel files
+1.  Run the `folly_to_bcr.sh` script to copy the `BUILD` files back into your new BCR Folly version.
+    You can run this script as many times as needed while iterating.
+    For example:
 
-Folly uses a build system called BUCK2 which is very similar to bazel.
+    ```shell
+    cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.2/scripts
+    ./folly_to_bcr.sh /path/to/your/folly/repo
+    ```
 
-The BUCK files in the folly source tree can be mostly copied to a file in the same directory called BUILD.bazel, and then modified from there to support bazel.
+1.  Update integrity as needed (must be run from the `bazel-central-registry` module).
+    For example:
 
+    ```shell
+    bazel run -- //tools:update_integrity folly
+    ```
 
-# PUT THIS IN README:
-# Checkout Folly repo at the version you want to Bazelfy. git checkout -b tag...
-# TODO: to use this create another folder and do (otherwise the include won't work):
-# bazel_dep(name = "folly")
-# local_path_override(
-#     module_name = "folly",
-#     path = "../folly",
-# )
+## Tips and other notes
+
+*   For Folly `BUILD` files, use our Bazel `cpp_library` macro instead of the Folly `cpp_library macro`.
+*   Add any custom `bzl` files under a directory called `bzl` in the Folly source tree.
+*   Folly uses a build system called [Buck2](https://buck2.build/) which is very similar to Bazel.
+    The `BUCK` files in the folly source tree can be mostly copied to a file in the same directory called `BUILD.bazel`, and then modified from there to support Bazel.
