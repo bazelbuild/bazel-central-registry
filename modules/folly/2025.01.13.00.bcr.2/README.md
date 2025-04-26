@@ -25,6 +25,7 @@
     ```
 
 1.  Update and/or add `BUILD` files in your Folly repo as needed.
+    Updated any source files as needed.
 
 1.  Because of the way the `includes` work for Folly BCR, you won't actually be able to build/test targets correctly from inside the Folly repo.
     The Folly repo must be tested as an external dep.
@@ -40,7 +41,7 @@
     ```
 
     Then build/test Folly with `@folly`.
-    E.g., `bazel build @folly//...`.
+    E.g., `bazel build @folly//...`
 
 1.  Run the `folly_to_bcr.sh` script to copy the `BUILD` files back into your new BCR Folly version.
     You can run this script as many times as needed while iterating.
@@ -50,6 +51,8 @@
     cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.2/scripts
     ./folly_to_bcr.sh /path/to/your/folly/repo
     ```
+
+1.  Generate Git patch files for any changes you made to Folly patch files and ensure they are added to the `patches` directory in BCR Folly.
 
 1.  Update integrity as needed (must be run from the `bazel-central-registry` module).
     For example:
