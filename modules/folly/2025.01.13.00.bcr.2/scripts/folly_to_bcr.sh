@@ -14,11 +14,11 @@ if [ ! -d "${folly_src_path}" ]; then
 fi
 
 dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-overlay_dir="${dir}/overlay"
+overlay_dir="${dir}/../overlay"
 
 mkdir -p "${overlay_dir}"
 
 cd "${folly_src_path}"
 find . -name "BUILD.bazel" | rsync -av --files-from=- . "${overlay_dir}"
 rsync -avR bzl/ "${overlay_dir}"
-rsync -av MODULE.bazel "${dir}/MODULE.bazel"
+rsync -av MODULE.bazel "${dir}/../MODULE.bazel"
