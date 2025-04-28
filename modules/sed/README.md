@@ -12,6 +12,7 @@ import re
 import shutil
 from pathlib import Path
 
+# Note that some values may be missing for platforms not currently tested.
 KNOWN_VALUES = {
     "GNULIB__EXIT",
     "GNULIB_ACCESS",
