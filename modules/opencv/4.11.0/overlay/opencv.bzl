@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 
 _OPENCV_COPTS = [
     "-D_USE_MATH_DEFINES",
@@ -110,7 +111,7 @@ def opencv_module(
             }),
             out = simd_declarations,
         )
-    native.cc_library(
+    cc_library(
         name = name,
         srcs = select({
             "@platforms//cpu:aarch64": native.glob(
