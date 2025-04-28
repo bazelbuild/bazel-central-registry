@@ -338,6 +338,7 @@ CONFIGURATION = {
     "@HAVE_DECL_FCLOSEALL@": "0",
     "@HAVE_DECL_FCVT@": "1",
     "@HAVE_DECL_GCVT@": "1",
+    "@HAVE_DECL_GETDELIM@": "1",
     "@HAVE_DECL_MEMRCHR@": "0",
     "@HAVE_DECL_UNSETENV@": "1",
     "@HAVE_DECL_WCSDUP@": "1",
