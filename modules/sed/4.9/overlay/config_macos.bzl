@@ -366,6 +366,7 @@ CONFIGURATION = {
     "@HAVE_MEMPCPY@": "0",
     "@HAVE_MKOSTEMP@": "1",
     "@HAVE_NEWLOCALE@": "1",
+    "@HAVE_NL_LANGINFO@": "1",
     "@HAVE_RAWMEMCHR@": "0",
     "@HAVE_READLINK@": "1",
     "@HAVE_REALLOCARRAY@": "0",
