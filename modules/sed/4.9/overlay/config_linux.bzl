@@ -384,7 +384,7 @@ CONFIGURATION = {
     "@HAVE_XLOCALE_H@": "0",
     "@INCLUDE_NEXT@": "include_next",
     "@LOCALENAME_ENHANCE_LOCALE_FUNCS@": "0",
-    "@NEXT_ASSERT_H@": "",
+    "@NEXT_ASSERT_H@": "<assert.h>",
     "@NEXT_CTYPE_H@": "<ctype.h>",
     "@NEXT_FCNTL_H@": "<fcntl.h>",
     "@NEXT_LANGINFO_H@": "<langinfo.h>",
