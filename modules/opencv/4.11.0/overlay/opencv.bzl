@@ -42,7 +42,8 @@ def opencv_module(
         name,
         dispatched_files = {},
         deps = [],
-        copts = []):
+        copts = [],
+        stub_opencl = False):
     """
     Creates a Bazel rule for an OpenCV module.
 
@@ -51,6 +52,7 @@ def opencv_module(
         dispatched_files: A mapping of keys to a list of operators.
         deps: A list of dependencies for the module.
         copts: Additional compiler options.
+        stub_opencl: If True, stubs out OpenCL functionality.
     """
     prefix = "modules/{}".format(name)
     dispatched_files = dispatched_files
@@ -63,8 +65,7 @@ def opencv_module(
             enabled_opts_x86_64[opt] = True
 
     # Stub out opencl as all empty since we don't need to use any opencl functionality
-    cl_sources = native.glob([prefix + "/src/opencl/*.cl"])
-    if len(cl_sources):
+    if stub_opencl:
         header_file = prefix + "/src/opencl_kernels_{}.hpp".format(name)
         write_file(
             name = "_{}".format(header_file),
