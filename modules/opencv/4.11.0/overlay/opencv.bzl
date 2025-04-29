@@ -30,20 +30,31 @@ _KNOWN_OPTS = [
 CONFIG = {
     "modules": [
         "calib3d",
-        "core",
+        "core", # lacks
         "features2d",
-        "flann",
+        "flann", # lacks
         "imgcodecs",
         "imgproc",
     ],
+    "stub_opencl": [
+        "core",
+        "imgproc",
+        "features2d",
+        "calib3d",
+    ],
+    "contains_src_headers": [
+        "imgproc",
+        "imgcodecs",
+        "features2d",
+        "calib3d",
+    ]
 }
 
 def opencv_module(
         name,
         dispatched_files = {},
         deps = [],
-        copts = [],
-        stub_opencl = False):
+        copts = []):
     """
     Creates a Bazel rule for an OpenCV module.
 
@@ -52,7 +63,6 @@ def opencv_module(
         dispatched_files: A mapping of keys to a list of operators.
         deps: A list of dependencies for the module.
         copts: Additional compiler options.
-        stub_opencl: If True, stubs out OpenCL functionality.
     """
     prefix = "modules/{}".format(name)
     dispatched_files = dispatched_files
@@ -65,7 +75,7 @@ def opencv_module(
             enabled_opts_x86_64[opt] = True
 
     # Stub out opencl as all empty since we don't need to use any opencl functionality
-    if stub_opencl:
+    if name in CONFIG["stub_opencl"]:
         header_file = prefix + "/src/opencl_kernels_{}.hpp".format(name)
         write_file(
             name = "_{}".format(header_file),
@@ -112,15 +122,14 @@ def opencv_module(
             }),
             out = simd_declarations,
         )
+    glob_srcs = [prefix + "/src/**/*.cpp", prefix + "/src/**/*.hpp"]
+    if name in CONFIG["contains_src_headers"]:
+        glob_srcs.append(prefix + "/src/**/*.h")
     cc_library(
         name = name,
         srcs = select({
             "@platforms//cpu:aarch64": native.glob(
-                [
-                    prefix + "/src/**/*.cpp",
-                    prefix + "/src/**/*.hpp",
-                    prefix + "/src/**/*.h",
-                ],
+                glob_srcs,
                 exclude = [
                     prefix + "/src/**/*.{}.cpp".format(x[0])
                     for x in _KNOWN_OPTS
@@ -128,11 +137,7 @@ def opencv_module(
                 ],
             ),
             "@platforms//cpu:x86_64": native.glob(
-                [
-                    prefix + "/src/**/*.cpp",
-                    prefix + "/src/**/*.hpp",
-                    prefix + "/src/**/*.h",
-                ],
+                glob_srcs,
                 exclude = [
                     prefix + "/src/**/*.{}.cpp".format(x[0])
                     for x in _KNOWN_OPTS
@@ -141,11 +146,8 @@ def opencv_module(
             ),
         }),
         hdrs = native.glob([
-            prefix + "/include/**/*.h",
-            prefix + "/include/**/*.hpp",
-            prefix + "/src/**/*.hpp",
-            prefix + "/src/**/*.h",
-            prefix + "/3rdparty/**/*.h",
+            prefix + "/**/*.hpp",
+            prefix + "/**/*.h",
         ]) + extra_headers,
         deps = deps + [":_base_headers"],
         includes = [
