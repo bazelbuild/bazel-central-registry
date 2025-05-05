@@ -54,7 +54,9 @@ def opencv_module(
         name,
         dispatched_files = {},
         deps = [],
-        copts = []):
+        copts = [],
+        linkopts = [],
+    ):
     """
     Creates a Bazel rule for an OpenCV module.
 
@@ -63,6 +65,7 @@ def opencv_module(
         dispatched_files: A mapping of keys to a list of operators.
         deps: A list of dependencies for the module.
         copts: Additional compiler options.
+        linkopts: Additional linker options.
     """
     prefix = "modules/{}".format(name)
     dispatched_files = dispatched_files
@@ -175,4 +178,5 @@ def opencv_module(
                         "-mavx2",
                     ],
                 }),
+        linkopts = linkopts,
     )
