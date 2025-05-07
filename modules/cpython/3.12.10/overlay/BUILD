@@ -21,6 +21,7 @@ toolchain(
     toolchain = ":py_runtime_pair",
     toolchain_type = "@rules_python//python:toolchain_type",
     target_settings = [":bootstrap_disabled"],
+    visibility = ["//visibility:public"],
 )
 
 py_cc_toolchain(
@@ -34,6 +35,7 @@ toolchain(
     toolchain = ":py_cc_toolchain",
     toolchain_type = "@rules_python//python/cc:toolchain_type",
     target_settings = [":bootstrap_disabled"],
+    visibility = ["//visibility:public"],
 )
 
 bool_setting(
@@ -44,11 +46,13 @@ bool_setting(
 config_setting(
     name = "bootstrap_disabled",
     flag_values = {":cpython_bootstrap": "False"},
+    visibility = ["//visibility:public"],
 )
 
 config_setting(
     name = "bootstrap_enabled",
     flag_values = {":cpython_bootstrap": "True"},
+    visibility = ["//visibility:public"],
 )
 
 # Everything within or depending on Python will need these flags.
