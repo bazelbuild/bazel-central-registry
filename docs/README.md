@@ -86,7 +86,7 @@ For example, in `zlib@1.2.13`'s [presubmit.yml](https://github.com/bazelbuild/ba
 ```yaml
 matrix:
   platform:
-  - centos7
+  - rockylinux8
   - debian10
   - ubuntu2004
   - macos
@@ -126,7 +126,7 @@ bcr_test_module:
   module_path: examples/bzlmod
   matrix:
     platform:
-    - centos7
+    - rockylinux8
     - debian10
     - ubuntu2004
     - macos
