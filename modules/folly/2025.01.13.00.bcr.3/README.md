@@ -20,7 +20,7 @@
     For example:
 
     ```shell
-    cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.2/scripts
+    cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.3/scripts
     ./bcr_to_folly.sh /path/to/your/folly/repo
     ```
 
@@ -48,7 +48,7 @@
     For example:
 
     ```shell
-    cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.2/scripts
+    cd /path/to/your/bazel-central-registry/modules/folly/2025.01.13.00.bcr.3/scripts
     ./folly_to_bcr.sh /path/to/your/folly/repo
     ```
 
