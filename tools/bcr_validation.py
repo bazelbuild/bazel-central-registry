@@ -238,6 +238,31 @@ def get_github_user_id(github_username):
     return None
 
 
+def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
+    """
+    Returns whether the bazel_compatability is valid for an overlay.
+    See: https://bazel.build/rules/lib/globals/module#module
+
+    Args:
+        bazel_compatability: List of bazel compatability strings.
+    
+    Returns:
+        Boolean indicating compatability with source overlays.
+    """
+    if not bazel_compatibility:
+        return False   
+    for v in bazel_compatibility:
+        m = re.fullmatch(r"^([><-]=?)(\d+\.\d+\.\d+)$", v)
+        if not m or m.group(1) == '-':
+            continue  # Skip - versions
+        version = tuple(int(i) for i in m.group(2).split("."))
+        if m.group(1) == '>':
+            return version > (7,2,0)
+        if m.group(1) == '>=':
+            return version >= (7,2,1)
+    return False
+
+
 class BcrValidationException(Exception):
     """
     Raised whenever we should stop the validation immediately.
@@ -491,8 +516,13 @@ class BcrValidator:
                     and isinstance(node.value.func, ast.Name)
                     and node.value.func.id == "module"
                 ):
-                    keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
-                    return keywords.get(attribute, default)
+                    for k in node.value.keywords:
+                        if k.arg == attribute:
+                            if isinstance(k.value, ast.Constant):
+                                return k.value.value
+                            if isinstance(k.value, ast.List):
+                                return [ v.value for v in k.value.elts if isinstance(v, ast.Constant) ]
+                    return default
 
     def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
         source = self.registry.get_source(module_name, version)
@@ -630,6 +660,17 @@ class BcrValidator:
                 self.report(
                     BcrValidationResult.FAILED,
                     f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). ",
+                )
+
+        # Check that bazel_compatability is sufficient when using "overlay"
+        if "overlay" in source:
+            current_bazel_compatibility = BcrValidator.extract_attribute_from_module(
+                bcr_module_dot_bazel, "bazel_compatibility", [])
+            if not is_valid_bazel_compatability_for_overlay(current_bazel_compatibility):
+                self.report(
+                    BcrValidationResult.FAILED,
+                    "When using overlay files the module must set `bazel_compatibility` constraints to "
+                    f"at least `['>=7.2.1']`, got {current_bazel_compatibility}. ",
                 )
 
         shutil.rmtree(tmp_dir)
