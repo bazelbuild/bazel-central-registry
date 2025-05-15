@@ -245,21 +245,21 @@ def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
 
     Args:
         bazel_compatability: List of bazel compatability strings.
-    
+
     Returns:
         Boolean indicating compatability with source overlays.
     """
     if not bazel_compatibility:
-        return False   
+        return False
     for v in bazel_compatibility:
         m = re.fullmatch(r"^([><-]=?)(\d+\.\d+\.\d+)$", v)
-        if not m or m.group(1) == '-':
+        if not m or m.group(1) == "-":
             continue  # Skip - versions
         version = tuple(int(i) for i in m.group(2).split("."))
-        if m.group(1) == '>':
-            return version > (7,2,0)
-        if m.group(1) == '>=':
-            return version >= (7,2,1)
+        if m.group(1) == ">":
+            return version > (7, 2, 0)
+        if m.group(1) == ">=":
+            return version >= (7, 2, 1)
     return False
 
 
@@ -521,7 +521,7 @@ class BcrValidator:
                             if isinstance(k.value, ast.Constant):
                                 return k.value.value
                             if isinstance(k.value, ast.List):
-                                return [ v.value for v in k.value.elts if isinstance(v, ast.Constant) ]
+                                return [v.value for v in k.value.elts if isinstance(v, ast.Constant)]
                     return default
 
     def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
@@ -665,7 +665,8 @@ class BcrValidator:
         # Check that bazel_compatability is sufficient when using "overlay"
         if "overlay" in source:
             current_bazel_compatibility = BcrValidator.extract_attribute_from_module(
-                bcr_module_dot_bazel, "bazel_compatibility", [])
+                bcr_module_dot_bazel, "bazel_compatibility", []
+            )
             if not is_valid_bazel_compatability_for_overlay(current_bazel_compatibility):
                 self.report(
                     BcrValidationResult.FAILED,
