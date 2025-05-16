@@ -259,7 +259,7 @@ def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
         if m.group(1) == ">":
             if version > (7, 2, 0):
                 return True
-        if m.group(1) == ">=":
+        elif m.group(1) == ">=":
             if version >= (7, 2, 1):
                 return True
     return False
