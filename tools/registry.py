@@ -547,8 +547,8 @@ def _download_if_exists(url):
 
 
 class UpstreamRegistry:
-    def __init__(self, org="bazelbuild", repo="bazel-central-registry", branch="main"):
-        self._root_url = f"https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/modules"
+    def __init__(self, modules_dir_url):
+        self._root_url = modules_dir_url
 
     def get_latest_module_version(self, module_name):
         metadata_url = posixpath.join(self._root_url, module_name, "metadata.json")
