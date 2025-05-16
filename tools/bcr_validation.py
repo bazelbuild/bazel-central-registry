@@ -77,7 +77,7 @@ COLOR = {
     BcrValidationResult.FAILED: RED,
 }
 
-UPSTREAM_MODULES_DIR_URL = "https://storage.googleapis.com/bcr.bazel.build/modules"
+UPSTREAM_MODULES_DIR_URL = "https://bcr.bazel.build/modules"
 
 # TODO(fweikert): switch to a stable release that contains https://github.com/slsa-framework/slsa-verifier/pull/840
 DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1-rc.1"
