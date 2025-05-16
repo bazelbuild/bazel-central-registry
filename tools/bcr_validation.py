@@ -923,7 +923,7 @@ def main(argv=None):
         for name, version in module_versions:
             print(f"{name}@{version}")
 
-    # TODO: Read org etc from flags to support forks.
+    # TODO: Read url from flags to support forks.
     upstream = UpstreamRegistry(modules_dir_url=UPSTREAM_MODULES_DIR_URL)
 
     # Validate given module version.
