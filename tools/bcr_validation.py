@@ -257,9 +257,11 @@ def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
             continue  # Skip - versions
         version = tuple(int(i) for i in m.group(2).split("."))
         if m.group(1) == ">":
-            return version > (7, 2, 0)
+            if version > (7, 2, 0):
+                return True
         if m.group(1) == ">=":
-            return version >= (7, 2, 1)
+            if version >= (7, 2, 1):
+                return True
     return False
 
 
