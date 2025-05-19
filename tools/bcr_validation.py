@@ -200,7 +200,7 @@ def check_github_url(repo_path, source_url):
     # Avoid potential path manipulations with "../"
     normalized_path = os.path.abspath(parts.path)
 
-    # If the URL doesn't starts with https://github.com/<repo_path>, return False
+    # If the URL doesn't start with https://github.com/<repo_path>, return False
     if parts.scheme != "https" or parts.netloc != "github.com" or not normalized_path.startswith(f"/{repo_path}/"):
         return False
 
