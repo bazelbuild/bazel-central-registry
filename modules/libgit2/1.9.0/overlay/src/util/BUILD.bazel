@@ -1,0 +1,76 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+_GIT2_FEATURES_H = """
+#define GIT_REGEX_BUILTIN
+#define GIT_SHA1_COLLISIONDETECT
+#define GIT_SHA256_BUILTIN
+#define GIT_HTTPPARSER_BUILTIN
+#define GIT_THREADS
+"""
+
+write_file(
+    name = "git2_features_h",
+    out = "git2_features.h",
+    content = [_GIT2_FEATURES_H] +
+              select({
+                  "@platforms//os:windows": ["#define GIT_IO_WSAPOLL 1"],
+                  "//conditions:default": ["#define GIT_IO_POLL"],
+              }),
+    newline = "unix",
+)
+
+cc_library(
+    name = "git2_features",
+    hdrs = [":git2_features_h"],
+    strip_include_prefix = "/src/util",
+)
+
+cc_library(
+    name = "util_hdrs",
+    hdrs = glob(["**/*.h"]),
+    strip_include_prefix = "/src/util",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":git2_features",
+        "//deps/pcre:pcre_hdrs",
+        "//include:git2",
+        "@zlib",
+    ],
+)
+
+GIT2_UTIL_WINDOWS_SRCS = glob([
+    "win32/*",
+]) + ["hash/win32.c"]
+
+GIT2_UTIL_UNIX_SRCS = glob(["unix/*"])
+
+GIT2_UTIL_SRCS = glob(
+    include = ["**/*.c"],
+    exclude = [
+        "hash/common_crypto.c",
+        "hash/openssl.c",
+    ] + GIT2_UTIL_WINDOWS_SRCS + GIT2_UTIL_UNIX_SRCS,
+)
+
+cc_library(
+    name = "util",
+    srcs = GIT2_UTIL_SRCS + select({
+        "@platforms//os:windows": GIT2_UTIL_WINDOWS_SRCS,
+        "//conditions:default": GIT2_UTIL_UNIX_SRCS,
+    }),
+    implementation_deps = [
+        "//deps/pcre",
+        "//deps/xdiff",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "secur32.lib",
+            "ws2_32.lib",
+            "advapi32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:__subpackages__"],
+    deps = [":util_hdrs"],
+)
