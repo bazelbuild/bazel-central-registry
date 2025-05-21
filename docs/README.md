@@ -9,6 +9,7 @@ The BCR follows the format of a regular [Bazel registry](https://bazel.build/ext
 - Extra metadata.json fields (see [JSON schema](https://github.com/bazelbuild/bazel-central-registry/blob/main/metadata.schema.json)):
   - `maintainers`: an array of JSON objects, each representing a module maintainer. Each object can have the following fields:
     - `github`: a string, the maintainer's GitHub username. This is used to `@`-ping the maintainer when a PR updating the module is sent, and determines whether a GitHub user has approval rights for a PR (see [approval and submission](#approval-and-submission) below).
+    - `github_user_id`: a number, the maintainer's GitHub ID number. This is used to verify the maintainer's identity in case of GitHub username change or deletion. Run `bazel run //tools:bcr_validation -- --check_metadata=foo --fix` to update it for the module `foo`.
     - `name`: a string, the maintainer's name. Purely informational.
     - `email`: a string, the maintainer's email address. Purely informational.
     - `do_not_notify`: a boolean. When set to `true`, the maintainer will still have approval rights, but will not be `@`-pinged when a PR for the module is sent.
@@ -68,6 +69,7 @@ Validations performed in the scripts are:
 - Verify the source archive URL is stable if it comes from GitHub. (See [this discussion](https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300)). Comment `@bazel-io skip_check unstable_url` to skip this check.
 - Verify the integrity values of the source archive and patch files (if any) are correct.
 - Verify the checked-in `MODULE.bazel` file matches the one in the extracted and patched source tree.
+- Verify the `compatibility_level` in `MODULE.bazel` matches the previous version. If the bump is intentional, you can comment `@bazel-io skip_check compatibility_level` in the PR to skip this check.
 - Check if the module is new or the `presubmit.yml` file is changed compared to the last version, if so a BCR maintainer review will be required to run jobs specified in `presubmit.yml`.
 
 Additional validations implemented in the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script:
@@ -84,7 +86,7 @@ For example, in `zlib@1.2.13`'s [presubmit.yml](https://github.com/bazelbuild/ba
 ```yaml
 matrix:
   platform:
-  - centos7
+  - rockylinux8
   - debian10
   - ubuntu2004
   - macos
@@ -124,7 +126,7 @@ bcr_test_module:
   module_path: examples/bzlmod
   matrix:
     platform:
-    - centos7
+    - rockylinux8
     - debian10
     - ubuntu2004
     - macos
@@ -160,6 +162,33 @@ bazel run //tools:setup_presubmit_repos -- --module <module_name>@<version>
 ```
 
 Then follow the instructions to run the build locally.
+
+### Testing incompatible flags
+
+Major breaking changes in Bazel are guarded by [incompatible flags](https://bazel.build/release/backward-compatibility). To assist the community with migration, BCR presubmit tests new modules against these flags using Bazelisk's [--migrate](https://github.com/bazelbuild/bazelisk/tree/master?tab=readme-ov-file#--migrate) feature, providing module maintainers with early warnings.
+
+By default, the flags tested are fetched from [incompatible_flag.yml](/incompatible_flags.yml), but they can be overridden in the `presubmit.yml` file for a specific module version.
+
+In the YAML files, you can specify a top-level `incompatible_flags` field in the format of:
+
+```yaml
+incompatible_flags:
+  "--incompatible_config_setting_private_default_visibility":
+    - 6.x
+    - 7.x
+    - 8.x
+  "--incompatible_autoload_externally=":
+    - 7.x
+    - 8.x
+```
+
+During presubmit jobs, flags matching the current Bazel version in use will be tested. This applies to both the [anonymous module](#anonymous-module-test) and the [test module](#test-module).
+
+If you need to temporarily skip incompatible flags testing, you can comment `@bazel-io skip_check incompatible_flags` in your PR. This will automatically add the `skip-incompatible-flags-test` label to the PR, bypassing incompatible flags testing for all presubmit jobs. You can migrate for those breaking changes at a later time.
+
+For an overview result of testing top BCR modules with incompatible flags, you can check the nightly build of [BCR Bazel Compatibility Test](https://buildkite.com/bazel/bcr-bazel-compatibility-test).
+
+Before adding a flag in [incompatible_flag.yml](/incompatible_flags.yml), please make sure the most commonly used modules are fixed, otherwise migration for other modules will be blocked without any workaround.
 
 ## Approval and submission
 

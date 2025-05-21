@@ -1,1 +1,11 @@
-../../5.4.5.bcr.4/overlay/tools.bzl
+def multi_test(names = [], **kwargs):
+    tests = []
+    for name in names:
+        native.cc_test(
+            name = name,
+            srcs = ["tests/" + name + ".c"],
+            **kwargs
+        )
+        tests.append(":" + name)
+
+    return tests
