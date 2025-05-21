@@ -19,3 +19,4 @@ _METADATA_FILES = glob(["modules/*/metadata.json"])
     )
     for s in _METADATA_FILES
 ]
+
