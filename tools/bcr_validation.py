@@ -315,7 +315,7 @@ class BcrValidator:
                 source_url = "https://" + source_netloc + "/" + source_parts
             if source_url.endswith(".git"):
                 source_url = source_url.removesuffix(".git")
-                # The asterisk here is to prevent the final slash from getting
+                # The asterisk here is to prevent the final slash from being
                 # dropped by os.path.abspath().
                 source_url = source_url + "/*"
         else:
