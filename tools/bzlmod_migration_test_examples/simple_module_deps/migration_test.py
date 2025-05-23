@@ -59,7 +59,7 @@ class BazelBuildTest(unittest.TestCase):
         result = self._run_command(["../../migrate_to_bzlmod.py", "-t=/..."])
         assert result.returncode == 0
         assert os.path.exists("migration_info.md"), (
-            f"File 'migration_info.md' should be created during migration, but it doesn't exist."
+            "File 'migration_info.md' should be created during migration, but it doesn't exist."
         )
         self._print_success()
 
