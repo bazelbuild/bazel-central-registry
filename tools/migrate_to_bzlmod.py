@@ -128,7 +128,7 @@ def append_to_file(filename, content):
 
 
 def append_migration_info(content):
-    """ Adds content to the "migration_info" file in order to help users with details about the migration."""
+    """Adds content to the "migration_info" file in order to help users with details about the migration."""
     append_to_file("migration_info.md", content + "\n")
 
 
@@ -203,7 +203,7 @@ def print_repo_definition(dep):
     header = "### Repository information in the WORKSPACE file"
     append_migration_info(header)
     if "definition_information" in dep:
-        def_info,_,_ = dep["definition_information"].partition("Repository rule ")
+        def_info, _, _ = dep["definition_information"].partition("Repository rule ")
         append_migration_info(def_info)
 
     if "original_attributes" in dep:
@@ -376,7 +376,11 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     append_migration_info("### Migration process")
 
     if not repo_def:
-        append_migration_info("Repository definition for `" + repo + "` is not found in ./resolved_deps.py file, please add `--force/-f` flag to force update it.")
+        append_migration_info(
+            "Repository definition for `"
+            + repo
+            + "` is not found in ./resolved_deps.py file, please add `--force/-f` flag to force update it."
+        )
         return False
 
     # Check if a module is already available in the registry.
@@ -415,7 +419,8 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     if (
         file_label
         and file_label.startswith("//")
-        or file_label and file_label.startswith("@bazel_tools//")
+        or file_label
+        and file_label.startswith("@bazel_tools//")
         and yes_or_no(
             "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
             True,
@@ -436,7 +441,6 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         add_repo_to_module_extension(repo, repo_def, "@bazel_tools//tools/build_defs/repo:local.bzl", rule_name)
         return True
 
-
     # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
     elif yes_or_no(
         "Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?",
@@ -444,7 +448,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     ):
         repo_def = ["", "# TODO: Migrated to Bzlmod"] + repo_def
         append_migration_info("\tIntroducing dep in WORKSPACE.bzlmod for later migration as:")
-        append_migration_info("\t\t" + ''.join(repo_def))
+        append_migration_info("\t\t" + "".join(repo_def))
         scratch_file("WORKSPACE.bzlmod", repo_def, mode="a")
         return True
     else:
@@ -651,27 +655,25 @@ def query_direct_targets(args):
     delete_file_if_exists(direct_deps_file)
 
     for target in targets:
-        bazel_command = [
-            "bazel",
-            "query",
-            "--noenable_bzlmod",
-            "--enable_workspace",
-            "--output=build"
-        ] + [target]
+        bazel_command = ["bazel", "query", "--noenable_bzlmod", "--enable_workspace", "--output=build"] + [target]
         exit_code, stdout, stderr = execute_command(bazel_command)
         if exit_code != 0 or not stdout:
             error(
-                "Bazel query: `" + " ".join(bazel_command) + "` contains error:\n" + stderr + \
-                "\nDouble check if the target you've specified can be built successfully."
+                "Bazel query: `"
+                + " ".join(bazel_command)
+                + "` contains error:\n"
+                + stderr
+                + "\nDouble check if the target you've specified can be built successfully."
             )
             abort_migration()
         append_to_file(direct_deps_file, stdout)
 
     direct_deps = parse_file(direct_deps_file)
     append_migration_info("## Direct dependencies:")
-    append_migration_info("* " + '\n* '.join(map(str, direct_deps)))
+    append_migration_info("* " + "\n* ".join(map(str, direct_deps)))
 
     return direct_deps
+
 
 def main(argv=None):
     if argv is None:
@@ -732,7 +734,7 @@ def main(argv=None):
     delete_file_if_exists("migration_info.md")
     append_migration_info("# Migration info")
     append_migration_info("Command for local testing:")
-    append_migration_info("```\nbazel build --enable_bzlmod --noenable_workspace " + ' '.join(args.target) + "\n```")
+    append_migration_info("```\nbazel build --enable_bzlmod --noenable_workspace " + " ".join(args.target) + "\n```")
 
     # First part of the migration - Find direct deps with bazel query and add them in MODULE.bazel file.
     print(f"{GREEN}\nFirst part of the migration - Resolve direct deps.")
@@ -754,7 +756,6 @@ def main(argv=None):
         print(f"\n{GREEN}All direct dependencies have been resolved.")
 
     print(f"{RESET}For details about the migration process, check {GREEN}`migration_info` {RESET}file.\n")
-
 
     # Second part of the migration - Build with bzlmod and fix potential errors.
     print(f"\n{GREEN}Second part of the migration - Build with bzlmod and fix potential errors.\n")
