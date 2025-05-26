@@ -315,7 +315,7 @@ class BcrValidator:
                 source_url = "https://" + source_netloc + "/" + source_parts
             if source_url.endswith(".git"):
                 source_url = source_url.removesuffix(".git")
-                # The asterisk here is to prevent the final slash from getting
+                # The asterisk here is to prevent the final slash from being
                 # dropped by os.path.abspath().
                 source_url = source_url + "/*"
         else:
@@ -892,7 +892,7 @@ class BcrValidator:
         # Calculate the overall return code
         # 0: All good
         # 1: BCR validation failed
-        # 42: BCR validation passes, but some changes need BCR maintainer review before trigging follow up BCR presubmit jobs.
+        # 42: BCR validation passes, but some changes need BCR maintainer review before triggering follow up BCR presubmit jobs.
         result_codes = [code for code, _ in self.validation_results]
         if BcrValidationResult.FAILED in result_codes:
             return 1
