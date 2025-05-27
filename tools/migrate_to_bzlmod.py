@@ -200,17 +200,25 @@ def print_repo_definition(dep):
             repo_def.append(f"  {key} = {value_str},")
     repo_def.append(")")
 
-    header = "### Repository information in the WORKSPACE file"
-    append_migration_info(header)
     if "definition_information" in dep:
-        def_info, _, _ = dep["definition_information"].partition("Repository rule ")
-        append_migration_info(def_info)
+        eprint(dep["definition_information"])
+        append_migration_info(f"""
+<details>
+  <summary>Click here to see where and how the repo was declared in the WORKSPACE file</summary>
 
-    if "original_attributes" in dep:
-        urls = dep["original_attributes"].get("urls", [])
-        if urls:
-            append_migration_info("URLs used before this migration:\n\t`" + "\n\t`".join(urls) + "`\n")
+#### Location
+```python
+{dep["definition_information"]}
+```
 
+#### Definition
+```python
+{"\n".join(repo_def)}
+```
+  **Tip**: URLs usually show which version was used.
+</details>
+""")
+    append_migration_info("___")
     if file_label and file_label.startswith("@@"):
         file_label = file_label[1:]
 
@@ -373,8 +381,6 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
                 urls.append(dep["original_attributes"]["remote"])
             break
 
-    append_migration_info("### Migration process")
-
     if not repo_def:
         append_migration_info(
             "Repository definition for `"
@@ -389,11 +395,11 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     for module_name in REGISTRY_CLIENT.get_all_modules():
         if repo == module_name:
             found_module = module_name
-            append_migration_info("Found perfect name match in BCR: `" + module_name + "`")
+            append_migration_info("Found perfect name match in BCR: `" + module_name + "`\n")
         elif any(url_match_source_repo(url, module_name) for url in urls):
             potential_modules.append(module_name)
     if potential_modules:
-        append_migration_info("Found partially name matches in BCR: `" + "`, `".join(potential_modules) + ("`"))
+        append_migration_info("Found partially name matches in BCR: `" + "`, `".join(potential_modules) + ("`\n"))
     if found_module == None and len(potential_modules) > 0:
         found_module = potential_modules[0]
 
@@ -407,8 +413,8 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             "Do you wish to add the bazel_dep definition to the MODULE.bazel file?",
             True,
         ):
-            append_migration_info("\tIt has been introduced as a Bazel module:")
-            append_migration_info("\t\t`" + bazel_dep_line + "`")
+            append_migration_info("It has been introduced as a Bazel module:\n")
+            append_migration_info("\t" + bazel_dep_line + "")
             write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
             return True
     else:
@@ -755,7 +761,7 @@ def main(argv=None):
     else:
         print(f"\n{GREEN}All direct dependencies have been resolved.")
 
-    print(f"{RESET}For details about the migration process, check {GREEN}`migration_info` {RESET}file.\n")
+    print(f"{RESET}For details about the migration process, check {GREEN}`migration_info.md` {RESET}file.\n")
 
     # Second part of the migration - Build with bzlmod and fix potential errors.
     print(f"\n{GREEN}Second part of the migration - Build with bzlmod and fix potential errors.\n")
