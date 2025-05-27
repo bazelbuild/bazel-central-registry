@@ -2,6 +2,7 @@ load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@pip//:requirements.bzl", "requirement")
 load("@python_versions//3.11:defs.bzl", compile_pip_requirements_3_11 = "compile_pip_requirements")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 npm_link_all_packages(name = "node_modules")
 
@@ -106,6 +107,9 @@ py_binary(
 py_binary(
     name = "module_analyzer",
     srcs = ["module_analyzer.py"],
+    data = [
+        "@buildozer_binary//:buildozer.exe",
+    ],
     deps = [
         ":module_selector",
         requirement("networkx"),
@@ -113,9 +117,6 @@ py_binary(
         requirement("scipy"),
         requirement("bazel-runfiles"),
     ],
-    data = [
-        "@buildozer_binary//:buildozer.exe",
-    ]
 )
 
 genrule(
