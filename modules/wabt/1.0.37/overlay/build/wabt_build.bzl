@@ -138,7 +138,7 @@ _WABT_CXXOPTS_CLANG_GCC = [
 ]
 
 WABT_CXXOPTS = select({
-    Label("//build:cc_compiler_msvc"): _WABT_CXXOPTS_MSVC,
-    Label("//build:cc_compiler_clang"): _WABT_CXXOPTS_CLANG_GCC,
-    Label("//build:cc_compiler_gcc"): _WABT_CXXOPTS_CLANG_GCC,
+    Label("@rules_cc//cc/compiler:msvc-cl"): _WABT_CXXOPTS_MSVC,
+    Label("@rules_cc//cc/compiler:clang"): _WABT_CXXOPTS_CLANG_GCC,
+    Label("@rules_cc//cc/compiler:gcc"): _WABT_CXXOPTS_CLANG_GCC,
 })
