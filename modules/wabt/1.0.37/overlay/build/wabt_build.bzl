@@ -1,6 +1,8 @@
 # Generates `config.h` from `config.h.in`, approximately matching the behavior
 # of CMake.
 
+visibility(["//..."])
+
 _DETECT_COMPILER = """
 #if defined(__clang__)
 #  define COMPILER_IS_CLANG 1
@@ -61,7 +63,7 @@ _WABT_BIG_ENDIAN = """
 #endif
 """
 
-def _config_h_impl(ctx):
+def _wabt_config_h_impl(ctx):
     substitutions = {
         "#cmakedefine WABT_VERSION_STRING ": "#define WABT_VERSION_STRING ",
         "@WABT_VERSION_STRING@": ctx.attr.version,
@@ -97,17 +99,16 @@ def _config_h_impl(ctx):
         have_unistd_h = "#define HAVE_UNISTD_H 1"
     substitutions["#cmakedefine01 HAVE_UNISTD_H"] = have_unistd_h
 
-    out = ctx.actions.declare_file("config.h")
     ctx.actions.expand_template(
         template = ctx.file._config_h_in,
-        output = out,
+        output = ctx.outputs.out,
         substitutions = substitutions,
     )
-    return DefaultInfo(files = depset([out]))
 
-_config_h = rule(
-    implementation = _config_h_impl,
+wabt_config_h = rule(
+    implementation = _wabt_config_h_impl,
     attrs = {
+        "out": attr.output(),
         "_config_h_in": attr.label(
             allow_single_file = True,
             default = Label("//src:config_h_in"),
@@ -117,13 +118,20 @@ _config_h = rule(
     },
 )
 
-def config_h(*, name):
-    _config_h(
-        name = name,
-        version = native.module_version(),
-        target_os = select({
-            "@platforms//os:linux": "linux",
-            "@platforms//os:windows": "windows",
-            "//conditions:default": "",
-        }),
-    )
+_WABT_CXXOPTS_MSVC = [
+    "/std:c++17",
+    "/D_HAS_EXCEPTIONS=0",
+]
+
+_WABT_CXXOPTS_CLANG_GCC = [
+    "-std=c++17",
+    "-fno-exceptions",
+    "-D__STDC_LIMIT_MACROS=1",
+    "-D__STDC_FORMAT_MACROS=1",
+]
+
+WABT_CXXOPTS = select({
+    "//build:cc_compiler_msvc": _WABT_CXXOPTS_MSVC,
+    "//build:cc_compiler_clang": _WABT_CXXOPTS_CLANG_GCC,
+    "//build:cc_compiler_gcc": _WABT_CXXOPTS_CLANG_GCC,
+})
