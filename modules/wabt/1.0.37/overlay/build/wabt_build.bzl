@@ -121,6 +121,13 @@ wabt_config_h = rule(
 _WABT_CXXOPTS_MSVC = [
     "/std:c++17",
     "/D_HAS_EXCEPTIONS=0",
+    # Warnings silenced per CMakeLists.txt
+    "/wd4018",
+    "/wd4056",
+    "/wd4244",
+    "/wd4267",
+    "/wd4756",
+    "/wd4800",
 ]
 
 _WABT_CXXOPTS_CLANG_GCC = [
