@@ -4,9 +4,9 @@ import sys
 
 from python.runfiles import Runfiles
 
-# Check if exactly one argument is provided
-if len(sys.argv) != 2:
-    print(f"Usage: {sys.argv[0]} /path/to/openssl", file=sys.stderr)
+# Check if exactly zero arguments are provided
+if len(sys.argv) != 1:
+    print(f"Usage: {sys.argv[0]}", file=sys.stderr)
     sys.exit(1)
 
 # Get the openssl binary path
