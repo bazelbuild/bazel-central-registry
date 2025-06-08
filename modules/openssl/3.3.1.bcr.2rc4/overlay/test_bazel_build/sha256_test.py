@@ -17,6 +17,7 @@ dir = os.path.dirname(openssl)
 print(f"dir {dir} exists: {os.path.exists(dir)}")
 if os.path.exists(dir):
     print(f"dir contains {os.listdir(dir)}")
+print(f"working directory contains {os.listdir(".")}")
 result = subprocess.run(command, input="European Burmese", text=True, capture_output=True)
 
 # Extract the hash from the output
