@@ -11,7 +11,7 @@ if len(sys.argv) != 1:
 
 # Get the openssl binary path
 r = Runfiles.Create()
-openssl = r.Rlocation("openssl/openssl")
+openssl = r.Rlocation("openssl/openssl.exe")
 
 # Run the openssl command to compute the SHA-256 hash
 command = [openssl, "dgst", "-sha256"]
