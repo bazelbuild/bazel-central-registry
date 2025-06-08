@@ -16,12 +16,6 @@ openssl = r.Rlocation("openssl/openssl" + extension)
 
 # Run the openssl command to compute the SHA-256 hash
 command = [openssl, "dgst", "-sha256"]
-print(f"Running: {command}")
-dir = os.path.dirname(openssl)
-print(f"dir {dir} exists: {os.path.exists(dir)}")
-if os.path.exists(dir):
-    print(f"dir contains {os.listdir(dir)}")
-print(f"working directory {os.getcwd()} contains {os.listdir('.')}")
 result = subprocess.run(command, input="European Burmese", text=True, capture_output=True)
 
 # Extract the hash from the output
