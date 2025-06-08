@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 
@@ -11,9 +12,12 @@ openssl = sys.argv[1]
 
 # Run the openssl command to compute the SHA-256 hash
 command = [openssl, "dgst", "-sha256"]
-result = subprocess.run(
-    command, input="European Burmese", text=True, capture_output=True
-)
+print(f"Running: {command}")
+dir = os.path.dirname(openssl)
+print(f"dir {dir} exists: {os.path.exists(dir)}")
+if os.path.exists(dir):
+    print(f"dir contains {os.listdir(dir)}")
+result = subprocess.run(command, input="European Burmese", text=True, capture_output=True)
 
 # Extract the hash from the output
 out = result.stdout.split()[-1]
