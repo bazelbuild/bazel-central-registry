@@ -1,0 +1,113 @@
+diff --git BUILD.bazel BUILD.bazel
+index 2d44dfba..76ed65c4 100644
+--- BUILD.bazel
++++ BUILD.bazel
+@@ -14,6 +14,9 @@ package(default_visibility = ["//visibility:public"])
+ 
+ load("@bazel_skylib//lib:selects.bzl", "selects")
+ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
++load("@bazel_skylib//rules:native_binary.bzl", "native_binary")
++load("@rules_cc//cc:defs.bzl", "cc_import")
++load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen_toolchain")
+ 
+ exports_files([
+     "LICENSE-APACHE",
+@@ -204,3 +207,26 @@ filegroup(
+     ],
+     visibility = ["//visibility:public"],
+ )
++
++native_binary(
++    name = "clang",
++    src = "@llvm_toolchain_llvm//:bin/clang",
++)
++
++cc_import(
++    name = "libclang",
++    shared_library = "@llvm_toolchain_llvm//:libclang",
++)
++
++rust_bindgen_toolchain(
++    name = "rust_bindgen_toolchain",
++    bindgen = "@rules_rust_bindgen//3rdparty:bindgen",
++    clang = ":clang",
++    libclang = ":libclang",
++)
++
++toolchain(
++    name = "my_bindgen_toolchain",
++    toolchain = ":rust_bindgen_toolchain",
++    toolchain_type = "@rules_rust_bindgen//:toolchain_type",
++)
+diff --git iceoryx2-ffi/ffi/BUILD.bazel iceoryx2-ffi/ffi/BUILD.bazel
+index 68b448d5..a94ccb17 100644
+--- iceoryx2-ffi/ffi/BUILD.bazel
++++ iceoryx2-ffi/ffi/BUILD.bazel
+@@ -20,9 +20,10 @@ filegroup(
+     srcs = glob(["**"]),
+ )
+ 
+-filegroup(
+-    name = "cbindgen-cli",
+-    srcs = ["@cbindgen//file"],
++alias(
++    name = "cbindgen",
++    actual = "@crate_index//:cbindgen__cbindgen",
++    tags = ["manual"],
+ )
+ 
+ genrule(
+@@ -31,11 +32,17 @@ genrule(
+         "//:all_srcs",
+         "Cargo.toml",
+         "cbindgen.toml",
+-        ":cbindgen-cli",
++        ":cbindgen",
+     ],
+     outs = ["include/iox2/iceoryx2.h"],
+     # this is actually just 'cbindgen iceoryx2-ffi/ffi --quiet --config iceoryx2-ffi/ffi/cbindgen.toml --output include/iox2/iceoryx2.h'
+-    cmd = "$(execpath :cbindgen-cli) $$(dirname $(location Cargo.toml)) --quiet --config $(location cbindgen.toml) --output $(OUTS)",
++    cmd = """
++export PATH=$$(dirname $$(realpath $(location @rules_rust//rust/toolchain:current_cargo_files))):$$PATH
++$(execpath :cbindgen) $$(dirname $(location Cargo.toml)) --quiet --config $(location cbindgen.toml) --output $(OUTS)
++""",
++    tools = [
++        "@rules_rust//rust/toolchain:current_cargo_files",
++    ],
+ )
+ 
+ rust_shared_library(
+diff --git iceoryx2-pal/posix/BUILD.bazel iceoryx2-pal/posix/BUILD.bazel
+index d969751e..89c84fab 100644
+--- iceoryx2-pal/posix/BUILD.bazel
++++ iceoryx2-pal/posix/BUILD.bazel
+@@ -15,6 +15,7 @@ package(default_visibility = ["//visibility:public"])
+ load("@rules_cc//cc:defs.bzl", "cc_library")
+ load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test_suite")
++load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
+ 
+ filegroup(
+     name = "all_srcs",
+@@ -34,14 +35,14 @@ cc_library(
+ )
+ 
+ # Generate the Rust binding file
+-genrule(
+-    name = "iceoryx2-pal-posix-bindgen",
+-    srcs = [
+-        "src/c/posix.h",
+-        "@bindgen//:bindgen-cli",
++rust_bindgen(
++    name = "posix_generated",
++    cc_lib = ":iceoryx2-pal-posix-c-lib",
++    header = "src/c/posix.h",
++    bindgen_flags = [
++        "--use-core",
++        "--blocklist-type=max_align_t",
+     ],
+-    outs = ["posix_generated.rs"],
+-    cmd = "$(execpath @bindgen//:bindgen-cli) --use-core --blocklist-type max_align_t $(location src/c/posix.h) --output $(OUTS)",
+ )
+ 
+ cargo_build_script(
