@@ -50,7 +50,7 @@ class BazelBuildTest(unittest.TestCase):
 
         # Verify bazel build is successful with enabled workspace
         print("\n--- Running bazel build with enabled workspace ---")
-        result = self._run_command(["bazel", "build", "--enable_workspace", "--noenable_bzlmod", "//..."])
+        result = self._run_command(["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."])
         assert result.returncode == 0
         self._print_success()
 

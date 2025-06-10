@@ -202,6 +202,7 @@ def print_repo_definition(dep):
 
     if "definition_information" in dep:
         eprint(dep["definition_information"])
+        repo_def_str = "\n".join(repo_def)
         append_migration_info(f"""
 <details>
   <summary>Click here to see where and how the repo was declared in the WORKSPACE file</summary>
@@ -213,7 +214,7 @@ def print_repo_definition(dep):
 
 #### Definition
 ```python
-{"\n".join(repo_def)}
+{repo_def_str}
 ```
   **Tip**: URLs usually show which version was used.
 </details>
