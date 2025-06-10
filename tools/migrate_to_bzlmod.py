@@ -36,6 +36,11 @@ LOAD_IDENTIFIER = "# -- load statements -- #"
 REPO_IDENTIFIER = "# -- repo definitions -- #"
 BAZEL_DEP_IDENTIFIER = "# -- bazel_dep definitions -- #"
 
+# Repos which are already translated to Bzlmod, but they could show up in the error messages as still needing translation.
+# Example: Maven extension adds TODOs for the user, even thought the repo has been resolved in MODULE.bazel file.
+IGNORED_REPOS = []
+# Keep information if it's the first time adding Maven extension since some parts of maven should be translated only once.
+ALREADY_INTRODUCED_MAVEN_EXTENSION = False
 
 def abort_migration():
     info("Abort migration...")
@@ -346,7 +351,67 @@ def url_match_source_repo(source_url, module_name):
     return matched
 
 
+def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
+    global ALREADY_INTRODUCED_MAVEN_EXTENSION
+    append_migration_info("It has been introduced as a maven extension:\n")
+    add_rules_jvm_external = ALREADY_INTRODUCED_MAVEN_EXTENSION
+
+    append_migration_info("```")
+    for maven_artifact in maven_artifacts:
+        parsed_data = json.loads(maven_artifact)
+        group = parsed_data["group"]
+        artifact = parsed_data["artifact"]
+        version = parsed_data["version"]
+        artifact = f"""maven.artifact(
+    group = "{group}",
+    artifact = "{artifact}",
+    version = "{version}"
+)
+"""
+        repo_def = []
+        if not ALREADY_INTRODUCED_MAVEN_EXTENSION:
+            # Introduce maven extension only once
+            ALREADY_INTRODUCED_MAVEN_EXTENSION = True
+            repo_def.append(
+                'maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")\n\n'
+            )
+            repo_def.append(artifact + "\n")
+            repo_def.append('use_repo(maven, "maven")\n')
+            write_at = REPO_IDENTIFIER
+        else:
+            repo_def.append(artifact)
+            write_at = "maven.artifact("
+
+        write_at_given_place(
+            "MODULE.bazel",
+            "".join([""] + repo_def),
+            write_at,
+        )
+        append_migration_info("".join([""] + repo_def))
+
+    append_migration_info("```")
+    IGNORED_REPOS.append(repo)
+    print(
+        f"{RED}TODO: {RESET}`"
+        + repo
+        + "` is a maven extension - Please modify `@"
+        + repo
+        + "//:` with `@maven//:`."
+    )
+    append_migration_info(
+        "TODO: Please modify `@" + repo + "//:` with `@maven//:`.\n\t\t"
+    )
+
+    if not add_rules_jvm_external:
+        # Introduce rules_jvm_external only once
+        # Due to readability of `migration_info.md` file, it's necessary adding this repo before/after maven information.
+        address_unavailable_repo("rules_jvm_external", resolved_deps, workspace_name)
+
+
 def address_unavailable_repo(repo, resolved_deps, workspace_name):
+    if repo in IGNORED_REPOS:
+        return False
+    
     append_migration_info("## Migration of `" + repo + "`:")
 
     # Check if it's the original main repo name
@@ -370,11 +435,13 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
 
     # Print the repo definition in the original WORKSPACE file
     repo_def, file_label, rule_name = [], None, None
-    urls = []
+    urls, maven_artifacts = [], []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
             repo_def, file_label, rule_name = print_repo_definition(dep)
             urls = dep["original_attributes"].get("urls", [])
+            if "artifacts" in dep["original_attributes"]:
+                maven_artifacts = dep["original_attributes"]["artifacts"]
             if dep["original_attributes"].get("url", None):
                 urls.append(dep["original_attributes"]["url"])
             if dep["original_attributes"].get("remote", None):
@@ -418,7 +485,12 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
             return True
     else:
-        append_migration_info("\tIt is not found in BCR. \n")
+        append_migration_info("It is not found in BCR. \n")
+
+    # Support maven extensions.
+    if str(file_label).__contains__("rules_jvm_external") and maven_artifacts:        
+        add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name)
+        return True
 
     # Ask user if the dependency should be introduced via use_repo_rule
     # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
