@@ -60,7 +60,6 @@ cc_library(
         "HAVE_STDINT_H",
         "HAVE_UNISTD_H",
         "VERSION=\\\"546\\\"",
-        "MAGIC=\\\"$(execpath :magic.mgc)\\\"",
     ],
     visibility = ["//visibility:public"],
 )
@@ -71,18 +70,28 @@ cc_shared_library(
 )
 
 cc_binary(
-    name = "file",
+    name = "magic_compiler",
     srcs = ["src/file.c", "src/seccomp.c"],
     deps = [":lib"],
 )
 
 genrule(
     name = "gen_magic",
-    tools = [":file"],
+    tools = [":magic_compiler"],
     srcs = glob(["magic/Magdir/*"]),
-    cmd = """cat $(SRCS) > combined_magic && $(execpath :file) -C -m combined_magic 2>/dev/null && mv combined_magic.mgc $@ && rm combined_magic""",
+    cmd = """cat $(SRCS) > combined_magic && $(execpath :magic_compiler) --compile --magic-file combined_magic 2>/dev/null && mv combined_magic.mgc $@ && rm combined_magic""",
     outs = ["magic.mgc"],
     visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "file",
+    srcs = ["src/file.c", "src/seccomp.c"],
+    data = ["magic.mgc"],
+    deps = [":lib"],
+    env = {
+        "MAGIC": "$(rootpath :magic.mgc)",
+    },
 )
 
 alias(
