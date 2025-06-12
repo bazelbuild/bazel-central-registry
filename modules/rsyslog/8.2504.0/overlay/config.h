@@ -5,7 +5,7 @@
 #define _PATH_MODDIR "plugins"
 
 /* Defined if debug mode is enabled (its easier to check). */
-#define DEBUG 1
+/* #undef DEBUG */
 
 /* Defined if debugless mode is enabled. */
 /* #undef DEBUGLESS */
@@ -481,7 +481,7 @@
 /* #undef MAXPATHLEN */
 
 /* Defined if debug mode is disabled. */
-/* #undef NDEBUG */
+#define NDEBUG 1
 
 /* new systemd present */
 /* #undef NEW_JOURNAL */
