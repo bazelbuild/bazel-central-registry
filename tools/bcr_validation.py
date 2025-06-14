@@ -748,9 +748,10 @@ class BcrValidator:
         self.verify_source_archive_url_integrity(module_name, version)
         if "presubmit_yml" not in skipped_validations:
             self.verify_presubmit_yml_change(module_name, version)
-        self.validate_presubmit_yml(module_name, version)
+            self.validate_presubmit_yml(module_name, version)
         self.verify_module_dot_bazel(module_name, version, "compatibility_level" not in skipped_validations)
-        self.verify_attestations(module_name, version)
+        if "attestations" not in skipped_validations:
+            self.verify_attestations(module_name, version)
 
     def validate_metadata(self, modules):
         print_expanded_group(f"Validating metadata.json files for {modules}")
@@ -948,8 +949,8 @@ def main(argv=None):
         action="append",
         help='Bypass the given step for validating modules. Supported values are: "url_stability", '
         + 'to bypass the URL stability check; "presubmit_yml", to bypass the presubmit.yml check; '
-        + '"source_repo", to bypass the source repo verification; '
-        + "This flag can be repeated to skip multiple validations.",
+        + '"source_repo", to bypass the source repo verification; "attestations", to skip the '
+        + "attestations check. This flag can be repeated to skip multiple validations.",
     )
 
     args = parser.parse_args(argv)
