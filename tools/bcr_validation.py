@@ -688,7 +688,7 @@ class BcrValidator:
                     "Missing bazel version for task '%s' in the presubmit.yml file." % task_name,
                 )
 
-    def validate_presubmit_yml(self, module_name, version):
+    def validate_presubmit_tasks(self, module_name, version):
         presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
         presubmit = yaml.safe_load(open(presubmit_yml, "r"))
         report_num_old = len(self.validation_results)
@@ -748,7 +748,8 @@ class BcrValidator:
         self.verify_source_archive_url_integrity(module_name, version)
         if "presubmit_yml" not in skipped_validations:
             self.verify_presubmit_yml_change(module_name, version)
-            self.validate_presubmit_yml(module_name, version)
+        if "presubmit_task" not in skipped_validations:
+            self.validate_presubmit_tasks(module_name, version)
         self.verify_module_dot_bazel(module_name, version, "compatibility_level" not in skipped_validations)
         if "attestations" not in skipped_validations:
             self.verify_attestations(module_name, version)
@@ -947,10 +948,13 @@ def main(argv=None):
         type=str,
         default=[],
         action="append",
-        help='Bypass the given step for validating modules. Supported values are: "url_stability", '
-        + 'to bypass the URL stability check; "presubmit_yml", to bypass the presubmit.yml check; '
-        + '"source_repo", to bypass the source repo verification; "attestations", to skip the '
-        + "attestations check. This flag can be repeated to skip multiple validations.",
+        help="Bypass the given step for validating modules. Supported values are: "
+        + '"url_stability", to bypass the URL stability check; '
+        + '"presubmit_yml", to bypass the presubmit.yml check; '
+        + '"presubmit_task", to bypass the presubmit.yml tasks check; '
+        + '"source_repo", to bypass the source repo verification; '
+        + '"attestations", to skip the attestations check. '
+        + "This flag can be repeated to skip multiple validations.",
     )
 
     args = parser.parse_args(argv)
