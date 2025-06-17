@@ -25,16 +25,22 @@ sha256-woVpUbvzDjCGGs43ZVldhroT8s8BJ52QH2xiJYxX9P8=
 
 A script to validate module information in the BCR. It is used in the BCR presubmit.
 ```
-usage: bcr_validation.py [-h] [--registry REGISTRY] [--check CHECK] [--check_all] [--check_all_metadata] [--fix]
+usage: bcr_validation.py [-h] [--registry REGISTRY] [--check CHECK] [--check_all] [--check_metadata CHECK_METADATA] [--check_all_metadata] [--fix] [--skip_validation SKIP_VALIDATION]
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --registry REGISTRY   Specify the root path of the registry (default: the current working directory).
   --check CHECK         Specify a Bazel module version you want to perform the BCR check on. (e.g. bazel_skylib@1.3.0). If no version is specified, all versions of that module are
                         checked. This flag can be repeated to accept multiple module versions.
   --check_all           Check all Bazel modules in the registry, ignore other --check flags.
+  --check_metadata CHECK_METADATA
+                        Check metadata for given modules in the registry.
   --check_all_metadata  Check all Bazel module metadata in the registry.
   --fix                 Should the script try to fix the detected validation errors.
+  --skip_validation SKIP_VALIDATION
+                        Bypass the given step for validating modules. Supported values are: "url_stability", to bypass the URL stability check; "presubmit_yml", to bypass the
+                        presubmit.yml check; "presubmit_task", to bypass the presubmit.yml tasks check; "source_repo", to bypass the source repo verification; "attestations",
+                        to skip the attestations check. This flag can be repeated to skip multiple validations.
 ```
 
 ## print_all_src_urls.py
