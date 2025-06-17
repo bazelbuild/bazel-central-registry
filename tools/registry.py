@@ -431,7 +431,7 @@ module(
         if module.presubmit_yml:
             shutil.copy(module.presubmit_yml, presubmit_yml)
         else:
-            PLATFORMS = ["debian10", "ubuntu2004", "macos", "macos_arm64", "windows"]
+            PLATFORMS = ["debian11", "ubuntu2204", "macos", "macos_arm64", "windows"]
             BAZEL_VERSIONS = ["8.x", "7.x", "6.x"]
             presubmit = {
                 "matrix": {
@@ -547,8 +547,8 @@ def _download_if_exists(url):
 
 
 class UpstreamRegistry:
-    def __init__(self, org="bazelbuild", repo="bazel-central-registry", branch="main"):
-        self._root_url = f"https://raw.githubusercontent.com/{org}/{repo}/refs/heads/{branch}/modules"
+    def __init__(self, modules_dir_url):
+        self._root_url = modules_dir_url
 
     def get_latest_module_version(self, module_name):
         metadata_url = posixpath.join(self._root_url, module_name, "metadata.json")

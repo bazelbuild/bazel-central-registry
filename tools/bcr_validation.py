@@ -77,6 +77,8 @@ COLOR = {
     BcrValidationResult.FAILED: RED,
 }
 
+UPSTREAM_MODULES_DIR_URL = "https://bcr.bazel.build/modules"
+
 # TODO(fweikert): switch to a stable release that contains https://github.com/slsa-framework/slsa-verifier/pull/840
 DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1-rc.1"
 
@@ -198,7 +200,7 @@ def check_github_url(repo_path, source_url):
     # Avoid potential path manipulations with "../"
     normalized_path = os.path.abspath(parts.path)
 
-    # If the URL doesn't starts with https://github.com/<repo_path>, return False
+    # If the URL doesn't start with https://github.com/<repo_path>, return False
     if parts.scheme != "https" or parts.netloc != "github.com" or not normalized_path.startswith(f"/{repo_path}/"):
         return False
 
@@ -236,6 +238,33 @@ def get_github_user_id(github_username):
         GITHUB_USER_ID_CACHE[github_username] = user_id
         return user_id
     return None
+
+
+def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
+    """
+    Returns whether the bazel_compatability is valid for an overlay.
+    See: https://bazel.build/rules/lib/globals/module#module
+
+    Args:
+        bazel_compatability: List of bazel compatability strings.
+
+    Returns:
+        Boolean indicating compatability with source overlays.
+    """
+    if not bazel_compatibility:
+        return False
+    for v in bazel_compatibility:
+        m = re.fullmatch(r"^([><-]=?)(\d+\.\d+\.\d+)$", v)
+        if not m or m.group(1) == "-":
+            continue  # Skip - versions
+        version = tuple(int(i) for i in m.group(2).split("."))
+        if m.group(1) == ">":
+            if version > (7, 2, 0):
+                return True
+        elif m.group(1) == ">=":
+            if version >= (7, 2, 1):
+                return True
+    return False
 
 
 class BcrValidationException(Exception):
@@ -286,7 +315,7 @@ class BcrValidator:
                 source_url = "https://" + source_netloc + "/" + source_parts
             if source_url.endswith(".git"):
                 source_url = source_url.removesuffix(".git")
-                # The asterisk here is to prevent the final slash from getting
+                # The asterisk here is to prevent the final slash from being
                 # dropped by os.path.abspath().
                 source_url = source_url + "/*"
         else:
@@ -491,8 +520,13 @@ class BcrValidator:
                     and isinstance(node.value.func, ast.Name)
                     and node.value.func.id == "module"
                 ):
-                    keywords = {k.arg: k.value.value for k in node.value.keywords if isinstance(k.value, ast.Constant)}
-                    return keywords.get(attribute, default)
+                    for k in node.value.keywords:
+                        if k.arg == attribute:
+                            if isinstance(k.value, ast.Constant):
+                                return k.value.value
+                            if isinstance(k.value, ast.List):
+                                return [v.value for v in k.value.elts if isinstance(v, ast.Constant)]
+                    return default
 
     def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
         source = self.registry.get_source(module_name, version)
@@ -630,6 +664,18 @@ class BcrValidator:
                 self.report(
                     BcrValidationResult.FAILED,
                     f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). ",
+                )
+
+        # Check that bazel_compatability is sufficient when using "overlay"
+        if "overlay" in source:
+            current_bazel_compatibility = BcrValidator.extract_attribute_from_module(
+                bcr_module_dot_bazel, "bazel_compatibility", []
+            )
+            if not is_valid_bazel_compatability_for_overlay(current_bazel_compatibility):
+                self.report(
+                    BcrValidationResult.FAILED,
+                    "When using overlay files the module must set `bazel_compatibility` constraints to "
+                    f"at least `['>=7.2.1']`, got {current_bazel_compatibility}. ",
                 )
 
         shutil.rmtree(tmp_dir)
@@ -846,7 +892,7 @@ class BcrValidator:
         # Calculate the overall return code
         # 0: All good
         # 1: BCR validation failed
-        # 42: BCR validation passes, but some changes need BCR maintainer review before trigging follow up BCR presubmit jobs.
+        # 42: BCR validation passes, but some changes need BCR maintainer review before triggering follow up BCR presubmit jobs.
         result_codes = [code for code, _ in self.validation_results]
         if BcrValidationResult.FAILED in result_codes:
             return 1
@@ -921,8 +967,8 @@ def main(argv=None):
         for name, version in module_versions:
             print(f"{name}@{version}")
 
-    # TODO: Read org etc from flags to support forks.
-    upstream = UpstreamRegistry()
+    # TODO: Read url from flags to support forks.
+    upstream = UpstreamRegistry(modules_dir_url=UPSTREAM_MODULES_DIR_URL)
 
     # Validate given module version.
     validator = BcrValidator(registry, upstream, args.fix)
