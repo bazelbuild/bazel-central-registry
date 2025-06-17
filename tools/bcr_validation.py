@@ -528,7 +528,7 @@ class BcrValidator:
                                 return [v.value for v in k.value.elts if isinstance(v, ast.Constant)]
                     return default
 
-    def verify_module_dot_bazel(self, module_name, version, check_compatibility_level=True):
+    def verify_contents(self, module_name, version, check_compatibility_level=True):
         source = self.registry.get_source(module_name, version)
         tmp_dir = Path(tempfile.mkdtemp())
         output_dir = tmp_dir.joinpath("source_root")
@@ -562,19 +562,14 @@ class BcrValidator:
                         f"The patch file `{patch_name}` is a symlink to `{patch_file.readlink()}`, "
                         "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
                     )
+                # Verify that the patch applies cleanly
                 apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
-            module_file = overlay_dir / "MODULE.bazel"
-            if module_file.exists() and (not module_file.is_symlink() or os.readlink(module_file) != "../MODULE.bazel"):
-                self.report(
-                    BcrValidationResult.FAILED,
-                    f"{module_file} should be a symlink to `../MODULE.bazel`.",
-                )
 
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
-                if overlay_src != module_file and overlay_src.is_symlink():
+                if overlay_src.is_symlink():
                     self.report(
                         BcrValidationResult.FAILED,
                         f"The overlay file `{overlay_file}` is a symlink to `{overlay_src.readlink()}`, "
@@ -604,43 +599,12 @@ class BcrValidator:
                         f"but the real integrity value is `{actual_integrity}`.",
                     )
                     continue
+                # Verify that writing out the overlay files in order succeeds
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(overlay_src, overlay_dst)
 
-        source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
-        if source_module_dot_bazel.exists():
-            source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
-        else:
-            source_module_dot_bazel_content = []
-        bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
-        bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
-        source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
-        bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
-        file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
-        diff = list(
-            unified_diff(
-                source_module_dot_bazel_content,
-                bcr_module_dot_bazel_content,
-                fromfile=file_name,
-                tofile=file_name,
-            )
-        )
-
-        if diff:
-            self.report(
-                BcrValidationResult.FAILED,
-                "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
-                + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
-                + "    "
-                + "    ".join(diff),
-            )
-            if self.should_fix:
-                self.add_module_dot_bazel_patch(diff, module_name, version)
-        else:
-            self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
-
         # Check the version in MODULE.bazel matches the version in directory name
-        version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "version")
+        version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(module_file, "version")
         if version_in_module_dot_bazel != version:
             self.report(
                 BcrValidationResult.FAILED,
@@ -655,7 +619,7 @@ class BcrValidator:
             pre_version = versions[index - 1]
             previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, pre_version)
             current_compatibility_level = BcrValidator.extract_attribute_from_module(
-                bcr_module_dot_bazel, "compatibility_level", 0
+                module_file, "compatibility_level", 0
             )
             previous_compatibility_level = BcrValidator.extract_attribute_from_module(
                 previous_module_dot_bazel, "compatibility_level", 0
@@ -669,7 +633,7 @@ class BcrValidator:
         # Check that bazel_compatability is sufficient when using "overlay"
         if "overlay" in source:
             current_bazel_compatibility = BcrValidator.extract_attribute_from_module(
-                bcr_module_dot_bazel, "bazel_compatibility", []
+                module_file, "bazel_compatibility", []
             )
             if not is_valid_bazel_compatability_for_overlay(current_bazel_compatibility):
                 self.report(
@@ -749,7 +713,7 @@ class BcrValidator:
         if "presubmit_yml" not in skipped_validations:
             self.verify_presubmit_yml_change(module_name, version)
         self.validate_presubmit_yml(module_name, version)
-        self.verify_module_dot_bazel(module_name, version, "compatibility_level" not in skipped_validations)
+        self.verify_contents(module_name, version, "compatibility_level" not in skipped_validations)
         self.verify_attestations(module_name, version)
 
     def validate_metadata(self, modules):
