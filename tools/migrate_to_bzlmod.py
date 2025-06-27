@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 from registry import RegistryClient
 
 # The registry client points to the bazel central registry repo
-REGISTRY_CLIENT = RegistryClient(pathlib.Path(__file__).parent.joinpath("../"))
+REGISTRY_CLIENT = RegistryClient(pathlib.Path(__file__).resolve().parent.joinpath("../"))
 
 USE_REPO_RULE_IDENTIFIER = "# -- use_repo_rule statements -- #"
 LOAD_IDENTIFIER = "# -- load statements -- #"
