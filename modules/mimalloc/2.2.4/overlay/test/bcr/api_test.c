@@ -1,4 +1,5 @@
 #include <mimalloc.h>
+#include <mimalloc-stats.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -21,6 +22,14 @@ int main(int argc, char** argv) {
     printf("Memory leak not detected\n");
     return 1;
   }
+
+  char* json = mi_stats_get_json(0, NULL);
+  if (json == NULL) {
+    printf("Failed to get JSON stats\n");
+    return 1;
+  }
+  puts(json);
+  mi_free(json);
 
   mi_free(p);
 }
