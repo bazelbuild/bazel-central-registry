@@ -1,6 +1,7 @@
 _use_languages_tag = tag_class(
     attrs = {
         "cc": attr.bool(default = False),
+        "upb_c": attr.bool(default = False),
         "csharp": attr.bool(default = False),
         "gapic": attr.bool(default = False),
         "go": attr.bool(default = False),
