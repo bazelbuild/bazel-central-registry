@@ -33,6 +33,9 @@ bzl_library(
     srcs = [
         "@rules_java//java:defs.bzl",
     ],
+    deps = [
+        "@bazel_gazelle//:def"
+    ]
 )
 
 sh_library(name='sh_lib')

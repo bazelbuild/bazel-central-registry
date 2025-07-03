@@ -328,6 +328,9 @@ def url_match_source_repo(source_url, module_name):
         if matched:
             break
         repo_type, repo_path = source_repository.split(":")
+        # Include repos which were moved to bazel-contrib:
+        # https://github.com/orgs/bazelbuild/discussions/2#discussioncomment-10671359.
+        repo_path = repo_path.replace("bazel-contrib/", "bazelbuild/")
         if repo_type == "github":
             matched = (
                 parts.scheme == "https"
@@ -532,7 +535,7 @@ def parse_bazel_version(bazel_version):
     return tuple([int(n) for n in version.split(".")])
 
 
-def prepare_migration():
+def prepare_migration(initial_flag):
     """Preparation work before starting the migration."""
     exit_code, stdout, _ = execute_command(["bazel", "--version"])
     eprint(stdout.strip())
@@ -552,6 +555,10 @@ def prepare_migration():
             if s:
                 workspace_name = s.groups()[0]
                 info(f"Detected original workspace name: {workspace_name}")
+
+    # Delete MODULE.bazel file if `--initial` flag is set.
+    if initial_flag:
+        delete_file_if_exists("MODULE.bazel")
 
     # Create MODULE.bazel file if it doesn't exist already.
     if not pathlib.Path("MODULE.bazel").is_file():
@@ -600,7 +607,7 @@ def generate_resolved_file(targets, use_bazel_sync):
         lines = f.readlines()
     with open("resolved_deps.py", "w") as f:
         for line in lines:
-            if '"_action_listener":' not in line:
+            if "unknown object com" not in line:
                 f.write(line)
 
 
@@ -682,6 +689,11 @@ def query_direct_targets(args):
     return direct_deps
 
 
+def run_first_part(initial_flag):
+    # Return true if MODULE.bazel file doesn't exist or if flag `--initial` is set.
+    return not pathlib.Path("MODULE.bazel").is_file() or initial_flag
+
+
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
@@ -713,10 +725,10 @@ def main(argv=None):
         help="ignore previously generated resolved dependencies.",
     )
     parser.add_argument(
-        "-i",
-        "--interactive",
+        "-c",
+        "--collaborate",
         action="store_true",
-        help="ask the user interactively on what to do.",
+        help="collaborate with the user interactively on what to do.",
     )
     parser.add_argument(
         "-t",
@@ -725,6 +737,12 @@ def main(argv=None):
         action="append",
         help="specify the targets you want to migrate. This flag is repeatable, and the targets are accumulated.",
     )
+    parser.add_argument(
+        "-i",
+        "--initial",
+        action="store_true",
+        help="translates direct dependencies into MODULE.bazel file. This flag overrides MODULE.bazel flag.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -732,11 +750,12 @@ def main(argv=None):
         parser.print_help()
         return 1
 
-    workspace_name = prepare_migration()
+    run_initial = run_first_part(args.initial)
+    workspace_name = prepare_migration(args.initial)
 
     resolved_deps = load_resolved_deps(args.target, args.sync, args.force)
 
-    yes_or_no.enable = args.interactive
+    yes_or_no.enable = args.collaborate
 
     delete_file_if_exists("migration_info.md")
     append_migration_info("# Migration info")
@@ -744,25 +763,28 @@ def main(argv=None):
     append_migration_info("```\nbazel build --enable_bzlmod --noenable_workspace " + " ".join(args.target) + "\n```")
 
     # First part of the migration - Find direct deps with bazel query and add them in MODULE.bazel file.
-    print(f"{GREEN}\nFirst part of the migration - Resolve direct deps.")
-    direct_deps = query_direct_targets(args)
+    if run_initial:
+        print(f"{GREEN}\nFirst part of the migration - Resolve direct deps.")
+        direct_deps = query_direct_targets(args)
 
-    resolved_repos = []
-    unresolved_deps = []
-    for direct_dep in direct_deps:
-        if address_unavailable_repo(direct_dep, resolved_deps, workspace_name):
-            resolved_repos.append(direct_dep)
+        resolved_repos = []
+        unresolved_deps = []
+        for direct_dep in direct_deps:
+            if address_unavailable_repo(direct_dep, resolved_deps, workspace_name):
+                resolved_repos.append(direct_dep)
+            else:
+                unresolved_deps.append(direct_dep)
+
+        if unresolved_deps:
+            print(f"{RED}\nThese repos need manual support:")
+            for dep in unresolved_deps:
+                print(f"\t{RED}" + dep)
         else:
-            unresolved_deps.append(direct_dep)
-
-    if unresolved_deps:
-        print(f"{RED}\nThese repos need manual support:")
-        for dep in unresolved_deps:
-            print(f"\t{RED}" + dep)
+            print(f"\n{GREEN}All direct dependencies have been resolved.")
     else:
-        print(f"\n{GREEN}All direct dependencies have been resolved.")
-
-    print(f"{RESET}For details about the migration process, check {GREEN}`migration_info.md` {RESET}file.\n")
+        print(
+            f"{RED}\nIgnored first part of the migration - If you want to run it, remove the `MODULE.bazel` file or add `--initial` flag."
+        )
 
     # Second part of the migration - Build with bzlmod and fix potential errors.
     print(f"\n{GREEN}Second part of the migration - Build with bzlmod and fix potential errors.\n")
@@ -811,6 +833,7 @@ def main(argv=None):
         error("Unrecognized error, please fix manually:\n" + stderr)
         return 1
 
+    print(f"{RESET}For details about the migration process, check {GREEN}`migration_info.md` {RESET}file.\n")
     return 0
 
 
