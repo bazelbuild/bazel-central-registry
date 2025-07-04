@@ -116,8 +116,6 @@ class Verifier:
             [self._executable, cmd] + args,
             capture_output=True,
             encoding="utf-8",
-            # TODO(fweikert): remove once GH attestation support is stable.
-            env={"SLSA_VERIFIER_EXPERIMENTAL": "1", **os.environ},
         )
 
         if result.returncode:
@@ -139,8 +137,7 @@ class Verifier:
         url = self._get_url()
         raw_content = download(url)
 
-        # TODO(fweikert): Re-enable once we use a stable release.
-        # self._check_sha256sum(raw_content, os.path.basename(url))
+        self._check_sha256sum(raw_content, os.path.basename(url))
 
         with open(self._executable, "wb") as f:
             f.write(raw_content)
