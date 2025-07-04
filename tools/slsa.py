@@ -128,7 +128,8 @@ class Verifier:
                 )
             )
 
-        eprint(f"Result:\n\t{result.stdout}")
+        # slsa-verifier prints to stderr.
+        eprint(f"\n\nResult:\n\n{result.stderr}")
 
     def _download_binary_if_necessary(self):
         if self._executable.exists():
