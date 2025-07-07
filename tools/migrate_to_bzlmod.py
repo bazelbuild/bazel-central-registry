@@ -704,12 +704,6 @@ def main(argv=None):
         + "including bind statements and execution platform & toolchain registrations.",
     )
     parser.add_argument(
-        "-f",
-        "--force",
-        action="store_true",
-        help="ignore previously generated resolved dependencies.",
-    )
-    parser.add_argument(
         "-c",
         "--collaborate",
         action="store_true",
