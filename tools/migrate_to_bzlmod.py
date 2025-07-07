@@ -56,14 +56,23 @@ def eprint(*args, **kwargs):
     print(*args, flush=True, file=sys.stderr, **kwargs)
 
 
-GREEN = "\x1b[32m"
-YELLOW = "\x1b[33m"
-RED = "\x1b[31m"
-RESET = "\x1b[0m"
+BOLD = "\033[1m"
+GREEN = "\x1b[32m\033[1m"
+YELLOW = "\x1b[33m\033[1m"
+RED = "\x1b[31m\033[1m"
+RESET = "\033[0m"
 
 
 def info(msg):
-    eprint(f"{GREEN}INFO: {RESET}{msg}")
+    eprint(msg)
+
+
+def resolved(msg):
+    eprint(f"{GREEN}RESOLVED: {RESET}{msg}")
+
+
+def important(msg):
+    eprint(f"{YELLOW}IMPORTANT: {RESET}{msg}")
 
 
 def warning(msg):
@@ -132,8 +141,9 @@ def append_migration_info(content):
     append_to_file("migration_info.md", content + "\n")
 
 
-def execute_command(args, cwd=None, env=None, shell=False, executable=None):
-    info("Executing command: " + " ".join(args))
+def execute_command(args, to_print=False, cwd=None, env=None, shell=False, executable=None):
+    if to_print:
+        info("Executing command: " + " ".join(args))
     with tempfile.TemporaryFile() as stdout:
         with tempfile.TemporaryFile() as stderr:
             proc = subprocess.Popen(
@@ -201,7 +211,6 @@ def print_repo_definition(dep):
     repo_def.append(")")
 
     if "definition_information" in dep:
-        eprint(dep["definition_information"])
         repo_def_str = "\n".join(repo_def)
         append_migration_info(f"""
 <details>
@@ -238,7 +247,6 @@ def detect_unavailable_repo_error(stderr):
         for p in PATTERNS:
             m = p.search(line)
             if m:
-                eprint(line)
                 return m.groups()[0]
 
     return None
@@ -419,6 +427,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         ):
             append_migration_info("It has been introduced as a Bazel module:\n")
             append_migration_info("\t" + bazel_dep_line + "")
+            resolved("`" + repo + "` has been introduced as a Bazel module.")
             write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
             return True
     else:
@@ -437,6 +446,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         )
     ):
         append_migration_info("\tIt has been introduced with `use_repo_rule`:\n")
+        resolved("`" + repo + "` has been introduced with `use_repo_rule`.")
         add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name)
         return True
 
@@ -444,67 +454,36 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Only ask when file_label exists, which means it's a starlark repository rule.
     elif file_label and yes_or_no("Do you wish to introduce the repository with a module extension?", True):
         append_migration_info("\tIt has been introduced as a module extension:\n")
+        resolved("`" + repo + "` has been introduced as a module extension.")
         add_repo_to_module_extension(repo, repo_def, file_label, rule_name)
         return True
     elif rule_name == "local_repository" and repo != "bazel_tools":
         append_migration_info("\tIt has been introduced as a module extension since it is local_repository rule:\n")
+        resolved("`" + repo + "` has been introduced as a module extension (local_repository).")
         add_repo_to_module_extension(repo, repo_def, "@bazel_tools//tools/build_defs/repo:local.bzl", rule_name)
         return True
 
-    # Ask user if this dep should be added to the WORKSPACE.bzlmod for later migration.
-    elif yes_or_no(
-        "Do you wish to add the repo definition to WORKSPACE.bzlmod for later migration?",
-        True,
-    ):
-        repo_def = ["", "# TODO: Migrated to Bzlmod"] + repo_def
-        append_migration_info("\tIntroducing dep in WORKSPACE.bzlmod for later migration as:")
-        append_migration_info("\t\t" + "".join(repo_def))
-        scratch_file("WORKSPACE.bzlmod", repo_def, mode="a")
-        return True
-    else:
-        append_migration_info("\tPlease manually add this dependency.")
-        return False
+    append_migration_info("\tPlease manually add this dependency.")
+    return False
 
 
 def detect_bind_issue(stderr):
-    """Search for error message that maybe caused by missing bind statements and return the missing target."""
+    """Search for error message that maybe caused by missing bind statements and return the missing target and its location."""
     for line in stderr.split("\n"):
-        s = re.search(r"no such target '(//external:[A-Za-z0-9_-]+)'", line)
+        s = re.search(r"ERROR: (.*): no such package 'external':", line)
         if s:
-            eprint(line)
             return s.groups()[0]
     return None
 
 
-def address_bind_issue(bind_target, resolved_repos):
-    warning(
-        f"A bind target detected: {bind_target}! `bind` is already deprecated,"
-        " you should reference the actual target directly instead of using //external:<target>."
+def address_bind_issue(bind_target_location, resolved_repos):
+    print("")
+    error(
+        f"A bind target detected at {bind_target_location}! `bind` is already deprecated,"
+        " you should reference the actual target directly instead of using //external:<target>"
+        " (details at https://bazel.build/external/migration#bind-targets). After this fix, rerun this tool."
     )
-
-    name = bind_target.split(":")[1]
-    bind_def = None
-    for dep in resolved_repos:
-        if dep["original_rule_class"] == "bind" and dep["original_attributes"]["name"] == name:
-            bind_def, _, _ = print_repo_definition(dep)
-            break
-
-    if bind_def:
-        bind_def = ["", "# TODO: Remove the following bind usage"] + bind_def
-        if yes_or_no(
-            "Do you wish to add the bind definition to WORKSPACE.bzlmod for later migration?",
-            True,
-        ):
-            info(f"Adding bind statement for {bind_target} in WORKSPACE.bzlmod")
-            scratch_file("WORKSPACE.bzlmod", bind_def, mode="a")
-            return True
-    else:
-        warning(
-            f"Bind definition for {bind_target} isn't found in ./resolved_deps.py file, please fix manually. "
-            + "You can get more verbose info by rerun the script with --sync/-s and --force/-f flags "
-            + "(but it might take a long time and could fail)."
-        )
-        abort_migration()
+    print("")
 
 
 def extract_version_number(bazel_version):
@@ -538,7 +517,7 @@ def parse_bazel_version(bazel_version):
 def prepare_migration(initial_flag):
     """Preparation work before starting the migration."""
     exit_code, stdout, _ = execute_command(["bazel", "--version"])
-    eprint(stdout.strip())
+    eprint(stdout.strip() + "\n")
     if exit_code != 0 or not stdout:
         warning(
             "Current bazel is not a release version, we recommend using Bazel 7 or newer releases for Bzlmod migration."
@@ -559,6 +538,7 @@ def prepare_migration(initial_flag):
     # Delete MODULE.bazel file if `--initial` flag is set.
     if initial_flag:
         delete_file_if_exists("MODULE.bazel")
+        delete_file_if_exists("migration_info.md")
 
     # Create MODULE.bazel file if it doesn't exist already.
     if not pathlib.Path("MODULE.bazel").is_file():
@@ -574,9 +554,6 @@ def prepare_migration(initial_flag):
     ]:
         if identifier not in module_bazel_content:
             scratch_file("MODULE.bazel", ["", identifier], mode="a")
-
-    # Create WORKSPACE.bzlmod file if it doesn't exist already.
-    scratch_file("WORKSPACE.bzlmod", [], mode="a")
 
     return workspace_name
 
@@ -618,8 +595,8 @@ def load_resolved_deps(targets, use_bazel_sync, force):
         generate_resolved_file(targets, use_bazel_sync)
     else:
         info(
-            "Found existing ./resolved_deps.py file, "
-            "if it's out of date, please add `--force/-f` flag to force update it."
+            "Found existing ./resolved_deps.py file - "
+            "If it's out of date, please add `--initial/-i` flag to force update it."
         )
 
     spec = importlib.util.spec_from_file_location("resolved_deps", "./resolved_deps.py")
@@ -627,7 +604,6 @@ def load_resolved_deps(targets, use_bazel_sync, force):
     sys.modules["resolved_deps"] = module
     spec.loader.exec_module(module)
     resolved_deps = module.resolved
-    info("Found %d external repositories in the ./resolved_deps.py file." % len(resolved_deps))
     return resolved_deps
 
 
@@ -694,6 +670,15 @@ def run_first_part(initial_flag):
     return not pathlib.Path("MODULE.bazel").is_file() or initial_flag
 
 
+def get_error_target(stderr, init_target):
+    pattern = r"Analysis of target '(.*?)' failed"
+    match = re.search(pattern, stderr)
+    if match:
+        return match.group(1)
+    else:
+        " ".join(init_target)
+
+
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
@@ -741,7 +726,7 @@ def main(argv=None):
         "-i",
         "--initial",
         action="store_true",
-        help="translates direct dependencies into MODULE.bazel file. This flag overrides MODULE.bazel flag.",
+        help="detect direct dependencies, introduce them in MODULE.bazel and rerun generation of resolved dependencies. Running with this flag always overrides the current MODULE.bazel file.",
     )
 
     args = parser.parse_args(argv)
@@ -753,18 +738,17 @@ def main(argv=None):
     run_initial = run_first_part(args.initial)
     workspace_name = prepare_migration(args.initial)
 
-    resolved_deps = load_resolved_deps(args.target, args.sync, args.force)
+    resolved_deps = load_resolved_deps(args.target, args.sync, args.initial)
 
     yes_or_no.enable = args.collaborate
-
-    delete_file_if_exists("migration_info.md")
-    append_migration_info("# Migration info")
-    append_migration_info("Command for local testing:")
-    append_migration_info("```\nbazel build --enable_bzlmod --noenable_workspace " + " ".join(args.target) + "\n```")
+    repro_command = "bazel build --enable_bzlmod --noenable_workspace " + " ".join(args.target)
 
     # First part of the migration - Find direct deps with bazel query and add them in MODULE.bazel file.
     if run_initial:
-        print(f"{GREEN}\nFirst part of the migration - Resolve direct deps.")
+        append_migration_info("# Migration info")
+        append_migration_info("Command for local testing:")
+        append_migration_info("```\n" + repro_command + "\n```")
+        print("")
         direct_deps = query_direct_targets(args)
 
         resolved_repos = []
@@ -779,16 +763,13 @@ def main(argv=None):
             print(f"{RED}\nThese repos need manual support:")
             for dep in unresolved_deps:
                 print(f"\t{RED}" + dep)
-        else:
-            print(f"\n{GREEN}All direct dependencies have been resolved.")
+            # TODO(kotlaja): Add these repos at the end.
     else:
-        print(
-            f"{RED}\nIgnored first part of the migration - If you want to run it, remove the `MODULE.bazel` file or add `--initial` flag."
+        info(
+            "To create a MODULE.bazel file from scratch, either delete existing MODULE.bazel file or use the `--initial/-i` flag."
         )
 
     # Second part of the migration - Build with bzlmod and fix potential errors.
-    print(f"\n{GREEN}Second part of the migration - Build with bzlmod and fix potential errors.\n")
-
     while True:
         # Try to build with Bzlmod enabled
         targets = args.target
@@ -801,17 +782,14 @@ def main(argv=None):
         ] + targets
         exit_code, _, stderr = execute_command(bazel_command)
         if exit_code == 0:
+            print("")
             info(
                 "Congratulations! All external repositories needed for building `"
                 + " ".join(targets)
-                + "` are available with Bzlmod (and the WORKSPACE.bzlmod file)!"
+                + "` are available with Bzlmod!"
             )
-            info("Things you should do next:")
-            info("  - Migrate remaining dependencies in the WORKSPACE.bzlmod file to Bzlmod.")
-            info(
-                "  - Run the actual build with Bzlmod enabled (with --enable_bzlmod, but without --nobuild) "
-                "and fix remaining build time issues."
-            )
+            important("Fix potential build time issues by running the following command:")
+            eprint(f"{BOLD}        `{repro_command}`{RESET}")
             break
 
         # 1. Detect build failure caused by unavailable repository
@@ -823,17 +801,22 @@ def main(argv=None):
                 abort_migration()
 
         # 2. Detect build failure caused by unavailable bind statements
-        bind_target = detect_bind_issue(stderr)
-        if bind_target:
-            if address_bind_issue(bind_target, resolved_deps):
+        bind_target_location = detect_bind_issue(stderr)
+        if bind_target_location:
+            if address_bind_issue(bind_target_location, resolved_deps):
                 continue
             else:
                 abort_migration()
 
+        print("")
         error("Unrecognized error, please fix manually:\n" + stderr)
+        err_target = get_error_target(stderr, args.target)
+        important("Command for rerunning the error:")
+        eprint(f"{BOLD}    `bazel build --enable_bzlmod --noenable_workspace {err_target}`{RESET}\n")
         return 1
 
-    print(f"{RESET}For details about the migration process, check {GREEN}`migration_info.md` {RESET}file.\n")
+    print("")
+    important("For details about the migration process, check `migration_info.md` file.\n")
     return 0
 
 

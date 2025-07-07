@@ -34,7 +34,8 @@ bzl_library(
         "@rules_java//java:defs.bzl",
     ],
     deps = [
-        "@bazel_gazelle//:def"
+        "@bazel_gazelle//:def",
+        "//external:gazelle_bind"
     ]
 )
 
