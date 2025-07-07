@@ -268,7 +268,6 @@ def write_at_given_place(filename, new_content, identifier):
 
 def add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name):
     """Introduce a repository with use_repo_rule in the MODULE.bazel file."""
-    info(f"Introducing @{repo} via use_repo_rule.")
     use_repo_rule = f'{rule_name} = use_repo_rule("{file_label}", "{rule_name}")'
 
     # Check if the use_repo_rule is already in the MODULE.bazel file
@@ -286,8 +285,6 @@ def add_repo_with_use_repo_rule(repo, repo_def, file_label, rule_name):
 
 def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     """Introduce a repository via a module extension."""
-    info(f"Introducing @{repo} via a module extension.")
-
     # If the repo was not defined in @bazel_tools,
     # we need to create a separate module extension for it to avoid cycle.
     need_separate_module_extension = not file_label.startswith("@bazel_tools")
@@ -533,7 +530,7 @@ def prepare_migration(initial_flag):
             s = re.search(r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line)
             if s:
                 workspace_name = s.groups()[0]
-                info(f"Detected original workspace name: {workspace_name}")
+                info(f"Detected original workspace name: {workspace_name}\n")
 
     # Delete MODULE.bazel file if `--initial` flag is set.
     if initial_flag:
@@ -591,7 +588,7 @@ def generate_resolved_file(targets, use_bazel_sync):
 def load_resolved_deps(targets, use_bazel_sync, force):
     """Generate and load the resolved file that contains external deps info."""
     if not pathlib.Path("resolved_deps.py").is_file() or force:
-        info("Generating ./resolved_deps.py file")
+        info("Generating ./resolved_deps.py file - It might take a while...")
         generate_resolved_file(targets, use_bazel_sync)
     else:
         info(
@@ -676,7 +673,7 @@ def get_error_target(stderr, init_target):
     if match:
         return match.group(1)
     else:
-        " ".join(init_target)
+        return " ".join(init_target)
 
 
 def main(argv=None):
@@ -760,7 +757,7 @@ def main(argv=None):
             # TODO(kotlaja): Add these repos at the end.
     else:
         info(
-            "To create a MODULE.bazel file from scratch, either delete existing MODULE.bazel file or use the `--initial/-i` flag."
+            "To create a MODULE.bazel file from scratch, either delete existing MODULE.bazel file or use the `--initial/-i` flag.\n"
         )
 
     # Second part of the migration - Build with bzlmod and fix potential errors.
