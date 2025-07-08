@@ -450,13 +450,13 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Ask user if the dependency should be introduced via module extension
     # Only ask when file_label exists, which means it's a starlark repository rule.
     elif file_label and yes_or_no("Do you wish to introduce the repository with a module extension?", True):
-        append_migration_info("\tIt has been introduced as a module extension:\n")
-        resolved("`" + repo + "` has been introduced as a module extension.")
+        append_migration_info("\tIt has been introduced using a module extension:\n")
+        resolved("`" + repo + "` has been introduced using a module extension.")
         add_repo_to_module_extension(repo, repo_def, file_label, rule_name)
         return True
     elif rule_name == "local_repository" and repo != "bazel_tools":
-        append_migration_info("\tIt has been introduced as a module extension since it is local_repository rule:\n")
-        resolved("`" + repo + "` has been introduced as a module extension (local_repository).")
+        append_migration_info("\tIt has been introduced using a module extension since it is local_repository rule:\n")
+        resolved("`" + repo + "` has been introduced using a module extension (local_repository).")
         add_repo_to_module_extension(repo, repo_def, "@bazel_tools//tools/build_defs/repo:local.bzl", rule_name)
         return True
 
@@ -802,7 +802,7 @@ def main(argv=None):
         print("")
         error("Unrecognized error, please fix manually:\n" + stderr)
         err_target = get_error_target(stderr, args.target)
-        important("Command for rerunning the error:")
+        important("Fix the error, then run this migration tool again. Command for reproducing the error:")
         eprint(f"{BOLD}    `bazel build --enable_bzlmod --noenable_workspace {err_target}`{RESET}\n")
         return 1
 
