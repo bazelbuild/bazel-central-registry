@@ -662,7 +662,9 @@ class BcrValidator:
             if current_compatibility_level != previous_compatibility_level:
                 self.report(
                     BcrValidationResult.FAILED,
-                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). ",
+                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}).\n"
+                    + "If this is intentional, please comment on your PR `@bazel-io skip_check compatibility_level`\n"
+                    + "Learn more about when to increase the compatibility level at https://bazel.build/external/faq#incrementing-compatibility-level",
                 )
 
         # Check that bazel_compatability is sufficient when using "overlay"
