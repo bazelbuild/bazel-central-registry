@@ -670,7 +670,7 @@ class BcrValidator:
             )
         else:
             next_compatibility_level = None
-        if previous_compatibility_level is not None and current_bazel_compatibility < previous_compatibility_level:
+        if previous_compatibility_level is not None and current_compatibility_level < previous_compatibility_level:
             self.report(
                 BcrValidationResult.FAILED,
                 f"The new module version {version} has a lower compatibility level than the previous version {previous_version} ({current_compatibility_level} < {previous_compatibility_level}).\n"
@@ -682,7 +682,7 @@ class BcrValidator:
                 f"The new module version {version} has a higher compatibility level than the next version {next_version} ({current_compatibility_level} > {next_compatibility_level}).\n"
                 + "This is not allowed, the compatibility level must be monotonically increasing.\n",
             )
-        if check_compatibility_level and current_bazel_compatibility != previous_compatibility_level:
+        if check_compatibility_level and current_compatibility_level != previous_compatibility_level:
             self.report(
                 BcrValidationResult.FAILED,
                 f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}).\n"
