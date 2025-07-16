@@ -239,16 +239,16 @@ def get_github_user_id(github_username):
     return None
 
 
-def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
+def is_valid_bazel_compatibility_for_overlay(bazel_compatibility):
     """
-    Returns whether the bazel_compatability is valid for an overlay.
+    Returns whether the bazel_compatibility is valid for an overlay.
     See: https://bazel.build/rules/lib/globals/module#module
 
     Args:
-        bazel_compatability: List of bazel compatability strings.
+        bazel_compatibility: List of bazel compatibility strings.
 
     Returns:
-        Boolean indicating compatability with source overlays.
+        Boolean indicating compatibility with source overlays.
     """
     if not bazel_compatibility:
         return False
@@ -695,7 +695,7 @@ class BcrValidator:
             current_bazel_compatibility = BcrValidator.extract_attribute_from_module(
                 bcr_module_dot_bazel, "bazel_compatibility", []
             )
-            if not is_valid_bazel_compatability_for_overlay(current_bazel_compatibility):
+            if not is_valid_bazel_compatibility_for_overlay(current_bazel_compatibility):
                 self.report(
                     BcrValidationResult.FAILED,
                     "When using overlay files the module must set `bazel_compatibility` constraints to "
