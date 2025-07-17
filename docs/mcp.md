@@ -5,10 +5,10 @@ It is implemented using [FastMCP](https://gofastmcp.com/getting-started/quicksta
 
 ## Running the server
 
-Use Bazel to start the server (dependencies are declared in `tools/requirements.in`):
+Use Bazel to start the server, no Python virtual environment setup needed:
 
 ```bash
-python3 tools/mcp_server.py
+bazel run //tools:mcp_server
 ```
 
 ## Available tools
@@ -32,8 +32,8 @@ Add the server to Gemini CLI's [settings](https://github.com/google-gemini/gemin
 ```json
   "mcpServers": {
     "BCR": {
-      "command": "python3",
-      "args": ["./tools/mcp_server.py"],
+      "command": "bazel",
+      "args": ["run", "//tools:mcp_server"],
       "cwd": "<Your local path to this repository>",
       "timeout": 5000,
       "trusted": true
