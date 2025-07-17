@@ -41,6 +41,8 @@ Add the server to Gemini CLI's [settings](https://github.com/google-gemini/gemin
   }
 ```
 
+Make sure to build the target first to reduce startup time.
+
 ## Example prompts
 
 - Update all Bazel modules in my MODULE.bazel file.
