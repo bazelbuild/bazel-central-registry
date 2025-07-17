@@ -20,6 +20,7 @@ The server registers a set of MCP tools mirroring the functionality of [tools/re
 - `list_versions(module, include_yanked=False)` – list versions for a module
 - `get_metadata(module)` – return the module's `metadata.json`
 - `get_source(module, version)` – return `source.json` for a version
+- `get_patch_file(module, version, patch_name)` – return the patch file content for a given patch
 - `get_module_bazel(module, version)` – return the `MODULE.bazel` file
 - `get_presubmit_yaml(module, version)` – return `presubmit.yml` if present
 - `get_attestations(module, version)` – return `attestations.json` if present
