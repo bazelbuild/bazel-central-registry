@@ -60,6 +60,13 @@ def get_source(module: str, version: str) -> dict:
 
 
 @mcp.tool
+def get_patch_file(module: str, version: str, patch_name: str) -> Optional[str]:
+    """Return the content of a specific patch file if present."""
+    path = client.get_patch_file_path(module, version, patch_name)
+    return path.read_text() if path.exists() else None
+
+
+@mcp.tool
 def get_module_bazel(module: str, version: str) -> str:
     """Return the contents of MODULE.bazel for a module version."""
     path = client.get_module_dot_bazel_path(module, version)
