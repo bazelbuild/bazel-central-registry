@@ -439,10 +439,8 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
     if (
         file_label
-        and
-        not is_macro
-        and
-        file_label.startswith(("//", "@bazel_tools//"))
+        and not is_macro
+        and file_label.startswith(("//", "@bazel_tools//"))
         and yes_or_no(
             "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
             True,
