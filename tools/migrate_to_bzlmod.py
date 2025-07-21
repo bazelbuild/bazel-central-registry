@@ -168,11 +168,13 @@ def print_repo_definition(dep):
     """Print the repository info to migration_info and return the repository definition."""
     # Parse the repository rule class (rule name, and the label for the bzl file where the rule is defined.)
     rule_class = dep["original_rule_class"]
+    is_macro = False
     if rule_class.find("%") != -1:
         # Starlark rule
         file_label, rule_name = rule_class.split("%")
         # If the original macro is not publicly visible, we trace back to fine a visible one.
         if rule_name.startswith("_"):
+            is_macro = True
             def_info = dep["definition_information"].split("\n")
             def_info.reverse()
             for line in def_info:
@@ -232,7 +234,7 @@ def print_repo_definition(dep):
     if file_label and file_label.startswith("@@"):
         file_label = file_label[1:]
 
-    return repo_def, file_label, rule_name
+    return repo_def, file_label, rule_name, is_macro
 
 
 def detect_unavailable_repo_error(stderr):
@@ -287,6 +289,8 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     """Introduce a repository via a module extension."""
     # If the repo was not defined in @bazel_tools,
     # we need to create a separate module extension for it to avoid cycle.
+    if rule_name.startswith("_"):
+        rule_name = rule_name[1:]
     need_separate_module_extension = not file_label.startswith("@bazel_tools")
     ext_name = f"extension_for_{rule_name}".replace("-", "_") if need_separate_module_extension else "non_module_deps"
     ext_bzl_name = ext_name + ".bzl"
@@ -306,9 +310,10 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
         )
 
     # Add repo definition to the module extension's bzl file
-    load_statement = f'load("{file_label}", "{rule_name}")'
+    imported_rule_statement = f'"{rule_name}"'
+    load_statement = f'load("{file_label}", {imported_rule_statement})'
     bzl_content = open(ext_bzl_name, "r").read()
-    if load_statement not in bzl_content:
+    if imported_rule_statement not in bzl_content:
         write_at_given_place(ext_bzl_name, load_statement, LOAD_IDENTIFIER)
     write_at_given_place(
         ext_bzl_name,
@@ -378,11 +383,11 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         append_migration_info("TODO: " + "\n".join(error_message))
 
     # Print the repo definition in the original WORKSPACE file
-    repo_def, file_label, rule_name = [], None, None
+    repo_def, file_label, rule_name, is_macro = [], None, None, False
     urls = []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
-            repo_def, file_label, rule_name = print_repo_definition(dep)
+            repo_def, file_label, rule_name, is_macro = print_repo_definition(dep)
             urls = dep["original_attributes"].get("urls", [])
             if dep["original_attributes"].get("url", None):
                 urls.append(dep["original_attributes"]["url"])
@@ -434,9 +439,8 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
     if (
         file_label
-        and file_label.startswith("//")
-        or file_label
-        and file_label.startswith("@bazel_tools//")
+        and not is_macro
+        and file_label.startswith(("//", "@bazel_tools//"))
         and yes_or_no(
             "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
             True,
@@ -788,16 +792,12 @@ def main(argv=None):
         if repo:
             if address_unavailable_repo(repo, resolved_deps, workspace_name):
                 continue
-            else:
-                abort_migration()
 
         # 2. Detect build failure caused by unavailable bind statements
         bind_target_location = detect_bind_issue(stderr)
         if bind_target_location:
             if address_bind_issue(bind_target_location, resolved_deps):
                 continue
-            else:
-                abort_migration()
 
         print("")
         error("Unrecognized error, please fix manually:\n" + stderr)
