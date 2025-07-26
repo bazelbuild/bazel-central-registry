@@ -143,3 +143,7 @@ options:
   -h, --help       show this help message and exit
   --module MODULE  Module name and version, e.g. foo@1.2.0
 ```
+
+## mcp_server.py
+
+Check how to setup the [BCR MCP server](../docs/mcp.md) for coding agents.
