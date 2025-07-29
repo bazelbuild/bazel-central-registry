@@ -75,6 +75,10 @@ def important(msg):
     eprint(f"{YELLOW}IMPORTANT: {RESET}{msg}")
 
 
+def action(msg):
+    eprint(f"{RED}ACTION NEEDED: {RESET}{msg}")
+
+
 def warning(msg):
     eprint(f"{YELLOW}WARNING: {RESET}{msg}")
 
@@ -164,7 +168,29 @@ def execute_command(args, to_print=False, cwd=None, env=None, shell=False, execu
             return exit_code, stdout_result, stderr_result
 
 
-def print_repo_definition(dep):
+def print_repo_definition(repo_def, dep):
+    # if "definition_information" in dep:
+    repo_def_str = "\n".join(repo_def)
+    append_migration_info(f"""
+<details>
+<summary>Click here to see where and how the repo was declared in the WORKSPACE file</summary>
+
+#### Location
+```python
+{dep["definition_information"]}
+```
+
+#### Definition
+```python
+{repo_def_str}
+```
+**Tip**: URLs usually show which version was used.
+</details>
+""")
+    append_migration_info("___")
+
+
+def repo_definition(dep):
     """Print the repository info to migration_info and return the repository definition."""
     # Parse the repository rule class (rule name, and the label for the bzl file where the rule is defined.)
     rule_class = dep["original_rule_class"]
@@ -212,25 +238,6 @@ def print_repo_definition(dep):
             repo_def.append(f"  {key} = {value_str},")
     repo_def.append(")")
 
-    if "definition_information" in dep:
-        repo_def_str = "\n".join(repo_def)
-        append_migration_info(f"""
-<details>
-  <summary>Click here to see where and how the repo was declared in the WORKSPACE file</summary>
-
-#### Location
-```python
-{dep["definition_information"]}
-```
-
-#### Definition
-```python
-{repo_def_str}
-```
-  **Tip**: URLs usually show which version was used.
-</details>
-""")
-    append_migration_info("___")
     if file_label and file_label.startswith("@@"):
         file_label = file_label[1:]
 
@@ -360,9 +367,72 @@ def url_match_source_repo(source_url, module_name):
     return matched
 
 
-def address_unavailable_repo(repo, resolved_deps, workspace_name):
-    append_migration_info("## Migration of `" + repo + "`:")
+def exists_in_file(filename, content):
+    with open(filename, "r") as f:
+        return content in f.read()
 
+
+def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
+    # Introduce `rules_jvm_external`` only once.
+    if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_jvm_external'):
+        address_unavailable_repo("rules_jvm_external", resolved_deps, workspace_name)
+        
+    # Introduce `maven`` extension only once.
+    if not exists_in_file("MODULE.bazel", 'maven = use_extension("@rules_jvm_external//:extensions.bzl"'):
+        maven_extension = f"""
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+use_repo(maven, "maven")
+# -- End of maven artifacts for repo `{repo}` -- #
+"""
+        write_at_given_place(
+            "MODULE.bazel",
+            maven_extension,
+            REPO_IDENTIFIER,
+        )
+
+    # Raise TODO error if the repo is already migrated (all maven artifacts are already translated).
+    # Otherwise, cycle with the "Unknown repository {repo}" error will happen.
+    raise_todo_error = True
+
+    # Translate each maven artifact which is lacking in MODULE.bazel file. 
+    for maven_artifact in maven_artifacts:
+        parsed_data = json.loads(maven_artifact)
+        group = parsed_data["group"]
+
+        if exists_in_file("MODULE.bazel", 'group = "' + group):
+            continue
+
+        raise_todo_error = False
+
+        append_migration_info("## Migration of `" + group + "` (" + repo + "):")
+        append_migration_info("It has been introduced as a maven artifact:\n")
+
+        artifact = f"""
+maven.artifact(
+    group = "{group}",
+    artifact = "{parsed_data["artifact"]}",
+    version = "{parsed_data["version"]}"
+)"""
+        write_at_given_place(
+            "MODULE.bazel",
+            artifact,
+            f"# -- End of maven artifacts for repo `{repo}` ",
+        )
+        resolved("`" + group + "` has been introduced as maven extension.")
+        append_migration_info("```" + artifact + "\n```")
+
+    if raise_todo_error:
+        action(
+            "`"
+            + repo
+            + "` is a maven extension - Please modify `@"
+            + repo
+            + "//:` with `@maven//:`, and then rerun the script.\n"
+        )
+        exit(1)
+
+
+def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Check if it's the original main repo name
     if repo == workspace_name:
         error_message = []
@@ -384,11 +454,13 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
 
     # Print the repo definition in the original WORKSPACE file
     repo_def, file_label, rule_name, is_macro = [], None, None, False
-    urls = []
+    urls, maven_artifacts = [], []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
-            repo_def, file_label, rule_name, is_macro = print_repo_definition(dep)
+            repo_def, file_label, rule_name, is_macro = repo_definition(dep)
             urls = dep["original_attributes"].get("urls", [])
+            if "artifacts" in dep["original_attributes"]:
+                maven_artifacts = dep["original_attributes"]["artifacts"]
             if dep["original_attributes"].get("url", None):
                 urls.append(dep["original_attributes"]["url"])
             if dep["original_attributes"].get("remote", None):
@@ -402,6 +474,14 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             + "` is not found in ./resolved_deps.py file, please add `--force/-f` flag to force update it."
         )
         return False
+
+    # Support maven extensions.
+    if str(file_label).__contains__("rules_jvm_external") and maven_artifacts:
+        add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name)
+        return True
+
+    append_migration_info("## Migration of `" + repo + "`:")
+    print_repo_definition(repo_def, dep)
 
     # Check if a module is already available in the registry.
     found_module = None
