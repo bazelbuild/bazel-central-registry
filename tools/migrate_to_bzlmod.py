@@ -376,7 +376,7 @@ def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
     # Introduce `rules_jvm_external`` only once.
     if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_jvm_external'):
         address_unavailable_repo("rules_jvm_external", resolved_deps, workspace_name)
-        
+
     # Introduce `maven`` extension only once.
     if not exists_in_file("MODULE.bazel", 'maven = use_extension("@rules_jvm_external//:extensions.bzl"'):
         maven_extension = f"""
@@ -394,7 +394,7 @@ use_repo(maven, "maven")
     # Otherwise, cycle with the "Unknown repository {repo}" error will happen.
     raise_todo_error = True
 
-    # Translate each maven artifact which is lacking in MODULE.bazel file. 
+    # Translate each maven artifact which is lacking in MODULE.bazel file.
     for maven_artifact in maven_artifacts:
         parsed_data = json.loads(maven_artifact)
         group = parsed_data["group"]
