@@ -1,3 +1,5 @@
+load("//:gen_test_targets.bzl", "gen_test_targets")
+
 def gen_test_targets(name, cc_srcs, header_srcs):
     """Generates a cc_test target for each source file.
 
