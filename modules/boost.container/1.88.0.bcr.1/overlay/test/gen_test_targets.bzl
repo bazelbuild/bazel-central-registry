@@ -13,7 +13,7 @@ def gen_test_targets(name, cc_srcs, header_srcs):
             name = name,
             srcs = [src] + header_srcs,
             deps = [
-                ":boost.container",
+                "@boost.container",
                 "@boost.core",
                 "@boost.iterator",
                 "@boost.tuple",
