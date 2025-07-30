@@ -5,9 +5,6 @@
     #ifndef _TCLCONFIG
     #define _TCLCONFIG
 
-// TESTING: DO NOT MERGE
-#include <dlfcn.h>
-
 /* Is gettimeofday() actually declared in <sys/time.h>? */
 /* #undef GETTOD_NOT_DECLARED */
 
