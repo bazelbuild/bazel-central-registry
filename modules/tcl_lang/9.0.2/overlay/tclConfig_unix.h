@@ -327,7 +327,7 @@
 /* #undef NO_COREFOUNDATION_64 */
 
 /* Do we have <dlfcn.h>? */
-/* #undef NO_DLFCN_H */
+#define NO_DLFCN_H
 
 /* Do we have fd_set? */
 /* #undef NO_FD_SET */
