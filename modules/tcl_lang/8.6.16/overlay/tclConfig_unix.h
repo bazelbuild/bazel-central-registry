@@ -314,7 +314,7 @@
 /* #undef NO_DIRENT_H */
 
 /* Do we have <dlfcn.h>? */
-#undef NO_DLFCN_H
+/* #undef NO_DLFCN_H */
 
 /* Do we have fd_set? */
 /* #undef NO_FD_SET */
