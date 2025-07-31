@@ -7,5 +7,6 @@ java_binary(
         "@px_deps//:org_antlr_antlr4",
         "@px_deps//:com_google_jimfs_jimfs",
         "@px_deps//:com_google_truth_truth",
+        "@jar//:org_apache_santuario_xmlsec"
     ],
 )

@@ -169,7 +169,6 @@ def execute_command(args, to_print=False, cwd=None, env=None, shell=False, execu
 
 
 def print_repo_definition(repo_def, dep):
-    # if "definition_information" in dep:
     repo_def_str = "\n".join(repo_def)
     append_migration_info(f"""
 <details>
@@ -373,16 +372,15 @@ def exists_in_file(filename, content):
 
 
 def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
-    # Introduce `rules_jvm_external`` only once.
+    # Introduce `rules_jvm_external` only once.
     if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_jvm_external'):
         address_unavailable_repo("rules_jvm_external", resolved_deps, workspace_name)
 
-    # Introduce `maven`` extension only once.
+    # Introduce `maven` extension only once.
     if not exists_in_file("MODULE.bazel", 'maven = use_extension("@rules_jvm_external//:extensions.bzl"'):
-        maven_extension = f"""
+        maven_extension = """
 maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
-use_repo(maven, "maven")
-# -- End of maven artifacts for repo `{repo}` -- #
+# -- End of maven extensions -- #
 """
         write_at_given_place(
             "MODULE.bazel",
@@ -390,9 +388,16 @@ use_repo(maven, "maven")
             REPO_IDENTIFIER,
         )
 
-    # Raise TODO error if the repo is already migrated (all maven artifacts are already translated).
-    # Otherwise, cycle with the "Unknown repository {repo}" error will happen.
-    raise_todo_error = True
+    # Introduce repo rule for `repo` only once.
+    if not exists_in_file("MODULE.bazel", f'use_repo(maven, "{repo}")'):
+        repo_rule = f"""
+use_repo(maven, "{repo}")
+# -- End of maven artifacts for repo `{repo}` -- #"""
+        write_at_given_place(
+            "MODULE.bazel",
+            repo_rule,
+            "# -- End of maven extensions",
+        )
 
     # Translate each maven artifact which is lacking in MODULE.bazel file.
     for maven_artifact in maven_artifacts:
@@ -402,13 +407,12 @@ use_repo(maven, "maven")
         if exists_in_file("MODULE.bazel", 'group = "' + group):
             continue
 
-        raise_todo_error = False
-
         append_migration_info("## Migration of `" + group + "` (" + repo + "):")
         append_migration_info("It has been introduced as a maven artifact:\n")
 
         artifact = f"""
 maven.artifact(
+    name = "{repo}",
     group = "{group}",
     artifact = "{parsed_data["artifact"]}",
     version = "{parsed_data["version"]}"
@@ -420,16 +424,6 @@ maven.artifact(
         )
         resolved("`" + group + "` has been introduced as maven extension.")
         append_migration_info("```" + artifact + "\n```")
-
-    if raise_todo_error:
-        action(
-            "`"
-            + repo
-            + "` is a maven extension - Please modify `@"
-            + repo
-            + "//:` with `@maven//:`, and then rerun the script.\n"
-        )
-        exit(1)
 
 
 def address_unavailable_repo(repo, resolved_deps, workspace_name):
@@ -476,7 +470,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         return False
 
     # Support maven extensions.
-    if str(file_label).__contains__("rules_jvm_external") and maven_artifacts:
+    if "rules_jvm_external" in file_label and maven_artifacts:
         add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name)
         return True
 

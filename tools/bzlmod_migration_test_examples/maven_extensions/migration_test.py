@@ -27,7 +27,7 @@ class BazelBuildTest(unittest.TestCase):
             if os.path.exists(file_path):
                 os.remove(file_path)
 
-    def _run_command(self, command, expected_failure=False):
+    def _run_command(self, command):
         """
         Helper function to run a command and return its result.
         It captures `stdout`, `stderr` and `returncode` for debugging.
@@ -38,8 +38,6 @@ class BazelBuildTest(unittest.TestCase):
         except FileNotFoundError:
             self.fail("Command not found.")
         except subprocess.CalledProcessError as e:
-            if expected_failure:
-                return e
             self.fail(f"Command failed with exit code {e.returncode}:\nSTDOUT:\n{e.stdout}\nSTDERR:\n{e.stderr}")
 
     def _print_message(self, message):
@@ -65,26 +63,11 @@ class BazelBuildTest(unittest.TestCase):
 
         # Run migration script
         print("\n--- Running migration script ---")
-        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=/..."], expected_failure=True)
-        assert result.returncode == 1
-        assert "`px_deps` is a maven extension" in result.stderr
-        # assert "no such package '@@[unknown repo 'px_deps'" in result.stderr
+        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=/..."])
+        assert result.returncode == 0
         assert os.path.exists(
             "migration_info.md"
         ), "File 'migration_info.md' should be created during migration, but it doesn't exist."
-        self._print_message("Expected error: User need to modify `@px_deps` into `@maven`.")
-
-        # Verify Bzlmod have error
-        print("\n--- Running bazel build with enabled bzlmod ---")
-        result = self._run_command(
-            ["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."], expected_failure=True
-        )
-        assert result.returncode == 1
-        self._print_message("Expected Bzlmod failure since manual change of BUILD file is needed")
-
-        # Modify BUILD file
-        self.modify_build_file("px_deps", "maven")
-        print("\n--- Modifying BUILD file ---")
         self._print_message("Success.")
 
         # Verify MODULE.bazel was created successfully
@@ -93,8 +76,6 @@ class BazelBuildTest(unittest.TestCase):
         assert result.returncode == 0
         self._print_message("Success with modified BUILD file.")
 
-        # Restore BUILD file to the initial content
-        self.modify_build_file("maven", "px_deps")
         self._cleanup_created_files()
 
 
