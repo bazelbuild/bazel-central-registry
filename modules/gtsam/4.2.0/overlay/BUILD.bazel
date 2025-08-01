@@ -1,0 +1,290 @@
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+# Auto-generate header files
+
+cmake_configure_file(
+    name = "gtsam_config",
+    src = "gtsam/config.h.in",
+    out = "gtsam/config.h",
+    defines = [
+        "GTSAM_ALLOCATOR_BOOSTPOOL",
+        "GTSAM_POSE3_EXPMAP",
+        "GTSAM_ROT3_EXPMAP",
+        "GTSAM_SOURCE_DIR=.",
+        "GTSAM_TANGENT_PREINTEGRATION",
+        "GTSAM_THROW_CHEIRALITY_EXCEPTION",
+        "GTSAM_TOOLBOX_INSTALL_PATH",
+        "GTSAM_VERSION_MAJOR=4",
+        "GTSAM_VERSION_MINOR=2",
+        "GTSAM_VERSION_NUMERIC=40200",
+        "GTSAM_VERSION_PATCH=0",
+        "GTSAM_VERSION_STRING=4.2.0",
+    ],
+    undefines = [
+        "EIGEN_USE_MKL_ALL",
+        "GTSAM_ALLOCATOR_STL",
+        "GTSAM_ALLOCATOR_TBB",
+        "GTSAM_SLOW_BUT_CORRECT_BETWEENFACTOR",
+        "GTSAM_SUPPORT_NESTED_DISSECTION",
+        "GTSAM_USE_EIGEN_MKL_OPENMP",
+        "GTSAM_USE_EIGEN_MKL",
+        "GTSAM_USE_QUATERNIONS",
+        "GTSAM_USE_SYSTEM_EIGEN",
+        "GTSAM_USE_SYSTEM_METIS",
+        "GTSAM_USE_TBB",
+        "TBB_GREATER_EQUAL_2020",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cmake_configure_file(
+    name = "gtsam_dllexport",
+    src = "cmake/dllexport.h.in",
+    out = "gtsam/dllexport.h",
+    defines = [
+        "BUILD_SHARED_LIBS",
+        "library_name=GTSAM",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cmake_configure_file(
+    name = "gtsam_unstable_dllexport",
+    src = "cmake/dllexport.h.in",
+    out = "gtsam_unstable/dllexport.h",
+    defines = [
+        "BUILD_SHARED_LIBS",
+        "library_name=GTSAM_UNSTABLE",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# Shared libraries
+
+cc_library(
+    name = "cpp_unit_lite",
+    srcs = glob(["CppUnitLite/*.cpp"]),
+    hdrs = glob(["CppUnitLite/*.h"]),
+    include_prefix = "CppUnitLite",
+    includes = ["CppUnitLite"],
+    strip_include_prefix = "CppUnitLite",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.lexical_cast",
+    ],
+)
+
+# Export data files for use by call sites
+
+filegroup(
+    name = "data",
+    srcs = glob(["examples/Data/**"]),
+    visibility = ["//visibility:public"],
+)
+
+# GTSAM stable modules
+
+GTSAM_TEST_FILES = [
+    "gtsam/**/tests/**",
+    "gtsam/base/chartTesting.*",
+    "gtsam/precompiled_header.*",
+]
+
+GTSAM_THIRDPARTY_FILES = [
+    "gtsam/3rdparty/ceres/**",
+    "gtsam/3rdparty/Eigen/**",
+    "gtsam/3rdparty/GeographicLib/**",
+    "gtsam/3rdparty/metis/**",
+    "gtsam/3rdparty/SuiteSparse_config/**",
+    "gtsam/3rdparty/CCOLAMD/Demo/**",
+    "gtsam/3rdparty/CCOLAMD/MATLAB/**",
+]
+
+GTSAM_HEADER_FILES = glob(
+    [
+        "gtsam/**/*.hpp",
+        "gtsam/**/*.h",
+    ],
+    exclude = GTSAM_TEST_FILES + GTSAM_THIRDPARTY_FILES,
+)
+
+GTSAM_SOURCE_FILES = glob(
+    [
+        "gtsam/**/*.cpp",
+        "gtsam/**/*.c",
+    ],
+    exclude = GTSAM_TEST_FILES + GTSAM_THIRDPARTY_FILES,
+)
+
+GTSAM_INTERFACE_FILES = glob(
+    [
+        "gtsam/**/*.i",
+    ],
+    exclude = GTSAM_TEST_FILES + GTSAM_THIRDPARTY_FILES,
+)
+
+cc_library(
+    name = "gtsam_header",
+    hdrs = GTSAM_HEADER_FILES + [
+        ":gtsam_config",
+        ":gtsam_dllexport",
+    ],
+    include_prefix = "gtsam",
+    includes = [
+        "gtsam/3rdparty/CCOLAMD/Include",
+        "gtsam/3rdparty/Spectra",
+    ],
+    strip_include_prefix = "gtsam",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "gtsam",
+    srcs = GTSAM_SOURCE_FILES + ["gtsam/3rdparty/SuiteSparse_config/SuiteSparse_config.c"],
+    hdrs = ["gtsam/3rdparty/SuiteSparse_config/SuiteSparse_config.h"],
+    strip_include_prefix = "gtsam/3rdparty/SuiteSparse_config",
+    copts = ["-I."],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cpp_unit_lite",
+        ":gtsam_header",
+        "@boost.assign",
+        "@boost.bimap",
+        "@boost.chrono",
+        "@boost.date_time",
+        "@boost.filesystem",
+        "@boost.format",
+        "@boost.graph",
+        "@boost.math",
+        "@boost.regex",
+        "@boost.serialization",
+        "@boost.system",
+        "@boost.thread",
+        "@boost.timer",
+        "@eigen",
+        "@geographiclib",
+	"@rules_cc//cc/runfiles",
+    ],
+)
+
+# GTSAM unstable modules
+
+GTSAM_UNSTABLE_TEST_FILES = [
+    "gtsam_unstable/**/tests/**",
+    "gtsam_unstable/**/examples/**",
+]
+
+GTSAM_UNSTABLE_EXCLUDES = [
+    "gtsam_unstable/slam/serialization.*",
+    "gtsam_unstable/testing_tools/**",
+    "gtsam_unstable/timing/**",
+]
+
+GTSAM_UNSTABLE_SOURCE_FILES = glob(
+    [
+        "gtsam_unstable/**/*.cpp",
+    ],
+    exclude = GTSAM_UNSTABLE_TEST_FILES + GTSAM_UNSTABLE_EXCLUDES,
+)
+
+GTSAM_UNSTABLE_HEADER_FILES = glob(
+    [
+        "gtsam_unstable/**/*.h",
+    ],
+    exclude = GTSAM_UNSTABLE_TEST_FILES + GTSAM_UNSTABLE_EXCLUDES,
+)
+
+cc_library(
+    name = "gtsam_unstable_header",
+    hdrs = GTSAM_UNSTABLE_HEADER_FILES + [
+        ":gtsam_unstable_dllexport",
+    ],
+    include_prefix = "gtsam_unstable",
+    strip_include_prefix = "gtsam_unstable",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "gtsam_unstable",
+    srcs = GTSAM_UNSTABLE_SOURCE_FILES,
+    copts = ["-I."],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cpp_unit_lite",
+        ":gtsam",
+        ":gtsam_unstable_header",
+    ],
+)
+
+TESTS = [
+    "testBoundingConstraint",
+    "testDoglegOptimizer",
+    "testExpressionFactor",
+    "testExtendedKalmanFilter",
+    "testGaussianBayesTreeB",
+    "testGaussianFactorGraphB",
+    "testGaussianISAM",
+    "testGaussianISAM2",
+    "testGaussianJunctionTreeB",
+    # "testGeneralSFMFactorB",
+    # "testGncOptimizer",
+    "testGradientDescentOptimizer",
+    "testGraph",
+    # "testImuPreintegration",
+    "testIterative",
+    "testLie",
+    "testManifold",
+    "testMarginals",
+    "testNonlinearEquality",
+    "testNonlinearFactor",
+    "testNonlinearFactorGraph",
+    "testNonlinearISAM",
+    "testNonlinearOptimizer",
+    "testPCGSolver",
+    "testPreconditioner",
+    "testRobust",
+    "testRot3Optimization",
+    # "testSerializationSlam",
+    "testSimulated2D",
+    "testSimulated2DOriented",
+    "testSimulated3D",
+    "testSubgraphPreconditioner",
+    "testSubgraphSolver",
+    # "testTranslationRecovery",
+    "testVisualISAM2",
+]
+
+cc_library(
+    name = "gtsam_test_header",
+    hdrs = glob(["tests/*.h"]),
+    include_prefix = "tests",
+    strip_include_prefix = "tests",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "gtsam_example_header",
+    hdrs = glob(["examples/*.h"]),
+    include_prefix = "examples",
+    strip_include_prefix = "examples",
+    visibility = ["//visibility:private"],
+)
+
+[
+    cc_test(
+        name = test,
+        size = "small",
+        srcs = ["tests/{}.cpp".format(test)],
+        copts = ["-I."],
+        data = [
+            ":data",
+        ],
+        deps = [
+            ":gtsam",
+	    ":gtsam_test_header",
+	    ":gtsam_example_header",
+        ],
+    )
+    for test in TESTS
+]
