@@ -65,8 +65,8 @@ class BazelBuildTest(unittest.TestCase):
 
         # Run migration script
         print("\n--- Running migration script ---")
-        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=/..."], expected_failure=True)
-        assert result.returncode == 2
+        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True)
+        assert result.returncode == 1
         assert "A bind target detected at " in result.stderr
         assert os.path.exists(
             "migration_info.md"

@@ -249,6 +249,7 @@ def detect_unavailable_repo_error(stderr):
         re.compile(r"The repository '@([A-Za-z0-9_-]+)' could not be resolved"),
         re.compile(r"No repository visible as '@([A-Za-z0-9_-]+)' from main repository"),
         re.compile(r"This could either mean you have to add the '@([A-Za-z0-9_-]+)' repository"),
+        re.compile(r"no repo visible as '@([A-Za-z0-9_-]+)' here"),
     ]
 
     for line in stderr.split("\n"):
@@ -260,16 +261,23 @@ def detect_unavailable_repo_error(stderr):
     return None
 
 
-def write_at_given_place(filename, new_content, identifier):
-    """Write content to a file at a position marked by the identifier."""
+def write_at_given_place(filename, new_content, write_before=None, write_after=None):
+    """Write content to a file before or after the identifier."""
     file_content = ""
     with open(filename, "r") as f:
         file_content = f.read()
-        file_content = file_content.replace(
-            identifier,
-            new_content + "\n" + identifier,
-            1,
-        )
+        if write_after:
+            file_content = file_content.replace(
+                write_after,
+                write_after + "\n" + new_content,
+                1,
+            )
+        elif write_before:
+            file_content = file_content.replace(
+                write_before,
+                new_content + "\n" + write_before,
+                1,
+            )
     with open(filename, "w") as f:
         f.write(file_content)
 
@@ -371,6 +379,69 @@ def exists_in_file(filename, content):
         return content in f.read()
 
 
+def add_go_extension(repo, origin_attrs):
+    if not exists_in_file("MODULE.bazel", 'use_extension("@bazel_gazelle//:extensions.bzl", "go_deps'):
+        go_deps = """
+go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
+# -- End of go extension -- #
+"""
+        write_at_given_place("MODULE.bazel", go_deps, REPO_IDENTIFIER)
+
+    go_module = ["\ngo_deps.module("]
+    if "importpath" in origin_attrs:
+        go_module.append('    path = "' + origin_attrs["importpath"] + '",')
+    if "sum" in origin_attrs:
+        go_module.append('    sum = "' + origin_attrs["sum"] + '",')
+    if "version" in origin_attrs:
+        go_module.append('    version = "' + origin_attrs["version"] + '",')
+    elif "tag" in origin_attrs:
+        go_module.append('    version = "' + origin_attrs["tag"] + '",')
+    go_module.append(")")
+
+    write_at_given_place(
+        "MODULE.bazel",
+        "\n".join(go_module),
+        None,
+        'go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")',
+    )
+    write_at_given_place(
+        "MODULE.bazel",
+        'use_repo(go_deps, "' + origin_attrs["name"] + '")',
+        "# -- End of go extension -- #",
+    )
+
+    resolved("`" + repo + "` has been introduced as go extension.")
+    append_migration_info("## Migration of `" + repo + "`:")
+    append_migration_info("It has been introduced as a go module:\n")
+    append_migration_info("```" + "\n".join(go_module) + "\n```")
+
+    # Add gazelle_override if needed.
+    gazelle_override_attrs = []
+    if "build_file_proto_mode" in origin_attrs:
+        gazelle_override_attrs.append('"gazelle:proto ' + origin_attrs["build_file_proto_mode"] + '",')
+    if "build_naming_convention" in origin_attrs:
+        gazelle_override_attrs.append('"gazelle:go_naming_convention ' + origin_attrs["build_naming_convention"] + '",')
+    if gazelle_override_attrs:
+        gazelle_override = f"""
+go_deps.gazelle_override(
+    path = "{origin_attrs["importpath"]}",
+    directives = [
+        {"\n         ".join(gazelle_override_attrs)}
+    ],
+)"""
+        write_at_given_place(
+            "MODULE.bazel",
+            gazelle_override,
+            None,
+            'go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")',
+        )
+        append_migration_info("Additionally, `gazelle_override` was used for the initial directives:\n")
+        append_migration_info("```" + gazelle_override + "\n```")
+
+    # TODO(kotlaja): Add go_sdk?
+    # TODO(kotlaja): Add go toolchains?
+
+
 def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
     # Introduce `rules_jvm_external` only once.
     if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_jvm_external'):
@@ -448,17 +519,18 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
 
     # Print the repo definition in the original WORKSPACE file
     repo_def, file_label, rule_name, is_macro = [], None, None, False
-    urls, maven_artifacts = [], []
+    urls, maven_artifacts, origin_attrs = [], [], []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
             repo_def, file_label, rule_name, is_macro = repo_definition(dep)
-            urls = dep["original_attributes"].get("urls", [])
-            if "artifacts" in dep["original_attributes"]:
-                maven_artifacts = dep["original_attributes"]["artifacts"]
-            if dep["original_attributes"].get("url", None):
-                urls.append(dep["original_attributes"]["url"])
-            if dep["original_attributes"].get("remote", None):
-                urls.append(dep["original_attributes"]["remote"])
+            origin_attrs = dep["original_attributes"]
+            urls = origin_attrs.get("urls", [])
+            if "artifacts" in origin_attrs:
+                maven_artifacts = origin_attrs["artifacts"]
+            if origin_attrs.get("url", None):
+                urls.append(origin_attrs["url"])
+            if origin_attrs.get("remote", None):
+                urls.append(origin_attrs["remote"])
             break
 
     if not repo_def:
@@ -468,6 +540,11 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             + "` is not found in ./resolved_deps.py file, please add `--force/-f` flag to force update it."
         )
         return False
+
+    # Support go extension.
+    if "bazel_gazelle" in file_label and "go_repository" in file_label:
+        add_go_extension(repo, origin_attrs)
+        return True
 
     # Support maven extensions.
     if "rules_jvm_external" in file_label and maven_artifacts:
