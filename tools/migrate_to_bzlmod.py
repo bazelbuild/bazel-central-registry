@@ -261,23 +261,16 @@ def detect_unavailable_repo_error(stderr):
     return None
 
 
-def write_at_given_place(filename, new_content, write_before=None, write_after=None):
-    """Write content to a file before or after the identifier."""
+def write_at_given_place(filename, new_content, identifier):
+    """Write content to a file at a position marked by the identifier."""
     file_content = ""
     with open(filename, "r") as f:
         file_content = f.read()
-        if write_after:
-            file_content = file_content.replace(
-                write_after,
-                write_after + "\n" + new_content,
-                1,
-            )
-        elif write_before:
-            file_content = file_content.replace(
-                write_before,
-                new_content + "\n" + write_before,
-                1,
-            )
+        file_content = file_content.replace(
+            identifier,
+            new_content + "\n" + identifier,
+            1,
+        )
     with open(filename, "w") as f:
         f.write(file_content)
 
@@ -387,7 +380,16 @@ go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
 """
         write_at_given_place("MODULE.bazel", go_deps, REPO_IDENTIFIER)
 
-    go_module = ["\ngo_deps.module("]
+    if (
+        os.path.exists("go.mod")
+        and os.path.exists("go.sum")
+        and not exists_in_file("MODULE.bazel", 'go_deps.from_file(go_mod = "//:go.mod")')
+    ):
+        from_file = """go_deps.from_file(go_mod = "//:go.mod")
+"""
+        write_at_given_place("MODULE.bazel", from_file, "# -- End of go extension -- #")
+
+    go_module = ["go_deps.module("]
     if "importpath" in origin_attrs:
         go_module.append('    path = "' + origin_attrs["importpath"] + '",')
     if "sum" in origin_attrs:
@@ -396,24 +398,19 @@ go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
         go_module.append('    version = "' + origin_attrs["version"] + '",')
     elif "tag" in origin_attrs:
         go_module.append('    version = "' + origin_attrs["tag"] + '",')
-    go_module.append(")")
+    go_module.append(")\n")
 
-    write_at_given_place(
-        "MODULE.bazel",
-        "\n".join(go_module),
-        None,
-        'go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")',
-    )
     write_at_given_place(
         "MODULE.bazel",
         'use_repo(go_deps, "' + origin_attrs["name"] + '")',
         "# -- End of go extension -- #",
     )
+    write_at_given_place("MODULE.bazel", "\n".join(go_module), "use_repo(go_deps, ")
 
     resolved("`" + repo + "` has been introduced as go extension.")
     append_migration_info("## Migration of `" + repo + "`:")
     append_migration_info("It has been introduced as a go module:\n")
-    append_migration_info("```" + "\n".join(go_module) + "\n```")
+    append_migration_info("```\n" + "\n".join(go_module) + "```")
 
     # Add gazelle_override if needed.
     gazelle_override_attrs = []
@@ -422,21 +419,16 @@ go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
     if "build_naming_convention" in origin_attrs:
         gazelle_override_attrs.append('"gazelle:go_naming_convention ' + origin_attrs["build_naming_convention"] + '",')
     if gazelle_override_attrs:
-        gazelle_override = f"""
-go_deps.gazelle_override(
+        gazelle_override = f"""go_deps.gazelle_override(
     path = "{origin_attrs["importpath"]}",
     directives = [
         {"\n         ".join(gazelle_override_attrs)}
     ],
-)"""
-        write_at_given_place(
-            "MODULE.bazel",
-            gazelle_override,
-            None,
-            'go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")',
-        )
+)
+"""
+        write_at_given_place("MODULE.bazel", gazelle_override, "go_deps.module(")
         append_migration_info("Additionally, `gazelle_override` was used for the initial directives:\n")
-        append_migration_info("```" + gazelle_override + "\n```")
+        append_migration_info("```\n" + gazelle_override + "```")
 
     # TODO(kotlaja): Add go_sdk?
     # TODO(kotlaja): Add go toolchains?
