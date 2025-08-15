@@ -1,0 +1,107 @@
+module(
+    name = "pre-commit",
+    version = "1.0.9",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "rules_python", version = "1.0.0")
+bazel_dep(name = "rules_license", version = "1.0.0")
+bazel_dep(name = "rules_diff", version = "1.0.0")
+bazel_dep(name = "toolchain_utils", version = "1.2.0")
+bazel_dep(name = "download_utils", version = "1.0.1")
+bazel_dep(name = "ape", version = "1.0.1")
+
+# TODO: Remove this in favour of `rules_python//uv:lock.bzl` when released
+bazel_dep(name = "rules_uv", version = "0.56.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.0.1", dev_dependency = True)
+bazel_dep(name = "hermetic_cc_toolchain", version = "3.1.0", dev_dependency = True)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    # TODO: remove this when `ignore_root_user_error` is hermetic
+    # https://github.com/bazelbuild/rules_python/issues/2016
+    ignore_root_user_error = True,
+    python_version = "3.13",
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+# Ensure there is a `pip` hub for each Python version
+# The project performs a `select` to grab the correct packages for the executing Python
+# This is important to provide Python package aliases downstream such as `//pre-commit:pkg`
+[
+    (
+        pip.parse(
+            experimental_index_url = "https://pypi.org/simple",
+            hub_name = "pre-commit-{}".format(version),
+            python_version = version,
+            requirements_lock = "//pre-commit/requirements:lock.txt",
+        ),
+        pip.parse(
+            experimental_index_url = "https://pypi.org/simple",
+            hub_name = "pre-commit-hook-{}".format(version),
+            python_version = version,
+            requirements_by_platform = {
+                "//pre-commit/hook/requirements:lock.txt": "linux_*,osx_*,windows_*",
+            },
+        ),
+        pip.parse(
+            experimental_index_url = "https://pypi.org/simple",
+            hub_name = "pre-commit-config-{}".format(version),
+            python_version = version,
+            requirements_lock = "//pre-commit/config/requirements:lock.txt",
+        ),
+        use_repo(
+            pip,
+            "pre-commit-{}".format(version),
+            "pre-commit-hook-{}".format(version),
+            "pre-commit-config-{}".format(version),
+        ),
+    )
+    # Keep this in sync with `//pre-commit/python:versions.bzl`
+    # TODO: load from `//pre-commit/python:version.bzl` when possible
+    for version in ("3.10", "3.11", "3.12", "3.13")
+]
+
+download_file = use_repo_rule("@download_utils//download/file:defs.bzl", "download_file")
+
+download_archive = use_repo_rule("@download_utils//download/archive:defs.bzl", "download_archive")
+
+# Bazelisk binaries
+[
+    download_file(
+        name = "bazelisk-{}".format(name),
+        executable = True,
+        integrity = integrity,
+        output = "bazelisk.exe" if ".exe" in suffix else "bazelisk",
+        urls = ["https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-{}".format(suffix)],
+    )
+    for name, suffix, integrity in (
+        ("amd64-linux", "linux-amd64", "sha256-/Y/f9BihdYiHUg+kLafmrjmu/HiM9ef3u422k00nn8Q="),
+        ("arm64-linux", "linux-arm64", "sha256-TI2WbkCsLE78x/Glpczu8sCi8WuVfnkfp6hnzOMej8s="),
+        ("amd64-macos", "darwin-amd64", "sha256-CvAZ7rZC+nB0RBnQKqMt9V5ueghBBdSfsmgBpmCqVtM="),
+        ("arm64-macos", "darwin-arm64", "sha256-sT3YnG7NkJRMo1OfWixxWhj2m3RYh4xHGpAqjkgs60s="),
+        ("amd64-windows", "windows-amd64.exe", "sha256-ZBo9/r1xdwNnX5EpF3NcRLRc9jAL/fuSRTfzz7/83ZI="),
+        ("arm64-windows", "bazelisk-windows-arm64.exe", "sha256-4FYwZnOIMzRNHbFatBB9L2L4nkphZJ1SF/Bw0l8NyNc="),
+    )
+]
+
+# Ruff binaries
+[
+    download_archive(
+        name = "ruff-{}".format(name),
+        integrity = integrity,
+        strip_prefix = "ruff-{}".format(triplet) if ext != ".zip" else "",
+        urls = ["https://github.com/astral-sh/ruff/releases/download/0.9.7/ruff-{}{}".format(triplet, ext)],
+    )
+    for name, triplet, ext, integrity in (
+        ("amd64-linux", "x86_64-unknown-linux-musl", ".tar.gz", "sha256-8LfHpa5EZzCsERkEpQTLlnicwcgrmWa1W+3Yim0+wHc="),
+        ("arm64-linux", "aarch64-unknown-linux-musl", ".tar.gz", "sha256-uUrZS8DPFKEqcl/PI4PtBHtTcGj0szvwgV6LrzXm7Fw="),
+        ("amd64-macos", "x86_64-apple-darwin", ".tar.gz", "sha256-Kg/RLNZtIKiCypcBWe82HV85e5OKWrnXYZ3sDxUVL1M="),
+        ("arm64-macos", "aarch64-apple-darwin", ".tar.gz", "sha256-8UQ35xOZ4UMCvfXOkQ49+avJoiP+D/XWsC6wg8Ofows="),
+        ("amd64-windows", "x86_64-pc-windows-msvc", ".zip", "sha256-I2xp7VEKMwL0C14Owc3gzHU1FGzTdljm0xaMhelOMIo="),
+        ("arm64-windows", "aarch64-pc-windows-msvc", ".zip", "sha256-ckodh0IeEldZ6bfbqxak0QNIks5BgKqvYePrvn5nr6I="),
+    )
+]
