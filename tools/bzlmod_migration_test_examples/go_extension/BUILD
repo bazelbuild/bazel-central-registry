@@ -9,5 +9,6 @@ go_binary(
     deps = [
         "@org_golang_google_grpc//codes",
         "@org_golang_x_net//context",
+        "@org_golang_x_text//language",
     ]
 )

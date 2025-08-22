@@ -372,7 +372,16 @@ def exists_in_file(filename, content):
         return content in f.read()
 
 
-def add_go_extension(repo, origin_attrs):
+def add_go_extension(repo, origin_attrs, resolved_deps, workspace_name):
+    # Introduce `bazel_gazelle` only once.
+    if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "gazelle'):
+        address_unavailable_repo("bazel_gazelle", resolved_deps, workspace_name)
+
+    # Introduce `io_bazel_rules_go` only once.
+    if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_go'):
+        address_unavailable_repo("io_bazel_rules_go", resolved_deps, workspace_name)
+
+    # Add go_deps
     if not exists_in_file("MODULE.bazel", 'use_extension("@bazel_gazelle//:extensions.bzl", "go_deps'):
         go_deps = """
 go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
@@ -380,37 +389,48 @@ go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
 """
         write_at_given_place("MODULE.bazel", go_deps, REPO_IDENTIFIER)
 
-    if (
-        os.path.exists("go.mod")
-        and os.path.exists("go.sum")
-        and not exists_in_file("MODULE.bazel", 'go_deps.from_file(go_mod = "//:go.mod")')
-    ):
-        from_file = """go_deps.from_file(go_mod = "//:go.mod")
+    # Add go_sdk
+    if not exists_in_file("MODULE.bazel", '@io_bazel_rules_go//go:extensions.bzl", "go_sdk'):
+        go_sdk = """go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
 """
-        write_at_given_place("MODULE.bazel", from_file, "# -- End of go extension -- #")
-
-    go_module = ["go_deps.module("]
-    if "importpath" in origin_attrs:
-        go_module.append('    path = "' + origin_attrs["importpath"] + '",')
-    if "sum" in origin_attrs:
-        go_module.append('    sum = "' + origin_attrs["sum"] + '",')
-    if "version" in origin_attrs:
-        go_module.append('    version = "' + origin_attrs["version"] + '",')
-    elif "tag" in origin_attrs:
-        go_module.append('    version = "' + origin_attrs["tag"] + '",')
-    go_module.append(")\n")
-
-    write_at_given_place(
-        "MODULE.bazel",
-        'use_repo(go_deps, "' + origin_attrs["name"] + '")',
-        "# -- End of go extension -- #",
-    )
-    write_at_given_place("MODULE.bazel", "\n".join(go_module), "use_repo(go_deps, ")
+        write_at_given_place("MODULE.bazel", go_sdk, "# -- End of go extension -- #")
 
     resolved("`" + repo + "` has been introduced as go extension.")
     append_migration_info("## Migration of `" + repo + "`:")
-    append_migration_info("It has been introduced as a go module:\n")
-    append_migration_info("```\n" + "\n".join(go_module) + "```")
+
+    if os.path.exists("go.mod") and os.path.exists("go.sum"):
+        if exists_in_file("MODULE.bazel", origin_attrs["name"]):
+            append_migration_info("It has already been introduced as a go module with the help of `go.mod`.\n")
+
+        if not exists_in_file("MODULE.bazel", 'go_deps.from_file(go_mod = "//:go.mod")'):
+            from_file = """go_deps.from_file(go_mod = "//:go.mod")
+go_sdk.from_file(go_mod = "//:go.mod")
+"""
+            write_at_given_place("MODULE.bazel", from_file, "# -- End of go extension -- #")
+            exit_code, stdout, _ = execute_command(["bazel", "mod", "tidy"])
+            assertExitCode(exit_code, 0, "Failed to run `bazel mod tidy`", stdout)
+            append_migration_info("It has been introduced as a go module with the help of `go.mod`:\n")
+            append_migration_info("```\n" + from_file + "```")
+    else:
+        go_module = ["go_deps.module("]
+        if "importpath" in origin_attrs:
+            go_module.append('    path = "' + origin_attrs["importpath"] + '",')
+        if "sum" in origin_attrs:
+            go_module.append('    sum = "' + origin_attrs["sum"] + '",')
+        if "version" in origin_attrs:
+            go_module.append('    version = "' + origin_attrs["version"] + '",')
+        elif "tag" in origin_attrs:
+            go_module.append('    version = "' + origin_attrs["tag"] + '",')
+        go_module.append(")\n")
+
+        write_at_given_place(
+            "MODULE.bazel",
+            'use_repo(go_deps, "' + origin_attrs["name"] + '")',
+            "# -- End of go extension -- #",
+        )
+        write_at_given_place("MODULE.bazel", "\n".join(go_module), "use_repo(go_deps, ")
+        append_migration_info("It has been introduced as a go module:\n")
+        append_migration_info("```\n" + "\n".join(go_module) + "```")
 
     # Add gazelle_override if needed.
     gazelle_override_attrs = []
@@ -426,12 +446,9 @@ go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
     ],
 )
 """
-        write_at_given_place("MODULE.bazel", gazelle_override, "go_deps.module(")
+        write_at_given_place("MODULE.bazel", gazelle_override, "# -- End of go extension -- #")
         append_migration_info("Additionally, `gazelle_override` was used for the initial directives:\n")
         append_migration_info("```\n" + gazelle_override + "```")
-
-    # TODO(kotlaja): Add go_sdk?
-    # TODO(kotlaja): Add go toolchains?
 
 
 def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
@@ -535,7 +552,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
 
     # Support go extension.
     if "bazel_gazelle" in file_label and "go_repository" in file_label:
-        add_go_extension(repo, origin_attrs)
+        add_go_extension(repo, origin_attrs, resolved_deps, workspace_name)
         return True
 
     # Support maven extensions.
@@ -566,14 +583,18 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         repo_name = "" if repo == found_module else f', repo_name = "{repo}"'
         bazel_dep_line = f'bazel_dep(name = "{found_module}", version = "{version}"{repo_name})'
 
-        if yes_or_no(
-            "Do you wish to add the bazel_dep definition to the MODULE.bazel file?",
-            True,
-        ):
-            append_migration_info("It has been introduced as a Bazel module:\n")
-            append_migration_info("\t" + bazel_dep_line + "")
-            resolved("`" + repo + "` has been introduced as a Bazel module.")
-            write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
+        if not exists_in_file("MODULE.bazel", bazel_dep_line):
+            if yes_or_no(
+                "Do you wish to add the bazel_dep definition to the MODULE.bazel file?",
+                True,
+            ):
+                append_migration_info("It has been introduced as a Bazel module:\n")
+                append_migration_info("\t" + bazel_dep_line + "")
+                resolved("`" + repo + "` has been introduced as a Bazel module.")
+                write_at_given_place("MODULE.bazel", bazel_dep_line, BAZEL_DEP_IDENTIFIER)
+                return True
+        else:
+            append_migration_info("This module has already been added inside the MODULE.bazel file")
             return True
     else:
         append_migration_info("\tIt is not found in BCR. \n")
