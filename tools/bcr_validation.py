@@ -654,41 +654,37 @@ class BcrValidator:
         current_compatibility_level = BcrValidator.extract_attribute_from_module(
             bcr_module_dot_bazel, "compatibility_level", 0
         )
-        if index > 0:
-            previous_version = versions[index - 1]
-            previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, previous_version)
-            previous_compatibility_level = BcrValidator.extract_attribute_from_module(
-                previous_module_dot_bazel, "compatibility_level", 0
-            )
-        else:
-            previous_compatibility_level = None
         if index < len(versions) - 1:
             next_version = versions[index + 1]
             next_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, next_version)
             next_compatibility_level = BcrValidator.extract_attribute_from_module(
                 next_module_dot_bazel, "compatibility_level", 0
             )
-        else:
-            next_compatibility_level = None
-        if previous_compatibility_level is not None and current_compatibility_level < previous_compatibility_level:
-            self.report(
-                BcrValidationResult.FAILED,
-                f"The new module version {version} has a lower compatibility level than the previous version {previous_version} ({current_compatibility_level} < {previous_compatibility_level}).\n"
-                + "This is not allowed, the compatibility level must be monotonically increasing.\n",
+            if current_compatibility_level > next_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The new module version {version} has a higher compatibility level than the next version {next_version} ({current_compatibility_level} > {next_compatibility_level}).\n"
+                    + "This is not allowed, the compatibility level must be monotonically increasing.\n",
+                )
+        if index > 0:
+            previous_version = versions[index - 1]
+            previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, previous_version)
+            previous_compatibility_level = BcrValidator.extract_attribute_from_module(
+                previous_module_dot_bazel, "compatibility_level", 0
             )
-        if next_compatibility_level is not None and current_compatibility_level > next_compatibility_level:
-            self.report(
-                BcrValidationResult.FAILED,
-                f"The new module version {version} has a higher compatibility level than the next version {next_version} ({current_compatibility_level} > {next_compatibility_level}).\n"
-                + "This is not allowed, the compatibility level must be monotonically increasing.\n",
-            )
-        if check_compatibility_level and current_compatibility_level != previous_compatibility_level:
-            self.report(
-                BcrValidationResult.FAILED,
-                f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}).\n"
-                + "If this is intentional, please comment on your PR `@bazel-io skip_check compatibility_level`\n"
-                + "Learn more about when to increase the compatibility level at https://bazel.build/external/faq#incrementing-compatibility-level",
-            )
+            if current_compatibility_level < previous_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The new module version {version} has a lower compatibility level than the previous version {previous_version} ({current_compatibility_level} < {previous_compatibility_level}).\n"
+                    + "This is not allowed, the compatibility level must be monotonically increasing.\n",
+                )
+            if check_compatibility_level and current_compatibility_level != previous_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}).\n"
+                    + "If this is intentional, please comment on your PR `@bazel-io skip_check compatibility_level`\n"
+                    + "Learn more about when to increase the compatibility level at https://bazel.build/external/faq#incrementing-compatibility-level",
+                )
 
         # Check that bazel_compatability is sufficient when using "overlay"
         if "overlay" in source:

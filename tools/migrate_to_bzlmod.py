@@ -75,6 +75,10 @@ def important(msg):
     eprint(f"{YELLOW}IMPORTANT: {RESET}{msg}")
 
 
+def action(msg):
+    eprint(f"{RED}ACTION NEEDED: {RESET}{msg}")
+
+
 def warning(msg):
     eprint(f"{YELLOW}WARNING: {RESET}{msg}")
 
@@ -164,15 +168,38 @@ def execute_command(args, to_print=False, cwd=None, env=None, shell=False, execu
             return exit_code, stdout_result, stderr_result
 
 
-def print_repo_definition(dep):
+def print_repo_definition(repo_def, dep):
+    repo_def_str = "\n".join(repo_def)
+    append_migration_info(f"""
+<details>
+<summary>Click here to see where and how the repo was declared in the WORKSPACE file</summary>
+
+#### Location
+```python
+{dep["definition_information"]}
+```
+
+#### Definition
+```python
+{repo_def_str}
+```
+**Tip**: URLs usually show which version was used.
+</details>
+""")
+    append_migration_info("___")
+
+
+def repo_definition(dep):
     """Print the repository info to migration_info and return the repository definition."""
     # Parse the repository rule class (rule name, and the label for the bzl file where the rule is defined.)
     rule_class = dep["original_rule_class"]
+    is_macro = False
     if rule_class.find("%") != -1:
         # Starlark rule
         file_label, rule_name = rule_class.split("%")
         # If the original macro is not publicly visible, we trace back to fine a visible one.
         if rule_name.startswith("_"):
+            is_macro = True
             def_info = dep["definition_information"].split("\n")
             def_info.reverse()
             for line in def_info:
@@ -210,29 +237,10 @@ def print_repo_definition(dep):
             repo_def.append(f"  {key} = {value_str},")
     repo_def.append(")")
 
-    if "definition_information" in dep:
-        repo_def_str = "\n".join(repo_def)
-        append_migration_info(f"""
-<details>
-  <summary>Click here to see where and how the repo was declared in the WORKSPACE file</summary>
-
-#### Location
-```python
-{dep["definition_information"]}
-```
-
-#### Definition
-```python
-{repo_def_str}
-```
-  **Tip**: URLs usually show which version was used.
-</details>
-""")
-    append_migration_info("___")
     if file_label and file_label.startswith("@@"):
         file_label = file_label[1:]
 
-    return repo_def, file_label, rule_name
+    return repo_def, file_label, rule_name, is_macro
 
 
 def detect_unavailable_repo_error(stderr):
@@ -287,6 +295,8 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     """Introduce a repository via a module extension."""
     # If the repo was not defined in @bazel_tools,
     # we need to create a separate module extension for it to avoid cycle.
+    if rule_name.startswith("_"):
+        rule_name = rule_name[1:]
     need_separate_module_extension = not file_label.startswith("@bazel_tools")
     ext_name = f"extension_for_{rule_name}".replace("-", "_") if need_separate_module_extension else "non_module_deps"
     ext_bzl_name = ext_name + ".bzl"
@@ -306,9 +316,10 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
         )
 
     # Add repo definition to the module extension's bzl file
-    load_statement = f'load("{file_label}", "{rule_name}")'
+    imported_rule_statement = f'"{rule_name}"'
+    load_statement = f'load("{file_label}", {imported_rule_statement})'
     bzl_content = open(ext_bzl_name, "r").read()
-    if load_statement not in bzl_content:
+    if imported_rule_statement not in bzl_content:
         write_at_given_place(ext_bzl_name, load_statement, LOAD_IDENTIFIER)
     write_at_given_place(
         ext_bzl_name,
@@ -355,9 +366,67 @@ def url_match_source_repo(source_url, module_name):
     return matched
 
 
-def address_unavailable_repo(repo, resolved_deps, workspace_name):
-    append_migration_info("## Migration of `" + repo + "`:")
+def exists_in_file(filename, content):
+    with open(filename, "r") as f:
+        return content in f.read()
 
+
+def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
+    # Introduce `rules_jvm_external` only once.
+    if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_jvm_external'):
+        address_unavailable_repo("rules_jvm_external", resolved_deps, workspace_name)
+
+    # Introduce `maven` extension only once.
+    if not exists_in_file("MODULE.bazel", 'maven = use_extension("@rules_jvm_external//:extensions.bzl"'):
+        maven_extension = """
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+# -- End of maven extensions -- #
+"""
+        write_at_given_place(
+            "MODULE.bazel",
+            maven_extension,
+            REPO_IDENTIFIER,
+        )
+
+    # Introduce repo rule for `repo` only once.
+    if not exists_in_file("MODULE.bazel", f'use_repo(maven, "{repo}")'):
+        repo_rule = f"""
+use_repo(maven, "{repo}")
+# -- End of maven artifacts for repo `{repo}` -- #"""
+        write_at_given_place(
+            "MODULE.bazel",
+            repo_rule,
+            "# -- End of maven extensions",
+        )
+
+    # Translate each maven artifact which is lacking in MODULE.bazel file.
+    for maven_artifact in maven_artifacts:
+        parsed_data = json.loads(maven_artifact)
+        group = parsed_data["group"]
+
+        if exists_in_file("MODULE.bazel", 'group = "' + group):
+            continue
+
+        append_migration_info("## Migration of `" + group + "` (" + repo + "):")
+        append_migration_info("It has been introduced as a maven artifact:\n")
+
+        artifact = f"""
+maven.artifact(
+    name = "{repo}",
+    group = "{group}",
+    artifact = "{parsed_data["artifact"]}",
+    version = "{parsed_data["version"]}"
+)"""
+        write_at_given_place(
+            "MODULE.bazel",
+            artifact,
+            f"# -- End of maven artifacts for repo `{repo}` ",
+        )
+        resolved("`" + group + "` has been introduced as maven extension.")
+        append_migration_info("```" + artifact + "\n```")
+
+
+def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Check if it's the original main repo name
     if repo == workspace_name:
         error_message = []
@@ -378,12 +447,14 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         append_migration_info("TODO: " + "\n".join(error_message))
 
     # Print the repo definition in the original WORKSPACE file
-    repo_def, file_label, rule_name = [], None, None
-    urls = []
+    repo_def, file_label, rule_name, is_macro = [], None, None, False
+    urls, maven_artifacts = [], []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
-            repo_def, file_label, rule_name = print_repo_definition(dep)
+            repo_def, file_label, rule_name, is_macro = repo_definition(dep)
             urls = dep["original_attributes"].get("urls", [])
+            if "artifacts" in dep["original_attributes"]:
+                maven_artifacts = dep["original_attributes"]["artifacts"]
             if dep["original_attributes"].get("url", None):
                 urls.append(dep["original_attributes"]["url"])
             if dep["original_attributes"].get("remote", None):
@@ -397,6 +468,14 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             + "` is not found in ./resolved_deps.py file, please add `--force/-f` flag to force update it."
         )
         return False
+
+    # Support maven extensions.
+    if "rules_jvm_external" in file_label and maven_artifacts:
+        add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name)
+        return True
+
+    append_migration_info("## Migration of `" + repo + "`:")
+    print_repo_definition(repo_def, dep)
 
     # Check if a module is already available in the registry.
     found_module = None
@@ -434,9 +513,8 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Only ask if the repo is defined in @bazel_tools or the root module to avoid potential cycle.
     if (
         file_label
-        and file_label.startswith("//")
-        or file_label
-        and file_label.startswith("@bazel_tools//")
+        and not is_macro
+        and file_label.startswith(("//", "@bazel_tools//"))
         and yes_or_no(
             "Do you wish to introduce the repository with use_repo_rule in MODULE.bazel (requires Bazel 7.3 or later)?",
             True,
@@ -788,16 +866,12 @@ def main(argv=None):
         if repo:
             if address_unavailable_repo(repo, resolved_deps, workspace_name):
                 continue
-            else:
-                abort_migration()
 
         # 2. Detect build failure caused by unavailable bind statements
         bind_target_location = detect_bind_issue(stderr)
         if bind_target_location:
             if address_bind_issue(bind_target_location, resolved_deps):
                 continue
-            else:
-                abort_migration()
 
         print("")
         error("Unrecognized error, please fix manually:\n" + stderr)
