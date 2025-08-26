@@ -4,9 +4,19 @@ import os
 from unittest import main
 
 
+def _cleanup_created_files(files):
+    """
+    Remove files which were created by migration tool.
+    """
+    for file_name in files:
+        file_path = os.path.join(os.getcwd(), file_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+
 class BazelBuildTest(unittest.TestCase):
     """
-    A test suite for verifying Bzlmod migration tool for maven extensions.
+    A test suite for verifying Bzlmod migration tool for go extension.
     """
 
     _CREATED_FILES = [
@@ -17,15 +27,6 @@ class BazelBuildTest(unittest.TestCase):
         "query_direct_deps",
         "resolved_deps.py",
     ]
-
-    def _cleanup_created_files(self):
-        """
-        Remove files which were created by migration tool.
-        """
-        for file_name in self._CREATED_FILES:
-            file_path = os.path.join(os.getcwd(), file_name)
-            if os.path.exists(file_path):
-                os.remove(file_path)
 
     def _run_command(self, command):
         """
@@ -45,9 +46,10 @@ class BazelBuildTest(unittest.TestCase):
         RESET = "\033[0m"
         print(f"{GREEN}{message}{RESET}")
 
-    def test_migration_of_module_deps(self):
-        self._cleanup_created_files()
+    def _verify(self, print_message):
         targets = "//..."
+
+        print(print_message)
 
         # Verify bazel build is successful with enabled workspace
         print("\n--- Running bazel build with enabled workspace ---")
@@ -70,7 +72,25 @@ class BazelBuildTest(unittest.TestCase):
         assert result.returncode == 0
         self._print_message("Success.")
 
-        self._cleanup_created_files()
+    def test_migration_with_go_mod(self):
+        _cleanup_created_files(self._CREATED_FILES)
+        if os.path.exists("go.mod2"):
+            os.rename("go.mod2", "go.mod")
+
+        self._verify("\nTesting with go.mod")
+
+        _cleanup_created_files(["MODULE.bazel"])
+
+    def test_migration_without_go_mod(self):
+        # Mask `go.mod` file in order to test go rules without it.
+        if os.path.exists("go.mod"):
+            os.rename("go.mod", "go.mod2")
+
+        self._verify("\nTesting without go.mod")
+
+        if os.path.exists("go.mod2"):
+            os.rename("go.mod2", "go.mod")
+        _cleanup_created_files(self._CREATED_FILES)
 
 
 if __name__ == "__main__":
