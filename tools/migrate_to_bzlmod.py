@@ -439,10 +439,11 @@ go_sdk.from_file(go_mod = "//:go.mod")
     if "build_naming_convention" in origin_attrs:
         gazelle_override_attrs.append('"gazelle:go_naming_convention ' + origin_attrs["build_naming_convention"] + '",')
     if gazelle_override_attrs:
+        directives = "\n         ".join(gazelle_override_attrs)
         gazelle_override = f"""go_deps.gazelle_override(
     path = "{origin_attrs["importpath"]}",
     directives = [
-        {"\n         ".join(gazelle_override_attrs)}
+        {directives}
     ],
 )
 """
