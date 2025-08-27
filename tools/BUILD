@@ -119,6 +119,15 @@ py_binary(
     ],
 )
 
+py_binary(
+    name = "mcp_server",
+    srcs = ["mcp_server.py"],
+    deps = [
+        ":registry",
+        requirement("fastmcp"),
+    ],
+)
+
 genrule(
     name = "bazelci_py",
     srcs = ["@bazelci_py_file//file"],

@@ -72,7 +72,7 @@ def download(url):
     opener = urllib.request.build_opener(Github404ErrorProcessor)
     urllib.request.install_opener(opener)
     parts = urllib.parse.urlparse(url)
-    headers = {"User-Agent": "Mozilla/5.0"}  # Set the User-Agent header
+    headers = {"User-Agent": "curl/8.7.1"}  # Set the User-Agent header
     try:
         authenticators = netrc.netrc().authenticators(parts.netloc)
     except FileNotFoundError:
