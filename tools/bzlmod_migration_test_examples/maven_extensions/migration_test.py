@@ -45,25 +45,19 @@ class BazelBuildTest(unittest.TestCase):
         RESET = "\033[0m"
         print(f"{GREEN}{message}{RESET}")
 
-    def modify_build_file(self, old, new):
-        with open("BUILD", "r") as f:
-            original_content = f.read()
-        with open("BUILD", "w") as f:
-            modified_content = str(original_content).replace(old, new)
-            f.write(modified_content)
-
     def test_migration_of_module_deps(self):
         self._cleanup_created_files()
+        targets = "//..."
 
         # Verify bazel build is successful with enabled workspace
         print("\n--- Running bazel build with enabled workspace ---")
-        result = self._run_command(["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."])
+        result = self._run_command(["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", targets])
         assert result.returncode == 0
         self._print_message("Success.")
 
         # Run migration script
         print("\n--- Running migration script ---")
-        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=/..."])
+        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=" + targets])
         assert result.returncode == 0
         assert os.path.exists(
             "migration_info.md"
@@ -72,9 +66,9 @@ class BazelBuildTest(unittest.TestCase):
 
         # Verify MODULE.bazel was created successfully
         print("\n--- Running bazel build with enabled bzlmod ---")
-        result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."])
+        result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", targets])
         assert result.returncode == 0
-        self._print_message("Success with modified BUILD file.")
+        self._print_message("Success.")
 
         self._cleanup_created_files()
 
