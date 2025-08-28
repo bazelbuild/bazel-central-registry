@@ -1,5 +1,6 @@
 """PostgreSQL BUILD file."""
 
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_cc//cc:defs.bzl", "cc_library")
@@ -42,6 +43,17 @@ write_file(
 #define MANDIR "/usr/local/pgsql/share/man"
 """.splitlines(),
     newline = "unix",
+)
+
+bool_flag(
+    name = "use_boringssl",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_boringssl_setting",
+    flag_values = {":use_boringssl": "True"},
 )
 
 write_file(
@@ -1181,6 +1193,21 @@ LIBPQ_WINDOWS = [
 ]
 
 cc_library(
+    name = "pq_ssl_lib",
+    tags = ["manual"],
+    deps = select({
+        ":use_boringssl_setting": [
+            "@boringssl//:crypto",
+            "@boringssl//:ssl",
+        ],
+        "//conditions:default": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }),
+)
+
+cc_library(
     name = "pq",
     hdrs = LIBPQ_PUBLIC_HDRS,
     includes = ["src/include", "src/interfaces"],
@@ -1217,6 +1244,7 @@ cc_library(
             "HAVE_SOCKLEN_T=1",
         ],
     }),
+    deps = [":pq_ssl_lib"],
     visibility = ["//visibility:public"],
 )
 
