@@ -1,0 +1,66 @@
+module(name = "gcc_toolchain",
+    version = "0.9.0",
+)
+
+# Dependencies
+# ============
+bazel_dep(name = "bazel_skylib", version = "1.8.1")
+bazel_dep(name = "aspect_bazel_lib", version = "1.40.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.0")
+
+# Local Toolchains
+# ================
+gcc_toolchains = use_extension("//toolchain:module_extensions.bzl", "gcc_toolchains", dev_dependency = True)
+
+[
+    [
+        gcc_toolchains.toolchain(
+            name = "gcc_toolchain_{}".format(arch),
+            target_arch = arch,
+        ),
+        use_repo(gcc_toolchains, "gcc_toolchain_{}".format(arch)),
+        register_toolchains(
+            "@gcc_toolchain_{}//:cc_toolchain".format(arch),
+            "@gcc_toolchain_{}//:fortran_toolchain".format(arch),
+            # Register toolchains as dev dependencies so that we don't pollute the toolchain resolution of consumers.
+            dev_dependency = True,
+        ),
+    ]
+    # Unfortunately, we can't load `ARCHS` directly here.
+    # But the attributes in `gcc_toolchains.toolchain` are gated to only contain values from ARCHS.
+    for arch in [
+        "aarch64",
+        "armv7",
+        "x86_64",
+    ]
+]
+
+# Dev Dependencies (for examples/)
+# ===============================
+bazel_dep(name = "rules_proto", version = "7.1.0", dev_dependency = True)
+bazel_dep(name = "rules_foreign_cc", version = "0.15.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.5.6", dev_dependency = True, repo_name = "io_bazel_stardoc")
+# We pin stardoc because a dependency requests a newer version (0.7.2), but the non-workspace flow doesn't work with it.
+single_version_override(
+    module_name = "stardoc",
+    version = "0.5.6",
+)
+
+bazel_dep(name = "protobuf", version = "29.3", dev_dependency = True, repo_name = "com_google_protobuf")
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = [
+        "//third_party/patches:com_google_protobuf.bzlmod.patch",
+    ],
+    version = "29.3",
+)
+
+non_bazel_dependencies = use_extension("//:internal.bzl", "non_bazel_dependencies")
+use_repo(
+    non_bazel_dependencies,
+    "avl",
+    "lapack",
+    "openssl",
+)
