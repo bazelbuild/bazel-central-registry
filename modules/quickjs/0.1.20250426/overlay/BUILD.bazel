@@ -1,0 +1,157 @@
+# Default visibility for all rules in this package.
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "DEFINE_CONFIG_VERSION",
+    defines = [
+        "CONFIG_VERSION=\\\"2025-04-05\\\"",
+    ],
+)
+
+# =============================================================================
+# PLATFORM CONFIGURATIONS
+# Using modern, constraint-based platform definitions.
+# =============================================================================
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "linux_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:osx",
+    ],
+)
+
+config_setting(
+    name = "macos_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:osx",
+    ],
+)
+
+config_setting(
+    name = "windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+# =============================================================================
+# BUILD RULES
+# =============================================================================
+
+# A filegroup for all public headers of libqjs.
+filegroup(
+    name = "qjs_headers",
+    srcs = glob([
+        "*.h",
+    ]),
+)
+
+# This is the main static library for QuickJS (produces quickjs.a).
+# It now includes quickjs-libc.c to match the Makefile.
+cc_library(
+    name = "quickjs",
+    srcs = [
+        "quickjs.c",
+        "libregexp.c",
+        "libunicode.c",
+        "cutils.c",
+        "dtoa.c",
+        "quickjs-libc.c",  # Added to match Makefile's quickjs.a
+        # NOTE: The 'libbf' sources for bignum support are not included here
+        # as they were not found in the directory listing. If CONFIG_BIGNUM
+        # is desired, you must add the corresponding .c files from the 'libbf'
+        # directory to this 'srcs' list.
+    ],
+    hdrs = [":qjs_headers"],
+    copts = select({
+        ":windows": [
+            "/W3",  # Standard warning level
+            "/Zi",  # Generate debug information
+            "/D_CRT_SECURE_NO_WARNINGS",  # Suppress common warnings in MSVC for C standard library
+        ],
+        "//conditions:default": [
+            "-fPIC",
+            "-g",
+            "-Wall",
+            "-D_GNU_SOURCE",
+            "-DCONFIG_BIGNUM",
+        ],
+    }),
+    local_defines = [
+        "CONFIG_VERSION=\\\"2025-04-05\\\"",
+    ],
+)
+
+# Common linker options for POSIX-like systems
+POSIX_LINKOPTS = [
+    "-lm",
+    "-lpthread",
+]
+
+LINUX_LINKOPTS = POSIX_LINKOPTS + ["-ldl"]
+
+# Rule to build the qjsc compiler executable.
+cc_binary(
+    name = "qjsc",
+    srcs = ["qjsc.c"],
+    linkopts = select({
+        ":linux_x86_64": LINUX_LINKOPTS,
+        ":linux_aarch64": LINUX_LINKOPTS,
+        ":macos_x86_64": POSIX_LINKOPTS,
+        ":macos_aarch64": POSIX_LINKOPTS,
+        ":windows": [],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":DEFINE_CONFIG_VERSION",
+        ":quickjs",
+    ],  # Depends on the main static library
+)
+
+# --- Rules for QJS executable ---
+
+# genrule to compile repl.js into a C source file using the qjsc tool.
+# This mimics the `repl.c: $(QJSC) repl.js` rule from the Makefile.
+genrule(
+    name = "gen_repl",
+    srcs = ["repl.js"],
+    outs = ["repl.c"],
+    cmd = "$(execpath :qjsc) -s -c -o $@ -m $(execpath :repl.js)",
+    tools = [":qjsc"],
+)
+
+# Rule to build the qjs interactive interpreter executable.
+cc_binary(
+    name = "qjs",
+    srcs = [
+        "qjs.c",
+        ":repl.c",  # This refers to the output of the 'gen_repl' rule.
+    ],
+    linkopts = select({
+        ":linux_x86_64": LINUX_LINKOPTS,
+        ":linux_aarch64": LINUX_LINKOPTS,
+        ":macos_x86_64": POSIX_LINKOPTS,
+        ":macos_aarch64": POSIX_LINKOPTS,
+        ":windows": [],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":DEFINE_CONFIG_VERSION",
+        ":quickjs",
+    ],  # Depends on the main static library
+)
