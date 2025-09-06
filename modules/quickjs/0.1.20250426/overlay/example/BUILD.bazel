@@ -1,0 +1,63 @@
+# BUILD file for QuickJS examples.
+
+package(default_visibility = ["//visibility:public"])
+
+# --- Rule for 'hello' executable ---
+
+# First, generate the C source file from the Javascript file.
+genrule(
+    name = "gen_hello_c",
+    srcs = ["hello.js"],
+    outs = ["hello.c"],
+    cmd = "$(execpath @quickjs//:qjsc) -e -o $@ $(execpath :hello.js)",
+    tools = ["@quickjs//:qjsc"],
+)
+
+# Second, build the executable from the generated C file.
+cc_binary(
+    name = "hello",
+    srcs = [":hello.c"],
+    linkopts = select({
+        "//:linux_x86_64": [
+            "-lm",
+            "-ldl",
+            "-lpthread",
+        ],
+        "//:linux_aarch64": [
+            "-lm",
+            "-ldl",
+            "-lpthread",
+        ],
+        "//:macos_x86_64": [
+            "-lm",
+            "-lpthread",
+        ],
+        "//:macos_aarch64": [
+            "-lm",
+            "-lpthread",
+        ],
+        "//:windows": [],
+        "//conditions:default": [],
+    }),
+    deps = ["@quickjs"],  # Depends on the main qjs library with libc
+)
+
+# --- Rules for shared libraries (.so files) ---
+
+# These are C modules that can be dynamically loaded by QuickJS.
+# We build them as shared libraries using linkshared = True.
+
+cc_binary(
+    name = "fib.so",
+    srcs = ["fib.c"],
+    defines = ["JS_SHARED_LIBRARY"],
+    linkshared = True,
+    deps = ["@quickjs"],  # Depends on the core qjs library
+)
+
+cc_binary(
+    name = "point.so",
+    srcs = ["point.c"],
+    linkshared = True,
+    deps = ["@quickjs"],  # Depends on the core qjs library
+)
