@@ -51,7 +51,7 @@ modules/
 
 ### Metadata
 
-- If there is non-trivial changes to `metadata.json` files, please ping `@bazelbuild/bcr-maintainers` for a manual review.
+- If there are any changes to `maintainers` or `repository` fields in `metadata.json` files, please ping @bazelbuild/bcr-maintainers for a manual review.
 
 ---
 
@@ -69,4 +69,4 @@ modules/
 
 ## 3) Additional Notes
 
-- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The file content of the symlink will look like `../MODULE.bazel`, these are allowed.
+- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The content of the symlink will look like a text file `../MODULE.bazel`, these are allowed and should be ignored.
