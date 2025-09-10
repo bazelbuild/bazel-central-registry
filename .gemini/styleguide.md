@@ -62,3 +62,7 @@ modules/
     --registry="file:///path/to/bazel-central-registry" \
     --lockfile_mode=off @<module>//:<target>
   ```
+
+## 3) Additional Notes
+
+- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. These are allowed.
