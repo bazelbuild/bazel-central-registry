@@ -79,8 +79,7 @@ COLOR = {
 
 UPSTREAM_MODULES_DIR_URL = "https://bcr.bazel.build/modules"
 
-# TODO(fweikert): switch to a stable release that contains https://github.com/slsa-framework/slsa-verifier/pull/840
-DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1-rc.1"
+DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1"
 
 ATTESTATIONS_DOCS_URL = "https://github.com/bazelbuild/bazel-central-registry/blob/main/docs/attestations.md"
 
@@ -117,7 +116,7 @@ def parse_module_versions(registry, check_all, inputs):
 def apply_patch(work_dir, patch_strip, patch_file):
     # Requires patch to be installed
     subprocess.run(
-        ["patch", "-p%d" % patch_strip, "-f", "-l", "-i", patch_file],
+        ["patch", "--strip", str(patch_strip), "--force", "--fuzz", "0", "--ignore-whitespace", "--input", patch_file],
         shell=False,
         check=True,
         env=os.environ,
@@ -240,16 +239,16 @@ def get_github_user_id(github_username):
     return None
 
 
-def is_valid_bazel_compatability_for_overlay(bazel_compatibility):
+def is_valid_bazel_compatibility_for_overlay(bazel_compatibility):
     """
-    Returns whether the bazel_compatability is valid for an overlay.
+    Returns whether the bazel_compatibility is valid for an overlay.
     See: https://bazel.build/rules/lib/globals/module#module
 
     Args:
-        bazel_compatability: List of bazel compatability strings.
+        bazel_compatibility: List of bazel compatibility strings.
 
     Returns:
-        Boolean indicating compatability with source overlays.
+        Boolean indicating compatibility with source overlays.
     """
     if not bazel_compatibility:
         return False
@@ -647,23 +646,44 @@ class BcrValidator:
                 "Checked in MODULE.bazel version does not match the version of the module directory added.",
             )
 
-        # Check the compatibility_level in MODULE.bazel matches the previous version
+        # Check the compatibility_level in MODULE.bazel is monotonically increasing. Also cautiously fail if
+        # it doesn't match the previous version's compatibility_level, but allow the user to skip this check.
         versions = self.registry.get_metadata(module_name)["versions"]
         versions.sort(key=Version)
         index = versions.index(version)
-        if check_compatibility_level and index > 0:
-            pre_version = versions[index - 1]
-            previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, pre_version)
-            current_compatibility_level = BcrValidator.extract_attribute_from_module(
-                bcr_module_dot_bazel, "compatibility_level", 0
+        current_compatibility_level = BcrValidator.extract_attribute_from_module(
+            bcr_module_dot_bazel, "compatibility_level", 0
+        )
+        if index < len(versions) - 1:
+            next_version = versions[index + 1]
+            next_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, next_version)
+            next_compatibility_level = BcrValidator.extract_attribute_from_module(
+                next_module_dot_bazel, "compatibility_level", 0
             )
+            if current_compatibility_level > next_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The new module version {version} has a higher compatibility level than the next version {next_version} ({current_compatibility_level} > {next_compatibility_level}).\n"
+                    + "This is not allowed, the compatibility level must be monotonically increasing.\n",
+                )
+        if index > 0:
+            previous_version = versions[index - 1]
+            previous_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, previous_version)
             previous_compatibility_level = BcrValidator.extract_attribute_from_module(
                 previous_module_dot_bazel, "compatibility_level", 0
             )
-            if current_compatibility_level != previous_compatibility_level:
+            if current_compatibility_level < previous_compatibility_level:
                 self.report(
                     BcrValidationResult.FAILED,
-                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}). ",
+                    f"The new module version {version} has a lower compatibility level than the previous version {previous_version} ({current_compatibility_level} < {previous_compatibility_level}).\n"
+                    + "This is not allowed, the compatibility level must be monotonically increasing.\n",
+                )
+            if check_compatibility_level and current_compatibility_level != previous_compatibility_level:
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"The compatibility_level in the new module version ({current_compatibility_level}) doesn't match the previous version ({previous_compatibility_level}).\n"
+                    + "If this is intentional, please comment on your PR `@bazel-io skip_check compatibility_level`\n"
+                    + "Learn more about when to increase the compatibility level at https://bazel.build/external/faq#incrementing-compatibility-level",
                 )
 
         # Check that bazel_compatability is sufficient when using "overlay"
@@ -671,7 +691,7 @@ class BcrValidator:
             current_bazel_compatibility = BcrValidator.extract_attribute_from_module(
                 bcr_module_dot_bazel, "bazel_compatibility", []
             )
-            if not is_valid_bazel_compatability_for_overlay(current_bazel_compatibility):
+            if not is_valid_bazel_compatibility_for_overlay(current_bazel_compatibility):
                 self.report(
                     BcrValidationResult.FAILED,
                     "When using overlay files the module must set `bazel_compatibility` constraints to "
