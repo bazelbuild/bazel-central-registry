@@ -49,6 +49,10 @@ modules/
 ### Presubmit & Validations
 - `presubmit.yml` is required for each version. Anonymous-module tasks should be put under the top-level `tasks` key, and test-module tasks under `bcr_test_module.tasks`. `tasks` should not be specified anywhere else because they will be ignored.
 
+### Metadata
+
+- If there is no-trivial changes to `metadata.json` files, please ping @meteorcloudy for a manual review.
+
 ---
 
 ## 2) Handy References & Commands (for authors)
