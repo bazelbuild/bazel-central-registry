@@ -51,7 +51,7 @@ modules/
 
 ### Metadata
 
-- If there is non-trivial changes to `metadata.json` files, please ping @meteorcloudy for a manual review.
+- If there is non-trivial changes to `metadata.json` files, please ping `@bazelbuild/bcr-maintainers` for a manual review.
 
 ---
 
