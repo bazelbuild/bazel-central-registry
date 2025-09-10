@@ -47,7 +47,7 @@ modules/
 - Pseudo-versions allowed (e.g. `1.19.1-YYYYMMDDHHMMSS-abcdef`) when upstream is stale.
 
 ### Presubmit & Validations
-- `presubmit.yml` is required for each version. Put anonymous-module tasks under the top-level `tasks` key, and test-module tasks under `bcr_test_module.tasks`.
+- `presubmit.yml` is required for each version. Anonymous-module tasks should be put under the top-level `tasks` key, and test-module tasks under `bcr_test_module.tasks`. `tasks` should not be specified anywhere else.
 
 ---
 
