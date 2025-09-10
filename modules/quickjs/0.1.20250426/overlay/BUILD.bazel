@@ -45,13 +45,23 @@ config_setting(
 )
 
 config_setting(
-    name = "windows",
-    constraint_values = ["@platforms//os:windows"],
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
 )
 
 # =============================================================================
 # BUILD RULES
 # =============================================================================
+
+genrule(
+    name = "libquickjs_win64_msys2_a",
+    srcs = ["@libquickjs_win64_msys2_file//file"],
+    outs = ["libquickjs-win64.msys2.a"],
+    cmd = "cp $(location @libquickjs_win64_msys2_file//file) $@",
+)
 
 # A filegroup for all public headers of libqjs.
 filegroup(
@@ -61,10 +71,18 @@ filegroup(
     ]),
 )
 
+cc_import(
+    name = "quickjs_windows",
+    deps = [
+        ":libquickjs_win64_msys2_a",
+        ":qjs_headers",
+    ],
+)
+
 # This is the main static library for QuickJS (produces quickjs.a).
 # It now includes quickjs-libc.c to match the Makefile.
 cc_library(
-    name = "quickjs",
+    name = "quickjs_unix",
     srcs = [
         "quickjs.c",
         "libregexp.c",
@@ -79,11 +97,6 @@ cc_library(
     ],
     hdrs = [":qjs_headers"],
     copts = select({
-        ":windows": [
-            "/W3",  # Standard warning level
-            "/Zi",  # Generate debug information
-            "/D_CRT_SECURE_NO_WARNINGS",  # Suppress common warnings in MSVC for C standard library
-        ],
         "//conditions:default": [
             "-fPIC",
             "-g",
@@ -95,6 +108,14 @@ cc_library(
     local_defines = [
         "CONFIG_VERSION=\\\"2025-04-05\\\"",
     ],
+)
+
+cc_library(
+    name = "quickjs",
+    deps = select({
+        ":windows_x86_64": [":quickjs_windows"],
+        "//conditions:default": [":quickjs_unix"],
+    }),
 )
 
 # Common linker options for POSIX-like systems
@@ -114,7 +135,6 @@ cc_binary(
         ":linux_aarch64": LINUX_LINKOPTS,
         ":macos_x86_64": POSIX_LINKOPTS,
         ":macos_aarch64": POSIX_LINKOPTS,
-        ":windows": [],
         "//conditions:default": [],
     }),
     deps = [
@@ -147,7 +167,6 @@ cc_binary(
         ":linux_aarch64": LINUX_LINKOPTS,
         ":macos_x86_64": POSIX_LINKOPTS,
         ":macos_aarch64": POSIX_LINKOPTS,
-        ":windows": [],
         "//conditions:default": [],
     }),
     deps = [
