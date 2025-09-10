@@ -65,4 +65,4 @@ modules/
 
 ## 3) Additional Notes
 
-- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. These are allowed.
+- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The file content of the symlink will look like `../MODULE.bazel`, these are allowed.
