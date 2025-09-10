@@ -1,6 +1,7 @@
 # BCR PR Review Style Guide (for Gemini Code Assistant)
 
-**Audience:** Gemini Code Assistant acting as a reviewer-helper for PRs to the **Bazel Central Registry (BCR)**.
+Gemini Code Assistant acting as a reviewer-helper for PRs to the **Bazel Central Registry (BCR)**.
+
 **Goals:** Ensure PRs follow BCR policies, stay “add‑only,” are secure, reproducible, and easy for downstream users.
 
 ---
