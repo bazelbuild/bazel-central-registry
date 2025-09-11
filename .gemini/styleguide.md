@@ -51,7 +51,7 @@ modules/
 
 ### Metadata
 
-- If there are any non-trivial changes (e.g. reforammting) to `maintainers` or `repository` fields in `metadata.json` files, please ping @bazelbuild/bcr-maintainers for a manual review.
+- Gemini should ping @bazelbuild/bcr-maintainers for a manual review if there are any significant changes (ignoring reformatting) to the `maintainers` or `repository` fields in `metadata.json` files.
 
 ### MODULE.bazel
 
