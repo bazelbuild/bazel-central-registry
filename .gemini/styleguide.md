@@ -51,7 +51,13 @@ modules/
 
 ### Metadata
 
-- If there are any changes to `maintainers` or `repository` fields in `metadata.json` files, please ping @bazelbuild/bcr-maintainers for a manual review.
+- If there are any non-trivial changes (e.g. reforammting) to `maintainers` or `repository` fields in `metadata.json` files, please ping @bazelbuild/bcr-maintainers for a manual review.
+
+### MODULE.bazel
+
+- The MODULE.bazel file may contain overrides (e.g. `archive_override`, `git_override`, `local_path_override`). Those will be ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
+- The MODULE.bazel file may contain dev dependencies specified with `dev_dependency = True`. Dev dependencies are ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
+- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The content of the symlink will look like a text file `../MODULE.bazel`, these are allowed and should be ignored.
 
 ---
 
@@ -66,7 +72,3 @@ modules/
     --registry="file:///path/to/bazel-central-registry" \
     --lockfile_mode=off @<module>//:<target>
   ```
-
-## 3) Additional Notes
-
-- There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The content of the symlink will look like a text file `../MODULE.bazel`, these are allowed and should be ignored.
