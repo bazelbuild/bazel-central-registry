@@ -693,7 +693,9 @@ def prepare_migration(initial_flag):
 
     # Parse the original workspace name from the WORKSPACE file
     workspace_name = "main"
-    with open("WORKSPACE", "r") as f:
+    workspace_file = next((f for f in ["WORKSPACE", "WORKSPACE.bazel"] if os.path.exists(f)), None)
+    
+    with open(workspace_file, "r") as f:
         for line in f:
             s = re.search(r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line)
             if s:
