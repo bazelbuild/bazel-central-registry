@@ -59,7 +59,7 @@ modules/
 - The MODULE.bazel file may contain overrides (e.g. `archive_override`, `git_override`, `local_path_override`). Those will be ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
 - The MODULE.bazel file may contain dev dependencies specified with `dev_dependency = True`. Dev dependencies are ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
 - There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The content of the symlink will look like a text file `../MODULE.bazel`, these are allowed and should be ignored.
-- Bazel module resolution allows cycle dependency.
+- Bazel module resolution allows cyclic dependencies.
 
 ---
 
