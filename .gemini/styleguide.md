@@ -17,8 +17,8 @@ Gemini Code Assistant acting as a reviewer-helper for PRs to the **Bazel Central
 - [ ] Module name is specific and unambiguous (avoid overly generic names).
 - [ ] For C++ overlays: ensure a public target named after the module (or alias `libfoo` -> `foo`); visibility is minimal but includes `//visibility:public` for intended APIs.
 - [ ] If using overlays: include `bazel_compatibility` >= 7.2.1 and brief notes on how large BUILD overlays were created.
-- [ ] Prefer adding a **test module** and/or **anonymous module** verify targets; keep `test_targets` realistic.
-- [ ] Encourage to build everything from source (no prebuilt binaries) unless absolutely necessary.
+- [ ] Prefer adding a **test module** and/or **anonymous module** verify targets;
+- [ ] Encourage to build everything from source (no prebuilt binaries) unless absolutely necessary. Registering prebuilt toolchains is a common and acceptable exception.
 
 ---
 
@@ -48,6 +48,7 @@ modules/
 
 ### Presubmit & Validations
 - `presubmit.yml` is required for each version. Anonymous-module tasks should be put under the top-level `tasks` key, and test-module tasks under `bcr_test_module.tasks`. `tasks` should not be specified anywhere else because they will be ignored.
+- Each task must specify at least one of `build_targets` or `test_targets`, but not necessarily both.
 
 ### Metadata
 
@@ -58,6 +59,7 @@ modules/
 - The MODULE.bazel file may contain overrides (e.g. `archive_override`, `git_override`, `local_path_override`). Those will be ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
 - The MODULE.bazel file may contain dev dependencies specified with `dev_dependency = True`. Dev dependencies are ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
 - There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The content of the symlink will look like a text file `../MODULE.bazel`, these are allowed and should be ignored.
+- Bazel module resolution allows cycle dependency.
 
 ---
 
