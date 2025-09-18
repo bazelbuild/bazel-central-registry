@@ -80,10 +80,7 @@ def main():
     print("\nThis script will generate two files in your current directory:")
     print("1. An agent instruction file (e.g., GEMINI.md) to guide the AI assistant.")
     print("2. A `check_repo.sh` script to query your legacy WORKSPACE setup.")
-    print(
-        "\nIMPORTANT: Please make sure you are running this script from the root of your"
-        " project."
-    )
+    print("\nIMPORTANT: Please make sure you are running this script from the root of your" " project.")
 
     # Create a temporary directory for the legacy workspace
     legacy_workspace_path = os.path.join(
@@ -119,14 +116,9 @@ def main():
     )
     while not build_target:
         print("This field is required.")
-        build_target = input(
-            "Enter the target to migrate: "
-        )
+        build_target = input("Enter the target to migrate: ")
 
-    agent_file = (
-        input("Enter the name of the agent file to generate (default: 'GEMINI.md'): ")
-        or "GEMINI.md"
-    )
+    agent_file = input("Enter the name of the agent file to generate (default: 'GEMINI.md'): ") or "GEMINI.md"
 
     output_dir = "."
     os.makedirs(output_dir, exist_ok=True)
@@ -139,9 +131,7 @@ def main():
     print(f"Generated {agents_md_path}")
 
     # Generate check_repo.sh
-    check_repo_sh_content = CHECK_REPO_SH_TEMPLATE.format(
-        legacy_workspace_path=legacy_workspace_path
-    )
+    check_repo_sh_content = CHECK_REPO_SH_TEMPLATE.format(legacy_workspace_path=legacy_workspace_path)
     check_repo_sh_path = os.path.join(output_dir, "check_repo.sh")
     with open(check_repo_sh_path, "w") as f:
         f.write(check_repo_sh_content)
@@ -150,7 +140,9 @@ def main():
     st = os.stat(check_repo_sh_path)
     os.chmod(check_repo_sh_path, st.st_mode | stat.S_IEXEC)
     print(f"Generated {check_repo_sh_path} and made it executable.\n")
-    print("Make sure `./check_repo.sh bazel_skylib` works, you should see the repository definition of @bazel_skylib, or any other repo you choose.")
+    print(
+        "Make sure `./check_repo.sh bazel_skylib` works, you should see the repository definition of @bazel_skylib, or any other repo you choose."
+    )
 
 
 if __name__ == "__main__":
