@@ -77,14 +77,15 @@ bazel query --output=build //external:$1
 
 def main():
     class Colors:
-        HEADER = "\033[95m"
-        OKBLUE = "\033[94m"
-        OKGREEN = "\033[92m"
-        WARNING = "\033[93m"
-        FAIL = "\033[91m"
-        ENDC = "\033[0m"
-        BOLD = "\033[1m"
-        UNDERLINE = "\033[4m"
+        is_tty = os.isatty(1)
+        HEADER = "\033[95m" if is_tty else ""
+        OKBLUE = "\033[94m" if is_tty else ""
+        OKGREEN = "\033[92m" if is_tty else ""
+        WARNING = "\033[93m" if is_tty else ""
+        FAIL = "\033[91m" if is_tty else ""
+        ENDC = "\033[0m" if is_tty else ""
+        BOLD = "\033[1m" if is_tty else ""
+        UNDERLINE = "\033[4m" if is_tty else ""
 
     print(f"{Colors.BOLD}Setup helper files for a Coding Agent to migrate your project to" f" Bzlmod.{Colors.ENDC}")
     print("\nThis script will generate two files in your current directory:")
