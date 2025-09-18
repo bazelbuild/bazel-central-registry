@@ -86,20 +86,10 @@ def main():
         BOLD = "\033[1m"
         UNDERLINE = "\033[4m"
 
-    print(
-        f"{Colors.BOLD}Setup helper files for a Coding Agent to migrate your project to"
-        f" Bzlmod.{Colors.ENDC}"
-    )
+    print(f"{Colors.BOLD}Setup helper files for a Coding Agent to migrate your project to" f" Bzlmod.{Colors.ENDC}")
     print("\nThis script will generate two files in your current directory:")
-    print(
-        f"1. An agent instruction file (e.g., {Colors.OKBLUE}GEMINI.md{Colors.ENDC}) to"
-        " guide the AI assistant."
-    )
-    print(
-        "2. A"
-        f" {Colors.OKBLUE}`check_repo.sh`{Colors.ENDC} script to query your legacy"
-        " WORKSPACE setup."
-    )
+    print(f"1. An agent instruction file (e.g., {Colors.OKBLUE}GEMINI.md{Colors.ENDC}) to" " guide the AI assistant.")
+    print("2. A" f" {Colors.OKBLUE}`check_repo.sh`{Colors.ENDC} script to query your legacy" " WORKSPACE setup.")
     print(
         f"\n{Colors.WARNING}IMPORTANT:{Colors.ENDC} Please make sure you are running"
         " this script from the root of your project."
@@ -116,9 +106,7 @@ def main():
         " serve as the legacy workspace at"
         f" {Colors.OKBLUE}{legacy_workspace_path}{Colors.ENDC}."
     )
-    input(
-        f"{Colors.OKGREEN}Press Enter to continue or Ctrl+C to exit...{Colors.ENDC}"
-    )
+    input(f"{Colors.OKGREEN}Press Enter to continue or Ctrl+C to exit...{Colors.ENDC}")
     print("Setting up a temporary legacy workspace by cloning the current project...")
     try:
         subprocess.run(
@@ -127,10 +115,7 @@ def main():
             capture_output=True,
             text=True,
         )
-        print(
-            f"{Colors.OKGREEN}Legacy workspace is ready at:"
-            f" {legacy_workspace_path}{Colors.ENDC}"
-        )
+        print(f"{Colors.OKGREEN}Legacy workspace is ready at:" f" {legacy_workspace_path}{Colors.ENDC}")
     except subprocess.CalledProcessError as e:
         print(f"{Colors.FAIL}Error creating the legacy workspace clone.{Colors.ENDC}")
         print(f"Stderr: {e.stderr}")
@@ -147,15 +132,10 @@ def main():
     )
     while not build_target:
         print(f"{Colors.WARNING}This field is required.{Colors.ENDC}")
-        build_target = input(
-            f"{Colors.OKGREEN}Enter the target to migrate: {Colors.ENDC}"
-        )
+        build_target = input(f"{Colors.OKGREEN}Enter the target to migrate: {Colors.ENDC}")
 
     agent_file = (
-        input(
-            "Enter the name of the agent file to generate (default:"
-            f" '{Colors.OKBLUE}GEMINI.md{Colors.ENDC}'): "
-        )
+        input("Enter the name of the agent file to generate (default:" f" '{Colors.OKBLUE}GEMINI.md{Colors.ENDC}'): ")
         or "GEMINI.md"
     )
 
@@ -170,9 +150,7 @@ def main():
     print(f"{Colors.OKGREEN}Generated {agents_md_path}{Colors.ENDC}")
 
     # Generate check_repo.sh
-    check_repo_sh_content = CHECK_REPO_SH_TEMPLATE.format(
-        legacy_workspace_path=legacy_workspace_path
-    )
+    check_repo_sh_content = CHECK_REPO_SH_TEMPLATE.format(legacy_workspace_path=legacy_workspace_path)
     check_repo_sh_path = os.path.join(output_dir, "check_repo.sh")
     with open(check_repo_sh_path, "w") as f:
         f.write(check_repo_sh_content)
@@ -180,10 +158,7 @@ def main():
     # Make check_repo.sh executable
     st = os.stat(check_repo_sh_path)
     os.chmod(check_repo_sh_path, st.st_mode | stat.S_IEXEC)
-    print(
-        f"{Colors.OKGREEN}Generated {check_repo_sh_path} and made it"
-        f" executable.{Colors.ENDC}\n"
-    )
+    print(f"{Colors.OKGREEN}Generated {check_repo_sh_path} and made it" f" executable.{Colors.ENDC}\n")
     print(
         f"{Colors.BOLD}Make sure `./check_repo.sh bazel_skylib` works, you should see"
         " the repository definition of @bazel_skylib, or any other repo you"
