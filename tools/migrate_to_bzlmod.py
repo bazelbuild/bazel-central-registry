@@ -525,10 +525,19 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
             REPO_IDENTIFIER,
         )
 
-    # Hardcode default python version to simplify migration and ask user to modify it, if needed.
+    # Determine python version to use. Check for an existing default or use 3.11.
     python_version = "3.11"
-    msg_python_version = f"{python_version} is used as a default python version. If you need a different version, please change it manually and then rerun the migration tool."
-    important(msg_python_version)
+    try:
+        with open("MODULE.bazel", "r") as f:
+            match = re.search(r'python\.defaults\s*\(\s*python_version\s*=\s*"([^"]+)"', f.read())
+    except FileNotFoundError:
+        match = None
+
+    if match:
+        python_version = match.group(1)
+        important(f"Using existing default python version {python_version} from MODULE.bazel.")
+    else:
+        important(f"{python_version} is used as a default python version. If you need a different version, please change it manually and then rerun the migration tool.")
 
     py_ext = f"""
 pip.parse(
