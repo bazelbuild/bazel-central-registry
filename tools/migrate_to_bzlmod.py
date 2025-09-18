@@ -537,7 +537,9 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
         python_version = match.group(1)
         important(f"Using existing default python version {python_version} from MODULE.bazel.")
     else:
-        important(f"{python_version} is used as a default python version. If you need a different version, please change it manually and then rerun the migration tool.")
+        important(
+            f"{python_version} is used as a default python version. If you need a different version, please change it manually and then rerun the migration tool."
+        )
 
     py_ext = f"""
 pip.parse(
