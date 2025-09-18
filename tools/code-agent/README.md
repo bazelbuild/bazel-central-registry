@@ -2,6 +2,10 @@
 
 This script prepares your environment for an AI-assisted Bzlmod migration.
 
+## Prerequisites
+
+- Your project has been using Bazel 7.x or later with a `WORKSPACE` file.
+
 ## Usage
 
 Run the script from the root of your project:
