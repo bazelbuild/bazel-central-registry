@@ -6,7 +6,7 @@ from unittest import main
 
 class BazelBuildTest(unittest.TestCase):
     """
-    A test suite for verifying Bzlmod migration tool for maven extensions.
+    A test suite for verifying Bzlmod migration tool for maven and python extensions.
     """
 
     _CREATED_FILES = [
