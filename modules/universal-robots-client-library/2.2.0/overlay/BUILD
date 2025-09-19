@@ -76,6 +76,11 @@ cc_library(
     includes = ["include"],
 )
 
+alias(
+    name = "universal-robots-client-library",
+    actual = ":ur_client_library",
+)
+
 cc_binary(
     name = "full_driver",
     srcs = [
