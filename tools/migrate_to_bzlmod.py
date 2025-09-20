@@ -45,6 +45,7 @@ def abort_migration():
 def assertExitCode(exit_code, expected_exit_code, error_message, stderr):
     if exit_code != expected_exit_code:
         error(f"Command exited with {exit_code}, expected {expected_exit_code}:")
+        eprint(error_message)
         eprint(stderr)
         abort_migration()
 
@@ -407,7 +408,7 @@ go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
 go_sdk.from_file(go_mod = "//:go.mod")
 """
             write_at_given_place("MODULE.bazel", from_file, "# -- End of go extension -- #")
-            exit_code, stdout, _ = execute_command(["bazel", "mod", "tidy"])
+            exit_code, stdout, _ = execute_command(["bazel", "mod", "tidy", "--enable_bzlmod"])
             assertExitCode(exit_code, 0, "Failed to run `bazel mod tidy`", stdout)
             append_migration_info("It has been introduced as a go module with the help of `go.mod`:\n")
             append_migration_info("```\n" + from_file + "```")
@@ -507,6 +508,95 @@ maven.artifact(
         append_migration_info("```" + artifact + "\n```")
 
 
+def add_python_extension(repo, origin_attrs, resolved_deps, workspace_name):
+    # Introduce `rules_python` only once.
+    if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_python"'):
+        address_unavailable_repo("rules_python", resolved_deps, workspace_name)
+
+    # Introduce `pip` extension only once.
+    if not exists_in_file("MODULE.bazel", 'pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")'):
+        pip_extension = """
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+# -- End of pip extensions -- #
+"""
+        write_at_given_place(
+            "MODULE.bazel",
+            pip_extension,
+            REPO_IDENTIFIER,
+        )
+
+    # Determine python version to use. Check for an existing default or use 3.11.
+    python_version = "3.11"
+    try:
+        with open("MODULE.bazel", "r") as f:
+            match = re.search(r'python\.defaults\s*\(\s*python_version\s*=\s*"([^"]+)"', f.read())
+    except FileNotFoundError:
+        match = None
+
+    if match:
+        python_version = match.group(1)
+        important(f"Using existing default python version {python_version} from MODULE.bazel.")
+    else:
+        important(
+            f"{python_version} is used as a default python version. If you need a different version, please change it manually and then rerun the migration tool."
+        )
+
+    py_ext = f"""
+pip.parse(
+    hub_name = "{repo}",
+    requirements_lock = "{origin_attrs["requirements_lock"]}",
+    python_version = "{python_version}",
+)
+use_repo(pip, "{repo}")
+"""
+    write_at_given_place(
+        "MODULE.bazel",
+        py_ext,
+        "# -- End of pip extensions -- #",
+    )
+
+    py_toolchain = []
+    # Introduce `python` extension only once.
+    if not exists_in_file(
+        "MODULE.bazel", 'python = use_extension("@rules_python//python/extensions:python.bzl", "python")'
+    ):
+        py_toolchain.append('python = use_extension("@rules_python//python/extensions:python.bzl", "python")')
+
+    # Introduce python default version only once.
+    if not exists_in_file("MODULE.bazel", "python.defaults(python_version ="):
+        py_toolchain.append(f'python.defaults(python_version = "{python_version}")')
+
+    # Introduce python toolchain only once.
+    if not exists_in_file("MODULE.bazel", f'python.toolchain(python_version = "{python_version}")'):
+        py_toolchain.append(f'python.toolchain(python_version = "{python_version}")')
+
+    py_toolchain_msg = "\n".join(py_toolchain)
+    write_at_given_place(
+        "MODULE.bazel",
+        py_toolchain_msg,
+        "# -- End of pip extensions -- #",
+    )
+
+    resolved("`" + repo + "` has been introduced as python extension.")
+    append_migration_info("## Migration of `" + repo + "`")
+    append_migration_info("It has been introduced as a python extension:\n")
+    append_migration_info("```" + py_ext + "\n" + py_toolchain_msg + "\n```")
+
+
+def add_python_repo(repo):
+    append_migration_info("## Migration of `" + repo + "`")
+    append_migration_info("It has been introduced as a python repo:\n")
+
+    py_repo = f'use_repo(python, "{repo}")'
+    write_at_given_place(
+        "MODULE.bazel",
+        py_repo,
+        "# -- End of pip extensions -- #",
+    )
+    resolved("`" + repo + "` has been introduced as a python repo.")
+    append_migration_info("```\n" + py_repo + "\n```")
+
+
 def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Check if it's the original main repo name
     if repo == workspace_name:
@@ -544,11 +634,9 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             break
 
     if not repo_def:
-        append_migration_info(
-            "Repository definition for `"
-            + repo
-            + "` is not found in ./resolved_deps.py file, please add `--force/-f` flag to force update it."
-        )
+        msg = f"Repository definition for `{repo}` is not found in ./resolved_deps.py file, please add `--initial/-i` flag to force update it."
+        error(msg)
+        append_migration_info(msg)
         return False
 
     # Support go extension.
@@ -559,6 +647,16 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Support maven extensions.
     if "rules_jvm_external" in file_label and maven_artifacts:
         add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name)
+        return True
+
+    # Support python extension.
+    if "requirements_lock" in origin_attrs and "pip_repository" in file_label:
+        add_python_extension(repo, origin_attrs, resolved_deps, workspace_name)
+        return True
+
+    # Support python toolchain dependencies.
+    if "generator_function" in origin_attrs and re.match(r"python_.*toolchains", origin_attrs["generator_function"]):
+        add_python_repo(repo)
         return True
 
     append_migration_info("## Migration of `" + repo + "`:")
