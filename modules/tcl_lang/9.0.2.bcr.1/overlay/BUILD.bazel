@@ -1,0 +1,376 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+[
+    copy_file(
+        name = src.replace(".h", "_copy"),
+        src = src,
+        out = dest,
+        tags = ["manual"],
+    )
+    for src, dest in {
+        "tclConfig_macos.h": "macosx/tclConfig.h",
+        "tclConfig_unix.h": "unix/tclConfig.h",
+        "tclConfig_windows.h": "windows/tclConfig.h",
+    }.items()
+]
+
+# Header library exposing the chosen tclConfig.h as an includable root header.
+cc_library(
+    name = "tcl_config",
+    hdrs = select({
+        "@platforms//os:macos": ["macosx/tclConfig.h"],
+        "@platforms//os:windows": ["win/tclConfig.h"],
+        "//conditions:default": ["unix/tclConfig.h"],
+    }),
+    includes = select({
+        "@platforms//os:macos": ["macosx"],
+        "@platforms//os:windows": ["win"],
+        "//conditions:default": ["unix"],
+    }),
+)
+
+# Generate generic/tclUuid.h via skylib write_file as requested
+write_file(
+    name = "tclUuid",
+    out = "generic/tclUuid.h",
+    content = [
+        "#define TCL_VERSION_UUID \\",
+        "bazel-central-registry",
+    ],
+    newline = "unix",
+)
+
+# Make all headers under generic/ available without the "generic/" prefix.
+cc_library(
+    name = "tcl_generic_headers",
+    hdrs = glob(["generic/*.h"]),
+    includes = ["generic"],
+)
+
+# Stage minizip headers so includes like "crypt.h" resolve
+cc_library(
+    name = "minizip_headers",
+    hdrs = glob(["compat/zlib/contrib/minizip/*.h"]),
+    includes = ["compat/zlib/contrib/minizip"],
+)
+
+TOMMATH_HDRS = [
+    "libtommath/tommath.h",
+    "libtommath/tommath_private.h",
+    "libtommath/tommath_class.h",
+    "libtommath/tommath_superclass.h",
+    "libtommath/tommath_cutoffs.h",
+]
+
+GENERIC_SRCS = [
+    "generic/regcomp.c",
+    "generic/regexec.c",
+    "generic/regfree.c",
+    "generic/regerror.c",
+    "generic/tclAlloc.c",
+    "generic/tclArithSeries.c",
+    "generic/tclAssembly.c",
+    "generic/tclAsync.c",
+    "generic/tclBasic.c",
+    "generic/tclBinary.c",
+    "generic/tclCkalloc.c",
+    "generic/tclClock.c",
+    "generic/tclClockFmt.c",
+    "generic/tclCmdAH.c",
+    "generic/tclCmdIL.c",
+    "generic/tclCmdMZ.c",
+    "generic/tclCompCmds.c",
+    "generic/tclCompCmdsGR.c",
+    "generic/tclCompCmdsSZ.c",
+    "generic/tclCompExpr.c",
+    "generic/tclCompile.c",
+    "generic/tclConfig.c",
+    "generic/tclDate.c",
+    "generic/tclDictObj.c",
+    "generic/tclDisassemble.c",
+    "generic/tclEncoding.c",
+    "generic/tclEnsemble.c",
+    "generic/tclEnv.c",
+    "generic/tclEvent.c",
+    "generic/tclExecute.c",
+    "generic/tclFCmd.c",
+    "generic/tclFileName.c",
+    "generic/tclGet.c",
+    "generic/tclHash.c",
+    "generic/tclHistory.c",
+    "generic/tclIcu.c",
+    "generic/tclIndexObj.c",
+    "generic/tclInterp.c",
+    "generic/tclIO.c",
+    "generic/tclIOCmd.c",
+    "generic/tclIORChan.c",
+    "generic/tclIORTrans.c",
+    "generic/tclIOGT.c",
+    "generic/tclIOSock.c",
+    "generic/tclIOUtil.c",
+    "generic/tclLink.c",
+    "generic/tclListObj.c",
+    "generic/tclLiteral.c",
+    "generic/tclLoad.c",
+    "generic/tclMain.c",
+    "generic/tclNamesp.c",
+    "generic/tclNotify.c",
+    "generic/tclObj.c",
+    "generic/tclOptimize.c",
+    "generic/tclPanic.c",
+    "generic/tclParse.c",
+    "generic/tclPathObj.c",
+    "generic/tclPipe.c",
+    "generic/tclPkg.c",
+    "generic/tclPkgConfig.c",
+    "generic/tclPosixStr.c",
+    "generic/tclPreserve.c",
+    "generic/tclProc.c",
+    "generic/tclProcess.c",
+    "generic/tclRegexp.c",
+    "generic/tclResolve.c",
+    "generic/tclResult.c",
+    "generic/tclScan.c",
+    "generic/tclStringObj.c",
+    "generic/tclStrIdxTree.c",
+    "generic/tclStrToD.c",
+    "generic/tclThread.c",
+    "generic/tclThreadAlloc.c",
+    "generic/tclThreadJoin.c",
+    "generic/tclThreadStorage.c",
+    "generic/tclStubInit.c",
+    "generic/tclTimer.c",
+    "generic/tclTrace.c",
+    "generic/tclUtf.c",
+    "generic/tclUtil.c",
+    "generic/tclVar.c",
+    "generic/tclZlib.c",
+    "generic/tclTomMathInterface.c",
+    "generic/tclZipfs.c",
+]
+
+OO_SRCS = [
+    "generic/tclOO.c",
+    "generic/tclOOBasic.c",
+    "generic/tclOOCall.c",
+    "generic/tclOODefineCmds.c",
+    "generic/tclOOInfo.c",
+    "generic/tclOOMethod.c",
+    "generic/tclOOProp.c",
+    "generic/tclOOStubInit.c",
+]
+
+UNIX_SRCS = [
+    "unix/tclUnixChan.c",
+    "unix/tclUnixEvent.c",
+    "unix/tclUnixFCmd.c",
+    "unix/tclUnixFile.c",
+    "unix/tclUnixPipe.c",
+    "unix/tclUnixSock.c",
+    "unix/tclUnixTime.c",
+    "unix/tclUnixInit.c",
+    "unix/tclUnixThrd.c",
+    "unix/tclUnixCompat.c",
+    "unix/tclLoadDyld.c",
+    "unix/tclKqueueNotfy.c",
+    "unix/tclSelectNotfy.c",
+    "unix/tclEpollNotfy.c",
+]
+
+MACOS_SRCS = UNIX_SRCS + [
+    "macosx/tclMacOSXBundle.c",
+    "macosx/tclMacOSXFCmd.c",
+    "macosx/tclMacOSXNotify.c",
+]
+
+# Linux-specific sources
+LINUX_SRCS = UNIX_SRCS + [
+]
+
+# Windows-specific sources (subset sufficient to build core)
+WINDOWS_SRCS = [
+    "win/tclWin32Dll.c",
+    "win/tclWinChan.c",
+    "win/tclWinConsole.c",
+    "win/tclWinError.c",
+    "win/tclWinFile.c",
+    "win/tclWinInit.c",
+    "win/tclWinLoad.c",
+    "win/tclWinNotify.c",
+    "win/tclWinPipe.c",
+    "win/tclWinReg.c",
+    "win/tclWinSerial.c",
+    "win/tclWinSock.c",
+    "win/tclWinThrd.c",
+    "win/tclWinTime.c",
+]
+
+# Using external zlib (via bzlmod) instead of vendored compat/zlib sources.
+# Keep minizip headers for crypt.h include in tclZipfs.c
+TOMMATH_SRCS = glob(["libtommath/*.c"])
+
+alias(
+    name = "tcl",
+    actual = ":Tcl",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "Tcl",
+    srcs = GENERIC_SRCS + OO_SRCS + TOMMATH_SRCS +
+           select({
+               "@platforms//os:linux": LINUX_SRCS,
+               "@platforms//os:macos": MACOS_SRCS,
+               "@platforms//os:windows": WINDOWS_SRCS,
+               "//conditions:default": [],
+           }),
+    hdrs = [
+        "compat/dlfcn.h",
+        "generic/regcustom.h",
+        "generic/regex.h",
+        "generic/regguts.h",
+        "generic/tcl.h",
+        "generic/tclDecls.h",
+        "generic/tclInt.h",
+        "generic/tclIntDecls.h",
+        "generic/tclIntPlatDecls.h",
+        "generic/tclPort.h",
+        "generic/tclTomMath.h",
+        "unix/tclUnixPort.h",
+        ":tclUuid",
+    ] + TOMMATH_HDRS,
+    copts = [
+        "-O2",
+        "-fno-common",
+        # Needs quotes preserved; local_defines strips them.
+        "-DCFG_RUNTIME_DLLFILE=\\\"libtcl.dylib\\\"",
+        # Match autoconf's MODULE_SCOPE definition with visibility hidden
+        "-DMODULE_SCOPE='extern __attribute__((__visibility__(\\\"hidden\\\")))'",
+    ],
+    defines = [
+        # Public: consumers including Tcl headers need this
+        "HAVE_TCL_CONFIG_H",
+    ],
+    includes = [
+        "compat",
+        "generic",
+        "libtommath",
+        "unix",
+        "win",
+    ],
+    local_defines = select({
+        "@platforms//os:windows": [
+            "USE_ZLIB=1",
+            "USE_THREAD_ALLOC=1",
+            "TCL_LIBRARY=\\\"\\\"",
+            "TCL_PACKAGE_PATH=\\\"\\\"",
+            "TCL_WITH_EXTERNAL_TOMMATH=0",
+            "CFG_RUNTIME_LIBDIR=\"\"",
+            "CFG_RUNTIME_BINDIR=\"\"",
+            "CFG_RUNTIME_SCRDIR=\"\"",
+            "CFG_RUNTIME_INCDIR=\"\"",
+            "CFG_RUNTIME_DOCDIR=\"\"",
+            "CFG_INSTALL_LIBDIR=\"\"",
+            "CFG_INSTALL_BINDIR=\"\"",
+            "CFG_INSTALL_SCRDIR=\"\"",
+            "CFG_INSTALL_INCDIR=\"\"",
+            "CFG_INSTALL_DOCDIR=\"\"",
+        ],
+        "//conditions:default": [
+            "USE_ZLIB=1",
+            "USE_THREAD_ALLOC=1",
+            "NO_DLFCN_H",
+            "RTLD_NEXT=((void*)-1)",
+            "RTLD_LOCAL=0",
+            "TCL_LIBRARY=\\\"\\\"",
+            "TCL_PACKAGE_PATH=\\\"\\\"",
+            "TCL_WITH_EXTERNAL_TOMMATH=0",
+            "CFG_RUNTIME_LIBDIR=\"\"",
+            "CFG_RUNTIME_BINDIR=\"\"",
+            "CFG_RUNTIME_SCRDIR=\"\"",
+            "CFG_RUNTIME_INCDIR=\"\"",
+            "CFG_RUNTIME_DOCDIR=\"\"",
+            "CFG_INSTALL_LIBDIR=\"\"",
+            "CFG_INSTALL_BINDIR=\"\"",
+            "CFG_INSTALL_SCRDIR=\"\"",
+            "CFG_INSTALL_INCDIR=\"\"",
+            "CFG_INSTALL_DOCDIR=\"\"",
+        ],
+    }),
+    textual_hdrs = [
+        "generic/regc_lex.c",
+        "generic/regc_color.c",
+        "generic/regc_nfa.c",
+        "generic/regc_cvec.c",
+        "generic/regc_locale.c",
+        "generic/rege_dfa.c",
+        "generic/tclUniData.c",
+    ] + glob(["generic/*.decls"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":minizip_headers",
+        ":tcl_config",
+        ":tcl_generic_headers",
+        "@zlib",
+    ],
+)
+
+cc_binary(
+    name = "tclsh",
+    srcs = select({
+        "@platforms//os:windows": ["win/tclAppInit.c"],
+        "//conditions:default": ["unix/tclAppInit.c"],
+    }),
+    # No private defines needed; HAVE_TCL_CONFIG_H is exported by :tcl
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+            "-lm",
+        ],
+        "@platforms//os:macos": [
+            "-framework",
+            "CoreFoundation",
+        ],
+        "@platforms//os:windows": [
+            "-luser32",
+            "-ladvapi32",
+            "-lshell32",
+            "-lws2_32",
+            "-lwinmm",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":tcl",
+        ":tcl_config",
+    ],
+)
+
+# Simple link test to ensure external consumers can link to the tcl library
+write_file(
+    name = "tcl_link_test_src",
+    out = "tests_out/tcl_link_test.c",
+    content = [
+        "#include \"tcl.h\"",
+        "",
+        "int main(void) {",
+        "    Tcl_Interp *interp = Tcl_CreateInterp();",
+        "    if (interp == NULL) return 1;",
+        "    Tcl_DeleteInterp(interp);",
+        "    return 0;",
+        "}",
+    ],
+    newline = "unix",
+)
+
+cc_test(
+    name = "tcl_link_test",
+    srcs = ["tests_out/tcl_link_test.c"],
+    deps = [":tcl"],
+)
