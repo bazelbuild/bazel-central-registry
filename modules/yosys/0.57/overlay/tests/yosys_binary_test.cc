@@ -73,21 +73,21 @@ class YosysTest : public ::testing::Test {
         if (yosys_path.empty()) {
             FAIL() << "Failed to locate yosys binary in runfiles.";
         }
+
+        const char* tmpdir = std::getenv("TEST_TMPDIR");
+        if (!tmpdir) {
+            FAIL() << "TEST_TMPDIR environment variable is not set";
+        }
+        test_tmpdir = tmpdir;
     }
 
-    void TearDown() override {
-        // Clean up any temporary files
-        remove("test_simple.v");
-        remove("test_output.il");
-        remove("autoname_test.rtlil");
-        remove("autoname_output.il");
-        remove("simple.v");
-        remove("simple.il");
-        remove("test.rtlil");
-        remove("test_out.rtlil");
+    /** Helper: prepend TEST_TMPDIR to filenames */
+    std::string temp_path(const std::string& filename) const {
+        return test_tmpdir + "/" + filename;
     }
 
     std::string yosys_path;
+    std::string test_tmpdir;
 
    public:
     static int argc;
@@ -149,13 +149,17 @@ TEST_F(YosysTest, BasicSynthesis) {
     // Create a simple Verilog file
     std::string verilog_content =
         "module simple(input a, b, output y); assign y = a & b; endmodule\n";
-    create_temp_file("test_simple.v", verilog_content);
+    std::string input_file = temp_path("test_simple.v");
+    std::string output_file = temp_path("test_output.il");
+    create_temp_file(input_file, verilog_content);
 
     // Run basic synthesis without techmap (which requires share/ directory
     // setup)
-    std::string cmd = yosys_path +
-                      " -p 'read_verilog test_simple.v; hierarchy; proc; opt; "
-                      "fsm; opt; memory; opt; write_rtlil test_output.il' 2>&1";
+
+    std::string cmd =
+        yosys_path + " -p 'read_verilog " + input_file +
+        "; hierarchy; proc; opt; fsm; opt; memory; opt; write_rtlil " +
+        output_file + "' 2>&1";
     std::string output = exec(cmd);
 
     // Check for successful completion (should not contain "ERROR")
@@ -163,7 +167,7 @@ TEST_F(YosysTest, BasicSynthesis) {
         << "Synthesis failed with error: " << output;
 
     // Check that output file was created
-    EXPECT_TRUE(file_exists("test_output.il"))
+    EXPECT_TRUE(file_exists(output_file))
         << "Synthesis did not create output file";
 }
 
@@ -187,12 +191,14 @@ module \top
   end
 end
 )";
-    create_temp_file("autoname_test.rtlil", rtlil_content);
+    std::string input_file = temp_path("autoname_test.rtlil");
+    std::string output_file = temp_path("autoname_output.il");
+    create_temp_file(input_file, rtlil_content);
 
     // Run autoname command
-    std::string cmd = yosys_path +
-                      " -p 'read_rtlil autoname_test.rtlil; autoname; "
-                      "write_rtlil autoname_output.il' 2>&1";
+
+    std::string cmd = yosys_path + " -p 'read_rtlil " + input_file +
+                      "; autoname; write_rtlil " + output_file + "' 2>&1";
     std::string output = exec(cmd);
 
     // Check for successful completion
@@ -200,7 +206,7 @@ end
         << "Autoname failed with error: " << output;
 
     // Check that output file was created
-    EXPECT_TRUE(file_exists("autoname_output.il"))
+    EXPECT_TRUE(file_exists(output_file))
         << "Autoname did not create output file";
 }
 
@@ -212,13 +218,16 @@ TEST_F(YosysTest, SimpleSynthesisWithSynth) {
     // Create a simple Verilog file
     std::string verilog_content =
         "module simple(input a, b, output y); assign y = a & b; endmodule\n";
-    create_temp_file("simple.v", verilog_content);
+    std::string input_file = temp_path("simple.v");
+    std::string output_file = temp_path("simple.il");
+    create_temp_file(input_file, verilog_content);
 
     // Run synthesis using synth command but without techmap (which requires
     // share/ directory)
-    std::string cmd = yosys_path +
-                      " -p 'read_verilog simple.v; hierarchy; proc; opt; fsm; "
-                      "opt; memory; opt; write_rtlil simple.il' 2>&1";
+    std::string cmd =
+        yosys_path + " -p 'read_verilog " + input_file +
+        "; hierarchy; proc; opt; fsm; opt; memory; opt; write_rtlil " +
+        output_file + "' 2>&1";
     std::string output = exec(cmd);
 
     // Check for successful completion
@@ -226,7 +235,7 @@ TEST_F(YosysTest, SimpleSynthesisWithSynth) {
         << "Simple synthesis with synth command failed: " << output;
 
     // Check that output file was created
-    EXPECT_TRUE(file_exists("simple.il"))
+    EXPECT_TRUE(file_exists(output_file))
         << "Simple synthesis did not create output file";
 }
 
@@ -275,17 +284,18 @@ TEST_F(YosysTest, FileFormatSupport) {
   end
 end
 )";
-    create_temp_file("test.rtlil", rtlil_content);
+    std::string input_file = temp_path("test.rtlil");
+    std::string output_file = temp_path("test_out.rtlil");
+    create_temp_file(input_file, rtlil_content);
 
-    std::string cmd =
-        yosys_path +
-        " -p 'read_rtlil test.rtlil; write_rtlil test_out.rtlil' 2>&1";
+    std::string cmd = yosys_path + " -p 'read_rtlil " + input_file +
+                      "; write_rtlil " + output_file + "' 2>&1";
     std::string output = exec(cmd);
 
     EXPECT_TRUE(output.find("ERROR") == std::string::npos)
         << "RTLIL format support failed: " << output;
 
-    EXPECT_TRUE(file_exists("test_out.rtlil"))
+    EXPECT_TRUE(file_exists(output_file))
         << "RTLIL output file was not created";
 }
 
