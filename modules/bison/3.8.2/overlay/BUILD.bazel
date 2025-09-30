@@ -1,0 +1,480 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":bison_utils.bzl", "bison_version_output", "sed_command")
+load(
+    ":config_linux.bzl",
+    LINUX_AUTOMAKE_VARS = "AUTOMAKE_VARIABLES",
+    LINUX_DELETE_VARS = "DELETE_VARIABLES",
+    LINUX_DIRECT_VARS = "DIRECT_VARIABLES",
+    LINUX_INLINE_VARS = "INLINE_VARIABLES",
+)
+load(
+    ":config_macos.bzl",
+    MACOS_AUTOMAKE_VARS = "AUTOMAKE_VARIABLES",
+    MACOS_DELETE_VARS = "DELETE_VARIABLES",
+    MACOS_DIRECT_VARS = "DIRECT_VARIABLES",
+    MACOS_INLINE_VARS = "INLINE_VARIABLES",
+)
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "EXEEXT=\\\"\\\"",
+    "PACKAGE_VERSION=\\\"3.8.2\\\"",
+    "INSTALLDIR=\\\"/usr/local/bin\\\"",
+] + select({
+    "@platforms//os:macos": [
+        "_DARWIN_C_SOURCE",
+    ],
+    "//conditions:default": [],
+})
+
+GENERATED_SRCS = {
+    "lib/alloca.h": "lib/alloca.in.h",
+    "lib/fcntl.h": "lib/fcntl.in.h",
+    "lib/getopt-cdefs.h": "lib/getopt-cdefs.in.h",
+    "lib/getopt.h": "lib/getopt.in.h",
+    "lib/iconv.h": "lib/iconv.in.h",
+    "lib/inttypes.h": "lib/inttypes.in.h",
+    "lib/limits.h": "lib/limits.in.h",
+    "lib/locale.h": "lib/locale.in.h",
+    "lib/malloc/scratch_buffer.gl.h": "lib/malloc/scratch_buffer.h",
+    "lib/math.h": "lib/math.in.h",
+    "lib/sched.h": "lib/sched.in.h",
+    "lib/signal.h": "lib/signal.in.h",
+    "lib/spawn.h": "lib/spawn.in.h",
+    "lib/stdint.h": "lib/stdint.in.h",
+    "lib/stdio.h": "lib/stdio.in.h",
+    "lib/stdlib.h": "lib/stdlib.in.h",
+    "lib/string.h": "lib/string.in.h",
+    "lib/sys/ioctl.h": "lib/sys_ioctl.in.h",
+    "lib/sys/resource.h": "lib/sys_resource.in.h",
+    "lib/sys/stat.h": "lib/sys_stat.in.h",
+    "lib/sys/time.h": "lib/sys_time.in.h",
+    "lib/sys/times.h": "lib/sys_times.in.h",
+    "lib/sys/types.h": "lib/sys_types.in.h",
+    "lib/sys/wait.h": "lib/sys_wait.in.h",
+    "lib/termios.h": "lib/termios.in.h",
+    "lib/textstyle.h": "lib/textstyle.in.h",
+    "lib/time.h": "lib/time.in.h",
+    "lib/unistd.h": "lib/unistd.in.h",
+    "lib/unistr.h": "lib/unistr.in.h",
+    "lib/unitypes.h": "lib/unitypes.in.h",
+    "lib/uniwidth.h": "lib/uniwidth.in.h",
+    "lib/wchar.h": "lib/wchar.in.h",
+    "lib/wctype.h": "lib/wctype.in.h",
+}
+
+USES_DIRECT_REPLACEMENTS = [
+    "lib/malloc/scratch_buffer.gl.h",
+]
+
+[
+    genrule(
+        name = hdr[:-len(".h")] + "_h",
+        srcs = [template] + select({
+            "@platforms//os:macos": MACOS_INLINE_VARS.values(),
+            "//conditions:default": LINUX_INLINE_VARS.values(),
+        }),
+        outs = [hdr],
+        cmd = select({
+            "@platforms//os:macos": sed_command(
+                automake_vars = MACOS_AUTOMAKE_VARS,
+                delete_vars = MACOS_DELETE_VARS,
+                direct_vars = MACOS_DIRECT_VARS,
+                inline_vars = MACOS_INLINE_VARS,
+                sed = "@sed",
+                template = template,
+                use_direct_vars = True if hdr in USES_DIRECT_REPLACEMENTS else False,
+            ),
+            "//conditions:default": sed_command(
+                automake_vars = LINUX_AUTOMAKE_VARS,
+                delete_vars = LINUX_DELETE_VARS,
+                direct_vars = LINUX_DIRECT_VARS,
+                inline_vars = LINUX_INLINE_VARS,
+                sed = "@sed",
+                template = template,
+                use_direct_vars = True if hdr in USES_DIRECT_REPLACEMENTS else False,
+            ),
+        }),
+        cmd_bat = select({
+            "@platforms//os:macos": sed_command(
+                automake_vars = MACOS_AUTOMAKE_VARS,
+                delete_vars = MACOS_DELETE_VARS,
+                direct_vars = MACOS_DIRECT_VARS,
+                inline_vars = MACOS_INLINE_VARS,
+                is_windows = True,
+                sed = "@sed",
+                template = template,
+                use_direct_vars = True if hdr in USES_DIRECT_REPLACEMENTS else False,
+            ),
+            "//conditions:default": sed_command(
+                automake_vars = LINUX_AUTOMAKE_VARS,
+                delete_vars = LINUX_DELETE_VARS,
+                direct_vars = LINUX_DIRECT_VARS,
+                inline_vars = LINUX_INLINE_VARS,
+                is_windows = True,
+                sed = "@sed",
+                template = template,
+                use_direct_vars = True if hdr in USES_DIRECT_REPLACEMENTS else False,
+            ),
+        }),
+        tools = ["@sed"],
+    )
+    for hdr, template in GENERATED_SRCS.items()
+]
+
+copy_file(
+    name = "config_h_src",
+    src = select({
+        "@platforms//os:macos": "config_macos.h",
+        "//conditions:default": "config_linux.h",
+    }),
+    out = "lib/config.h",
+    tags = ["manual"],
+)
+
+write_file(
+    name = "configmake_h_src",
+    out = "lib/configmake.h",
+    content = [
+        "#define LOCALEDIR \"\"",
+        "#define PKGDATADIR \"bison/data\"",
+        "",
+    ],
+    newline = "unix",
+    tags = ["manual"],
+)
+
+BISON_COPTS = select({
+    "@rules_cc//cc/compiler:clang": [
+        "-w",
+        "-std=c11",
+        "-Wno-unused-but-set-variable",
+    ],
+    "@rules_cc//cc/compiler:gcc": [
+        "-w",
+        "-std=c11",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        # C4116: unnamed type definition in parentheses
+        "/wd4116",
+    ],
+    "//conditions:default": [],
+})
+
+# Gnulib library - minimal set of required functions
+cc_library(
+    name = "gnulib",
+    srcs = [
+        "lib/allocator.c",
+        "lib/areadlink.c",
+        "lib/argmatch.c",
+        "lib/asnprintf.c",
+        "lib/basename.c",
+        "lib/basename-lgpl.c",
+        "lib/binary-io.c",
+        "lib/bitrotate.c",
+        "lib/bitset.c",
+        "lib/bitset/array.c",
+        "lib/bitset/list.c",
+        "lib/bitset/stats.c",
+        "lib/bitset/table.c",
+        "lib/bitset/vector.c",
+        "lib/bitsetv.c",
+        "lib/c-ctype.c",
+        "lib/c-strcasecmp.c",
+        "lib/c-strncasecmp.c",
+        "lib/canonicalize.c",
+        "lib/careadlinkat.c",
+        "lib/cloexec.c",
+        "lib/close-stream.c",
+        "lib/closeout.c",
+        "lib/concat-filename.c",
+        "lib/dirname.c",
+        "lib/dirname-lgpl.c",
+        "lib/dup-safer.c",
+        "lib/dup-safer-flag.c",
+        "lib/execute.c",
+        "lib/exitfail.c",
+        "lib/fatal-signal.c",
+        "lib/fd-safer.c",
+        "lib/fd-safer-flag.c",
+        "lib/file-set.c",
+        "lib/findprog-in.c",
+        "lib/fopen-safer.c",
+        "lib/free.c",
+        "lib/fstrcmp.c",
+        "lib/get-errno.c",
+        "lib/gethrxtime.c",
+        "lib/getprogname.c",
+        "lib/gettime.c",
+        "lib/gl_array_list.c",
+        "lib/gl_hash_map.c",
+        "lib/gl_linked_list.c",
+        "lib/gl_list.c",
+        "lib/gl_map.c",
+        "lib/gl_oset.c",
+        "lib/gl_rbtree_oset.c",
+        "lib/gl_rbtreehash_list.c",
+        "lib/gl_xlist.c",
+        "lib/gl_xmap.c",
+        "lib/glthread/lock.c",
+        "lib/glthread/threadlib.c",
+        "lib/glthread/tls.c",
+        "lib/hash.c",
+        "lib/hash-pjw.c",
+        "lib/hash-triple-simple.c",
+        "lib/ialloc.c",
+        "lib/integer_length.c",
+        "lib/integer_length_l.c",
+        "lib/localcharset.c",
+        "lib/malloc/scratch_buffer_dupfree.c",
+        "lib/malloc/scratch_buffer_grow.c",
+        "lib/malloc/scratch_buffer_grow_preserve.c",
+        "lib/malloc/scratch_buffer_set_array_size.c",
+        "lib/math.c",
+        "lib/mbchar.c",
+        "lib/mbfile.c",
+        "lib/mbswidth.c",
+        "lib/obstack.c",
+        "lib/path-join.c",
+        "lib/pipe-safer.c",
+        "lib/pipe2.c",
+        "lib/pipe2-safer.c",
+        "lib/printf-args.c",
+        "lib/printf-frexp.c",
+        "lib/printf-frexpl.c",
+        "lib/printf-parse.c",
+        "lib/progname.c",
+        "lib/quotearg.c",
+        "lib/readline.c",
+        "lib/sig-handler.c",
+        "lib/spawn.c",
+        "lib/spawn-pipe.c",
+        "lib/spawn_faction_addchdir.c",
+        "lib/spawn_faction_addclose.c",
+        "lib/spawn_faction_adddup2.c",
+        "lib/spawn_faction_addopen.c",
+        "lib/spawn_faction_destroy.c",
+        "lib/spawn_faction_init.c",
+        "lib/spawnattr_destroy.c",
+        "lib/spawnattr_init.c",
+        "lib/spawnattr_setflags.c",
+        "lib/spawnattr_setpgroup.c",
+        "lib/spawnattr_setsigmask.c",
+        "lib/spawni.c",
+        "lib/spawnp.c",
+        "lib/stripslash.c",
+        "lib/timespec.c",
+        "lib/timevar.c",
+        "lib/unicodeio.c",
+        "lib/unistd.c",
+        "lib/unistr/u8-mbtoucr.c",
+        "lib/unistr/u8-uctomb.c",
+        "lib/unistr/u8-uctomb-aux.c",
+        "lib/uniwidth/width.c",
+        "lib/vasnprintf.c",
+        "lib/wait-process.c",
+        "lib/wctype-h.c",
+        "lib/xalloc-die.c",
+        "lib/xconcat-filename.c",
+        "lib/xhash.c",
+        "lib/xmalloc.c",
+        "lib/xmemdup0.c",
+        "lib/xreadlink.c",
+        "lib/xsize.c",
+        "lib/xstrndup.c",
+        "lib/xtime.c",
+    ] + select({
+        "@platforms//os:linux": [
+            "lib/fcntl.c",
+            "lib/hard-locale.c",
+            "lib/mbrtowc.c",
+            "lib/setlocale_null.c",
+        ],
+        "@platforms//os:macos": [
+            "lib/asprintf.c",
+            "lib/canonicalize-lgpl.c",
+            "lib/error.c",
+            "lib/fopen.c",
+            "lib/fpending.c",
+            "lib/fprintf.c",
+            "lib/fseterr.c",
+            "lib/getopt.c",
+            "lib/getopt1.c",
+            "lib/lstat.c",
+            "lib/malloca.c",
+            "lib/mempcpy.c",
+            "lib/obstack_printf.c",
+            "lib/open.c",
+            "lib/perror.c",
+            "lib/printf.c",
+            "lib/rawmemchr.c",
+            "lib/readlink.c",
+            "lib/reallocarray.c",
+            "lib/rename.c",
+            "lib/snprintf.c",
+            "lib/sprintf.c",
+            "lib/stat.c",
+            "lib/stat-time.c",
+            "lib/strerror.c",
+            "lib/strerror-override.c",
+            "lib/strerror_r.c",
+            "lib/strverscmp.c",
+            "lib/unlink.c",
+            "lib/vasprintf.c",
+            "lib/vfprintf.c",
+            "lib/vsnprintf.c",
+            "lib/vsprintf.c",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = GENERATED_SRCS.keys() + glob(
+        include = ["lib/**/*.h"],
+        exclude = GENERATED_SRCS.keys() + [
+            "lib/config.h",
+            "lib/configmake.h",
+        ],
+    ) + [
+        "src/scan-code.c",
+        "src/scan-gram.c",
+        "src/scan-skel.c",
+        ":config_h_src",
+        ":configmake_h_src",
+    ],
+    copts = BISON_COPTS,
+    includes = ["lib"],
+    local_defines = LOCAL_DEFINES + [
+        "DEFAULT_TEXT_DOMAIN=\\\"bison-gnulib\\\"",
+    ],
+    textual_hdrs = [
+        "lib/timevar.def",
+        "lib/printf-frexp.c",
+    ],
+)
+
+# Liby library (separate from gnulib)
+cc_library(
+    name = "y",
+    srcs = [
+        "lib/main.c",
+        "lib/yyerror.c",
+    ],
+    includes = ["lib"],
+    local_defines = LOCAL_DEFINES,
+    deps = [
+        ":gnulib",
+    ],
+)
+
+alias(
+    name = "liby",
+    actual = ":y",
+)
+
+BISON_SRC_SRCS = glob(
+    include = [
+        "src/*.c",
+    ],
+    exclude = [
+        "src/bazel_runfiles.cc",
+        "src/i18n-strings.c",
+        "src/scan-code.c",
+        "src/scan-gram.c",
+        "src/scan-skel.c",
+        "src/main.c",
+    ],
+)
+
+BISON_HDRS_SRCS = glob(
+    include = ["src/*.h"],
+)
+
+cc_library(
+    name = "bison_bazel_runfiles",
+    srcs = ["src/bazel_runfiles.cc"],
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+# Main bison library
+cc_library(
+    name = "lib/bison",
+    srcs = BISON_SRC_SRCS,
+    hdrs = [
+        "src/AnnotationList.h",
+        "src/InadequacyList.h",
+        "src/complain.h",
+    ],
+    copts = BISON_COPTS,
+    includes = [
+        "lib",
+        "src",
+    ],
+    local_defines = LOCAL_DEFINES,
+    textual_hdrs = BISON_HDRS_SRCS,
+    deps = [
+        ":bison_bazel_runfiles",
+        ":gnulib",
+        ":liby",
+    ],
+)
+
+alias(
+    name = "libbison",
+    actual = ":lib/bison",
+)
+
+# Runfiles for bison binary
+filegroup(
+    name = "bison_data",
+    srcs = glob(["data/**/*"]) + [
+        "@rules_m4//m4:current_m4_toolchain",
+    ],
+)
+
+# Link options for different compilers
+BISON_LINKOPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        # LNK4001: no object files specified; libraries used
+        "/IGNORE:4001",
+    ],
+    "//conditions:default": [],
+})
+
+# Bison binary
+cc_binary(
+    name = "bin/bison",
+    srcs = ["src/main.c"],
+    data = [":bison_data"],
+    defines = LOCAL_DEFINES,
+    linkopts = BISON_LINKOPTS + select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": ["-liconv"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libbison",
+        ":liby",
+    ],
+)
+
+alias(
+    name = "bison",
+    actual = ":bin/bison",
+    visibility = ["//visibility:public"],
+)
+
+# Yacc binary (alias for bison)
+alias(
+    name = "yacc",
+    actual = ":bin/bison",
+    visibility = ["//visibility:public"],
+)
+
+bison_version_output(
+    name = "bison_version_output",
+    bison = ":bison",
+)
