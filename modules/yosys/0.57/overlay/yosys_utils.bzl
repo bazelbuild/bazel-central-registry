@@ -47,6 +47,10 @@ yosys_bison = rule(
     doc = "An internal rule for running bison in the yosys project.",
     implementation = _yosys_bison_impl,
     attrs = {
+        "args": attr.string_list(
+            doc = "Arguments to pass to bison.",
+            mandatory = True,
+        ),
         "bison": attr.label(
             doc = "The bison binary.",
             cfg = "exec",
@@ -108,6 +112,10 @@ yosys_flex = rule(
     doc = "An internal rule for running flex in the yosys project.",
     implementation = _yosys_flex_impl,
     attrs = {
+        "args": attr.string_list(
+            doc = "Arguments to pass to flex.",
+            mandatory = True,
+        ),
         "flex": attr.label(
             doc = "The flex binary.",
             cfg = "exec",
