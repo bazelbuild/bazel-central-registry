@@ -10,8 +10,9 @@ This document summarizes the key learnings from adding a new module version to t
     ```
 2.  **Create the `MODULE.bazel` file**: Copy from a previous version if possible and update the version number. If the module has dependencies, ensure they are correctly listed.
 3.  **Create the `source.json` file**: Copy from a previous version if possible and update the version number. This file contains the URL of the source archive, its integrity hash, and the `strip_prefix`. If the source archive doesn't contain a `MODULE.bazel` or `BUILD.bazel` file, you'll need to provide them in an `overlay`.
-4.  **Create `presubmit.yml`**: The validation script will fail if `modules/<module_name>/<version>/presubmit.yml` does not exist. You can usually copy this file from a previous version.
-5.  **Update `metadata.json`**: The validation script will fail if the new version is not added to the `versions` list in `modules/<module_name>/metadata.json`.
+4.  **Create `overlay` and `patches` directories**: If the module requires any overlays or patches, copy these directories from a previous version if they exist.
+5.  **Create `presubmit.yml`**: The validation script will fail if `modules/<module_name>/<version>/presubmit.yml` does not exist. You can usually copy this file from a previous version.
+6.  **Update `metadata.json`**: The validation script will fail if the new version is not added to the `versions` list in `modules/<module_name>/metadata.json`.
 
 ## 2. Validation and Iteration
 
