@@ -42,13 +42,15 @@ def get_task_platform(task):
     # Default to linux
     return "linux"
 
+
 def appendFlagsToBazelrc(repo_root):
     # Refactor startup flags and common build/test flags into a .bazelrc file
     with open(os.path.join(repo_root, ".bazelrc"), "a") as f:
         f.write("common --announce_rc\n")
-        f.write("common --repository_cache=\n") # Disable repo cache to prevent it from caching BCR
-        f.write("common --lockfile_mode=off\n") # Disable lockfile to prevent it from caching BCR
+        f.write("common --repository_cache=\n")  # Disable repo cache to prevent it from caching BCR
+        f.write("common --lockfile_mode=off\n")  # Disable lockfile to prevent it from caching BCR
         f.write("build --verbose_failures\n")
+
 
 def print_build_instruction(module_name, module_version, repo_root, task_configs):
     build_targets = test_targets = bazel_version = None
