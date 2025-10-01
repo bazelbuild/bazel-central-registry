@@ -15,7 +15,7 @@ This document summarizes the key learnings from adding a new module version to t
 ## 2. Validation and Iteration
 
 *   **Validation is your best friend**: The `tools/bcr_validation.py` script is the most important tool for this process. Run it early and often.
-*   **Use the `update_integrity` tool**: The `bazel run //tools:update_integrity -- --module <module_name>@<version>` command is the correct way to update the integrity hashes in `source.json`. Do not try to do this manually.
+*   **Use the `update_integrity` tool**: The `bazel run //tools:update_integrity -- <module name> --version=<version>` command is the correct way to update the integrity hashes in `source.json`. Do not try to do this manually.
 *   **`overlay` vs. `patches`**:
     *   `overlay`: Use this to add or overwrite files in the downloaded source archive. The files to be overlaid should be placed in an `overlay` subdirectory within the version directory.
     *   `patches`: Use this to apply changes to existing files in the source archive. Patch files should be placed in a `patches` subdirectory.
