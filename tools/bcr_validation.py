@@ -500,7 +500,18 @@ class BcrValidator:
         tmp_dir = Path(tempfile.mkdtemp())
         archive_file = tmp_dir.joinpath(source_url.split("/")[-1].split("?")[0])
         download_file(source_url, archive_file)
-        shutil.unpack_archive(str(archive_file), output_dir)
+        # Use archive_type from source.json if specified, otherwise let shutil guess from filename
+        # https://bazel.build/rules/lib/repo/http#http_archive-type
+        # https://docs.python.org/3/library/shutil.html#shutil.unpack_archive
+        format = {
+            "tar.gz": "gztar",
+            "tgz": "gztar",
+            "tar.bz2": "bztar",
+            "tar.xz": "xztar",
+            "tar": "tar",
+            "zip": "zip",
+        }.get(source.get("archive_type"))
+        shutil.unpack_archive(str(archive_file), output_dir, format=format)
 
     def _download_git_repo(self, source, output_dir):
         run_git("clone", "--depth=1", source["remote"], output_dir)
