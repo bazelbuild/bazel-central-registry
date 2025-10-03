@@ -311,3 +311,73 @@ verilator_build_template = rule(
         ),
     },
 )
+
+def _verilator_test_impl(ctx):
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+
+    # Get runfiles path to verilator binary
+    repo = ctx.executable.verilator.owner.workspace_name or ctx.workspace_name
+    verilator_rf = "{}/{}".format(repo, ctx.executable.verilator.short_path)
+
+    # Build runfiles paths for sources
+    def _rf(ctx, f):
+        repo = f.owner.workspace_name or ctx.workspace_name
+        return "{}/{}".format(repo, f.short_path)
+    src_rfs = [_rf(ctx, f) for f in ctx.files.srcs]
+    src_args = " ".join(['"${TEST_SRCDIR}/%s"' % s for s in src_rfs])
+
+    # Unique include dirs based on sources (also runfiles paths)
+    def _rf_dir(ctx, f):
+        repo = f.owner.workspace_name or ctx.workspace_name
+        return repo if not f.dirname else "%s/%s" % (repo, f.dirname)
+    seen = {}
+    inc_dirs = []
+    for f in ctx.files.srcs:
+        d = _rf_dir(ctx, f)
+        if d not in seen:
+            seen[d] = True
+            inc_dirs.append(d)
+    inc_flags = " ".join(['-I"${TEST_SRCDIR}/%s"' % d for d in inc_dirs])
+
+    # Arguments to verilator
+    args = " ".join([a for a in ctx.attr.verilator_args])
+
+    # Always specify top module
+    top = "--top-module {}".format(ctx.attr.top_module)
+
+    content = "\n".join([
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        # Get correct path to binary, set VERILATOR_ROOT accordingly
+        'VERILATOR="${TEST_SRCDIR}/%s"' % verilator_rf,
+        'export VERILATOR_ROOT="$(dirname "$VERILATOR")"',
+        # Setup working directory and output directory
+        'WORKDIR="${TEST_TMPDIR}"',
+        'mkdir -p "${WORKDIR}"',
+        'cd "${WORKDIR}"',
+        'OUTDIR=obj_dir',
+        'mkdir "$OUTDIR"',
+        '"${VERILATOR}" --Mdir "${OUTDIR}" -I${OUTDIR} ' + args + " " + inc_flags + " " + src_args + " " + top,
+    ])
+
+    ctx.actions.write(output = script, content = content, is_executable = True)
+
+    # Ensure the executable and its runfiles are present in the test’s runfiles.
+    runfiles = ctx.runfiles(files = ctx.files.srcs + [ctx.executable.verilator])
+    runfiles = runfiles.merge(ctx.attr.verilator[DefaultInfo].default_runfiles)
+
+    return DefaultInfo(
+        executable = script,
+        runfiles = runfiles
+    )
+
+verilator_test = rule(
+    implementation = _verilator_test_impl,
+    test = True,
+    attrs = {
+        "verilator": attr.label(executable = True, cfg = "target", default = "//:verilator_bin"),
+        "srcs": attr.label_list(allow_files = [".sv", ".svh", ".v"]),
+        "top_module": attr.string(doc = "The top module name"),
+        "verilator_args": attr.string_list(),
+    },
+)
