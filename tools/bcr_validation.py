@@ -510,6 +510,9 @@ class BcrValidator:
             "tar.xz": "xztar",
             "tar": "tar",
             "zip": "zip",
+            "jar": "zip",
+            "war": "zip",
+            "aar": "zip",
         }.get(source.get("archive_type"))
         shutil.unpack_archive(str(archive_file), output_dir, format=format)
 
