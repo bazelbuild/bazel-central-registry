@@ -43,6 +43,15 @@ def get_task_platform(task):
     return "linux"
 
 
+def appendFlagsToBazelrc(repo_root):
+    # Refactor startup flags and common build/test flags into a .bazelrc file
+    with open(os.path.join(repo_root, ".bazelrc"), "a") as f:
+        f.write("common --announce_rc\n")
+        f.write("common --repository_cache=\n")  # Disable repo cache to prevent it from caching BCR
+        f.write("common --lockfile_mode=off\n")  # Disable lockfile to prevent it from caching BCR
+        f.write("build --verbose_failures\n")
+
+
 def print_build_instruction(module_name, module_version, repo_root, task_configs):
     build_targets = test_targets = bazel_version = None
 
@@ -82,19 +91,16 @@ def print_build_instruction(module_name, module_version, repo_root, task_configs
             print(f"    export USE_BAZEL_VERSION={bazel_version}")
 
     print(f"    cd {repo_root}")
+    print(f"    bazel clean --expunge")
 
-    startup_flags = ["--nosystem_rc", "--nohome_rc"]
     if build_targets:
-        build_flags += ["--announce_rc", "--verbose_failures"]
         bazel_build_command = (
-            f"bazel {' '.join(startup_flags)} build {' '.join(build_flags)} -- {' '.join(build_targets)}"
+            f"bazel --nosystem_rc --nohome_rc build {' '.join(build_flags)} -- {' '.join(build_targets)}"
         )
         print(f"    {bazel_build_command}")
     if test_targets:
-        test_flags += ["--announce_rc", "--verbose_failures"]
-        bazel_test_command = f"bazel {' '.join(startup_flags)} test {' '.join(test_flags)} -- {' '.join(test_targets)}"
+        bazel_test_command = f"bazel --nosystem_rc --nohome_rc test {' '.join(test_flags)} -- {' '.join(test_targets)}"
         print(f"    {bazel_test_command}")
-
     print(f"\nMake sure to check {presubmit_yml} for additional build and test configurations.")
     print()
 
@@ -140,6 +146,7 @@ def main():
             anonymous_module_root.mkdir(exist_ok=True, parents=True)
             bcr_presubmit.create_anonymous_repo(module_name, module_version, anonymous_module_root)
             logging.info("Anonymous module repo ready at: %s", anonymous_module_root)
+            appendFlagsToBazelrc(anonymous_module_root)
             print_build_instruction(module_name, module_version, anonymous_module_root, anonymous_module_task_config)
         except Exception as e:
             logging.error("Failed to create anonymous module repo: %s", e)
@@ -157,6 +164,7 @@ def main():
                 module_name, module_version, overwrite_bazel_version=None, root=test_module_root, suppress_log=True
             )
             logging.info("Test module repo ready at: %s", test_module_root)
+            appendFlagsToBazelrc(test_module_root)
             print_build_instruction(module_name, module_version, test_module_root, test_module_task_config)
         except Exception as e:
             logging.error("Failed to create test module repo: %s", e)

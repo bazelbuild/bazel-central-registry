@@ -1,0 +1,151 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+
+EXTENSIONS = [
+    "bigreq",
+    "composite",
+    "damage",
+    "dbe",
+    "dpms",
+    "dri2",
+    "dri3",
+    "ge",
+    "glx",
+    "present",
+    "randr",
+    "record",
+    "render",
+    "res",
+    "screensaver",
+    "shape",
+    "shm",
+    "sync",
+    "xc_misc",
+    "xevie",
+    "xf86dri",
+    "xfixes",
+    "xinerama",
+    "xinput",
+    "xkb",
+    "xprint",
+    "xproto",
+    "xselinux",
+    "xtest",
+    "xv",
+    "xvmc",
+]
+
+py_binary(
+    name = "c_client",
+    srcs = ["src/c_client.py"],
+    data = [
+        "@xcb-proto//:xml",
+    ],
+    deps = [
+        "@xcb-proto//:py_xcbgen",
+    ],
+)
+
+[genrule(
+    name = "c_client_{}".format(extension),
+    srcs = [
+        "@xcb-proto//:src/{}.xml".format(extension),
+        "@xcb-proto//:xml",
+    ],
+    outs = [
+        "{}.c".format(extension),
+        "{}.h".format(extension),
+    ],
+    cmd = ('$(location c_client) -c "libxcb 1.17" ' +
+           '-l "X Version 11" ' +
+           '-s "3" ' +
+           "-p $$(dirname $(location @xcb-proto//:xcbgen/state.py)) " +
+           "$(location @xcb-proto//:src/{extension}.xml) && " +
+           "mv {extension}.c $(location {extension}.c) && " +
+           "mv {extension}.h $(location {extension}.h)").format(
+        extension = extension,
+    ),
+    tools = [
+        "c_client",
+        "@xcb-proto//:py_xcbgen",
+        "@xcb-proto//:xcbgen/state.py",
+    ],
+) for extension in EXTENSIONS]
+
+[genrule(
+    name = "headermove_{}".format(x),
+    srcs = ["src/{}".format(x)],
+    outs = ["xcb/{}".format(x)],
+    cmd = "cp $< $@",
+) for x in [
+    "xcb.h",
+    "xcbext.h",
+]]
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+UPSTREAM_VERSION_MAJOR = UPSTREAM_VERSION.split(".")[0]
+
+UPSTREAM_VERSION_MINOR = UPSTREAM_VERSION.split(".")[1]
+
+UPSTREAM_VERSION_PATCH = UPSTREAM_VERSION.split(".")[2]
+
+expand_template(
+    name = "config_h",
+    out = "src/config.h",
+    substitutions = {
+        "{LIBXCB_VERSION}": UPSTREAM_VERSION,
+        "{LIBXCB_VERSION_MAJOR}": UPSTREAM_VERSION_MAJOR,
+        "{LIBXCB_VERSION_MINOR}": UPSTREAM_VERSION_MINOR,
+        "{LIBXCB_VERSION_PATCH}": UPSTREAM_VERSION_PATCH,
+    } | select({
+        "@platforms//os:macos": {},
+        "@platforms//os:windows": {
+            "#define HAVE_UNISTD_H 1": "/* #undef HAVE_UNISTD_H */",
+        },
+	"//conditions:default": {
+            "#define HAVE_SOCKADDR_SUN_LEN 1": "/* #undef HAVE_SOCKADDR_SUN_LEN */",
+        },
+    }),
+    template = "src/config.h.in",
+)
+
+cc_library(
+    name = "xcb",
+    srcs = (
+        ["{}.c".format(x) for x in EXTENSIONS] +
+        ["{}.h".format(x) for x in EXTENSIONS] +
+        ["src/" + x for x in [
+            "xcb_auth.c",
+            "xcb_conn.c",
+            "xcb_ext.c",
+            "xcb_in.c",
+            "xcb_list.c",
+            "xcb_out.c",
+            "xcb_xid.c",
+            "xcb_util.c",
+            "xcbint.h",
+        ]]
+    ) + ["//:config_h"],
+    hdrs = [
+        "src/xcb.h",
+        "src/xcbext.h",
+    ],
+    copts = [
+        "-DHAVE_CONFIG_H",
+    ],
+    include_prefix = "xcb",
+    includes = ["src"],
+    strip_include_prefix = "src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libxau",
+    ],
+)
+
+alias(
+    name = "libxcb",
+    actual = ":xcb",
+    visibility = ["//visibility:public"],
+)
