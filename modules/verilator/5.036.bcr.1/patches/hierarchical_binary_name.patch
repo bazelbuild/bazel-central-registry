@@ -1,11 +1,40 @@
 --- a/src/V3EmitMk.cpp
 +++ b/src/V3EmitMk.cpp
-@@ -814,7 +814,7 @@ class EmitMkHierVerilation final {
+@@ -22,6 +22,22 @@
+ #include "V3HierBlock.h"
+ #include "V3Os.h"
+
++#include "rules_cc/cc/runfiles/runfiles.h"
++
++using rules_cc::cc::runfiles::Runfiles;
++std::string verilator_binary(const Runfiles &runfiles) {
++  std::string repo;
++#ifdef BAZEL_CURRENT_REPOSITORY
++  repo = BAZEL_CURRENT_REPOSITORY;
++#endif
++  if (repo.empty()) {
++    repo = "_main";
++  }
++
++  return runfiles.Rlocation(repo + "/verilator_bin");
++}
++
++
+ VL_DEFINE_DEBUG_FUNCTIONS;
+
+ // Groups adjacent files in a list, evenly distributing sum of scores
+@@ -814,7 +830,13 @@ class EmitMkHierVerilation final {
          of.puts("VM_HIER_RUN_DIR := " + cwd + "\n");
          of.puts("# Common options for hierarchical blocks\n");
          const string fullpath_bin = V3Os::filenameRealPath(v3Global.opt.buildDepBin());
 -        const string verilator_wrapper = V3Os::filenameDir(fullpath_bin) + "/verilator";
-+        const string verilator_wrapper = V3Os::filenameDir(fullpath_bin) + "/verilator_bin";
++        std::unique_ptr<Runfiles> runfiles(Runfiles::Create(fullpath_bin));
++        if (!runfiles) {
++            v3fatal("Cannot find runfiles directory for: " << fullpath_bin);
++        }
++
++        const string verilator_bin = verilator_binary(*runfiles.get());
++        const string verilator_wrapper = verilator_bin;
          of.puts("VM_HIER_VERILATOR := " + verilator_wrapper + "\n");
          of.puts("VM_HIER_INPUT_FILES := \\\n");
          const V3StringList& vFiles = v3Global.opt.vFiles();
