@@ -1,3 +1,459 @@
 
 
-# TODO: use modules/paho.mqtt.c/1.3.14/overlay/BUILD.bazel as inspriation for versioninfo stuff
+load("@aspect_bazel_lib//lib:run_binary.bzl", "run_binary")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+
+package(default_visibility = ["//visibility:private"])
+
+
+# Python dependencies for the code generation scripts
+py_binary(
+    name = "diagnostic_gen",
+    srcs = ["scripts/diagnostic_gen.py"],
+)
+
+py_binary(
+    name = "syntax_gen",
+    srcs = ["scripts/syntax_gen.py"],
+)
+
+py_binary(
+    name = "grammar_gen",
+    srcs = ["scripts/grammar_gen.py"],
+)
+
+# Run diagnostic generation
+run_binary(
+    name = "generate_diagnostics",
+    srcs = [
+        "scripts/diagnostics.txt",
+        "scripts/warning_docs.txt",
+    ] + glob(["include/slang/analysis/*"]),
+    outs = [
+        "generated/DiagCode.cpp",
+        "generated/slang/diagnostics/AllDiags.h",
+        "generated/slang/diagnostics/AnalysisDiags.h",
+        "generated/slang/diagnostics/CompilationDiags.h",
+        "generated/slang/diagnostics/ConstEvalDiags.h",
+        "generated/slang/diagnostics/DeclarationsDiags.h",
+        "generated/slang/diagnostics/ExpressionsDiags.h",
+        "generated/slang/diagnostics/GeneralDiags.h",
+        "generated/slang/diagnostics/LexerDiags.h",
+        "generated/slang/diagnostics/LookupDiags.h",
+        "generated/slang/diagnostics/MetaDiags.h",
+        "generated/slang/diagnostics/NumericDiags.h",
+        "generated/slang/diagnostics/ParserDiags.h",
+        "generated/slang/diagnostics/PreprocessorDiags.h",
+        "generated/slang/diagnostics/StatementsDiags.h",
+        "generated/slang/diagnostics/SysFuncsDiags.h",
+        "generated/slang/diagnostics/TypesDiags.h",
+    ],
+    args = [
+        "--diagnostics=$(location scripts/diagnostics.txt)",
+        "--outDir=$(RULEDIR)/generated/",
+        "--srcDir=scripts/diagnostics/",
+        "--incDir=include/slang/analysis/",
+    ],
+    tool = ":diagnostic_gen",
+)
+
+# Run syntax generation
+run_binary(
+    name = "generate_syntax",
+    srcs = [
+        "scripts/syntax.txt",
+        "scripts/systemnames.txt",
+        "scripts/tokenkinds.txt",
+        "scripts/triviakinds.txt",
+    ],
+    outs = [
+        "generated/AllSyntax.cpp",
+        "generated/KnownSystemName.cpp",
+        "generated/SyntaxClone.cpp",
+        "generated/TokenKind.cpp",
+        "generated/slang/parsing/KnownSystemName.h",
+        "generated/slang/parsing/TokenKind.h",
+        "generated/slang/syntax/AllSyntax.h",
+        "generated/slang/syntax/SyntaxFwd.h",
+        "generated/slang/syntax/SyntaxKind.h",
+    ],
+    args = [
+        "--syntax=$(location scripts/syntax.txt)",
+        "--dir=$(RULEDIR)/generated/",
+    ],
+    tool = ":syntax_gen",
+)
+
+# Run syntax generation for the python bindings
+run_binary(
+    name = "generate_syntax_python",
+    srcs = [
+        "scripts/syntax.txt",
+    ],
+    outs = [
+        "generated/pyslang/PySyntaxBindings0.cpp",
+        "generated/pyslang/PySyntaxBindings1.cpp",
+        "generated/pyslang/PySyntaxBindings2.cpp",
+        "generated/pyslang/PySyntaxBindings3.cpp",
+    ],
+    args = [
+        "--syntax=$(location scripts/syntax.txt)",
+        "--dir=$(RULEDIR)/generated/pyslang/",
+        "--python-bindings",
+    ],
+    tool = ":syntax_gen",
+)
+
+# List of generated header files for the slang library
+filegroup(
+    name = "slang_lib_generated_headers",
+    srcs = [
+        "generated/slang/diagnostics/AllDiags.h",
+        "generated/slang/diagnostics/AnalysisDiags.h",
+        "generated/slang/diagnostics/CompilationDiags.h",
+        "generated/slang/diagnostics/ConstEvalDiags.h",
+        "generated/slang/diagnostics/DeclarationsDiags.h",
+        "generated/slang/diagnostics/ExpressionsDiags.h",
+        "generated/slang/diagnostics/GeneralDiags.h",
+        "generated/slang/diagnostics/LexerDiags.h",
+        "generated/slang/diagnostics/LookupDiags.h",
+        "generated/slang/diagnostics/MetaDiags.h",
+        "generated/slang/diagnostics/NumericDiags.h",
+        "generated/slang/diagnostics/ParserDiags.h",
+        "generated/slang/diagnostics/PreprocessorDiags.h",
+        "generated/slang/diagnostics/StatementsDiags.h",
+        "generated/slang/diagnostics/SysFuncsDiags.h",
+        "generated/slang/diagnostics/TypesDiags.h",
+        "generated/slang/parsing/KnownSystemName.h",
+        "generated/slang/parsing/TokenKind.h",
+        "generated/slang/syntax/AllSyntax.h",
+        "generated/slang/syntax/SyntaxFwd.h",
+        "generated/slang/syntax/SyntaxKind.h",
+    ],
+)
+
+filegroup(
+    name = "slang_lib_external_headers",
+    srcs = glob([
+        "external/**/*.h",
+        "external/**/*.hpp",
+    ]),
+)
+
+filegroup(
+    name = "slang_lib_internal_headers",
+    srcs = glob([
+        "include/**/*.h",
+        "source/**/*.h",
+    ]),
+)
+
+filegroup(
+    name = "slang_ast_sources",
+    srcs = glob([
+        "source/ast/**/*.cpp",
+        "source/ast/**/*.h",
+    ]),
+)
+
+filegroup(
+    # Collect all the headers together for the main library
+    name = "slang_lib_headers",
+    srcs = [
+        ":slang_lib_external_headers",
+        ":slang_lib_generated_headers",
+        ":slang_lib_internal_headers",
+    ],
+)
+
+cc_library(
+    name = "libsvlang",
+    srcs = [
+        "generated/AllSyntax.cpp",
+        "generated/DiagCode.cpp",
+        "generated/KnownSystemName.cpp",
+        "generated/SyntaxClone.cpp",
+        "generated/TokenKind.cpp",
+        "source/analysis/AbstractFlowAnalysis.cpp",
+        "source/analysis/AnalysisManager.cpp",
+        "source/analysis/AnalyzedAssertion.cpp",
+        "source/analysis/AnalyzedProcedure.cpp",
+        "source/analysis/CaseDecisionDag.cpp",
+        "source/analysis/ClockInference.cpp",
+        "source/analysis/DataFlowAnalysis.cpp",
+        "source/analysis/DriverTracker.cpp",
+        "source/analysis/ValueDriver.cpp",
+        "source/diagnostics/DiagnosticClient.cpp",
+        "source/diagnostics/DiagnosticEngine.cpp",
+        "source/diagnostics/Diagnostics.cpp",
+        "source/diagnostics/JsonDiagnosticClient.cpp",
+        "source/diagnostics/TextDiagnosticClient.cpp",
+        "source/driver/Driver.cpp",
+        "source/driver/SourceLoader.cpp",
+        "source/numeric/ConstantValue.cpp",
+        "source/numeric/SVInt.cpp",
+        "source/numeric/Time.cpp",
+        "source/parsing/Lexer.cpp",
+        "source/parsing/LexerFacts.cpp",
+        "source/parsing/NumberParser.cpp",
+        "source/parsing/Parser.cpp",
+        "source/parsing/ParserBase.cpp",
+        "source/parsing/ParserMetadata.cpp",
+        "source/parsing/Parser_expressions.cpp",
+        "source/parsing/Parser_members.cpp",
+        "source/parsing/Parser_statements.cpp",
+        "source/parsing/Preprocessor.cpp",
+        "source/parsing/Preprocessor_macros.cpp",
+        "source/parsing/Preprocessor_pragmas.cpp",
+        "source/parsing/Token.cpp",
+        "source/syntax/SyntaxFacts.cpp",
+        "source/syntax/SyntaxNode.cpp",
+        "source/syntax/SyntaxPrinter.cpp",
+        "source/syntax/SyntaxTree.cpp",
+        "source/syntax/SyntaxVisitor.cpp",
+        "source/text/CharInfo.cpp",
+        "source/text/Glob.cpp",
+        "source/text/Json.cpp",
+        "source/text/SourceLocation.cpp",
+        "source/text/SourceManager.cpp",
+        "source/util/BumpAllocator.cpp",
+        "source/util/CommandLine.cpp",
+        "source/util/IntervalMap.cpp",
+        "source/util/OS.cpp",
+        "source/util/SmallVector.cpp",
+        "source/util/String.cpp",
+        "source/util/TimeTrace.cpp",
+        "source/util/Util.cpp",
+        ":slang_ast_sources",
+        ":slang_lib_headers",
+        "slang/version_info:VersionInfo.cpp",
+    ],
+    hdrs = [],  # TODO @ahizzey: add any outward facing headers for use as a library
+    copts = [
+        "-std=c++20",
+        "-fvisibility=hidden",
+        "-fvisibility-inlines-hidden",
+        "-fPIC",  # Position-independent code required for python bindings
+    ],
+    includes = [
+        "external",
+        "generated",
+        "include",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        "slang/export_headers:slang_export_headers",
+        "@boost.unordered",
+        "@fmt",
+    ],
+    alwayslink = True,
+)
+
+# Slang driver - the main slang binary
+cc_binary(
+    name = "slang",
+    srcs = [
+        "tools/driver/slang_main.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+# Slang-tidy linting tool
+
+cc_library(
+    name = "slang_tidy_lib",
+    srcs = [
+        "tools/tidy/src/ASTHelperVisitors.cpp",
+        "tools/tidy/src/TidyConfig.cpp",
+        "tools/tidy/src/TidyConfigParser.cpp",
+        "tools/tidy/src/style/AlwaysCombNamed.cpp",
+        "tools/tidy/src/style/AlwaysCombNonBlocking.cpp",
+        "tools/tidy/src/style/AlwaysFFBlocking.cpp",
+        "tools/tidy/src/style/EnforceModuleInstantiationPrefix.cpp",
+        "tools/tidy/src/style/EnforcePortPrefix.cpp",
+        "tools/tidy/src/style/EnforcePortSuffix.cpp",
+        "tools/tidy/src/style/GenerateNamed.cpp",
+        "tools/tidy/src/style/NoDotStarInPortConnection.cpp",
+        "tools/tidy/src/style/NoDotVarInPortConnection.cpp",
+        "tools/tidy/src/style/NoImplicitPortNameInPortConnection.cpp",
+        "tools/tidy/src/style/NoLegacyGenerate.cpp",
+        "tools/tidy/src/style/NoOldAlwaysSyntax.cpp",
+        "tools/tidy/src/style/OnlyANSIPortDecl.cpp",
+        "tools/tidy/src/synthesis/AlwaysFFAssignmentOutsideConditional.cpp",
+        "tools/tidy/src/synthesis/CastSignedIndex.cpp",
+        "tools/tidy/src/synthesis/NoLatchesOnDesign.cpp",
+        "tools/tidy/src/synthesis/OnlyAssignedOnReset.cpp",
+        "tools/tidy/src/synthesis/RegisterHasNoReset.cpp",
+        "tools/tidy/src/synthesis/UndrivenRange.cpp",
+        "tools/tidy/src/synthesis/UnusedSensitiveSignal.cpp",
+        "tools/tidy/src/synthesis/XilinxDoNotCareValues.cpp",
+    ],
+    hdrs = glob([
+        "tools/tidy/include/**/*.h",
+    ]),
+    copts = [
+        "-std=c++20",
+    ],
+    includes = [
+        "tools/tidy/include",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":libsvlang",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "slang-tidy",
+    srcs = [
+        "tools/tidy/src/tidy.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":slang_tidy_lib",
+    ],
+)
+
+cc_binary(
+    name = "slang-hier",
+    srcs = [
+        "tools/hier/hier.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+cc_library(
+    name = "slang_reflect_lib",
+    srcs = [
+        "tools/reflect/src/SvEnum.cpp",
+        "tools/reflect/src/SvLocalParam.cpp",
+        "tools/reflect/src/SvStruct.cpp",
+        "tools/reflect/src/SvType.cpp",
+        "tools/reflect/src/SvTypeReflector.cpp",
+        "tools/reflect/src/SvUnion.cpp",
+    ],
+    hdrs = glob(["tools/reflect/include/**/*.h"]),
+    copts = [
+        "-std=c++20",
+    ],
+    includes = ["tools/reflect/include"],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":libsvlang",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "slang-reflect",
+    srcs = [
+        "tools/reflect/src/reflect.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":slang_reflect_lib",
+    ],
+)
+
+cc_binary(
+    name = "rewriter",
+    srcs = [
+        "tools/rewriter/rewriter.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+cc_binary(
+    name = "slang-threadtest",
+    srcs = [
+        "tools/threadtest/threadtest.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fsanitize=thread",
+    ],
+    linkopts = [
+        "-fsanitize=thread",
+    ],
+    visibility = ["@//silicon:silicon_packages"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+# Add python bindings
+pybind_library(
+    name = "pyslang_bindings_lib",
+    srcs = [
+        "bindings/python/AnalysisBindings.cpp",
+        "bindings/python/ASTBindings.cpp",
+        "bindings/python/CompBindings.cpp",
+        "bindings/python/ExpressionBindings.cpp",
+        "bindings/python/NumericBindings.cpp",
+        "bindings/python/pyslang.cpp",
+        "bindings/python/StatementBindings.cpp",
+        "bindings/python/SymbolBindings.cpp",
+        "bindings/python/SyntaxBindings.cpp",
+        "bindings/python/TypeBindings.cpp",
+        "bindings/python/UtilBindings.cpp",
+        # Generated
+        "generated/pyslang/PySyntaxBindings0.cpp",
+        "generated/pyslang/PySyntaxBindings1.cpp",
+        "generated/pyslang/PySyntaxBindings2.cpp",
+        "generated/pyslang/PySyntaxBindings3.cpp",
+    ],
+    hdrs = [
+        "bindings/python/PyVisitors.h",
+        "bindings/python/pyslang.h",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fPIC",
+    ],
+    defines = [
+        "VERSION_INFO={}".format(module_version()),
+    ],
+    includes = [
+        "bindings/python",
+    ],
+    visibility = ["@//silicon/infra/pyslang/pyslang:__subpackages__"],
+    deps = [":libsvlang"],
+)
+
+# Export sources to use in pyslang
+filegroup(
+    name = "pyslang_bindings_files",
+    srcs = [
+        "bindings/python/pyslang.cpp",
+        "bindings/python/pyslang.h",
+    ],
+    visibility = ["@//silicon/infra/pyslang/pyslang:__subpackages__"],
+)
