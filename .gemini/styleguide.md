@@ -67,6 +67,7 @@ modules/
 - The MODULE.bazel file may contain dev dependencies specified with `dev_dependency = True`. Dev dependencies are ignored when the module is used as a dependency, so they are allowed and you can ignore reviewing them.
 - There could be symlinks under `overlay/` directory that points to a `MODULE.bazel` file in the parent directory. The content of the symlink will look like a text file `../MODULE.bazel`, these are allowed and should be ignored.
 - Bazel module resolution allows cyclic dependencies.
+- Do not comment on or check if the version of a `bazel_dep` is correct; this will be covered by presubmit.
 
 ---
 
