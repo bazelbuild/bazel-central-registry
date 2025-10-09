@@ -375,7 +375,7 @@ verilator_test = rule(
     implementation = _verilator_test_impl,
     test = True,
     attrs = {
-        "verilator": attr.label(executable = True, cfg = "target", default = "//:verilator_bin"),
+        "verilator": attr.label(executable = True, cfg = "target", default = "//:verilator"),
         "srcs": attr.label_list(allow_files = [".sv", ".svh", ".v"]),
         "top_module": attr.string(doc = "The top module name"),
         "verilator_args": attr.string_list(),
