@@ -10,6 +10,6 @@ It includes:
 - Locally-built Python bindings (pyslang)
 
 
-Pyslang is available on PyPi, but the option of using a local build is provided
+Pyslang is available on PyPI, but the option of using a local build is provided
 to take advantage of the reproducable hermetic build, and to align the versions
 used for Slang and Pyslang in a given repository.
