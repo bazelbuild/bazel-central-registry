@@ -4,7 +4,7 @@ This is a bazel wrapper to build [slang](https://sv-lang.com/).
 
 It includes:
 
-- Slang C Libraries
+- Slang C++ Libraries
 - Binary for the main slang driver
 - Binaries for the slang tools (slang-tidy, rewriter, ...)
 - Locally-built Python bindings (pyslang)
