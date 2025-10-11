@@ -42,6 +42,7 @@ DEPENDENCY_VERSIONS = {
 # BCR versions are compared using their base version (1.89.0.bcr.1 -> 1.89.0)
 LAST_AVAILABLE_VERSIONS = {
     "boost.compatibility": "1.83.0",
+    "boost.pin_version": "1.83.0",
 }
 
 PRESUBMIT_CONTENT = """\
