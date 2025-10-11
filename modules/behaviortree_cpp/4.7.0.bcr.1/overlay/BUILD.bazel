@@ -1,0 +1,108 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "LICENSE",
+)
+
+UNIX_SRCS = [
+    "src/shared_library_UNIX.cpp",
+]
+
+WINDOWS_SRCS = [
+    "src/shared_library_WIN.cpp",
+]
+
+cc_library(
+    name = "behaviortree_cpp",
+    srcs = glob(
+               [
+                   "src/**/*.cpp",
+                   "src/**/*.hpp",
+               ],
+               exclude = ["src/example.cpp"] + WINDOWS_SRCS + UNIX_SRCS,
+           ) +
+           select({
+               "@platforms//os:windows": WINDOWS_SRCS,
+               "//conditions:default": UNIX_SRCS,
+           }),
+    hdrs = glob([
+        "include/**/*.h",
+        "include/**/*.hpp",
+    ]),
+    # IMPORTANT: module_version() MUST be in the form of X.Y.Z
+    defines = ['BTCPP_LIBRARY_VERSION=\\"' + module_version() + '\\"'],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":wildcards",
+        "@cpp-sqlite",
+        "@cppzmq",
+        "@flatbuffers",
+        "@lexy",
+        "@libzmq",
+        "@minicoro",
+        "@minitrace",
+        "@ncurses",
+        "@tinyxml2",
+    ],
+)
+
+TESTS_THAT_FAIL_ON_MACOS = [
+    # These tests are broken on x86 macOS Bazel 8
+    "tests/gtest_postconditions.cpp",
+    "tests/gtest_parallel.cpp",
+]
+
+cc_test(
+    name = "behaviortree_cpp_test",
+    size = "small",
+    srcs = glob(
+        [
+            "tests/**/*.cpp",
+            "tests/**/*.h",
+            "tests/**/*.hpp",
+            "sample_nodes/*.cpp",
+            "sample_nodes/*.h",
+        ],
+        exclude = [
+            # These tests are broken and are not included in the cmake build.
+            "tests/gtest_async_action_node.cpp",
+            "tests/gtest_logger_zmq.cpp",
+            "tests/navigation_test.cpp",
+        ] + TESTS_THAT_FAIL_ON_MACOS,
+    ) + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": TESTS_THAT_FAIL_ON_MACOS,
+    }),
+    data = glob(["tests/trees/**/*.xml"]),
+    includes = [
+        "tests",
+        "tests/include",
+    ],
+    # NOTE: It's not currently possible to get the path to a directory here. If bazel supported
+    # getting the path to a directory, then we could get the path to the tests directory and pass it
+    # directly as BT_TEST_FOLDER. Instead we get the path to one of the xml files, and then patch
+    # the logic in tests/gtest_factory.cpp as a work-around.
+    # See: https://github.com/bazelbuild/bazel/issues/23139
+    local_defines = [
+        "BT_TEST_PARENT_INCLUDE_CHILD_XML_FILE=" +
+        "\\\"../$(rlocationpath tests/trees/parent_include_child.xml)\\\"",
+    ],
+    deps = [
+        ":behaviortree_cpp",
+        "@googletest//:gtest",
+    ],
+)
+
+# Use the vendored version of wildcards because it has an important bug fix.
+# See: https://github.com/zemasoft/wildcards/issues/28
+# Be aware that this might cause issues if you depend on both behaviortree_cpp and a different
+# version of wildcards.
+cc_library(
+    name = "wildcards",
+    hdrs = ["3rdparty/wildcards/wildcards.hpp"],
+    includes = ["3rdparty"],
+)
