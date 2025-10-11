@@ -54,7 +54,7 @@ matrix:
     - ubuntu2004
     - ubuntu2204
     - windows
-  bazel: [7.x, 8.x]
+  bazel: [7.*, 8.*]
 tasks:
   verify_targets:
     name: Verify build targets
