@@ -652,25 +652,21 @@ objc_library(
     }),
 )
 
-cc_library(
-    name = "gtk3_stub",
-)
-
 write_file(
     name = "_highgui_config.hpp",
     out = "opencv_highgui_config.hpp",
     content = select({
+        ":have_gtk3": [
+            "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"GTK3\"",
+        ],
         "@platforms//os:macos": [
             "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"COCOA\"",
         ],
         "@platforms//os:windows": [
             "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"WIN32UI\"",
         ],
-        ":linux_using_stub_gtk3": [
+        "//conditions:default": [
             "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"\"",
-        ],
-        "@platforms//os:linux": [
-            "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"GTK3\"",
         ],
     }),
 )
@@ -684,15 +680,14 @@ opencv_module(
         ":videoio",
         ":imgcodecs",
     ] + select({
+        ":have_gtk3": [":gtk3"],
         "@platforms//os:macos": [":ocv.3rdparty.cocoa"],
-        "@platforms//os:linux": [":gtk3"],
         "//conditions:default": [],
     }),
     local_defines = select({
+        ":have_gtk3": ["HAVE_GTK3=1", "HAVE_GTK=1"],
         "@platforms//os:macos": ["HAVE_COCOA=1"],
         "@platforms//os:windows": ["HAVE_WIN32UI=1"],
-        ":linux_using_stub_gtk3": [],
-        "@platforms//os:linux": ["HAVE_GTK3=1", "HAVE_GTK=1"],
         "//conditions:default": [],
     }),
     sources = [
@@ -701,8 +696,7 @@ opencv_module(
         "modules/highgui/src/roiSelector.cpp",
         "opencv_highgui_config.hpp",
     ] + select({
-        ":linux_using_stub_gtk3": [],
-        "@platforms//os:linux": [
+        ":have_gtk3": [
             "modules/highgui/src/window_gtk.cpp",
         ],
         "@platforms//os:windows": [
@@ -770,13 +764,23 @@ config_setting(
     },
 )
 
+bool_flag(
+    name = "with_gtk3",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "have_gtk3",
+    flag_values = {":with_gtk3": "True"},
+)
+
+# TODO: replace with BCR version of GTK3 after https://github.com/bazelbuild/bazel-central-registry/issues/6187 is resolved
 label_flag(
     name = "gtk3",
     build_setting_default = ":gtk3_stub",
 )
 
-config_setting(
-    name = "linux_using_stub_gtk3",
-    flag_values = {":gtk3": ":gtk3_stub"},
-    constraint_values = ["@platforms//os:linux"],
+cc_library(
+    name = "gtk3_stub",
+    target_compatible_with = ["@platforms//:incompatible"],
 )
