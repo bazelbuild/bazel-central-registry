@@ -775,15 +775,15 @@ class BcrValidator:
         if not conflict_found:
             self.report(BcrValidationResult.GOOD, "No module name conflict found.")
 
-    def verify_no_dir_symlinks(self):
-        """Check there is no directory symlink under modules/ dir"""
-        for dirpath, dirnames, _ in os.walk(self.registry.root / "modules"):
-            for dirname in dirnames:
-                full_path = os.path.join(dirpath, dirname)
+    def verify_no_symlinks(self):
+        """Check there is no symlink under modules/ dir"""
+        for dirpath, dirnames, filenames in os.walk(self.registry.root / "modules"):
+            for name in dirnames + filenames:
+                full_path = os.path.join(dirpath, name)
                 if os.path.islink(full_path):
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"Dir symlink is not allowed: {full_path}",
+                        f"Symlink is not allowed: {full_path}",
                     )
 
     def validate_module(self, module_name, version, skipped_validations):
@@ -936,7 +936,7 @@ class BcrValidator:
     def global_checks(self):
         """General global checks for BCR"""
         self.verify_module_name_conflict()
-        self.verify_no_dir_symlinks()
+        self.verify_no_symlinks()
 
     def getValidationReturnCode(self):
         # Calculate the overall return code
