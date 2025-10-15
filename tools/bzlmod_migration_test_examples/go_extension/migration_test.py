@@ -1,6 +1,7 @@
 import unittest
 import subprocess
 import os
+import sys
 from unittest import main
 
 
@@ -59,7 +60,7 @@ class BazelBuildTest(unittest.TestCase):
 
         # Run migration script
         print("\n--- Running migration script ---")
-        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=" + targets])
+        result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=" + targets])
         assert result.returncode == 0
         assert os.path.exists(
             "migration_info.md"
