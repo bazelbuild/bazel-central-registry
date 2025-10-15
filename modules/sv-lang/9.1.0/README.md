@@ -1,4 +1,4 @@
-# Slang
+# Slang (sv-lang)
 
 This is a bazel wrapper to build [slang](https://sv-lang.com/).
 
