@@ -305,8 +305,9 @@ class BcrValidator:
 
     def verify_source_archive_url_match_github_repo(self, module_name, version):
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
-        if self.registry.get_source(module_name, version).get("type", None) == "git_repository":
-            source_url = self.registry.get_source(module_name, version)["remote"]
+        source = self.registry.get_source(module_name, version)
+        if source.get("type", None) == "git_repository":
+            source_url = source["remote"]
             # Preprocess the git URL to make the comparison easier.
             if source_url.startswith("git@"):
                 source_url = source_url.removeprefix("git@")
@@ -314,11 +315,14 @@ class BcrValidator:
                 source_url = "https://" + source_netloc + "/" + source_parts
             if source_url.endswith(".git"):
                 source_url = source_url.removesuffix(".git")
-                # The asterisk here is to prevent the final slash from being
-                # dropped by os.path.abspath().
-                source_url = source_url + "/*"
+            # Make the commit look like a GitHub archive to unify the
+            # rest of this check. For non-GitHub repositories, the extra
+            # trailing parts are ignored.
+            commit = source["commit"]
+            source_url = source_url.rstrip("/")
+            source_url = f"{source_url}/archive/{commit}.zip"
         else:
-            source_url = self.registry.get_source(module_name, version)["url"]
+            source_url = source["url"]
         source_repositories = self.registry.get_metadata(module_name).get("repository", [])
         matched = not source_repositories
         for source_repository in source_repositories:
