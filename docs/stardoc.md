@@ -12,11 +12,12 @@ The built-in rule [starlark_doc_extract](https://bazel.build/versions/8.3.0/refe
 - Docs: https://buf.build/bazel/bazel/docs/main:stardoc_output#stardoc_output.ModuleInfo
 
 Authors are free to generate these files however they choose.
+The simplest option is to add a `starlark_doc_extract` target for each `bzl_library` target you wish to document.
 
 Note that the `bzl_library` rule from `bazel_skylib` has `filegroup` semantics - it doesn't produce any outputs, nor verify that the `bzl_library` has all dependencies provided.
 See https://github.com/bazel-contrib/bazel-lib/blob/main/bzl_library.bzl for an alternative that fixes this. 
 
-You may wish to run `bazel query 'kind(starlark_doc_extract, //...)'` to confirm which starlark modules your ruleset documents.
+It is wise to run `bazel query 'kind(starlark_doc_extract, //...)'` to confirm which starlark modules your ruleset documents.
 
 ## Creating the docs artifact
 
