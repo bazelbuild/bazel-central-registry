@@ -50,6 +50,12 @@ The tool also accepts a `--version` option to update the `source.json` of a spec
    # the target can also be your target that depends on this.
    ```
 
+### Documenting the module
+
+The `source.json` permits a `docs_url` attribute pointing to the documentation.
+
+This may optionally point to an archive file of stardoc_output.proto files, see [Stardoc API Docs](./stardoc.md).
+
 ## Presubmit
 
 Every module version must pass the BCR presubmit before getting merged. The presubmit validates the correctness and consistency of module information, then runs build and test targets specified in the `presubmit.yml` file. The BCR presubmit is driven by the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script on [Bazel CI](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite#bazel-continuous-integration).
