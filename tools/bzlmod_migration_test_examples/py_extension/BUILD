@@ -9,9 +9,6 @@ py_binary(
         "@my_deps_1//mpmath",
         "@my_deps_2//mpmath"
     ],
-    toolchains = [
-        "@rules_python//python:current_py_toolchain",
-    ]
 )
 
 py_runtime(
