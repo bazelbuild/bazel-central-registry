@@ -280,7 +280,7 @@ module(
         return module_versions
 
     def get_metadata(self, module_name):
-        return json.loads(self.get_metadata_path(module_name).read_text())
+        return json.loads(self.get_metadata_path(module_name).read_text(encoding="utf-8"))
 
     def get_metadata_path(self, module_name):
         return self.root / "modules" / module_name / "metadata.json"
@@ -295,7 +295,7 @@ module(
         return self.get_version_dir(module_name, version) / "overlay"
 
     def get_source(self, module_name, version):
-        return json.loads(self.get_source_json_path(module_name, version).read_text())
+        return json.loads(self.get_source_json_path(module_name, version).read_text(encoding="utf-8"))
 
     def get_source_json_path(self, module_name, version):
         return self.get_version_dir(module_name, version) / "source.json"
