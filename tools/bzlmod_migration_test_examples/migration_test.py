@@ -17,18 +17,17 @@ class BazelBuildTest(unittest.TestCase):
         "migration_info.md",
         "query_direct_deps",
         "resolved_deps.py",
-        "extension_for_"
+        "extension_for_",
     ]
 
     def _cleanup_created_files(self):
         """
         Remove files which were created by migration tool.
         """
-        for file_name in self._CREATED_FILES:
-            my_dir = os.getcwd()
-            for fname in os.listdir(my_dir):
-                if fname.startswith(file_name):
-                    os.remove(os.path.join(my_dir, fname))
+        my_dir = os.getcwd()
+        for fname in os.listdir(my_dir):
+            if any(fname.startswith(p) for p in self._CREATED_FILES):
+                os.remove(os.path.join(my_dir, fname))
 
     def _run_command(self, command):
         """
