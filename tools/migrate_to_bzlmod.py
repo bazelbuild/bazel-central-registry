@@ -538,7 +538,10 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
         important(f"Using existing default python version {python_version} from MODULE.bazel.")
     else:
         important(
-            f"{python_version} is used as a default python version. If you need a different version, please change it manually and then rerun the migration tool."
+            f"""{python_version} is used as a default python version.
+                If you need a different version, please change it manually and then rerun the migration tool.
+                If you're using `python_register_multi_toolchains`, add `python.toolchain` for each python version.
+            """
         )
 
     py_ext = f"""
@@ -581,20 +584,6 @@ use_repo(pip, "{repo}")
     append_migration_info("## Migration of `" + repo + "`")
     append_migration_info("It has been introduced as a python extension:\n")
     append_migration_info("```" + py_ext + "\n" + py_toolchain_msg + "\n```")
-
-
-def add_python_repo(repo):
-    append_migration_info("## Migration of `" + repo + "`")
-    append_migration_info("It has been introduced as a python repo:\n")
-
-    py_repo = f'use_repo(python, "{repo}")'
-    write_at_given_place(
-        "MODULE.bazel",
-        py_repo,
-        "# -- End of pip extensions -- #",
-    )
-    resolved("`" + repo + "` has been introduced as a python repo.")
-    append_migration_info("```\n" + py_repo + "\n```")
 
 
 def address_unavailable_repo(repo, resolved_deps, workspace_name):
@@ -794,7 +783,7 @@ def prepare_migration(initial_flag):
     workspace_name = "main"
     with open("WORKSPACE", "r") as f:
         for line in f:
-            s = re.search(r"workspace\(name\s+=\s+[\'\"]([A-Za-z0-9_-]+)[\'\"]", line)
+            s = re.search(r"workspace\(name\s*=\s*[\'\"]([A-Za-z0-9_-]+)[\'\"]", line)
             if s:
                 workspace_name = s.groups()[0]
                 info(f"Detected original workspace name: {workspace_name}\n")
