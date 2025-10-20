@@ -312,7 +312,7 @@ verilator_build_template = rule(
     },
 )
 
-def _verilator_test_impl(ctx):
+def _verilator_internal_test_impl(ctx):
     script = ctx.actions.declare_file(ctx.label.name + ".sh")
 
     # Get runfiles path to verilator binary
@@ -371,8 +371,9 @@ def _verilator_test_impl(ctx):
         runfiles = runfiles
     )
 
-verilator_test = rule(
-    implementation = _verilator_test_impl,
+verilator_internal_test = rule(
+    doc = "Internal test rule for Verilator BCR release. Do not reuse.",
+    implementation = _verilator_internal_test_impl,
     test = True,
     attrs = {
         "verilator": attr.label(executable = True, cfg = "target", default = "//:verilator_bin"),
