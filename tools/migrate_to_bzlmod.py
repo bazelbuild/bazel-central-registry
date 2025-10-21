@@ -537,9 +537,11 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
         python_version = match.group(1)
     else:
         important(
-            (f'{python_version} is used as a default python version.\n'
-             '\t\tIf you need a different version, please change it manually and then rerun the migration tool.\n'
-             '\t\tIf you\'re using `python_register_multi_toolchains`, add `python.toolchain` for each python version.')
+            (
+                f"{python_version} is used as a default python version.\n"
+                "\t\tIf you need a different version, please change it manually and then rerun the migration tool.\n"
+                "\t\tIf you're using `python_register_multi_toolchains`, add `python.toolchain` for each python version."
+            )
         )
 
     py_ext = f"""
