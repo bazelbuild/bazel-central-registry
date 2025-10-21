@@ -535,13 +535,11 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 
     if match:
         python_version = match.group(1)
-        important(f"Using existing default python version {python_version} from MODULE.bazel.")
     else:
         important(
-            f"""{python_version} is used as a default python version.
-                If you need a different version, please change it manually and then rerun the migration tool.
-                If you're using `python_register_multi_toolchains`, add `python.toolchain` for each python version.
-            """
+            (f'{python_version} is used as a default python version.\n'
+             '\t\tIf you need a different version, please change it manually and then rerun the migration tool.\n'
+             '\t\tIf you\'re using `python_register_multi_toolchains`, add `python.toolchain` for each python version.')
         )
 
     py_ext = f"""
@@ -580,9 +578,9 @@ use_repo(pip, "{repo}")
         "# -- End of pip extensions -- #",
     )
 
-    resolved("`" + repo + "` has been introduced as python extension.")
+    resolved("`" + repo + "` has been introduced as python extension, with python_version=" + python_version + ".")
     append_migration_info("## Migration of `" + repo + "`")
-    append_migration_info("It has been introduced as a python extension:\n")
+    append_migration_info("It has been introduced as a python extension, with python_version=" + python_version + ":\n")
     append_migration_info("```" + py_ext + "\n" + py_toolchain_msg + "\n```")
 
 
