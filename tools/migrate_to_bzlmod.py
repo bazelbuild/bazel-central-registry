@@ -453,7 +453,27 @@ go_sdk.from_file(go_mod = "//:go.mod")
         append_migration_info("```\n" + gazelle_override + "```")
 
 
-def add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name):
+def add_testonly_maven_artifact(group, artifact, version, repo):
+    test_artifact = f"""maven.artifact(
+    testonly = True,
+    group = "{group}",
+    artifact = "{artifact}",
+    version = "{version}"
+)
+"""
+    write_at_given_place(
+        "MODULE.bazel",
+        test_artifact,
+        f"# -- End of maven artifacts for repo `{repo}` ",
+    )
+
+    resolved("`" + group + "` has been introduced as maven artifact (testonly).")
+    append_migration_info("## Migration of `" + group + "` (" + repo + "):")
+    append_migration_info("It has been introduced as a maven artifact (testonly):\n")
+    append_migration_info("```\n" + test_artifact + "```")
+
+
+def add_maven_extension(repo, maven_artifacts, repositories, resolved_deps, workspace_name):
     # Introduce `rules_jvm_external` only once.
     if not exists_in_file("MODULE.bazel", 'bazel_dep(name = "rules_jvm_external'):
         address_unavailable_repo("rules_jvm_external", resolved_deps, workspace_name)
@@ -481,31 +501,48 @@ use_repo(maven, "{repo}")
             "# -- End of maven extensions",
         )
 
-    # Translate each maven artifact which is lacking in MODULE.bazel file.
+    parsed_artifacts = []
+    # If the repo is `testonly`, translate it as `maven.artifact`. Otherwise, use `maven.install`.
     for maven_artifact in maven_artifacts:
         parsed_data = json.loads(maven_artifact)
         group = parsed_data["group"]
+        artifact = parsed_data["artifact"]
+        version = parsed_data["version"]
 
-        if exists_in_file("MODULE.bazel", 'group = "' + group):
+        if "testonly" in parsed_data and parsed_data["testonly"]:
+            add_testonly_maven_artifact(group, artifact, version, repo)
             continue
 
-        append_migration_info("## Migration of `" + group + "` (" + repo + "):")
-        append_migration_info("It has been introduced as a maven artifact:\n")
+        parsed_artifact = '"' + group + ":" + artifact + ":" + version + '",'
+        parsed_artifacts.append(parsed_artifact)
 
-        artifact = f"""
-maven.artifact(
-    name = "{repo}",
-    group = "{group}",
-    artifact = "{parsed_data["artifact"]}",
-    version = "{parsed_data["version"]}"
-)"""
-        write_at_given_place(
-            "MODULE.bazel",
-            artifact,
-            f"# -- End of maven artifacts for repo `{repo}` ",
-        )
-        resolved("`" + group + "` has been introduced as maven extension.")
-        append_migration_info("```" + artifact + "\n```")
+    parsed_repositories = []
+    for repository in repositories:
+        parsed_data = json.loads(repository)
+        parsed_repositories.append('"' + parsed_data["repo_url"] + '",')
+
+    name = "" if repo == "maven" else '\n\tname = "' + repo + '",'
+    parsed_artifacts = "\n\t\t".join(parsed_artifacts)
+    parsed_repositories = "\n\t\t".join(parsed_repositories)
+    maven_install = f"""maven.install({name}
+    artifacts = [
+        {parsed_artifacts}
+    ],
+    repositories = [
+        {parsed_repositories}
+    ],
+)
+"""
+    write_at_given_place(
+        "MODULE.bazel",
+        maven_install,
+        f"# -- End of maven artifacts for repo `{repo}` ",
+    )
+
+    resolved("`" + repo + "` has been introduced as maven extension.")
+    append_migration_info("## Migration of `" + repo + "`:")
+    append_migration_info("It has been introduced as a maven extension:\n")
+    append_migration_info("```\n" + maven_install + "```")
 
 
 def add_python_extension(repo, origin_attrs, resolved_deps, workspace_name):
@@ -608,7 +645,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
 
     # Print the repo definition in the original WORKSPACE file
     repo_def, file_label, rule_name, is_macro = [], None, None, False
-    urls, maven_artifacts, origin_attrs = [], [], []
+    urls, maven_artifacts, origin_attrs, repositories = [], [], [], []
     for dep in resolved_deps:
         if dep["original_attributes"]["name"] == repo:
             repo_def, file_label, rule_name, is_macro = repo_definition(dep)
@@ -616,6 +653,8 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
             urls = origin_attrs.get("urls", [])
             if "artifacts" in origin_attrs:
                 maven_artifacts = origin_attrs["artifacts"]
+            if "repositories" in origin_attrs:
+                repositories = origin_attrs["repositories"]
             if origin_attrs.get("url", None):
                 urls.append(origin_attrs["url"])
             if origin_attrs.get("remote", None):
@@ -635,7 +674,7 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
 
     # Support maven extensions.
     if "rules_jvm_external" in file_label and maven_artifacts:
-        add_maven_extension(repo, maven_artifacts, resolved_deps, workspace_name)
+        add_maven_extension(repo, maven_artifacts, repositories, resolved_deps, workspace_name)
         return True
 
     # Support python extension.
