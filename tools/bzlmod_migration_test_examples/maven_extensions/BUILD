@@ -7,6 +7,17 @@ java_binary(
         "@px_deps//:org_antlr_antlr4",
         "@px_deps//:com_google_jimfs_jimfs",
         "@px_deps//:com_google_truth_truth",
-        "@jar//:org_apache_santuario_xmlsec"
+        "@maven//:org_apache_santuario_xmlsec",
+        "@maven//:aopalliance_aopalliance",
     ],
+)
+
+alias(
+    name = "biz_aQute_bnd",
+    actual = "@maven//:biz_aQute_bnd",
+)
+
+alias(
+    name = "com_google_truth_truth",
+    actual = "@maven//:com_google_truth_truth",
 )
