@@ -1,3 +1,5 @@
+"""gen_test_targets"""
+
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 def gen_test_targets(name, cc_srcs, header_srcs):
