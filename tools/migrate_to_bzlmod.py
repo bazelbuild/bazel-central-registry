@@ -323,9 +323,10 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     bzl_content = open(ext_bzl_name, "r").read()
     if imported_rule_statement not in bzl_content:
         write_at_given_place(ext_bzl_name, load_statement, LOAD_IDENTIFIER)
+    repo_def_str = "\n".join(["  " + line.replace("\n", "\n  ") for line in repo_def[1:]])
     write_at_given_place(
         ext_bzl_name,
-        "\n".join(["  " + line.replace("\n", "\n  ") for line in repo_def[1:]]),
+        repo_def_str,
         REPO_IDENTIFIER,
     )
 
@@ -333,9 +334,14 @@ def add_repo_to_module_extension(repo, repo_def, file_label, rule_name):
     use_ext = f'{ext_name} = use_extension("//:{ext_name}.bzl", "{ext_name}")'
     module_bazel_content = open("MODULE.bazel", "r").read()
     ext_identifier = f"# End of extension `{ext_name}`"
+    append_migration_info("```")
     if use_ext not in module_bazel_content:
         scratch_file("MODULE.bazel", ["", use_ext, ext_identifier], mode="a")
-    write_at_given_place("MODULE.bazel", f'use_repo({ext_name}, "{repo}")', ext_identifier)
+        append_migration_info(use_ext + "\n")
+    use_repo_msg = f'use_repo({ext_name}, "{repo}")'
+    write_at_given_place("MODULE.bazel", use_repo_msg, ext_identifier)
+    append_migration_info(use_repo_msg)
+    append_migration_info("```")
 
 
 def url_match_source_repo(source_url, module_name):
@@ -745,12 +751,12 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
     # Ask user if the dependency should be introduced via module extension
     # Only ask when file_label exists, which means it's a starlark repository rule.
     elif file_label and yes_or_no("Do you wish to introduce the repository with a module extension?", True):
-        append_migration_info("\tIt has been introduced using a module extension:\n")
+        append_migration_info("It has been introduced using a module extension:\n")
         resolved("`" + repo + "` has been introduced using a module extension.")
         add_repo_to_module_extension(repo, repo_def, file_label, rule_name)
         return True
     elif rule_name == "local_repository" and repo != "bazel_tools":
-        append_migration_info("\tIt has been introduced using a module extension since it is local_repository rule:\n")
+        append_migration_info("It has been introduced using a module extension since it is local_repository rule:\n")
         resolved("`" + repo + "` has been introduced using a module extension (local_repository).")
         add_repo_to_module_extension(repo, repo_def, "@bazel_tools//tools/build_defs/repo:local.bzl", rule_name)
         return True
