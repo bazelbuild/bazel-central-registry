@@ -1,0 +1,86 @@
+module(
+    name = "rules_zig",
+    version = "0.12.2",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "aspect_bazel_lib", version = "2.21.2")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_cc", version = "0.2.11")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+zig = use_extension("//zig:extensions.bzl", "zig")
+zig.index(file = "//zig/private:versions.json")
+use_repo(zig, "zig_toolchains")
+
+register_toolchains("@rules_zig//zig/target:all")
+
+register_toolchains("@zig_toolchains//:all")
+
+zig_dev = use_extension(
+    "//zig:extensions.bzl",
+    "zig",
+    dev_dependency = True,
+)
+zig_dev.toolchain(zig_version = "0.15.1")
+zig_dev.toolchain(zig_version = "0.14.1")
+
+bazel_dep(name = "toolchains_buildbuddy", dev_dependency = True)
+archive_override(
+    module_name = "toolchains_buildbuddy",
+    integrity = "sha256-UA+poYaWFbPxgtoA2re4mX89c3/8yYchpKwr4pvvGOw=",
+    strip_prefix = "buildbuddy-toolchain-ffd296b7a9821174cdb2188d1373fd262cacb09d",
+    urls = ["https://github.com/buildbuddy-io/buildbuddy-toolchain/archive/ffd296b7a9821174cdb2188d1373fd262cacb09d.tar.gz"],
+)
+
+buildbuddy = use_extension(
+    "@toolchains_buildbuddy//:extensions.bzl",
+    "buildbuddy",
+    dev_dependency = True,
+)
+use_repo(buildbuddy, "buildbuddy_toolchain")
+
+bazel_dep(name = "bazel_features", version = "1.37.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "gazelle", version = "0.45.0", dev_dependency = True, repo_name = "bazel_gazelle")
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.2", dev_dependency = True)
+bazel_dep(
+    name = "buildifier_prebuilt",
+    version = "8.2.0.2",
+    dev_dependency = True,
+)
+bazel_dep(name = "rules_multirun", version = "0.13.0", dev_dependency = True)
+bazel_dep(name = "rules_python", version = "1.6.3", dev_dependency = True)
+bazel_dep(
+    name = "rules_bazel_integration_test",
+    version = "0.34.0",
+    dev_dependency = True,
+)
+
+bazel_binaries = use_extension(
+    "@rules_bazel_integration_test//:extensions.bzl",
+    "bazel_binaries",
+    dev_dependency = True,
+)
+bazel_binaries.download(version_file = "//:.bazelversion")
+bazel_binaries.download(version = "8.4.1")
+use_repo(
+    bazel_binaries,
+    "bazel_binaries",
+    "bazel_binaries_bazelisk",
+    "build_bazel_bazel_.bazelversion",
+    "build_bazel_bazel_8_4_1",
+)
+
+# TODO[AH] Should be an implicit transitive dependency through rules_bazel_integration_test.
+# However, if we do not include it explicitly, then the runfiles resolution for
+# cgrindel_bazel_starlib/shlib/lib/message.sh fails in
+# rules_bazel_integration_test/tools/update_deleted_packages.sh when invoked
+# through the rules_multirun target //util:update.
+bazel_dep(name = "cgrindel_bazel_starlib", version = "0.27.0", dev_dependency = True)
+
+# Hack to get around a cc_common.link(main_output) private API limitation.
+# See https://github.com/bazelbuild/bazel/pull/23838
+cc_common_link = use_repo_rule("//zig/private/bzlmod:cc_common_link.bzl", "cc_common_link")
+
+cc_common_link(name = "build_bazel_rules_android")
