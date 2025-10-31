@@ -3,6 +3,7 @@ Bazel module for DART: Dynamics Animation and Robotics Toolkit.
 
 Available targets:
 
+//:dartsim (alias for dart-all)
 //:dart-all
 //:dart-collision
 //:dart-collision-bullet
@@ -31,9 +32,9 @@ Notes:
   dependencies.
 """
 
-load("//:generate_include_header.bzl", "generate_include_header")
 load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
 load("@rules_license//rules:license.bzl", "license")
+load("//:generate_include_header.bzl", "generate_include_header")
 
 package(
     default_applicable_licenses = [":license"],
@@ -61,20 +62,22 @@ generated_includes = [
     "simulation",
 ]
 
-[generate_include_header(
-    name = "%s_genrule" % subdir,
-    out = "dart/%s/%s.hpp" % (subdir, subdir),
-    hdrs = glob(
-        include = [
-            "dart/%s/*.hpp" % subdir,
-        ],
-        exclude = [
-            # Exclude deprecated hdr
-            "dart/dynamics/MultiSphereShape.hpp",
-        ]
-    ),
-)
-for subdir in generated_includes]
+[
+    generate_include_header(
+        name = "%s_genrule" % subdir,
+        out = "dart/%s/%s.hpp" % (subdir, subdir),
+        hdrs = glob(
+            include = [
+                "dart/%s/*.hpp" % subdir,
+            ],
+            exclude = [
+                # Exclude deprecated hdr
+                "dart/dynamics/MultiSphereShape.hpp",
+            ],
+        ),
+    )
+    for subdir in generated_includes
+]
 
 # Generate collision headers
 collision_generated_includes = [
@@ -84,15 +87,16 @@ collision_generated_includes = [
     "ode",
 ]
 
-[generate_include_header(
-    name = "collision_%s_genrule" % subdir,
-    out = "dart/collision/%s/%s.hpp" % (subdir, subdir),
-    hdrs = glob([
-        "dart/collision/%s/*.hpp" % subdir,
-    ]),
-)
-for subdir in collision_generated_includes]
-
+[
+    generate_include_header(
+        name = "collision_%s_genrule" % subdir,
+        out = "dart/collision/%s/%s.hpp" % (subdir, subdir),
+        hdrs = glob([
+            "dart/collision/%s/*.hpp" % subdir,
+        ]),
+    )
+    for subdir in collision_generated_includes
+]
 
 generate_include_header(
     name = "collision_genrule",
@@ -130,7 +134,7 @@ cmake_configure_file(
         "DART_ADDITIONAL_DOCUMENTATION_INSTALL_PATH=dart",
         "ASSIMP_AISCENE_CTOR_DTOR_DEFINED=1",
         "ASSIMP_AIMATERIAL_CTOR_DTOR_DEFINED=1",
-    ]
+    ],
 )
 
 config_setting(
@@ -149,21 +153,30 @@ cc_library(
     hdrs = [
         "dart/config.hpp",
     ],
-    visibility = ["//visibility:public"],
     include_prefix = ".",
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "dart-dynamics",
     srcs = glob([
         "dart/dynamics/*.cpp",
-        "dart/dynamics/*.hpp",
         "dart/dynamics/detail/*.cpp",
     ]),
     hdrs = glob([
         "dart/dynamics/*.hpp",
         "dart/dynamics/detail/*.hpp",
     ]) + ["dart/dynamics/dynamics.hpp"],
+    copts = [
+        "-Wno-dangling-pointer",
+        "-Wno-overloaded-virtual",
+        "-Wno-unknown-warning-option",
+    ] + select({
+        "//conditions:default": [],
+        ":opt_mode": copts_release_flags,
+    }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-common",
         ":dart-config",
@@ -173,64 +186,52 @@ cc_library(
         "@assimp",
         "@eigen",
     ],
-    copts = [
-        "-Wno-dangling-pointer",
-        "-Wno-overloaded-virtual",
-        "-Wno-unknown-warning-option",
-    ] + select({
-        "//conditions:default": [],
-        ":opt_mode": copts_release_flags,
-    }),
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-math",
     srcs = glob([
         "dart/math/*.cpp",
-        "dart/math/*.hpp",
     ]),
     hdrs = glob([
         "dart/math/*.hpp",
         "dart/math/detail/*.hpp",
     ]) + ["dart/math/math.hpp"],
+    copts = select({
+        "//conditions:default": [],
+        ":opt_mode": copts_release_flags,
+    }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-common",
         ":dart-external",
         "@eigen",
     ],
-    copts = select({
-        "//conditions:default": [],
-        ":opt_mode": copts_release_flags,
-    }),
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-common",
     srcs = glob([
         "dart/common/*.cpp",
-        "dart/common/*.hpp",
         "dart/common/detail/*.cpp",
     ]),
     hdrs = glob([
         "dart/common/*.hpp",
         "dart/common/detail/*.hpp",
     ]) + ["dart/common/common.hpp"],
+    copts = select({
+        "//conditions:default": [],
+        ":opt_mode": copts_release_flags,
+    }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-config",
         "@assimp",
         "@eigen",
         "@tinyxml2",
     ],
-    copts = select({
-        "//conditions:default": [],
-        ":opt_mode": copts_release_flags,
-    }),
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
@@ -242,20 +243,20 @@ cc_library(
         "dart/collision/*.hpp",
         "dart/collision/detail/*.hpp",
     ]) + ["dart/collision/collision.hpp"],
-    deps = [
-        ":dart-common",
-        ":dart-dynamics",
-        ":dart-math",
-        "@eigen",
-    ],
     copts = [
         "-Wno-overloaded-virtual",
     ] + select({
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
-    visibility = ["//visibility:public"],
     include_prefix = ".",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":dart-common",
+        ":dart-dynamics",
+        ":dart-math",
+        "@eigen",
+    ],
 )
 
 cc_library(
@@ -268,6 +269,15 @@ cc_library(
         "dart/collision/ode/*.hpp",
         "dart/collision/ode/detail/*.hpp",
     ]) + ["dart/collision/ode/ode.hpp"],
+    copts = [
+        "-Wno-overloaded-virtual",
+        "-Wno-unused-function",
+    ] + select({
+        "//conditions:default": [],
+        ":opt_mode": copts_release_flags,
+    }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-core",
         ":dart-dynamics",
@@ -276,15 +286,6 @@ cc_library(
         "@eigen",
         "@ode",
     ],
-    copts = [
-        "-Wno-overloaded-virtual",
-        "-Wno-unused-function",
-    ] + select({
-        "//conditions:default": [],
-        ":opt_mode": copts_release_flags,
-    }),
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
@@ -303,6 +304,8 @@ cc_library(
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-core",
         ":dart-common",
@@ -313,8 +316,6 @@ cc_library(
         "@bullet//:BulletCollisionDoublePrecision",
         "@eigen",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
@@ -324,7 +325,15 @@ cc_library(
     ]),
     hdrs = glob([
         "dart/collision/fcl/*.hpp",
-    ]) + ["dart/collision/fcl/fcl.hpp"] ,
+    ]) + ["dart/collision/fcl/fcl.hpp"],
+    copts = [
+        "-Wno-overloaded-virtual",
+    ] + select({
+        "//conditions:default": [],
+        ":opt_mode": copts_release_flags,
+    }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-core",
         ":dart-common",
@@ -335,43 +344,36 @@ cc_library(
         "@eigen",
         "@fcl",
     ],
-    copts = [
-        "-Wno-overloaded-virtual",
-    ] + select({
-        "//conditions:default": [],
-        ":opt_mode": copts_release_flags,
-    }),
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-collision-dart",
     srcs = glob([
         "dart/collision/dart/*.cpp",
-        "dart/collision/dart/*.hpp",
     ]),
     hdrs = glob([
-        "dart/collision/dart/*.hpp"
+        "dart/collision/dart/*.hpp",
     ]) + ["dart/collision/dart/dart.hpp"],
-    deps = [
-        ":dart-collision-core",
-        ":dart-dynamics",
-        ":dart-math",
-        "@eigen",
-    ],
     copts = [
         "-Wno-overloaded-virtual",
     ] + select({
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
-    visibility = ["//visibility:public"],
     include_prefix = ".",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":dart-collision-core",
+        ":dart-dynamics",
+        ":dart-math",
+        "@eigen",
+    ],
 )
 
 cc_library(
     name = "dart-collision",
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-bullet",
         ":dart-collision-core",
@@ -379,8 +381,6 @@ cc_library(
         ":dart-collision-fcl",
         ":dart-collision-ode",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
@@ -395,20 +395,19 @@ cc_library(
         "dart/external/lodepng/*.h",
         "dart/external/odelcpsolver/*.h",
     ]),
-    visibility = ["//visibility:public"],
     copts = select({
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
-    includes = ["dart/external/lodepng/"],
     include_prefix = ".",
+    includes = ["dart/external/lodepng/"],
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "dart-constraint",
     srcs = glob([
         "dart/constraint/*.cpp",
-        "dart/constraint/*.hpp",
     ]),
     hdrs = glob([
         "dart/constraint/*.hpp",
@@ -420,6 +419,8 @@ cc_library(
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-core",
         ":dart-collision-dart",
@@ -432,15 +433,12 @@ cc_library(
         ":dart-math",
         "@eigen",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-simulation",
     srcs = glob([
         "dart/simulation/*.cpp",
-        "dart/simulation/*.hpp",
     ]),
     hdrs = glob([
         "dart/simulation/*.hpp",
@@ -452,6 +450,8 @@ cc_library(
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-core",
         ":dart-common",
@@ -460,32 +460,27 @@ cc_library(
         ":dart-integration",
         "@eigen",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-integration",
     srcs = glob([
         "dart/integration/*.cpp",
-        "dart/integration/*.hpp",
     ]),
     hdrs = glob([
         "dart/integration/*.hpp",
     ]) + ["dart/integration/integration.hpp"],
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         "@eigen",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-utils",
     srcs = glob([
         "dart/utils/*.cpp",
-        "dart/utils/*.hpp",
-        "dart/utils/sdf/*.hpp",
     ]),
     hdrs = glob([
         "dart/utils/*.hpp",
@@ -498,6 +493,8 @@ cc_library(
         "//conditions:default": [],
         ":opt_mode": copts_release_flags,
     }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision-core",
         ":dart-collision-dart",
@@ -512,26 +509,23 @@ cc_library(
         "@fmt",
         "@tinyxml2",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
     name = "dart-optimizer",
     srcs = glob([
         "dart/optimizer/*.cpp",
-        "dart/optimizer/*.hpp",
     ]),
     hdrs = glob([
         "dart/optimizer/*.hpp",
     ]) + ["dart/optimizer/optimizer.hpp"],
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-common",
         ":dart-math",
         "@eigen",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
@@ -543,14 +537,14 @@ cc_library(
     hdrs = glob([
         "dart/lcpsolver/*.hpp",
     ]) + ["dart/lcpsolver/lcpsolver.hpp"],
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-common",
         ":dart-external",
         ":dart-math",
         "@eigen",
     ],
-    visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
 
 cc_library(
@@ -562,6 +556,12 @@ cc_library(
     hdrs = [
         "dart/dart.hpp",
     ],
+    copts = select({
+        "//conditions:default": [],
+        ":opt_mode": copts_release_flags,
+    }),
+    include_prefix = ".",
+    visibility = ["//visibility:public"],
     deps = [
         ":dart-collision",
         ":dart-common",
@@ -576,10 +576,10 @@ cc_library(
         ":dart-simulation",
         ":dart-utils",
     ],
-    copts = select({
-        "//conditions:default": [],
-        ":opt_mode": copts_release_flags,
-    }),
+)
+
+alias(
+    name = "dartsim",
+    actual = ":dart-all",
     visibility = ["//visibility:public"],
-    include_prefix = ".",
 )
