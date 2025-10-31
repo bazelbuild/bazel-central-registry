@@ -1,0 +1,87 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    package_name = "fcl",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = ":LICENSE",
+)
+
+cmake_configure_file(
+    name = "config",
+    src = "include/fcl/config.h.in",
+    out = "include/fcl/config.h",
+    cmakelists = ["CMakeLists.txt"],
+    defines = [
+        "FCL_HAVE_OCTOMAP=1",
+        "FCL_MAJOR_VERSION=0",
+        "FCL_MINOR_VERSION=7",
+        "FCL_PATCH_VERSION=0",
+        "FCL_VERSION=0.7.0",
+        "GENERATED_FILE_MARKER=GENERATED FILE DO NOT EDIT",
+        "OCTOMAP_MAJOR_VERSION=1",
+        "OCTOMAP_MINOR_VERSION=9",
+        "OCTOMAP_PATCH_VERSION=7",
+    ],
+    undefines = [
+        "FCL_ENABLE_PROFILING",
+        "FCL_HAVE_SSE",
+    ],
+)
+
+expand_template(
+    name = "export",
+    out = "include/fcl/export.h",
+    substitutions = select({
+        "@platforms//os:windows": {
+            "@FCL_EXPORT_VISIBILITY@": "__declspec(dllexport)",
+            "@FCL_IMPORT_VISIBILITY@": "",
+            "@FCL_HIDDEN_VISIBILITY@": "",
+            "@FCL_DEPRECATED@": "__declspec(deprecated)",
+        },
+        "//conditions:default": {
+            "@FCL_EXPORT_VISIBILITY@": "__attribute__((visibility(\"default\")))",
+            "@FCL_IMPORT_VISIBILITY@": "__attribute__((visibility(\"default\")))",
+            "@FCL_HIDDEN_VISIBILITY@": "__attribute__((visibility(\"hidden\")))",
+            "@FCL_DEPRECATED@": "__attribute__ ((__deprecated__))",
+        },
+    }),
+    template = "include/fcl/export.h.in",
+)
+
+fcl_sources = glob(
+    include = [
+        "src/**/*.cpp",
+    ],
+)
+
+fcl_headers = glob(
+    include = [
+        "include/fcl/**/*.h",
+    ],
+) + [
+    "include/fcl/config.h",
+    "include/fcl/export.h",
+]
+
+cc_library(
+    name = "fcl",
+    srcs = fcl_sources,
+    hdrs = fcl_headers,
+    defines = [
+        "FCL_HAVE_OCTOMAP",
+    ],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@ccd",
+        "@eigen",
+        "@octomap",
+    ],
+)
