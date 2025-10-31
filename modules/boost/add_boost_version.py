@@ -33,7 +33,7 @@ DEPENDENCY_VERSIONS = {
     "boringssl": "0.20251002.0",
     "bzip2": "1.0.8.bcr.2",
     "onetbb": "2022.1.0",
-    "openssl": "3.3.1.bcr.7",
+    "openssl": "3.3.1.bcr.8",
     "zlib": "1.3.1.bcr.7",
     "zstd": "1.5.7",
 }
