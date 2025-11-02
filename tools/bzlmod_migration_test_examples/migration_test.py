@@ -1,6 +1,7 @@
 import unittest
 import subprocess
 import os
+import sys
 from unittest import main
 
 
@@ -16,16 +17,17 @@ class BazelBuildTest(unittest.TestCase):
         "migration_info.md",
         "query_direct_deps",
         "resolved_deps.py",
+        "extension_for_",
     ]
 
     def _cleanup_created_files(self):
         """
         Remove files which were created by migration tool.
         """
-        for file_name in self._CREATED_FILES:
-            file_path = os.path.join(os.getcwd(), file_name)
-            if os.path.exists(file_path):
-                os.remove(file_path)
+        my_dir = os.getcwd()
+        for fname in os.listdir(my_dir):
+            if any(fname.startswith(p) for p in self._CREATED_FILES):
+                os.remove(os.path.join(my_dir, fname))
 
     def _run_command(self, command):
         """
@@ -57,7 +59,7 @@ class BazelBuildTest(unittest.TestCase):
 
         # Run migration script
         print("\n--- Running migration script ---")
-        result = self._run_command(["../../migrate_to_bzlmod.py", "-t=" + targets])
+        result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=" + targets])
         assert result.returncode == 0
         assert os.path.exists(
             "migration_info.md"
