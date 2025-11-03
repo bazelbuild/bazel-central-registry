@@ -232,12 +232,11 @@ def get_github_user_id(github_username):
     if github_token:
         headers["Authorization"] = f"token {github_token}"
     response = requests.get(url, headers=headers)
-    response.raise_for_status()
     if response.status_code == 200:
         user_id = response.json().get("id")
         GITHUB_USER_ID_CACHE[github_username] = user_id
         return user_id
-    raise RuntimeError("unexpected HTTP status code while getting user id: {response.status_code}")
+    raise requests.HTTPError(f"unexpected {response.status_code} status code from {url}", response=response)
 
 
 def is_valid_bazel_compatibility_for_overlay(bazel_compatibility):
