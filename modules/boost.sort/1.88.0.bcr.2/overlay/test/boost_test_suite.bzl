@@ -2,7 +2,7 @@
 
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
-def boost_test_suite(name, cc_srcs, deps = []):
+def boost_test_suite(name, cc_srcs, deps = [], defines = []):
     """Generates a cc_test target for each source file.
 
     Each of boost.sort's tests have their own main function, so each test needs
@@ -12,6 +12,7 @@ def boost_test_suite(name, cc_srcs, deps = []):
         name: name of this macro
         cc_srcs: test files to generate cc_test targets for
         deps: Dependencies for all tests.
+        defines: Defines to add to all tests.
     """
 
     tests = []
@@ -22,6 +23,7 @@ def boost_test_suite(name, cc_srcs, deps = []):
             name = test_name,
             srcs = [src],
             deps = deps,
+            defines = defines,
             linkopts = select({
                 "@platforms//os:linux": ["-lpthread"],
                 "//conditions:default": [],
