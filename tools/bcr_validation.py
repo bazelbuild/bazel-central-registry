@@ -236,7 +236,7 @@ def get_github_user_id(github_username):
         user_id = response.json().get("id")
         GITHUB_USER_ID_CACHE[github_username] = user_id
         return user_id
-    return None
+    raise requests.HTTPError(f"unexpected {response.status_code} status code from {url}", response=response)
 
 
 def is_valid_bazel_compatibility_for_overlay(bazel_compatibility):
@@ -848,11 +848,12 @@ class BcrValidator:
             if "github" in maintainer:
                 github_username = maintainer["github"]
                 print("checking github user id for %s" % github_username)
-                github_user_id = get_github_user_id(github_username)
-                if github_user_id is None:
+                try:
+                    github_user_id = get_github_user_id(github_username)
+                except Exception as e:
                     raise BcrValidationException(
                         f"Failed to get GitHub user ID for {github_username}. Please check the username."
-                    )
+                    ) from e
                 if github_user_id != maintainer.get("github_user_id"):
                     self.report(
                         BcrValidationResult.FAILED,
