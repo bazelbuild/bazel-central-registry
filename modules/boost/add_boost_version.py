@@ -464,12 +464,15 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
             except Exception as e:
                 logging.warning("Could not update %s: %s", module_file, e)
 
-    # Convert overlay/MODULE.bazel to symlink if it's a regular file
+    # Copy overlay/MODULE.bazel from main MODULE.bazel if it doesn't exist
     overlay_module = target_path / "overlay" / "MODULE.bazel"
-    if overlay_module.exists() and not overlay_module.is_symlink():
-        logging.debug("Converting overlay/MODULE.bazel to symlink")
+    main_module = target_path / "MODULE.bazel"
+    if overlay_module.exists() and overlay_module.is_symlink():
+        logging.debug("Converting overlay/MODULE.bazel from symlink to copy")
         overlay_module.unlink()
-        overlay_module.symlink_to("../MODULE.bazel")
+    if not overlay_module.exists() and main_module.exists():
+        logging.debug("Copying MODULE.bazel to overlay/MODULE.bazel")
+        shutil.copy2(main_module, overlay_module)
 
     run_buildifier([target_path])
 
@@ -523,12 +526,12 @@ def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: l
     bazelignore = overlay_dir / ".bazelignore"
     bazelignore.write_text(BAZEL_IGNORE, encoding="utf-8")
 
-    # Create symlink to main MODULE.bazel
+    # Copy main MODULE.bazel to overlay
     overlay_module_file = overlay_dir / "MODULE.bazel"
     if overlay_module_file.exists() or overlay_module_file.is_symlink():
         overlay_module_file.unlink()
-    overlay_module_file.symlink_to("../MODULE.bazel")
-    logging.debug("Created overlay/MODULE.bazel -> ../MODULE.bazel symlink")
+    shutil.copy2(main_module_file, overlay_module_file)
+    logging.debug("Copied MODULE.bazel to overlay/MODULE.bazel")
 
     # Generate individual BUILD.bazel files for each module in subdirectories
     # This allows targets like @boost//coroutine2 instead of @boost//:coroutine2
