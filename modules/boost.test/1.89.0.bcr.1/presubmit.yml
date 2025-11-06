@@ -1,0 +1,74 @@
+matrix:
+  unix_platform:
+    - debian10
+    - debian11
+    - macos
+    - macos_arm64
+    - ubuntu2004
+    - ubuntu2204
+    - ubuntu2404
+  windows_platform:
+    - windows
+  bazel: [7.x, 8.x, rolling]
+tasks:
+  unix_verify_targets:
+    platform: ${{ unix_platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@boost.test//:hdrs"
+      - "@boost.test//:boost.test"
+      - "@boost.test//:cpp_main"
+      - "@boost.test//:test_main"
+      - "@boost.test//:unit_test_main"
+
+  windows_verify_targets:
+    platform: ${{ windows_platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@boost.test//:hdrs"
+      - "@boost.test//:boost.test"
+      - "@boost.test//:cpp_main"
+      - "@boost.test//:test_main"
+      - "@boost.test//:unit_test_main"
+
+# boost.test has a header-only version and a source version. If you include
+# boost.test using "boost/test/included" and link the source version, you will
+# get an odr-violation if compiling with ASan. Without ASan it will compile,
+# but the BCR CI tests seem to run with some form of ASan. These tests ensure
+# the BCR boost.test library always provides both a header-only target and a
+# sources target.
+bcr_test_module:
+  module_path: test
+  matrix:
+    unix_platform:
+      - debian10
+      - debian11
+      - macos
+      - macos_arm64
+      - ubuntu2004
+      - ubuntu2204
+      - ubuntu2404
+    windows_platform:
+      - windows
+    bazel: [7.x, 8.x, rolling]
+  tasks:
+    verify_targets_asan:
+      platform: ${{ unix_platform }}  # doesn't work on Windows
+      bazel: ${{ bazel }}
+      build_flags:
+        - --copt=-fsanitize=address
+        - --compilation_mode=dbg
+        - --copt=-fno-omit-frame-pointer
+        - --linkopt=-fsanitize=address
+      build_targets:
+        - "//..."
+      test_flags:
+        - --copt=-fsanitize=address
+        - --compilation_mode=dbg
+        - --copt=-fno-omit-frame-pointer
+        - --linkopt=-fsanitize=address
+      test_targets:
+        - "//..."
+        # These tests have memory leaks, so skip it for ASan.
+        - "-//framework-ts:macro_global_fixture_test"
+        - "-//framework-ts:result_report_test"
