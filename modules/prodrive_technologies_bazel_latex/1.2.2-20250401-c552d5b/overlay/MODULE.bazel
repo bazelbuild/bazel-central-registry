@@ -1,1 +1,83 @@
-../MODULE.bazel
+"""
+    Rules for building LaTeX documents with Bazel.
+"""
+
+module(
+    name = "prodrive_technologies_bazel_latex",
+    version = "1.2.2-20250401-c552d5b",
+    bazel_compatibility = [">=7.2.1"],
+    compatibility_level = 0,
+    repo_name = "bazel_latex",
+)
+
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "rules_foreign_cc", version = "0.12.0")
+bazel_dep(name = "rules_python", version = "0.36.0")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "py_deps",
+    python_version = "3.11",
+    requirements_lock = "//:requirements_lock.txt",
+)
+use_repo(pip, "py_deps")
+
+register_toolchains(
+    "//:latex_toolchain_aarch64-darwin",
+    # The latex_toolchain_amd64-freebsd seems broken, see comment in BUILD.bazel, so disabled for now
+    #"@bazel_latex//:latex_toolchain_amd64-freebsd",
+    "//:latex_toolchain_x86_64-darwin",
+    "//:latex_toolchain_x86_64-linux",
+)
+
+texlive_repositories = use_extension("//:extensions.bzl", "texlive_repositories")
+texlive_repositories.install()
+use_repo(
+    texlive_repositories,
+    "bazel_latex_texlive",
+    "texlive_bin__aarch64-linux",
+    "texlive_bin__amd64-freebsd",
+    "texlive_bin__amd64-netbsd",
+    "texlive_bin__armhf-linux",
+    "texlive_bin__i386-cygwin",
+    "texlive_bin__i386-freebsd",
+    "texlive_bin__i386-linux",
+    "texlive_bin__i386-netbsd",
+    "texlive_bin__i386-solaris",
+    "texlive_bin__universal-darwin",
+    "texlive_bin__win32",
+    "texlive_bin__x86_64-cygwin",
+    "texlive_bin__x86_64-darwinlegacy",
+    "texlive_bin__x86_64-linux",
+    "texlive_bin__x86_64-linuxmusl",
+    "texlive_bin__x86_64-solaris",
+    "texlive_texmf__texmf-dist__scripts__texlive",
+)
+
+module_repositories = use_extension("//:repositories.bzl", "module_repositories")
+use_repo(
+    module_repositories,
+    "bazel_latex_latexrun",
+    "ghost_script_source",
+)
+
+# macOS shared lib was difficult to build via foreign rules so as a temporary
+# solution we provide it as a precompiled artifact.
+# Consider making it available via bazel_latex binaries repo instead
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "ghostscript_macos",
+    build_file_content = """
+filegroup(
+    name = "libgs_macos",
+    srcs = glob(["*/*"]),
+    target_compatible_with = ["@platforms//os:osx"],
+    visibility = ["//visibility:public"],
+)
+""",
+    sha256 = "56b480ebdf34000eac4a29e108ce6384858941d892fd69e604d90585aaae4c94",
+    urls = [
+        "https://github.com/solsjo/rules_latex_deps/releases/download/v0.9.4/rules_latex_deps_macos-latest.zip",
+    ],
+)
