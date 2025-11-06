@@ -582,16 +582,9 @@ class BcrValidator:
                 apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
-            module_file = overlay_dir / "MODULE.bazel"
-            if module_file.exists() and (not module_file.is_symlink() or os.readlink(module_file) != "../MODULE.bazel"):
-                self.report(
-                    BcrValidationResult.FAILED,
-                    f"{module_file} should be a symlink to `../MODULE.bazel`.",
-                )
-
             for overlay_file, expected_integrity in source["overlay"].items():
                 overlay_src = overlay_dir / overlay_file
-                if overlay_src != module_file and overlay_src.is_symlink():
+                if overlay_src.is_symlink():
                     self.report(
                         BcrValidationResult.FAILED,
                         f"The overlay file `{overlay_file}` is a symlink to `{overlay_src.readlink()}`, "
@@ -775,15 +768,15 @@ class BcrValidator:
         if not conflict_found:
             self.report(BcrValidationResult.GOOD, "No module name conflict found.")
 
-    def verify_no_dir_symlinks(self):
-        """Check there is no directory symlink under modules/ dir"""
-        for dirpath, dirnames, _ in os.walk(self.registry.root / "modules"):
-            for dirname in dirnames:
-                full_path = os.path.join(dirpath, dirname)
+    def verify_no_symlinks(self):
+        """Check there is no symlink under modules/ dir"""
+        for dirpath, dirnames, filenames in os.walk(self.registry.root / "modules"):
+            for name in dirnames + filenames:
+                full_path = os.path.join(dirpath, name)
                 if os.path.islink(full_path):
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"Dir symlink is not allowed: {full_path}",
+                        f"Symlink is not allowed: {full_path}",
                     )
 
     def validate_module(self, module_name, version, skipped_validations):
@@ -937,7 +930,7 @@ class BcrValidator:
     def global_checks(self):
         """General global checks for BCR"""
         self.verify_module_name_conflict()
-        self.verify_no_dir_symlinks()
+        self.verify_no_symlinks()
 
     def getValidationReturnCode(self):
         # Calculate the overall return code
