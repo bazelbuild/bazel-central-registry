@@ -15,6 +15,7 @@ def boost_test_suite(name, cc_srcs, header_srcs, deps = []):
     tests = []
     for src in cc_srcs:
         test_name = src.removeprefix("test/").removesuffix(".cpp").replace("/", "_")
+        tests.append(test_name)
         cc_test(
             name = test_name,
             srcs = [src] + header_srcs,
