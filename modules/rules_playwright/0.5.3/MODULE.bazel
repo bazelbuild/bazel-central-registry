@@ -1,0 +1,115 @@
+"Bazel dependencies"
+
+module(
+    name = "rules_playwright",
+    version = "0.5.3",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.4.1")
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "aspect_bazel_lib", version = "2.11.0")
+
+bazel_dep(name = "toolchains_musl", version = "0.1.20", dev_dependency = True)
+
+toolchains_musl = use_extension(
+    "@toolchains_musl//:toolchains_musl.bzl",
+    "toolchains_musl",
+    dev_dependency = True,
+)
+toolchains_musl.config(
+    extra_target_compatible_with = ["@//tools/linkers:musl"],
+)
+
+bazel_dep(name = "toolchains_llvm", version = "1.2.0", dev_dependency = True)
+
+# Configure and register the toolchain.
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+llvm.toolchain(
+    llvm_version = "16.0.0",
+)
+use_repo(llvm, "llvm_toolchain")
+
+register_toolchains(
+    "@llvm_toolchain//:all",
+    dev_dependency = True,
+)
+
+bazel_dep(name = "buildifier_prebuilt", version = "6.1.2", dev_dependency = True)
+bazel_dep(
+    name = "rules_rust",
+    version = "0.59.2",
+    dev_dependency = True,
+)
+
+rust = use_extension(
+    "@rules_rust//rust:extensions.bzl",
+    "rust",
+    dev_dependency = True,
+)
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = {
+        "x86_64-apple-darwin": [
+            "@platforms//cpu:x86_64",
+            "@platforms//os:macos",
+        ],
+        "aarch64-apple-darwin": [
+            "@platforms//cpu:arm64",
+            "@platforms//os:macos",
+        ],
+        "aarch64-unknown-linux-musl": [
+            "@platforms//cpu:arm64",
+            "@platforms//os:linux",
+            "@//tools/linkers:musl",
+        ],
+        "x86_64-unknown-linux-musl": [
+            "@platforms//cpu:x86_64",
+            "@platforms//os:linux",
+            "@//tools/linkers:musl",
+        ],
+    },
+    sha256s = {
+        "rustc-1.84.0-aarch64-apple-darwin.tar.xz": "7e2a1594c1e174f28b84adab25e96699feb8d0455dabe8dac1b2850945b400b1",
+        "clippy-1.84.0-aarch64-apple-darwin.tar.xz": "5317d98dc9d6994f8d087aabecc16627d1a202500acd09f752d722f5462587df",
+        "cargo-1.84.0-aarch64-apple-darwin.tar.xz": "0dc1cf2510c692f0d2ac254bf8474b3f96a719eeb5062b16dceb30361c0d235e",
+        "llvm-tools-1.84.0-aarch64-apple-darwin.tar.xz": "2600f7f19064157b3b4108a852a311c29bbe3353d1f24b284cc942b89693f3f6",
+        "rust-std-1.84.0-aarch64-apple-darwin.tar.xz": "c3ec73225e0f0228e4a8a9c650195b3f9e63f839954e65509d47ea58316f8f5d",
+    },
+    versions = ["1.84.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+crate = use_extension(
+    "@rules_rust//crate_universe:extension.bzl",
+    "crate",
+    dev_dependency = True,
+)
+crate.from_cargo(
+    name = "crate_index",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = [
+        "//:Cargo.toml",
+        "//playwright/private/cli:Cargo.toml",
+    ],
+    supported_platform_triples = [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+use_repo(crate, "crate_index")
+
+http_jar = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_jar")
+
+http_jar(
+    name = "stardoc-prebuilt",
+    integrity = "sha256-jDi5ITmziwwiHCsfd8v0UOoraWXIAfICIll+wbpg/vE=",
+    urls = ["https://github.com/alexeagle/stardoc-prebuilt/releases/download/v0.7.1/renderer_deploy.jar"],
+)

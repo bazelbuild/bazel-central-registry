@@ -1,0 +1,139 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+UNIX_DEFINES = [
+    "HAVE_DECL_GETENTROPY",
+    "HAVE_DECL_GLOB",
+    "HAVE_DECL_MMAP",
+    "HAVE_DLOPEN",
+    "HAVE_FUNC_ATTRIBUTE_DESTRUCTOR",
+    "HAVE_PTHREAD_H",
+    "HAVE_STRINGS_H",
+    "HAVE_UNISTD_H",
+]
+
+cc_library(
+    name = "xml2",
+    srcs = [
+        "HTMLparser.c",
+        "HTMLtree.c",
+        "SAX2.c",
+        "buf.c",
+        "c14n.c",
+        "catalog.c",
+        "chvalid.c",
+        "debugXML.c",
+        "dict.c",
+        "encoding.c",
+        "entities.c",
+        "error.c",
+        "globals.c",
+        "hash.c",
+        "list.c",
+        "nanohttp.c",
+        "parser.c",
+        "parserInternals.c",
+        "pattern.c",
+        "relaxng.c",
+        "schematron.c",
+        "threads.c",
+        "tree.c",
+        "uri.c",
+        "valid.c",
+        "xinclude.c",
+        "xlink.c",
+        "xmlIO.c",
+        "xmlmemory.c",
+        "xmlmodule.c",
+        "xmlreader.c",
+        "xmlregexp.c",
+        "xmlsave.c",
+        "xmlschemas.c",
+        "xmlschemastypes.c",
+        "xmlstring.c",
+        "xmlwriter.c",
+        "xpath.c",
+        "xpointer.c",
+    ] + glob(["include/private/*.h"]),
+    hdrs = glob([
+        "include/libxml/*.h",
+        "*.h",
+    ]),
+    defines = select({
+        "@platforms//os:linux": UNIX_DEFINES + [
+            "HAVE_POLL_H",
+        ],
+        "@platforms//os:macos": UNIX_DEFINES,
+        "@platforms//os:windows": [
+            "LIBXML_STATIC",
+            '"XML_THREAD_LOCAL=__declspec(thread)"',
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "bcrypt.lib",
+        ],
+        "//conditions:default": [
+            "-lm",
+            "-pthread",
+            "-ldl",
+        ],
+    }),
+    textual_hdrs = [
+        "codegen/charset.inc",
+        "codegen/escape.inc",
+        "codegen/html5ent.inc",
+        "codegen/ranges.inc",
+        "codegen/unicode.inc",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libxml2",
+    actual = ":xml2",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "xmllint",
+    srcs = [
+        "lintmain.c",
+        "shell.c",
+        "xmllint.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//:libxml2"],
+)
+
+cc_binary(
+    name = "xmlcatalog",
+    srcs = ["xmlcatalog.c"],
+    visibility = ["//visibility:public"],
+    deps = ["//:libxml2"],
+)
+
+DATA = glob([
+    "test/**",
+])
+
+[
+    cc_test(
+        name = test.removeprefix("test") + "_test",
+        srcs = [test + ".c"],
+        data = DATA,
+        deps = ["//:libxml2"],
+    )
+    for test in [
+        "testapi",
+        "testchar",
+        "testdict",
+        "testlimits",
+        # TODO(zbarsky): Figure out why these two fail in BCR CI but work locally...
+        # "testparser",
+        # "testrecurse",
+    ]
+]

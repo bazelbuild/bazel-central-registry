@@ -36,7 +36,7 @@ dispatched_files = {
 These mappings ensure that the correct SIMD or hardware-specific implementation is used during runtime, based on the capabilities of the target architecture. Be sure to review the dispatched files for each module and update the mappings as necessary.
 
 When adding a new module, follow these steps:
-1. Add the new module `modules/opencv/4.11.0/overlay/opencv.bzl` to `CONFIG`
+1. Add the new module `modules/opencv/4.12.0/overlay/opencv.bzl` to `CONFIG`
 2. Use the `opencv_module` macro to define the module's build rules.
 3. Update the `dispatched_files` mapping if the module includes hardware-specific optimizations.
 
