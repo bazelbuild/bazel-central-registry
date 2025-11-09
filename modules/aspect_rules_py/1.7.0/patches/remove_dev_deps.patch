@@ -1,0 +1,561 @@
+--- a/MODULE.bazel	2025-11-08 19:15:08
++++ b/MODULE.bazel	2025-11-08 19:15:08
+@@ -40,558 +40,3 @@
+ # HACK: In prod the includer's patch inserts the use_repo for multitool. This
+ # solves the problem of needing a use_repo here in prod and below in dev.
+ 
+-################################################################################
+-# Dev deps
+-#
+-# This is what we wish the MODULE.bazel looked like.
+-#
+-# See https://github.com/bazelbuild/bazel/issues/27137, we can't do e2e tests
+-# with includes.
+-#
+-# As a workaround this block is expanded using tools/bazel/includer.py as part of
+-# pre-commit. Do NOT add directly to the below content as it will be replaced.
+-# Instead add an include directive, or add to one of the included files.
+-#
+-# The included content is truncated off in release. Production dependencies MUST
+-# be specified directly in the MODULE.bazel file as is conventional.
+-#
+-# include("//bazel/include:llvm.MODULE.bazel")
+-# include("//bazel/include:rust.MODULE.bazel")
+-# include("//bazel/include:cargo.MODULE.bazel")
+-# include("//bazel/include:test.MODULE.bazel")
+-# include("//bazel/include:oci.MODULE.bazel")
+-# include("//bazel/include:telemetry.MODULE.bazel")
+-# include("//bazel/include:python.MODULE.bazel")
+-# include("//bazel/include:release.MODULE.bazel")
+-# include("//bazel/include:multitool.MODULE.bazel")
+-# include("//bazel/include:tools.MODULE.bazel")
+-
+-################################################################################
+-# Begin included content
+-
+-########################################
+-# from bazel/include/llvm.MODULE.bazel
+-# LLVM configuration
+-
+-bazel_dep(name = "toolchains_llvm", version = "1.4.0")
+-bazel_dep(name = "rules_cc", version = "0.2.11")
+-
+-single_version_override(
+-    module_name = "toolchains_llvm",
+-    patch_strip = 1,
+-    patches = [
+-        "//bazel/patches:toolchains_llvm.patch",
+-    ],
+-)
+-
+-llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+-
+-execution_oses = [
+-    "macos",
+-    "linux",
+-]
+-
+-execution_cpus = [
+-    "aarch64",
+-    "x86_64",
+-]
+-
+-[
+-    [
+-        llvm.toolchain(
+-            name = "llvm_toolchain_{}_{}".format(exec_os, exec_cpu),
+-            exec_arch = exec_cpu,
+-            exec_os = exec_os if exec_os != "macos" else "darwin",
+-            llvm_version = "20.1.2",
+-        ),
+-        llvm.sysroot(
+-            name = "llvm_toolchain_{}_{}".format(exec_os, exec_cpu),
+-            label = "@org_chromium_sysroot_linux_x86_64//:sysroot",
+-            targets = ["linux-x86_64"],
+-        ),
+-        llvm.sysroot(
+-            name = "llvm_toolchain_{}_{}".format(exec_os, exec_cpu),
+-            label = "@org_chromium_sysroot_linux_arm64//:sysroot",
+-            targets = ["linux-aarch64"],
+-        ),
+-        llvm.sysroot(
+-            name = "llvm_toolchain_{}_{}".format(exec_os, exec_cpu),
+-            label = "@sysroot_darwin_universal//:sysroot",
+-            targets = [
+-                "darwin-aarch64",
+-                "darwin-x86_64",
+-            ],
+-        ),
+-        use_repo(llvm, "llvm_toolchain_{}_{}".format(exec_os, exec_cpu)),
+-    ]
+-    for exec_os in execution_oses
+-    for exec_cpu in execution_cpus
+-]
+-
+-http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+-
+-_SYSROOT_LINUX_BUILD_FILE = """\
+-filegroup(
+-    name = "sysroot",
+-    srcs = glob(["*/**"]),
+-    visibility = ["//visibility:public"],
+-)
+-"""
+-
+-http_archive(
+-    name = "org_chromium_sysroot_linux_arm64",
+-    build_file_content = _SYSROOT_LINUX_BUILD_FILE,
+-    sha256 = "b199942a0bd9c34800e8d7b669778ef45f2054b9f106039439383dd66efcef31",
+-    urls = ["https://github.com/DavidZbarsky-at/sysroot-min/releases/download/v0.0.20/debian_bullseye_arm64_sysroot.tar.xz"],
+-)
+-
+-http_archive(
+-    name = "org_chromium_sysroot_linux_x86_64",
+-    build_file_content = _SYSROOT_LINUX_BUILD_FILE,
+-    sha256 = "b279dd2926e7d3860bb4e134997a45df5106f680e160a959b945580ba4ec755f",
+-    urls = ["https://github.com/DavidZbarsky-at/sysroot-min/releases/download/v0.0.20/debian_bullseye_amd64_sysroot.tar.xz"],
+-)
+-
+-http_archive(
+-    name = "sysroot_darwin_universal",
+-    build_file_content = """
+-filegroup(
+-    name = "sysroot",
+-    srcs = glob(
+-        include = ["**"],
+-        exclude = ["**/*:*"],
+-    ),
+-    visibility = ["//visibility:public"],
+-)
+-""",
+-    integrity = "sha256-9qzGIJ251Wtn/K+R7B3v5Ici6esT3CH7kc/s6xSJ5X4=",
+-    # The ruby header has an infinite symlink that we need to remove.
+-    patch_cmds = ["rm System/Library/Frameworks/Ruby.framework/Versions/Current/Headers/ruby/ruby"],
+-    strip_prefix = "MacOSX14.5.sdk",
+-    urls = ["https://github.com/alexey-lysiuk/macos-sdk/releases/download/14.5/MacOSX14.5.tar.xz"],
+-)
+-
+-target_oses = [
+-    "macos",
+-    "linux",
+-]
+-
+-target_cpus = [
+-    "aarch64",
+-    "x86_64",
+-]
+-
+-platforms = [
+-    {
+-        "exec_os": exec_os,
+-        "exec_cpu": exec_cpu,
+-        "tgt_os": tgt_os,
+-        "tgt_cpu": tgt_cpu,
+-    }
+-    for exec_os in execution_oses
+-    for exec_cpu in execution_cpus
+-    for tgt_os in target_oses
+-    for tgt_cpu in target_cpus
+-]
+-
+-[register_toolchains("//bazel/platforms/toolchains:{}_{}_{}_{}_llvm".format(
+-    p["exec_os"],
+-    p["exec_cpu"],
+-    p["tgt_os"],
+-    p["tgt_cpu"],
+-)) for p in platforms]
+-
+-########################################
+-# from bazel/include/rust.MODULE.bazel
+-# Rust configuration
+-
+-bazel_dep(name = "rules_rust", version = "0.67.0")
+-bazel_dep(name = "openssl", version = "3.3.1.bcr.6")
+-
+-RUST_EDITION = "2024"
+-
+-RUST_VERSION = "1.88.0"
+-
+-rust = use_extension(
+-    "@rules_rust//rust:extensions.bzl",
+-    "rust",
+-)
+-
+-# These override the default rust_repository_sets created by rust_register_toolchain. They must be named exactly as follows.
+-# NB: The first call for a particular name may set the `edition`, `exec_triple`, and `versions` attributes, the subsequent calls should not set it or else Bazel will fail with,
+-# "Error in fail: You must only set edition on the first call to repository_set for a particular name but it was set multiple times for rust_linux_x86_64"
+-# "Error in fail: You must only set exec_triple on the first call to repository_set for a particular name but it was set multiple times for rust_linux_x86_64"
+-# "Error in fail: You must only set versions on the first call to repository_set for a particular name but it was set multiple times for rust_linux_x86_64"
+-
+-# Execution platform : linux x86 (x86_64-unknown-linux-gnu)
+-# -> linux x86_64 (gnu)
+-rust.repository_set(
+-    name = "rust_linux_x86_64",
+-    edition = RUST_EDITION,  # "edition" only set in first instance of "rust_linux_x86_64" repository_set (see comment above)
+-    exec_triple = "x86_64-unknown-linux-gnu",  # "exec_triple" only set in first instance of "rust_linux_x86_64" repository_set (see comment above)
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "x86_64-unknown-linux-gnu",
+-    versions = [RUST_VERSION],  # "versions" only set in first instance of "rust_linux_x86_64" repository_set (see comment above)
+-)
+-
+-# -> linux x86_64 (musl)
+-rust.repository_set(
+-    name = "rust_linux_x86_64",
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "x86_64-unknown-linux-musl",
+-)
+-
+-# -> linux arm (musl)
+-rust.repository_set(
+-    name = "rust_linux_x86_64",
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:arm64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "aarch64-unknown-linux-musl",
+-)
+-
+-# -> darwin x86
+-rust.repository_set(
+-    name = "rust_linux_x86_64",
+-    target_compatible_with = [
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:macos",
+-    ],
+-    target_triple = "x86_64-apple-darwin",
+-)
+-
+-# -> darwin arm
+-rust.repository_set(
+-    name = "rust_linux_x86_64",
+-    target_compatible_with = [
+-        "@platforms//cpu:arm64",
+-        "@platforms//os:macos",
+-    ],
+-    target_triple = "aarch64-apple-darwin",
+-)
+-
+-# Execution platform : linux arm (aarch64-unknown-linux-gnu)
+-# -> linux arm (gnu)
+-rust.repository_set(
+-    name = "rust_linux_aarch64",
+-    edition = RUST_EDITION,  # "edition" only set in first instance of "rust_linux_aarch64" repository_set (see comment above)
+-    exec_triple = "aarch64-unknown-linux-gnu",  # "exec_triple" only set in first instance of "rust_linux_aarch64" repository_set (see comment above)
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:aarch64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "aarch64-unknown-linux-gnu",
+-    versions = [RUST_VERSION],  # "versions" only set in first instance of "rust_linux_aarch64" repository_set (see comment above)
+-)
+-
+-# -> linux arm (musl)
+-rust.repository_set(
+-    name = "rust_linux_aarch64",
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:aarch64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "aarch64-unknown-linux-musl",
+-)
+-
+-# Execution platform : darwin x86 (x86_64-apple-darwin)
+-# -> linux x86 (musl)
+-rust.repository_set(
+-    name = "rust_darwin_x86_64",
+-    edition = RUST_EDITION,  # "edition" only set in first instance of "rust_darwin_x86_64" repository_set (see comment above)
+-    exec_triple = "x86_64-apple-darwin",  # "exec_triple" only set in first instance of "rust_darwin_x86_64" repository_set (see comment above)
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "x86_64-unknown-linux-musl",
+-    versions = [RUST_VERSION],  # "versions" only set in first instance of "rust_darwin_x86_64" repository_set (see comment above)
+-)
+-
+-# -> linux arm (musl)
+-rust.repository_set(
+-    name = "rust_darwin_x86_64",
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:arm64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "aarch64-unknown-linux-musl",
+-)
+-
+-# -> darwin x86
+-rust.repository_set(
+-    name = "rust_darwin_x86_64",
+-    target_compatible_with = [
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:macos",
+-    ],
+-    target_triple = "x86_64-apple-darwin",
+-)
+-
+-# -> darwin arm
+-rust.repository_set(
+-    name = "rust_darwin_x86_64",
+-    target_compatible_with = [
+-        "@platforms//cpu:arm64",
+-        "@platforms//os:macos",
+-    ],
+-    target_triple = "aarch64-apple-darwin",
+-)
+-
+-# Execution platform : darwin arm (aarch64-apple-darwin)
+-# -> linux x86 (musl)
+-rust.repository_set(
+-    name = "rust_darwin_aarch64",
+-    edition = RUST_EDITION,  # "edition" only set in first instance of "rust_darwin_aarch64" repository_set (see comment above)
+-    exec_triple = "aarch64-apple-darwin",  # "exec_triple" only set in first instance of "rust_darwin_aarch64" repository_set (see comment above)
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "x86_64-unknown-linux-musl",
+-    versions = [RUST_VERSION],  # "versions" only set in first instance of "rust_darwin_aarch64" repository_set (see comment above)
+-)
+-
+-# -> linux arm (musl)
+-rust.repository_set(
+-    name = "rust_darwin_aarch64",
+-    target_compatible_with = [
+-        "//bazel/platforms/linkers:unknown",
+-        "@platforms//cpu:arm64",
+-        "@platforms//os:linux",
+-    ],
+-    target_triple = "aarch64-unknown-linux-musl",
+-)
+-
+-# -> darwin x86
+-rust.repository_set(
+-    name = "rust_darwin_aarch64",
+-    target_compatible_with = [
+-        "@platforms//cpu:x86_64",
+-        "@platforms//os:macos",
+-    ],
+-    target_triple = "x86_64-apple-darwin",
+-)
+-
+-# -> darwin arm
+-rust.repository_set(
+-    name = "rust_darwin_aarch64",
+-    target_compatible_with = [
+-        "@platforms//cpu:arm64",
+-        "@platforms//os:macos",
+-    ],
+-    target_triple = "aarch64-apple-darwin",
+-)
+-use_repo(rust, "rust_toolchains")
+-
+-register_toolchains("@rust_toolchains//:all")
+-
+-########################################
+-# from bazel/include/cargo.MODULE.bazel
+-# Separate from the Rust config so that we can reuse Rust in e2e testing whereas
+-# the cargo config is root repo specific.
+-
+-bazel_dep(name = "xz", version = "5.4.5.bcr.5")
+-bazel_dep(name = "zstd", version = "1.5.7")
+-bazel_dep(name = "bzip2", version = "1.0.8.bcr.2")
+-bazel_dep(name = "rules_rs", version = "0.0.7")
+-
+-crate = use_extension(
+-    "@rules_rs//rs:extensions.bzl",
+-    "crate",
+-)
+-crate.from_cargo(
+-    name = "crates",
+-    cargo_lock = "//:Cargo.lock",
+-    cargo_toml = "//:Cargo.toml",
+-    platform_triples = [
+-        "aarch64-apple-darwin",
+-        "aarch64-unknown-linux-gnu",
+-        "x86_64-apple-darwin",
+-        "x86_64-unknown-linux-gnu",
+-    ],
+-)
+-crate.annotation(
+-    crate = "backtrace",
+-    # This just compiles code on Android, we don't need it.
+-    gen_build_script = "off",
+-    repositories = ["crates"],
+-)
+-crate.annotation(
+-    crate = "zstd-sys",
+-    # This build script is naughty and tries to depend on system zstd or build it from source.
+-    gen_build_script = "off",
+-    repositories = ["crates"],
+-    deps = ["@@zstd+//:zstd"],
+-)
+-crate.annotation(
+-    crate = "bzip2-sys",
+-    gen_build_script = "off",
+-    repositories = ["crates"],
+-    deps = ["@@bzip2+//:bz2"],
+-)
+-crate.annotation(
+-    crate = "lzma-sys",
+-    gen_build_script = "off",
+-    repositories = ["crates"],
+-    deps = ["@@xz+//:lzma"],
+-)
+-use_repo(crate, "crates")
+-
+-########################################
+-# from bazel/include/test.MODULE.bazel
+-# TODO: Replace with bazel_features?
+-# cf. https://github.com/bazel-contrib/bazelrc-preset.bzl/blob/main/MODULE.bazel#L8C1-L10C70
+-bazel_dep(name = "bazel_features", version = "1.0.0")
+-bazel_dep(name = "rules_shell", version = "0.6.1")
+-
+-version = use_extension("@bazel_features//private:extensions.bzl", "version_extension")
+-use_repo(version, "bazel_features_globals", "bazel_features_version")
+-
+-########################################
+-# from bazel/include/oci.MODULE.bazel
+-# rules_oci and friends
+-bazel_dep(name = "rules_oci", version = "2.2.6", dev_dependency = True)
+-
+-oci = use_extension("@rules_oci//oci:extensions.bzl", "oci", dev_dependency = True)
+-oci.pull(
+-    name = "ubuntu",
+-    digest = "sha256:66460d557b25769b102175144d538d88219c077c678a49af4afca6fbfc1b5252",
+-    image = "public.ecr.aws/docker/library/ubuntu",
+-    platforms = [
+-        "linux/arm64/v8",
+-        "linux/amd64",
+-    ],
+-    tag = "latest",
+-)
+-use_repo(oci, "ubuntu", "ubuntu_linux_amd64", "ubuntu_linux_arm64_v8")
+-
+-# For building test images with py_image_layer
+-bazel_dep(name = "container_structure_test", version = "1.19.3", dev_dependency = True)
+-git_override(
+-    module_name = "container_structure_test",
+-    commit = "89353131caa8b28f73bb5aa67e91cf5b1b5b5650",
+-    remote = "https://github.com/GoogleContainerTools/container-structure-test.git",
+-)
+-
+-# Used for testing container layers
+-bazel_dep(name = "tar.bzl", version = "0.5.5")
+-
+-bazel_lib_toolchains = use_extension("@tar.bzl//tar:extensions.bzl", "toolchains")
+-use_repo(bazel_lib_toolchains, "bsd_tar_toolchains")
+-
+-register_toolchains("@bsd_tar_toolchains//:all")
+-
+-########################################
+-# from bazel/include/telemetry.MODULE.bazel
+-# tools_telemetry
+-bazel_dep(name = "aspect_tools_telemetry", version = "0.2.8")
+-
+-tel = use_extension("@aspect_tools_telemetry//:extension.bzl", "telemetry")
+-use_repo(tel, "aspect_tools_telemetry_report")
+-
+-########################################
+-# from bazel/include/python.MODULE.bazel
+-# rules_python and friends
+-# Note that we dep on rules_python as part of the prod deps, not here
+-bazel_dep(name = "rules_python_gazelle_plugin", version = "1.0.0")
+-
+-python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+-python.toolchain(
+-    is_default = True,
+-    python_version = "3.9",
+-)
+-python.toolchain(
+-    is_default = False,
+-    python_version = "3.12",
+-)
+-
+-# We still use pip for testing the virtual deps machinery
+-pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+-pip.parse(
+-    hub_name = "django",
+-    python_version = "3.9",
+-    requirements_lock = "//py/tests/virtual/django:requirements.txt",
+-)
+-use_repo(pip, "django")
+-
+-# For everything else, we use our own uv machinery
+-uv = use_extension("//uv/unstable:extension.bzl", "uv", dev_dependency = True)
+-uv.declare_hub(
+-    hub_name = "pypi",
+-)
+-uv.declare_venv(
+-    hub_name = "pypi",
+-    venv_name = "default",
+-)
+-uv.lockfile(
+-    src = "//:uv.lock",
+-    hub_name = "pypi",
+-    venv_name = "default",
+-)
+-uv.unstable_annotate_requirements(
+-    src = "//:annotations.toml",
+-    hub_name = "pypi",
+-    venv_name = "default",
+-)
+-use_repo(uv, "pypi")
+-
+-http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+-
+-http_file(
+-    name = "django_4_2_4",
+-    downloaded_file_path = "Django-4.2.4-py3-none-any.whl",
+-    sha256 = "860ae6a138a238fc4f22c99b52f3ead982bb4b1aad8c0122bcd8c8a3a02e409d",
+-    urls = ["https://files.pythonhosted.org/packages/7f/9e/fc6bab255ae10bc57fa2f65646eace3d5405fbb7f5678b90140052d1db0f/Django-4.2.4-py3-none-any.whl"],
+-)
+-
+-http_file(
+-    name = "django_4_1_10",
+-    downloaded_file_path = "Django-4.1.10-py3-none-any.whl",
+-    sha256 = "26d0260c2fb8121009e62ffc548b2398dea2522b6454208a852fb0ef264c206c",
+-    urls = ["https://files.pythonhosted.org/packages/34/25/8a218de57fc9853297a1a8e4927688eff8107d5bc6dcf6c964c59801f036/Django-4.1.10-py3-none-any.whl"],
+-)
+-
+-http_file(
+-    name = "sqlparse_0_4_0",
+-    downloaded_file_path = "sqlparse-0.4.0-py3-none-any.whl",
+-    sha256 = "0523026398aea9c8b5f7a4a6d5c0829c285b4fbd960c17b5967a369342e21e01",
+-    urls = ["https://files.pythonhosted.org/packages/10/96/36c136013c4a6ecb8c6aa3eed66e6dcea838f85fd80e1446499f1dabfac7/sqlparse-0.4.0-py3-none-any.whl"],
+-)
+-
+-########################################
+-# from bazel/include/release.MODULE.bazel
+-bazel_dep(name = "rules_pkg", version = "1.1.0")
+-
+-########################################
+-# from bazel/include/multitool.MODULE.bazel
+-# Multitool configuration
+-
+-# Multitool is a prod dep (for now) so we don't need this
+-bazel_dep(name = "rules_multitool", version = "1.9.0")
+-
+-multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool")
+-multitool.hub(lockfile = "//tools:tools.lock.json")
+-use_repo(multitool, "multitool")
+-
+-########################################
+-# from bazel/include/tools.MODULE.bazel
+-# Local tools
+-bazel_dep(name = "bazelrc-preset.bzl", version = "1.4.0")
+-bazel_dep(name = "bazel_env.bzl", version = "0.5.0")
+-bazel_dep(name = "gazelle", version = "0.45.0")
