@@ -1,0 +1,164 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+_COMMON_DEPS = [
+    "@boost.assert",
+    "@boost.bind",
+    "@boost.chrono",
+    "@boost.config",
+    "@boost.core",
+    "@boost.date_time",
+    "@boost.move",
+    "@boost.system",
+    "@boost.type_traits",
+]
+
+_COMMON_HDRS = [
+    "include/boost/thread/detail/*.hpp",
+    "include/boost/thread/*.hpp",
+    "include/boost/thread/futures/*.hpp",
+    "include/boost/thread/csbl/**/*.hpp",
+    "include/boost/thread/executors/*.hpp",
+]
+
+_WINDOWS_HDRS = [
+    "include/boost/thread/win32/*.hpp",
+]
+
+_POSIX_HDRS = [
+    "include/boost/thread/pthread/*.hpp",
+]
+
+_MAC_HDRS = [
+    "include/boost/thread/pthread/*.hpp",
+]
+
+_WINDOWS_SRCS = [
+    "src/win32/*.cpp",
+]
+
+_MAC_SRCS = [
+    "src/pthread/once.cpp",
+    "src/pthread/thread.cpp",
+]
+
+_POSIX_SRCS = [
+    "src/pthread/thread.cpp",
+    "src/pthread/once.cpp",
+]
+
+_COMMON_SRCS = [
+    "src/future.cpp",
+]
+
+_COMMON_EXCLUDE_SRCS = ["src/pthread/once_atomic.cpp"]
+
+cc_library(
+    name = "thread_posix",
+    srcs = glob(
+        _POSIX_SRCS + _COMMON_SRCS,
+        exclude = _COMMON_EXCLUDE_SRCS,
+    ),
+    hdrs = glob(_POSIX_HDRS + _COMMON_HDRS),
+    defines = [
+        "BOOST_THREAD_DONT_USE_ATOMIC",
+    ],
+    includes = ["include"],
+    linkopts = ["-lpthread"],
+    target_compatible_with = select({
+        "@platforms//os:macos": ["@platforms//:incompatible"],
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = _COMMON_DEPS,
+)
+
+cc_library(
+    name = "thread_windows",
+    srcs = glob(
+        _WINDOWS_SRCS + _COMMON_SRCS,
+        exclude = _COMMON_EXCLUDE_SRCS,
+    ),
+    hdrs = glob(_WINDOWS_HDRS + _COMMON_HDRS),
+    defines = [
+        "BOOST_THREAD_WIN32",
+        "BOOST_THREAD_DONT_USE_ATOMIC",
+    ],
+    includes = ["include"],
+    linkopts = ["-DEFAULTLIB:shell32"],
+    local_defines = [
+        "BOOST_THREAD_BUILD_LIB",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:macos": ["@platforms//:incompatible"],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    textual_hdrs = glob(_POSIX_HDRS),
+    deps = _COMMON_DEPS + [
+        "@boost.atomic",
+    ],
+)
+
+cc_library(
+    name = "thread_mac",
+    srcs = glob(
+        _MAC_SRCS + _COMMON_SRCS,
+        exclude = _COMMON_EXCLUDE_SRCS,
+    ),
+    hdrs = glob(_MAC_HDRS + _COMMON_HDRS),
+    defines = [
+        "BOOST_THREAD_DONT_USE_ATOMIC",
+    ],
+    includes = ["include"],
+    target_compatible_with = select({
+        "@platforms//os:macos": [],
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = _COMMON_DEPS,
+)
+
+cc_library(
+    name = "boost.thread",
+    srcs = glob(
+        include = ["src/**/*.cpp"],
+        exclude = _POSIX_SRCS + _WINDOWS_SRCS + _MAC_SRCS + _COMMON_SRCS + _COMMON_EXCLUDE_SRCS,
+    ),
+    hdrs = glob(
+        include = [
+            "include/**/*.hpp",
+        ],
+        exclude = _POSIX_HDRS + _WINDOWS_HDRS + _MAC_HDRS + _COMMON_HDRS,
+    ),
+    includes = ["include"],
+    deps = [
+        "@boost.atomic",
+        "@boost.concept_check",
+        "@boost.container",
+        "@boost.container_hash",
+        "@boost.exception",
+        "@boost.function",
+        "@boost.io",
+        "@boost.optional",
+        "@boost.predef",
+        "@boost.preprocessor",
+        "@boost.smart_ptr",
+        "@boost.static_assert",
+        "@boost.throw_exception",
+        "@boost.tuple",
+        "@boost.utility",
+    ] + select({
+        "@platforms//os:macos": [
+            ":thread_mac",
+        ],
+        "@platforms//os:windows": [
+            ":thread_windows",
+            "@boost.winapi",
+        ],
+        "//conditions:default": [
+            ":thread_posix",
+        ],
+    }) + _COMMON_DEPS,
+)
