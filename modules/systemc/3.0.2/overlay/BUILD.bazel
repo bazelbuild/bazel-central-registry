@@ -1,24 +1,54 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
+PLATFORM_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/wd4996",
+    ],
+    "//conditions:default": [
+        "-Wno-deprecated",
+    ],
+})
+
+PLATFORM_CXXOPTS = PLATFORM_COPTS + select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/std:c++17",
+    ],
+    "//conditions:default": [
+        "-std=c++17",
+    ],
+})
+
 cc_library(
     name = "systemc",
     srcs = glob(
         ["src/**/*.cpp"],
         exclude = ["src/sysc/packages/qt/**"],
     ) + [
-        "src/sysc/packages/qt/md/iX86_64.s",
         "src/sysc/packages/qt/qt.c",
-    ],
+    ] + select({
+        "@platforms//cpu:aarch64": ["src/sysc/packages/qt/md/aarch64.s"],
+        "@platforms//cpu:x86_64": ["src/sysc/packages/qt/md/iX86_64.s"],
+        "//conditions:default": [],
+    }),
     hdrs = glob([
         "src/**/*.h",
     ]) + [
         "src/systemc",
         "src/tlm",
     ],
-    local_defines = [
-        "SC_BUILD",
-        "SC_INCLUDE_FX",
-    ],
+    copts = PLATFORM_COPTS,
+    cxxopts = PLATFORM_CXXOPTS,
     includes = ["src"],
+    local_defines = select({
+        "@platforms//os:windows": [
+            "SC_BUILD",
+            "SC_INCLUDE_FX",
+            "_CRT_SECURE_NO_WARNINGS",
+        ],
+        "//conditions:default": [
+            "SC_BUILD",
+            "SC_INCLUDE_FX",
+        ],
+    }),
     visibility = ["//visibility:public"],
 )
