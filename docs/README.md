@@ -207,6 +207,10 @@ To be submitted, a PR needs to:
   - If you see your presubmit check stuck on "blocked", a BCR maintainer needs to explicitly unblock the presubmit run or apply the `presubmit-auto-run` label to your PR. This is to avoid abuse of our CI system. Feel free to ping `@bazelbuild/bcr-maintainers` if you're blocked on this.
 - Pass certain other checks, especially for first-time contributors, such as CLA signing or GitHub workflows that require approval from BCR maintainers.
 
+In case a release is broken, the PR to publish it may never be merged.
+Module maintainers can ask the `bazel-io` bot to close a PR by commenting `@bazel-io abandon` on the PR thread.
+This is intended for cases where the PR is opened by a bot account, and helps BCR maintainers keep the PR backlog manageable.
+
 ## Module versions
 
 Bazel has a diverse ecosystem, and projects use a variety of versioning schemes. Bazel modules have a fairly relaxed [version format](https://bazel.build/external/module#version_format), which covers most version strings used by open-source projects. Thus, modules submitted to the BCR are generally versioned according to their upstream project's versions.
