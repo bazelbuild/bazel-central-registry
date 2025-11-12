@@ -73,6 +73,12 @@ cmake(
         # This is name of the monolithic static lib.
 	    "libusd_m.a",
     ],
+    # These out_data_dirs are required because the USD library
+    # will attempt to load plugin info files (plugInfo.json) on startup.
+    # It will throw an exception and exit if it cannot find these files.
+    out_data_dirs = [
+        "lib/usd"
+    ]
     lib_source = ":all_srcs",
     deps = [
         "@onetbb//:tbb",
