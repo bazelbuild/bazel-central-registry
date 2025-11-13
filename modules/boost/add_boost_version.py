@@ -110,13 +110,12 @@ status
 tools
 """
 
-# This compatibility level is non-zero for historical reasons. Previously, the compatibility level
-# was different for every minor version of boost. Version 1.89.0 for example was given the
-# compatibility level of 108900. This number is chosen to be higher than all of those, and is not
-# expected to change unless / until boost has a major version release.
+# Historical note: Previously, the compatibility_level was different for every minor version of
+# boost. Version 1.89.0 for example was given the compatibility level of 108900.
+# This is not expected to change unless / until boost has a major version release.
 # For more discussion, see:
 # https://github.com/bazelbuild/bazel-central-registry/discussions/6511
-COMPATIBILITY_LEVEL = 1000000
+COMPATIBILITY_LEVEL = 0
 
 
 class Semver:
