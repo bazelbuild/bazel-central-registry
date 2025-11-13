@@ -1,6 +1,8 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
 load("@rules_license//rules:license.bzl", "license")
+load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 
 package(
     default_applicable_licenses = [":license"],
@@ -21,7 +23,19 @@ license(
 
 filegroup(
     name = "all_srcs",
-    srcs = glob(["**"], exclude=["bazel*/**"]),
+    srcs = glob([
+    	"CMakeLists.txt",
+    	"pxr/**",
+    	"cmake/**",
+    	"extras/**",
+    	"docs/**",
+    	"third_party/**"
+    ], exclude=[
+    	"bazel*/**",
+    	"BUILD",
+    	"BUILD.bazel",
+    	"MODULE.bazel"
+    ]),
     visibility = ["//visibility:public"],
 )
 
@@ -37,6 +51,9 @@ filegroup(
 #
 cmake(
     name = "openusd",
+    build_args = [
+        "-j16",
+    ],
     cache_entries = {
         "BUILD_SHARED_LIBS": "OFF",
         "PXR_BUILD_MONOLITHIC": "ON",
@@ -66,29 +83,45 @@ cmake(
     },
     env = {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_BUILD_PARALLEL_LEVEL": "4",
+        "CMAKE_BUILD_PARALLEL_LEVEL": "16",
     },
     alwayslink = True,
     out_static_libs = [
         # This is name of the monolithic static lib.
 	    "libusd_m.a",
     ],
-    # These out_data_dirs are required because the USD library
-    # will attempt to load plugin info files (plugInfo.json) on startup.
-    # It will throw an exception and exit if it cannot find these files.
     out_data_dirs = [
-        "lib/usd"
-    ]
+	    "lib/usd"
+    ],
     lib_source = ":all_srcs",
     deps = [
         "@onetbb//:tbb",
     ],
 )
 
+# As part of the cmake build, OpenUSD installs a directory of plugin file resources (many plugInfo.json files)
+# to openusd/lib/usd. On program startup, OpenUSD expects these plugin files to be in a usd/ dir directly next
+# to the executable or .so library. It will throw an exception and crash if they are not found.
+# We use the 'copy_to_directory' helper to copy them out of 'openusd/lib/usd' to just 'usd' so that they
+# are at the right path.
+copy_to_directory(
+    name = "plugin_files",
+    srcs = [":openusd"],
+    out = "usd",
+    replace_prefixes = {
+        "openusd/lib/usd": "",
+    }
+)
+
 cc_test(
     name = "test_main",
     srcs = ["test_main.cpp"],
     deps = [
-        ":openusd"
+      ":openusd",
+      "@bazel_tools//tools/cpp/runfiles",
+    ],
+    data = [
+	    ":plugin_files",
     ]
 )
+
