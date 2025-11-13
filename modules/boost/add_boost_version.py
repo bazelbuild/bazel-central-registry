@@ -110,7 +110,13 @@ status
 tools
 """
 
-COMPATIBILITY_LEVEL = 0
+# This compatibility level is non-zero for historical reasons. Previously, the compatibility level
+# was different for every minor version of boost. Version 1.89.0 for example was given the
+# compatibility level of 108900. This number is chosen to be higher than all of those, and is not
+# expected to change unless / until boost has a major version release.
+# For more discussion, see:
+# https://github.com/bazelbuild/bazel-central-registry/discussions/6511
+COMPATIBILITY_LEVEL = 1000000
 
 
 class Semver:
@@ -285,10 +291,6 @@ def update_version_in_content(content: str, old_version: str, new_version: str) 
             content,
         )
 
-    # Replace any existing compatibility_level with 0. Previously the compatibility_level was set
-    # based on the boost version. Now we always set it to 0 so future versions can be backwards
-    # compatible. For more details, see discussion here:
-    # https://github.com/bazelbuild/bazel-central-registry/discussions/6511
     if "compatibility_level" in content:
         content = re.sub(r"(compatibility_level\s*=\s*)\d+", rf"\g<1>{COMPATIBILITY_LEVEL}", content)
 
@@ -417,6 +419,9 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
         if not has_any_files(target_path):
             logging.debug("Removing empty directory tree: %s", target_path)
             shutil.rmtree(target_path)
+
+    # TODO(kgk): Delete this line before pushing to PR.
+    shutil.rmtree(target_path)
 
     logging.debug("Copying from: %s to %s", source_path.name, target_path.name)
     shutil.copytree(source_path, target_path)
@@ -709,18 +714,20 @@ def main() -> None:
         module_versions = get_module_versions(module_path)
         tgt_path = module_path / args.version
 
-        # Check if version already exists (either in metadata.json or as directory)
-        if args.version in module_versions:
-            # Module already has this version in metadata.json
-            logging.debug("Retaining existing version: %s (in metadata.json)", module)
-            modules_with_version[module] = False
-            continue
+        # TODO(kgk): Delete this line before pushing to PR.
+        if 0:
+            # Check if version already exists (either in metadata.json or as directory)
+            if args.version in module_versions:
+                # Module already has this version in metadata.json
+                logging.debug("Retaining existing version: %s (in metadata.json)", module)
+                modules_with_version[module] = False
+                continue
 
-        if tgt_path.exists() and has_any_files(tgt_path):
-            # Directory exists with files but not in metadata.json yet
-            logging.debug("Retaining existing version: %s (directory exists)", module)
-            modules_with_version[module] = False
-            continue
+            if tgt_path.exists() and has_any_files(tgt_path):
+                # Directory exists with files but not in metadata.json yet
+                logging.debug("Retaining existing version: %s (directory exists)", module)
+                modules_with_version[module] = False
+                continue
 
         # Need to create this version
         try:
