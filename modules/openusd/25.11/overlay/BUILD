@@ -51,9 +51,6 @@ filegroup(
 #
 cmake(
     name = "openusd",
-    build_args = [
-        "-j16",
-    ],
     cache_entries = {
         "BUILD_SHARED_LIBS": "OFF",
         "PXR_BUILD_MONOLITHIC": "ON",
@@ -83,7 +80,6 @@ cmake(
     },
     env = {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_BUILD_PARALLEL_LEVEL": "16",
     },
     alwayslink = True,
     out_static_libs = [
