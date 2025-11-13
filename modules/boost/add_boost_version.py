@@ -110,6 +110,8 @@ status
 tools
 """
 
+COMPATIBILITY_LEVEL = 0
+
 
 class Semver:
     """Semantic version with BCR support.
@@ -283,20 +285,24 @@ def update_version_in_content(content: str, old_version: str, new_version: str) 
             content,
         )
 
-    # Update compatibility_level - always replace regardless of old value
+    # Replace any existing compatibility_level with 0. Previously the compatibility_level was set
+    # based on the boost version. Now we always set it to 0 so future versions can be backwards
+    # compatible. For more details, see discussion here:
+    # https://github.com/bazelbuild/bazel-central-registry/discussions/6511
     if "compatibility_level" in content:
-        new_parts = new_version.split(".")
-        if len(new_parts) >= 2:
-            major = int(new_parts[0])
-            minor = int(new_parts[1])
-            patch = int(new_parts[2].split(".bcr.")[0]) if len(new_parts) > 2 else 0
-            # Formula: major * 100000 + minor * 100 + patch
-            new_compat = major * 100000 + minor * 100 + patch
-
-            # Replace any compatibility_level value with the correct one
-            content = re.sub(r"(compatibility_level\s*=\s*)\d+", rf"\g<1>{new_compat}", content)
+        content = re.sub(r"(compatibility_level\s*=\s*)\d+", rf"\g<1>{COMPATIBILITY_LEVEL}", content)
 
     return content
+
+
+#def ensure_boost_deps_are_nodep_in_content(content: str) -> str:
+#    content = re.sub(
+#        r'(bazel_dep\([^)]*name\s*=\s*"boost\.[^"]*"[^)]*version\s*=\s*"[^"]*")(\s*,)?\s*\)',
+#        rf"\g<1>, repo_name = None)",
+#        content,
+#        flags=re.DOTALL,
+#    )
+#    return content
 
 
 def update_source_json(content: str, new_version: str) -> str:
@@ -422,6 +428,9 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
             logging.debug("Removing empty directory tree: %s", target_path)
             shutil.rmtree(target_path)
 
+    # TODO(kgk): Delete this before sending PR.
+    #shutil.rmtree(target_path)
+
     logging.debug("Copying from: %s to %s", source_path.name, target_path.name)
     shutil.copytree(source_path, target_path)
 
@@ -441,6 +450,9 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
                     content = update_source_json(content, new_version)
                 else:
                     content = update_version_in_content(content, old_version, new_version)
+
+                #if file_path.name == "MODULE.bazel":
+                #    content = ensure_boost_deps_are_nodep_in_content(content)
 
                 file_path.write_text(content, encoding="utf-8")
             except Exception as e:
@@ -467,12 +479,17 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
     # Copy overlay/MODULE.bazel from main MODULE.bazel if it doesn't exist
     overlay_module = target_path / "overlay" / "MODULE.bazel"
     main_module = target_path / "MODULE.bazel"
-    if overlay_module.exists() and overlay_module.is_symlink():
-        logging.debug("Converting overlay/MODULE.bazel from symlink to copy")
+    if overlay_module.exists():
+        if overlay_module.is_symlink():
+            logging.debug("Converting overlay/MODULE.bazel from symlink to copy")
+        else:
+            logging.debug("Overwriting existing overlay/MODULE.bazel")
         overlay_module.unlink()
-    if not overlay_module.exists() and main_module.exists():
+    if main_module.exists():
         logging.debug("Copying MODULE.bazel to overlay/MODULE.bazel")
         shutil.copy2(main_module, overlay_module)
+    else:
+        logging.debug("Skipping creation of overlay/MODULE.bazel -- MODULE.bazel does not exist")
 
     run_buildifier([target_path])
 
@@ -494,22 +511,14 @@ def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: l
     if not boost_modules:
         raise ValueError("No boost.* modules provided for meta-module generation")
 
-    # Calculate compatibility level from version
-    # Formula: major * 100000 + minor * 100 + patch
-    parts = version.split(".")
-    if len(parts) >= 2:
-        major = int(parts[0])
-        minor = int(parts[1])
-        patch = int(parts[2].split(".bcr.")[0]) if len(parts) > 2 else 0
-        compatibility_level = major * 100000 + minor * 100 + patch
-    else:
-        compatibility_level = 100000
-
     # Generate main MODULE.bazel using template
-    module_header = MODULE_TEMPLATE.format(version=version, compatibility_level=compatibility_level)
+    module_header = MODULE_TEMPLATE.format(version=version, compatibility_level=COMPATIBILITY_LEVEL)
 
     # Add bazel_dep for each boost module
-    deps = [f'bazel_dep(name = "{module}", version = "{version}")' for module in boost_modules]
+    deps = [
+        f'bazel_dep(name = "{module}", version = "{version}", repo_name = None)'
+        for module in boost_modules
+    ]
 
     module_content = module_header + "\n".join(deps) + "\n"
 
@@ -692,18 +701,20 @@ def main() -> None:
         module_versions = get_module_versions(module_path)
         tgt_path = module_path / args.version
 
-        # Check if version already exists (either in metadata.json or as directory)
-        if args.version in module_versions:
-            # Module already has this version in metadata.json
-            logging.debug("Retaining existing version: %s (in metadata.json)", module)
-            modules_with_version[module] = False
-            continue
+        # TODO(kgk): Reenable before sending PR.
+        if 0:
+            # Check if version already exists (either in metadata.json or as directory)
+            if args.version in module_versions:
+                # Module already has this version in metadata.json
+                logging.debug("Retaining existing version: %s (in metadata.json)", module)
+                modules_with_version[module] = False
+                continue
 
-        if tgt_path.exists() and has_any_files(tgt_path):
-            # Directory exists with files but not in metadata.json yet
-            logging.debug("Retaining existing version: %s (directory exists)", module)
-            modules_with_version[module] = False
-            continue
+            if tgt_path.exists() and has_any_files(tgt_path):
+                # Directory exists with files but not in metadata.json yet
+                logging.debug("Retaining existing version: %s (directory exists)", module)
+                modules_with_version[module] = False
+                continue
 
         # Need to create this version
         try:
