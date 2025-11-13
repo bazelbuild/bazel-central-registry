@@ -295,16 +295,6 @@ def update_version_in_content(content: str, old_version: str, new_version: str) 
     return content
 
 
-#def ensure_boost_deps_are_nodep_in_content(content: str) -> str:
-#    content = re.sub(
-#        r'(bazel_dep\([^)]*name\s*=\s*"boost\.[^"]*"[^)]*version\s*=\s*"[^"]*")(\s*,)?\s*\)',
-#        rf"\g<1>, repo_name = None)",
-#        content,
-#        flags=re.DOTALL,
-#    )
-#    return content
-
-
 def update_source_json(content: str, new_version: str) -> str:
     """Update source.json content with new version."""
     # Extract base version (remove .bcr.X suffix)
@@ -428,9 +418,6 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
             logging.debug("Removing empty directory tree: %s", target_path)
             shutil.rmtree(target_path)
 
-    # TODO(kgk): Delete this before sending PR.
-    #shutil.rmtree(target_path)
-
     logging.debug("Copying from: %s to %s", source_path.name, target_path.name)
     shutil.copytree(source_path, target_path)
 
@@ -451,8 +438,8 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
                 else:
                     content = update_version_in_content(content, old_version, new_version)
 
-                #if file_path.name == "MODULE.bazel":
-                #    content = ensure_boost_deps_are_nodep_in_content(content)
+                if file_path.name == "MODULE.bazel":
+                    content = ensure_meta_module_dep_exists_in_content(content, new_version)
 
                 file_path.write_text(content, encoding="utf-8")
             except Exception as e:
@@ -494,7 +481,28 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
     run_buildifier([target_path])
 
 
-def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: list[str]) -> bool:
+def ensure_meta_module_dep_exists_in_content(content: str, version: str) -> str:
+    bazel_meta_dep_regex = r'bazel_dep\s*\(\s*name\s*=\s*"boost"'
+    if re.search(bazel_meta_dep_regex, content, flags=re.DOTALL):
+        # The boost meta-module is already present as a dependency.
+        return content
+
+    # Insert a bazel_dep on the boost meta-module above the first dep that is found. This should be
+    # alpha-sorted as-is because boost modules only depend on other boost modules.
+    content_lines = content.splitlines(keepends=True)
+    boost_meta_dep_str = f'bazel_dep(name = "boost", version = "{version}")\n'
+    for i, line in enumerate(content_lines):
+        if line.startswith("bazel_dep"):
+            content_lines.insert(i, boost_meta_dep_str)
+            return "".join(content_lines)
+
+    # If this module didn't have any deps just insert our boost meta-module dep at the end.
+    if content.endswith('\n'):
+        return content + boost_meta_dep_str
+    return content + '\n' + boost_meta_dep_str
+
+
+def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: list[str]) -> None:
     """Generate both main MODULE.bazel and overlay files for the boost meta-module.
 
     Args:
@@ -701,20 +709,18 @@ def main() -> None:
         module_versions = get_module_versions(module_path)
         tgt_path = module_path / args.version
 
-        # TODO(kgk): Reenable before sending PR.
-        if 0:
-            # Check if version already exists (either in metadata.json or as directory)
-            if args.version in module_versions:
-                # Module already has this version in metadata.json
-                logging.debug("Retaining existing version: %s (in metadata.json)", module)
-                modules_with_version[module] = False
-                continue
+        # Check if version already exists (either in metadata.json or as directory)
+        if args.version in module_versions:
+            # Module already has this version in metadata.json
+            logging.debug("Retaining existing version: %s (in metadata.json)", module)
+            modules_with_version[module] = False
+            continue
 
-            if tgt_path.exists() and has_any_files(tgt_path):
-                # Directory exists with files but not in metadata.json yet
-                logging.debug("Retaining existing version: %s (directory exists)", module)
-                modules_with_version[module] = False
-                continue
+        if tgt_path.exists() and has_any_files(tgt_path):
+            # Directory exists with files but not in metadata.json yet
+            logging.debug("Retaining existing version: %s (directory exists)", module)
+            modules_with_version[module] = False
+            continue
 
         # Need to create this version
         try:
