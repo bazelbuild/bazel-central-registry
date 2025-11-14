@@ -80,6 +80,7 @@ cmake(
     },
     env = {
         "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_BUILD_PARALLEL_LEVEL": "4",
     },
     alwayslink = True,
     out_static_libs = [
