@@ -57,52 +57,58 @@ class BazelBuildTest(unittest.TestCase):
 
     def test_migration_of_module_deps(self):
         self._cleanup_created_files()
-        targets = "//..."
+        try:
+            targets = "//..."
 
-        # Verify bazel build is successful with enabled workspace
-        print("\n--- Running bazel build with enabled workspace ---")
-        result = self._run_command(["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", targets])
-        assert result.returncode == 0
-        self._print_message("Success.")
+            # Verify bazel build is successful with enabled workspace
+            print("\n--- Running bazel build with enabled workspace ---")
+            result = self._run_command(
+                ["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", targets]
+            )
+            assert result.returncode == 0
+            self._print_message("Success.")
 
-        # Run migration script
-        print("\n--- Running migration script ---")
-        result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True)
-        assert result.returncode == 1
-        assert "Update pip dependency reference from" in result.stderr
-        assert os.path.exists("migration_info.md"), (
-            "File 'migration_info.md' should be created during migration, but it doesn't exist."
-        )
-        self._print_message("Expected error: User need to modify pypi reference.")
+            # Run migration script
+            print("\n--- Running migration script ---")
+            result = self._run_command(
+                [sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True
+            )
+            assert result.returncode == 1
+            assert "Update pip dependency reference from" in result.stderr
+            assert os.path.exists(
+                "migration_info.md"
+            ), "File 'migration_info.md' should be created during migration, but it doesn't exist."
 
-        # Verify Bzlmod have error
-        print("\n--- Running bazel build with enabled bzlmod ---")
-        result = self._run_command(
-            ["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."], expected_failure=True
-        )
-        assert result.returncode == 1
-        self._print_message("Expected error: Manual change for pypi reference is needed.")
+            self._print_message("Expected error: User need to modify pypi reference.")
 
-        # Modify BUILD file
-        self.modify_build_file("@pypi_yamllint//:rules_python_wheel_entry_point_yamllint", "@pypi//yamllint")
-        print("\n--- Modifying BUILD file ---")
-        self._print_message("Success.")
+            # Verify Bzlmod have error
+            print("\n--- Running bazel build with enabled bzlmod ---")
+            result = self._run_command(
+                ["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."], expected_failure=True
+            )
+            assert result.returncode == 1
+            self._print_message("Expected error: Manual change for pypi reference is needed.")
 
-        # Rerun migration script
-        print("\n--- Running migration script ---")
-        result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."])
-        assert result.returncode == 0
-        self._print_message("Success.")
+            # Modify BUILD file
+            self.modify_build_file("@pypi_yamllint//:rules_python_wheel_entry_point_yamllint", "@pypi//yamllint")
+            print("\n--- Modifying BUILD file ---")
+            self._print_message("Success.")
 
-        # Verify MODULE.bazel was created successfully
-        print("\n--- Running bazel build with enabled bzlmod ---")
-        result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."])
-        assert result.returncode == 0
-        self._print_message("Success.")
+            # Rerun migration script
+            print("\n--- Running migration script ---")
+            result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."])
+            assert result.returncode == 0
+            self._print_message("Success.")
 
-        # Restore BUILD file to the initial content
-        self.modify_build_file("@pypi//yamllint", "@pypi_yamllint//:rules_python_wheel_entry_point_yamllint")
-        self._cleanup_created_files()
+            # Verify MODULE.bazel was created successfully
+            print("\n--- Running bazel build with enabled bzlmod ---")
+            result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."])
+            assert result.returncode == 0
+            self._print_message("Success.")
+        finally:
+            # Restore BUILD file to the initial content
+            self.modify_build_file("@pypi//yamllint", "@pypi_yamllint//:rules_python_wheel_entry_point_yamllint")
+            self._cleanup_created_files()
 
 
 if __name__ == "__main__":

@@ -687,14 +687,9 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         add_python_extension(repo, origin_attrs, resolved_deps, workspace_name)
         return True
 
-    if repo.startswith("pypi_") and file_label.find("rules_python"):
+    if repo.startswith("pypi_") and "rules_python" in file_label:
         address_pypi_reference(repo)
         return False
-
-    # Support python toolchain dependencies.
-    if "generator_function" in origin_attrs and re.match(r"python_.*toolchains", origin_attrs["generator_function"]):
-        add_python_repo(repo)
-        return True
 
     append_migration_info("## Migration of `" + repo + "`:")
     print_repo_definition(repo_def, dep)
