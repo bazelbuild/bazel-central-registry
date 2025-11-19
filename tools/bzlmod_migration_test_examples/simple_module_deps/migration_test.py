@@ -60,13 +60,17 @@ class BazelBuildTest(unittest.TestCase):
         try:
             # Verify bazel build is successful with enabled workspace
             print("\n--- Running bazel build with enabled workspace ---")
-            result = self._run_command(["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."])
+            result = self._run_command(
+                ["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."]
+            )
             assert result.returncode == 0
             self._print_message("Success.")
 
             # Run migration script
             print("\n--- Running migration script ---")
-            result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True)
+            result = self._run_command(
+                [sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True
+            )
             assert result.returncode == 1
             assert "A bind target detected at " in result.stderr
             assert os.path.exists(
