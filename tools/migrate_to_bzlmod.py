@@ -786,6 +786,7 @@ def address_bind_issue(bind_target_location, resolved_repos):
     )
     print("")
 
+
 def address_pypi_reference(repo):
     repo_suffix = repo.removeprefix("pypi_")
     print("")
@@ -794,6 +795,7 @@ def address_pypi_reference(repo):
         " The @pypi_<name> references are deprecated and the modern, supported, way is to go through the hub (@pypi)."
     )
     print("")
+
 
 def extract_version_number(bazel_version):
     """Extracts the semantic version number from a version string

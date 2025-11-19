@@ -70,9 +70,9 @@ class BazelBuildTest(unittest.TestCase):
         result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True)
         assert result.returncode == 1
         assert "Update pip dependency reference from" in result.stderr
-        assert os.path.exists(
-            "migration_info.md"
-        ), "File 'migration_info.md' should be created during migration, but it doesn't exist."
+        assert os.path.exists("migration_info.md"), (
+            "File 'migration_info.md' should be created during migration, but it doesn't exist."
+        )
         self._print_message("Expected error: User need to modify pypi reference.")
 
         # Verify Bzlmod have error
@@ -99,7 +99,7 @@ class BazelBuildTest(unittest.TestCase):
         result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."])
         assert result.returncode == 0
         self._print_message("Success.")
-        
+
         # Restore BUILD file to the initial content
         self.modify_build_file("@pypi//yamllint", "@pypi_yamllint//:rules_python_wheel_entry_point_yamllint")
         self._cleanup_created_files()
