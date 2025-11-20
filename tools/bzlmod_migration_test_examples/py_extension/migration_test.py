@@ -7,7 +7,7 @@ from unittest import main
 
 class BazelBuildTest(unittest.TestCase):
     """
-    A test suite for verifying Bzlmod migration tool for simple module deps and bind rule.
+    A test suite for verifying Bzlmod migration tool for python extensions.
     """
 
     _CREATED_FILES = [
@@ -58,10 +58,12 @@ class BazelBuildTest(unittest.TestCase):
     def test_migration_of_module_deps(self):
         self._cleanup_created_files()
         try:
+            targets = "//..."
+
             # Verify bazel build is successful with enabled workspace
             print("\n--- Running bazel build with enabled workspace ---")
             result = self._run_command(
-                ["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."]
+                ["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", targets]
             )
             assert result.returncode == 0
             self._print_message("Success.")
@@ -72,11 +74,12 @@ class BazelBuildTest(unittest.TestCase):
                 [sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True
             )
             assert result.returncode == 1
-            assert "A bind target detected at " in result.stderr
+            assert "Update pip dependency reference from" in result.stderr
             assert os.path.exists(
                 "migration_info.md"
             ), "File 'migration_info.md' should be created during migration, but it doesn't exist."
-            self._print_message("Expected error: User need to modify bind rule.")
+
+            self._print_message("Expected error: User need to modify pypi reference.")
 
             # Verify Bzlmod have error
             print("\n--- Running bazel build with enabled bzlmod ---")
@@ -84,11 +87,17 @@ class BazelBuildTest(unittest.TestCase):
                 ["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."], expected_failure=True
             )
             assert result.returncode == 1
-            self._print_message("Expected error: Manual change for bind rule is needed.")
+            self._print_message("Expected error: Manual change for pypi reference is needed.")
 
             # Modify BUILD file
-            self.modify_build_file("//external:gazelle_bind", "@bazel_gazelle//:deps")
+            self.modify_build_file("@pypi_yamllint//:rules_python_wheel_entry_point_yamllint", "@pypi//yamllint")
             print("\n--- Modifying BUILD file ---")
+            self._print_message("Success.")
+
+            # Rerun migration script
+            print("\n--- Running migration script ---")
+            result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."])
+            assert result.returncode == 0
             self._print_message("Success.")
 
             # Verify MODULE.bazel was created successfully
@@ -98,7 +107,7 @@ class BazelBuildTest(unittest.TestCase):
             self._print_message("Success.")
         finally:
             # Restore BUILD file to the initial content
-            self.modify_build_file("@bazel_gazelle//:deps", "//external:gazelle_bind")
+            self.modify_build_file("@pypi//yamllint", "@pypi_yamllint//:rules_python_wheel_entry_point_yamllint")
             self._cleanup_created_files()
 
 

@@ -16,3 +16,8 @@ py_binary(
         "@my_deps_2//attrs"
     ],
 )
+
+alias(
+    name = "yamllint",
+    actual = "@pypi_yamllint//:rules_python_wheel_entry_point_yamllint",
+)
