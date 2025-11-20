@@ -7,7 +7,7 @@ from unittest import main
 
 class BazelBuildTest(unittest.TestCase):
     """
-    A test suite for verifying Bzlmod migration tool for maven and python extensions.
+    A test suite for verifying Bzlmod migration tool for maven and module extensions.
     """
 
     _CREATED_FILES = [
@@ -17,16 +17,21 @@ class BazelBuildTest(unittest.TestCase):
         "migration_info.md",
         "query_direct_deps",
         "resolved_deps.py",
-        "extension_for_",
     ]
 
     def _cleanup_created_files(self):
         """
         Remove files which were created by migration tool.
         """
+        for file_name in self._CREATED_FILES:
+            file_path = os.path.join(os.getcwd(), file_name)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        # Remove all created extensions.
         my_dir = os.getcwd()
         for fname in os.listdir(my_dir):
-            if any(fname.startswith(p) for p in self._CREATED_FILES):
+            if fname.startswith("extension_for_"):
                 os.remove(os.path.join(my_dir, fname))
 
     def _run_command(self, command):
