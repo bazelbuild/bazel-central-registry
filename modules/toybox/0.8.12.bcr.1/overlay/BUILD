@@ -42,8 +42,10 @@ cc_library(
     name = "helper_lib",
     srcs = glob([
         "lib/*.c",
-        "lib/*.h",
-    ]) + [
+    ]),
+    hdrs = [
+        "lib/lsm.h",
+        "lib/toyflags.h",
         "toys.h",
     ],
     copts = COPTS,
@@ -61,7 +63,7 @@ cc_library(
 cc_library(
     name = "toys_lib",
     srcs = glob(
-        [
+        include = [
             "toys/lsb/*.c",
             "toys/net/*.c",
             "toys/other/*.c",
