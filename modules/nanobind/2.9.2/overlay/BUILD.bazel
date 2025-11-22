@@ -1,72 +1,54 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_python//python:defs.bzl", "py_library")
+load(":tests.bzl", "nb_test")
+
+package(
+    default_testonly = True,
+    features = [
+        "parse_headers",
+        "layering_check",
+    ],
+)
 
 cc_library(
-    name = "nanobind",
-    srcs = [
-        "include/nanobind/stl/detail/nb_dict.h",
-        "include/nanobind/stl/detail/nb_list.h",
-        "include/nanobind/stl/detail/traits.h",
-        "src/buffer.h",
-        "src/common.cpp",
-        "src/error.cpp",
-        "src/hash.h",
-        "src/implicit.cpp",
-        "src/nb_abi.h",
-        "src/nb_enum.cpp",
-        "src/nb_ft.cpp",
-        "src/nb_ft.h",
-        "src/nb_func.cpp",
-        "src/nb_internals.cpp",
-        "src/nb_internals.h",
-        "src/nb_ndarray.cpp",
-        "src/nb_static_property.cpp",
-        "src/nb_type.cpp",
-        "src/trampoline.cpp",
-    ],
-    hdrs = glob(
-        include = [
-            "include/nanobind/*.h",
-            "include/nanobind/eigen/*.h",
-            "include/nanobind/stl/*.h",
-            "include/nanobind/stl/detail/*.h",
-        ],
-        allow_empty = False,
-    ),
-    additional_linker_inputs = select({
-        "@platforms//os:macos": [":cmake/darwin-ld-cpython.sym"],
-        "//conditions:default": [],
-    }),
-    copts = select({
-        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
-        "//conditions:default": [
-            "--std=c++17",
-            "-fexceptions",
-            "-frtti",
-        ],
-    }),
-    includes = ["include"],
-    linkopts = select({
-        "@platforms//os:macos": [
-            "-Wl,@$(location :cmake/darwin-ld-cpython.sym)",
-        ],
-        "//conditions:default": [],
-    }),
-    strip_include_prefix = "include",
-    visibility = ["//visibility:public"],
+    name = "inter_module",
+    testonly = True,
+    srcs = ["inter_module.cpp"],
+    hdrs = ["inter_module.h"],
     deps = [
-        "@robin-map//:robin-map",
-        "@rules_python//python/cc:current_py_cc_headers",
+        "//:nanobind",
     ],
 )
 
-cc_test(
-    name = "linktest",
-    linkopts = select({
-        "@platforms//os:macos": ["-all_load"],
-        "//conditions:default": [],
-    }),
-    linkshared = True,
-    visibility = ["//visibility:private"],
-    deps = [":nanobind"],
+py_library(
+    name = "common",
+    testonly = True,
+    srcs = ["common.py"],
+    imports = ["."],
 )
+
+[
+    nb_test(name = name)
+    for name in [
+        "accessor",
+        "functions",
+        "callbacks",
+        # "classes", # TODO: Fix class mismatch
+        "holders",
+        "stl",
+        "stl_bind_map",
+        "stl_bind_vector",
+        "chrono",
+        "enum",
+        "eval",
+        # "ndarray", # TODO: Not supported
+        # "jax", # TODO: Not supported
+        # "tensorflow", # TODO: Not supported
+        "exception",
+        "make_iterator",
+        "typing",
+        "issue",
+        # "intrusive", # TODO: Not supported
+        "thread",
+    ]
+]
