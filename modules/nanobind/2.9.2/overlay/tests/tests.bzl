@@ -14,7 +14,13 @@ def nb_test(name):
         deps = [
             "//:nanobind",
             ":inter_module",  # NOTE: Not all targets need this
-        ],
+        ] + select({
+            "@platforms//os:windows": [
+                # TODO: Why does windows need this
+                "@rules_python//python/cc:current_py_cc_libs",
+            ],
+            "//conditions:default": [],
+        }),
         copts = select({
             "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
             "//conditions:default": ["--std=c++17"],
