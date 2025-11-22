@@ -1,0 +1,66 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+cc_library(
+    name = "xxhash",
+    srcs = ["xxhash.c"] + select({
+        "@platforms//cpu:x86_64": ["xxh_x86dispatch.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "xxh3.h",
+        "xxhash.h",
+    ] + select({
+        "@platforms//cpu:x86_64": ["xxh_x86dispatch.h"],
+        "//conditions:default": [],
+    }),
+    include_prefix = "xxhash",
+    includes = [""],
+    local_defines = select({
+        "@platforms//cpu:x86_64": ["XXHSUM_DISPATCH=1"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "xxhsum_lib",
+    srcs = glob(["cli/*.c"]),
+    hdrs = glob(["cli/*.h"]),
+    # Some of the tests include c files, this allows for that.
+    textual_hdrs = glob(["cli/*.c"]),
+    deps = [":xxhash"],
+)
+
+cc_binary(
+    name = "xxhsum",
+    srcs = ["cli/xxhsum.c"],
+    visibility = ["//visibility:public"],
+    deps = [":xxhsum_lib"],
+)
+
+cc_test(
+    name = "multi_include_test",
+    srcs = ["tests/multiInclude.c"],
+    deps = [":xxhash"],
+)
+
+cc_test(
+    name = "sanity_test",
+    srcs = [
+        "tests/sanity_test.c",
+        "tests/sanity_test_vectors.h",
+    ],
+    deps = [
+        ":xxhash",
+        ":xxhsum_lib",
+    ],
+)
+
+cc_test(
+    name = "vectors_generator_test",
+    srcs = ["tests/sanity_test_vectors_generator.c"],
+    deps = [
+        ":xxhash",
+        ":xxhsum_lib",
+    ],
+)
