@@ -14,10 +14,11 @@ def nb_test(name):
         deps = [
             "//:nanobind",
             ":inter_module",  # NOTE: Not all targets need this
-        ] + select({
+        ],
+        target_compatible_with = select({
             "@platforms//os:windows": [
-                # TODO: Why does windows need this
-                "@rules_python//python/cc:current_py_cc_libs",
+                # TODO: Windows fails to link python libs
+                "@platforms//:incompatible",
             ],
             "//conditions:default": [],
         }),
