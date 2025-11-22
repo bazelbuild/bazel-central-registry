@@ -246,7 +246,10 @@ _BASE_CURL_COPTS = [
 
     # Extra defines needed by curl
     "-DBUILDING_LIBCURL",
+    # These 3 all have to be set correctly
     "-DCURL_HIDDEN_SYMBOLS",
+    '-DCURL_EXTERN_SYMBOL=__attribute__((__visibility__(\"default\")))',
+    "-fvisibility=hidden",
 ]
 
 expand_template(
@@ -275,119 +278,118 @@ expand_template(
     template = ":symbol_versioning_map_prefix",
 )
 
-# NOTE: Exists to avoid setting CURL_STATICLIB for the shared library target
-cc_library(
-    name = "curl.underlying",
-    srcs = glob([
-        "lib/**/*.c",
-        "lib/**/*.h",
-    ]),
-    hdrs = glob(["include/curl/*.h"]),
-    copts = select({
-        "@platforms//os:windows": [
-            "/DBUILDING_LIBCURL",
-            "/DCURL_DISABLE_LDAP",
-            "/DUSE_IPV6",
-            "/DUSE_SCHANNEL",
-            "/DUSE_WIN32_IDN",
-            "/DUSE_WINDOWS_SSPI",
-            "/DWANT_IDN_PROTOTYPES",
-            "/DWIN32",
+[
+    cc_library(
+        name = name,
+        srcs = glob([
+            "lib/**/*.c",
+            "lib/**/*.h",
+        ]),
+        hdrs = glob(["include/curl/*.h"]),
+        copts = select({
+            "@platforms//os:windows": [
+                "/DBUILDING_LIBCURL",
+                "/DCURL_DISABLE_LDAP",
+                "/DUSE_IPV6",
+                "/DUSE_SCHANNEL",
+                "/DUSE_WIN32_IDN",
+                "/DUSE_WINDOWS_SSPI",
+                "/DWANT_IDN_PROTOTYPES",
+                "/DWIN32",
+            ],
+            "@platforms//os:macos": _BASE_CURL_COPTS,
+            "//conditions:default": _BASE_CURL_COPTS + [
+                "-DHAVE_LINUX_TCP_H=1",
+                "-DHAVE_MSG_NOSIGNAL=1",
+            ],
+        }) + select({
+            "@platforms//os:macos": ["-DCURL_OS=\"darwin\""],
+            "@platforms//os:linux": ["-DCURL_OS=\"linux\""],
+            "@platforms//os:windows": ["-DCURL_OS=\"windows\""],
+            "//conditions:default": ["-DCURL_OS=\"unknown\""],
+        }),
+        defines = defines,
+        includes = [
+            "include",
+            "lib",
         ],
-        "@platforms//os:macos": _BASE_CURL_COPTS,
-        "//conditions:default": _BASE_CURL_COPTS + [
-            "-DHAVE_LINUX_TCP_H=1",
-            "-DHAVE_MSG_NOSIGNAL=1",
+        linkopts = select({
+            ":use_sectransport": [
+                "-Wl,-framework,CoreFoundation",
+                "-Wl,-framework,Security",
+            ],
+            "//conditions:default": [],
+        }) + select({
+            "@platforms//os:windows": [
+                "-DEFAULTLIB:ws2_32.lib",
+                "-DEFAULTLIB:advapi32.lib",
+                "-DEFAULTLIB:crypt32.lib",
+                "-DEFAULTLIB:Normaliz.lib",
+            ],
+            "@platforms//os:macos": [
+                "-Wl,-framework,SystemConfiguration",
+            ],
+            "//conditions:default": [
+                "-lpthread",
+            ],
+        }),
+        local_defines = select({
+            "@platforms//os:macos": [
+                'CURL_CA_BUNDLE=\\"/etc/ssl/cert.pem\\"',
+                'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
+            ],
+            "@platforms//os:linux": [
+                'CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"',
+                'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
+            ],
+            "//conditions:default": [],
+        }) + select({
+            ":use_boringssl": [
+                "USE_OPENSSL",
+                "HAVE_BORING_SSL=1",
+            ],
+            ":use_mbedtls": ["USE_MBEDTLS"],
+            ":use_openssl": ["USE_OPENSSL"],
+            "//conditions:default": [],
+        }) + select({
+            ":use_sectransport": ["USE_SECTRANSP"],
+            "//conditions:default": [],
+        }) + select({
+            ":http_only_setting": ["HTTP_ONLY"],
+            "//conditions:default": [],
+        }) + select({
+            ":ca_bundle_is_unset": [],
+            "//conditions:default": ['CURL_CA_BUNDLE=\\"$(CURL_CA_BUNDLE)\\"'],
+        }) + select({
+            ":ca_path_is_unset": [],
+            "//conditions:default": ['CURL_CA_PATH=\\"$(CURL_CA_PATH)\\"'],
+        }),
+        toolchains = [
+            ":ca_bundle",
+            ":ca_path",
         ],
-    }) + select({
-        "@platforms//os:macos": ["-DCURL_OS=\"darwin\""],
-        "@platforms//os:linux": ["-DCURL_OS=\"linux\""],
-        "@platforms//os:windows": ["-DCURL_OS=\"windows\""],
-        "//conditions:default": ["-DCURL_OS=\"unknown\""],
-    }),
-    includes = [
-        "include/",
-        "lib/",
-    ],
-    linkopts = select({
-        ":use_sectransport": [
-            "-Wl,-framework,CoreFoundation",
-            "-Wl,-framework,Security",
-        ],
-        "//conditions:default": [],
-    }) + select({
-        "@platforms//os:windows": [
-            "-DEFAULTLIB:ws2_32.lib",
-            "-DEFAULTLIB:advapi32.lib",
-            "-DEFAULTLIB:crypt32.lib",
-            "-DEFAULTLIB:Normaliz.lib",
-        ],
-        "@platforms//os:macos": [
-            "-Wl,-framework,SystemConfiguration",
-        ],
-        "//conditions:default": [
-            "-lpthread",
-        ],
-    }),
-    local_defines = select({
-        "@platforms//os:macos": [
-            'CURL_CA_BUNDLE=\\"/etc/ssl/cert.pem\\"',
-            'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
-        ],
-        "@platforms//os:linux": [
-            'CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"',
-            'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
-        ],
-        "//conditions:default": [],
-    }) + select({
-        ":use_boringssl": [
-            "USE_OPENSSL",
-            "HAVE_BORING_SSL=1",
-        ],
-        ":use_mbedtls": ["USE_MBEDTLS"],
-        ":use_openssl": ["USE_OPENSSL"],
-        "//conditions:default": [],
-    }) + select({
-        ":use_sectransport": ["USE_SECTRANSP"],
-        "//conditions:default": [],
-    }) + select({
-        ":http_only_setting": ["HTTP_ONLY"],
-        "//conditions:default": [],
-    }) + select({
-        ":ca_bundle_is_unset": [],
-        "//conditions:default": ['CURL_CA_BUNDLE=\\"$(CURL_CA_BUNDLE)\\"'],
-    }) + select({
-        ":ca_path_is_unset": [],
-        "//conditions:default": ['CURL_CA_PATH=\\"$(CURL_CA_PATH)\\"'],
-    }),
-    toolchains = [
-        ":ca_bundle",
-        ":ca_path",
-    ],
-    visibility = ["//visibility:public"],
-    deps = select({
-        ":use_boringssl": [
-            "@boringssl//:crypto",
-            "@boringssl//:ssl",
-        ],
-        ":use_mbedtls": ["@mbedtls"],
-        ":use_openssl": [
-            "@openssl//:crypto",
-            "@openssl//:ssl",
-        ],
-        "//conditions:default": [],
-    }),
-)
-
-cc_library(
-    name = "curl",
-    # NOTE: Re-export headers for layering_check
-    hdrs = glob(["include/curl/*.h"]),
-    defines = ["CURL_STATICLIB"],
-    includes = ["include/"],
-    visibility = ["//visibility:public"],
-    deps = [":curl.underlying"],
-)
+        visibility = ["//visibility:public"],
+        deps = select({
+            ":use_boringssl": [
+                "@boringssl//:crypto",
+                "@boringssl//:ssl",
+            ],
+            ":use_mbedtls": ["@mbedtls"],
+            ":use_openssl": [
+                "@openssl//:crypto",
+                "@openssl//:ssl",
+            ],
+            "//conditions:default": [],
+        }),
+    )
+    for name, defines in [
+        (
+            "curl",
+            ["CURL_STATICLIB"],
+        ),
+        ("curl_shared.underlying", []),
+    ]
+]
 
 cc_shared_library(
     name = "curl_shared",
@@ -407,7 +409,7 @@ cc_shared_library(
         ],
     }),
     visibility = ["//visibility:public"],
-    deps = [":curl.underlying"],
+    deps = [":curl_shared.underlying"],
 )
 
 cc_binary(
