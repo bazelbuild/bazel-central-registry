@@ -1,0 +1,98 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+string_flag(
+    name = "ssl",
+    build_setting_default = "boringssl",
+    values = [
+        "openssl",
+        "boringssl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "openssl",
+    flag_values = {":ssl": "openssl"},
+)
+
+config_setting(
+    name = "boringssl",
+    flag_values = {":ssl": "boringssl"},
+)
+
+write_file(
+    name = "src_win",
+    out = "boost.mysql.src.win.cpp",
+    content = select({
+        ":boringssl": [
+            "#include <boost/mysql/src.hpp>",
+        ],
+        ":openssl": [
+            "#include <winsock2.h>",
+            "#include <windows.h>",
+            "#include <boost/mysql/src.hpp>",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+write_file(
+    name = "src",
+    out = "boost.mysql.src.cpp",
+    content = ["#include <boost/mysql/src.hpp>"],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "boost.mysql",
+    srcs = select({
+        "@platforms//os:windows": [":src_win"],
+        "//conditions:default": [":src"],
+    }),
+    defines = ["BOOST_MYSQL_SEPARATE_COMPILATION"],
+    features = [
+        "parse_headers",
+    ],
+    includes = ["include"],
+    textual_hdrs = glob([
+        "include/**/*.*pp",
+    ]),
+    deps = [
+        "@boost.align",
+        "@boost.array",
+        "@boost.asio",
+        "@boost.assert",
+        "@boost.bind",
+        "@boost.charconv",
+        "@boost.chrono",
+        "@boost.compat",
+        "@boost.config",
+        "@boost.context",
+        "@boost.core",
+        "@boost.coroutine",
+        "@boost.date_time",
+        "@boost.endian",
+        "@boost.exception",
+        "@boost.function",
+        "@boost.pfr",
+        "@boost.regex",
+        "@boost.smart_ptr",
+        "@boost.system",
+        "@boost.throw_exception",
+        "@boost.type_traits",
+        "@boost.utility",
+    ] + select({
+        ":boringssl": [
+            "@boringssl//:crypto",
+            "@boringssl//:ssl",
+        ],
+        ":openssl": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }),
+)
