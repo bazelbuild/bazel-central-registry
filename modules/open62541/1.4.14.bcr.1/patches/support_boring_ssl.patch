@@ -1,0 +1,66 @@
+diff --git a/plugins/crypto/openssl/securitypolicy_openssl_common.c b/plugins/crypto/openssl/securitypolicy_openssl_common.c
+index e1d36f513..9c9cc73b1 100644
+--- a/plugins/crypto/openssl/securitypolicy_openssl_common.c
++++ b/plugins/crypto/openssl/securitypolicy_openssl_common.c
+@@ -135,7 +135,10 @@ UA_OpenSSL_RSA_Public_Verify(const UA_ByteString *message,
+     }
+ 
+     if(padding == RSA_PKCS1_PSS_PADDING) {
++        // See https://source.corp.google.com/piper///depot/google3/third_party/openssl/boringssl/src/include/openssl/evp.h;rcl=620966069;l=732
++        #define RSA_PSS_SALTLEN_DIGEST -1
+         opensslRet = EVP_PKEY_CTX_set_rsa_pss_saltlen(evpKeyCtx, RSA_PSS_SALTLEN_DIGEST);
++        #undef RSA_PSS_SALTLEN_DIGEST
+         if(opensslRet != 1) {
+             ret = UA_STATUSCODE_BADINTERNALERROR;
+             goto errout;
+@@ -583,7 +586,10 @@ UA_Openssl_RSA_Private_Sign (const UA_ByteString * message,
+     }
+     EVP_PKEY_CTX_set_rsa_padding (evpKeyCtx, padding);
+     if(padding == RSA_PKCS1_PSS_PADDING) {
++        // See https://source.corp.google.com/piper///depot/google3/third_party/openssl/boringssl/src/include/openssl/evp.h;rcl=620966069;l=732
++#define RSA_PSS_SALTLEN_DIGEST -1
+         opensslRet = EVP_PKEY_CTX_set_rsa_pss_saltlen(evpKeyCtx, RSA_PSS_SALTLEN_DIGEST); //RSA_PSS_SALTLEN_DIGEST
++#undef RSA_PSS_SALTLEN_DIGEST
+         if (opensslRet != 1) {
+             ret = UA_STATUSCODE_BADINTERNALERROR;
+             goto errout;
+diff --git a/plugins/crypto/openssl/ua_openssl_create_certificate.c b/plugins/crypto/openssl/ua_openssl_create_certificate.c
+index 0bea05ee3..bb8eba385 100644
+--- a/plugins/crypto/openssl/ua_openssl_create_certificate.c
++++ b/plugins/crypto/openssl/ua_openssl_create_certificate.c
+@@ -77,7 +77,7 @@ add_x509V3ext(const UA_Logger *logger, X509 *x509, int nid, char *value) {
+     X509V3_CTX ctx;
+     X509V3_set_ctx_nodb(&ctx);
+     X509V3_set_ctx(&ctx, x509, x509, NULL, NULL, 0);
+-    ex = X509V3_EXT_conf_nid(NULL, &ctx, nid, value);
++    ex = X509V3_EXT_nconf_nid(NULL, &ctx, nid, value);
+     if(!ex)
+     {
+ #if UA_LOGLEVEL <= 300
+diff --git a/plugins/crypto/openssl/ua_pki_openssl.c b/plugins/crypto/openssl/ua_pki_openssl.c
+index fdcdf0a90..4a523fc69 100644
+--- a/plugins/crypto/openssl/ua_pki_openssl.c
++++ b/plugins/crypto/openssl/ua_pki_openssl.c
+@@ -10,6 +10,7 @@
+ #include <open62541/plugin/pki_default.h>
+ 
+ #include "securitypolicy_openssl_common.h"
++#include "include/openssl/asn1.h"
+ 
+ #if defined(UA_ENABLE_ENCRYPTION_OPENSSL) || defined(UA_ENABLE_ENCRYPTION_LIBRESSL)
+ #include <openssl/x509.h>
+@@ -815,10 +816,12 @@ UA_GetCertificate_ExpirationDate(UA_DateTime *expiryDateTime,
+ 
+     /* Get the certificate Expiry date */
+     ASN1_TIME *not_after = X509_get_notAfter(x509);
++    time_t utcTime;
++    ASN1_TIME_to_time_t(not_after, &utcTime);
++    X509_free(x509);
+ 
+     struct tm dtTime;
+-    ASN1_TIME_to_tm(not_after, &dtTime);
+-    X509_free(x509);
++    gmtime_r(&utcTime, &dtTime);
+ 
+     struct musl_tm dateTime;
+     memset(&dateTime, 0, sizeof(struct musl_tm));
