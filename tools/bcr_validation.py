@@ -24,7 +24,6 @@ Validations performed are:
   - Verify the source archive URL is stable
   - Verify if the presubmit.yml file matches the previous version
     - If not, we should require BCR maintainer review.
-  - Verify the checked in MODULE.bazel file matches the one in the extracted and patched source tree.
   - Verify attestations (SLSA provenance / VSA) referenced by attestations.json (if it exists).
 """
 
@@ -134,8 +133,6 @@ def run_git(*args):
     )
 
 
-def fix_line_endings(lines):
-    return [line.rstrip() + "\n" for line in lines]
 
 
 def extract_reference(repo_path, path):
@@ -486,18 +483,6 @@ class BcrValidator:
                     "The presubmit.yml file matches the previous version.",
                 )
 
-    def add_module_dot_bazel_patch(self, diff, module_name, version):
-        """Adding a patch file for MODULE.bazel according to the diff result."""
-        source = self.registry.get_source(module_name, version)
-        patch_file = self.registry.get_patch_file_path(module_name, version, "module_dot_bazel.patch")
-        patch_file.parent.mkdir(parents=True, exist_ok=True)
-        open(patch_file, "w").writelines(diff)
-        source["patch_strip"] = int(source.get("patch_strip", 0))
-        patches = source.get("patches", {})
-        patches["module_dot_bazel.patch"] = integrity(read(patch_file))
-        source["patches"] = patches
-        source_json_content = json.dumps(source, indent=4) + "\n"
-        self.registry.get_source_json_path(module_name, version).write_text(source_json_content)
 
     def _download_source_archive(self, source, output_dir):
         source_url = source["url"]
@@ -617,37 +602,7 @@ class BcrValidator:
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(overlay_src, overlay_dst)
 
-        source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
-        if source_module_dot_bazel.exists():
-            source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
-        else:
-            source_module_dot_bazel_content = []
         bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
-        bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
-        source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
-        bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
-        file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
-        diff = list(
-            unified_diff(
-                source_module_dot_bazel_content,
-                bcr_module_dot_bazel_content,
-                fromfile=file_name,
-                tofile=file_name,
-            )
-        )
-
-        if diff:
-            self.report(
-                BcrValidationResult.FAILED,
-                "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
-                + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
-                + "    "
-                + "    ".join(diff),
-            )
-            if self.should_fix:
-                self.add_module_dot_bazel_patch(diff, module_name, version)
-        else:
-            self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
 
         # Check the version in MODULE.bazel matches the version in directory name
         version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "version")
