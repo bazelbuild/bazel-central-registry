@@ -133,8 +133,6 @@ def run_git(*args):
     )
 
 
-
-
 def extract_reference(repo_path, path):
     """
     Extracts the reference from a path matching the pattern /<repo_path>/archive/<ref>.zip or /<repo_path>/archive/<ref>.tar.gz
@@ -482,7 +480,6 @@ class BcrValidator:
                     BcrValidationResult.GOOD,
                     "The presubmit.yml file matches the previous version.",
                 )
-
 
     def _download_source_archive(self, source, output_dir):
         source_url = source["url"]
