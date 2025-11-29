@@ -110,6 +110,13 @@ status
 tools
 """
 
+# Historical note: Previously, the compatibility_level was different for every minor version of
+# boost. Version 1.89.0 for example was given the compatibility level of 108900.
+# This is not expected to change unless / until boost has a major version release.
+# For more discussion, see:
+# https://github.com/bazelbuild/bazel-central-registry/discussions/6511
+COMPATIBILITY_LEVEL = 0
+
 
 class Semver:
     """Semantic version with BCR support.
@@ -283,18 +290,8 @@ def update_version_in_content(content: str, old_version: str, new_version: str) 
             content,
         )
 
-    # Update compatibility_level - always replace regardless of old value
     if "compatibility_level" in content:
-        new_parts = new_version.split(".")
-        if len(new_parts) >= 2:
-            major = int(new_parts[0])
-            minor = int(new_parts[1])
-            patch = int(new_parts[2].split(".bcr.")[0]) if len(new_parts) > 2 else 0
-            # Formula: major * 100000 + minor * 100 + patch
-            new_compat = major * 100000 + minor * 100 + patch
-
-            # Replace any compatibility_level value with the correct one
-            content = re.sub(r"(compatibility_level\s*=\s*)\d+", rf"\g<1>{new_compat}", content)
+        content = re.sub(r"(compatibility_level\s*=\s*)\d+", rf"\g<1>{COMPATIBILITY_LEVEL}", content)
 
     return content
 
@@ -442,6 +439,9 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
                 else:
                     content = update_version_in_content(content, old_version, new_version)
 
+                if file_path.name == "MODULE.bazel":
+                    content = ensure_meta_module_dep_exists_in_content(content, new_version)
+
                 file_path.write_text(content, encoding="utf-8")
             except Exception as e:
                 logging.warning("Could not update %s: %s", file_path, e)
@@ -467,17 +467,43 @@ def copy_and_update_directory(source_path: Path, target_path: Path, old_version:
     # Copy overlay/MODULE.bazel from main MODULE.bazel if it doesn't exist
     overlay_module = target_path / "overlay" / "MODULE.bazel"
     main_module = target_path / "MODULE.bazel"
-    if overlay_module.exists() and overlay_module.is_symlink():
-        logging.debug("Converting overlay/MODULE.bazel from symlink to copy")
+    if overlay_module.exists():
+        if overlay_module.is_symlink():
+            logging.debug("Converting overlay/MODULE.bazel from symlink to copy")
+        else:
+            logging.debug("Overwriting existing overlay/MODULE.bazel")
         overlay_module.unlink()
-    if not overlay_module.exists() and main_module.exists():
+    if main_module.exists():
         logging.debug("Copying MODULE.bazel to overlay/MODULE.bazel")
         shutil.copy2(main_module, overlay_module)
+    else:
+        logging.debug("Skipping creation of overlay/MODULE.bazel -- MODULE.bazel does not exist")
 
     run_buildifier([target_path])
 
 
-def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: list[str]) -> bool:
+def ensure_meta_module_dep_exists_in_content(content: str, version: str) -> str:
+    bazel_meta_dep_regex = r'bazel_dep\s*\(\s*name\s*=\s*"boost"'
+    if re.search(bazel_meta_dep_regex, content, flags=re.DOTALL):
+        # The boost meta-module is already present as a dependency.
+        return content
+
+    # Insert a bazel_dep on the boost meta-module above the first dep that is found. This should be
+    # alpha-sorted as-is because boost modules only depend on other boost modules.
+    content_lines = content.splitlines(keepends=True)
+    boost_meta_dep_str = f'bazel_dep(name = "boost", version = "{version}")\n'
+    for i, line in enumerate(content_lines):
+        if line.startswith("bazel_dep"):
+            content_lines.insert(i, boost_meta_dep_str)
+            return "".join(content_lines)
+
+    # If this module didn't have any deps just insert our boost meta-module dep at the end.
+    if content.endswith("\n"):
+        return content + boost_meta_dep_str
+    return content + "\n" + boost_meta_dep_str
+
+
+def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: list[str]) -> None:
     """Generate both main MODULE.bazel and overlay files for the boost meta-module.
 
     Args:
@@ -494,22 +520,11 @@ def generate_meta_module_files(version: str, modules_dir: Path, boost_modules: l
     if not boost_modules:
         raise ValueError("No boost.* modules provided for meta-module generation")
 
-    # Calculate compatibility level from version
-    # Formula: major * 100000 + minor * 100 + patch
-    parts = version.split(".")
-    if len(parts) >= 2:
-        major = int(parts[0])
-        minor = int(parts[1])
-        patch = int(parts[2].split(".bcr.")[0]) if len(parts) > 2 else 0
-        compatibility_level = major * 100000 + minor * 100 + patch
-    else:
-        compatibility_level = 100000
-
     # Generate main MODULE.bazel using template
-    module_header = MODULE_TEMPLATE.format(version=version, compatibility_level=compatibility_level)
+    module_header = MODULE_TEMPLATE.format(version=version, compatibility_level=COMPATIBILITY_LEVEL)
 
     # Add bazel_dep for each boost module
-    deps = [f'bazel_dep(name = "{module}", version = "{version}")' for module in boost_modules]
+    deps = [f'bazel_dep(name = "{module}", version = "{version}", repo_name = None)' for module in boost_modules]
 
     module_content = module_header + "\n".join(deps) + "\n"
 
