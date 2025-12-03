@@ -857,9 +857,7 @@ class BcrValidator:
         if not source_uri:
             self.report(
                 BcrValidationResult.FAILED,
-                (
-                    f"{module_name}@{version}: Only GitHub repositories are currently supported."
-                ),
+                (f"{module_name}@{version}: Only GitHub repositories are currently supported."),
             )
             return
 
