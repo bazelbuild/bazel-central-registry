@@ -82,7 +82,8 @@ DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1"
 
 ATTESTATIONS_DOCS_URL = "https://github.com/bazelbuild/bazel-central-registry/blob/main/docs/attestations.md"
 
-GITHUB_REPO_RE = re.compile(r"^(https://github.com/|github:)([^/]+/[^/]+)$")
+GITHUB_REPO_RE = re.compile(r"^github:([^/]+/[^/]+)$")
+GITHUB_URL_RE = re.compile(r"^https://github.com/([^/]+/[^/]+)")
 
 # Global cache for GitHub user IDs
 GITHUB_USER_ID_CACHE = {}
@@ -841,16 +842,36 @@ class BcrValidator:
             )
             return
 
-        source_uri = self.get_source_uri(module_name)
-        if not source_uri:
+        gh_source_uris = self.get_github_source_uris(module_name)
+        if not gh_source_uris:
             self.report(
                 BcrValidationResult.FAILED,
                 (
                     f"{module_name}@{version}: Could not determine source URI. "
-                    "Please ensure that metadata.json contains a single GitHub repository."
+                    "Please ensure that metadata.json contains at least one GitHub repository."
                 ),
             )
             return
+
+        source_uri = self.get_expected_source_uri(attestations[0].url)
+        if not source_uri:
+            self.report(
+                BcrValidationResult.FAILED,
+                (
+                    f"{module_name}@{version}: Only GitHub repositories are currently supported."
+                ),
+            )
+            return
+
+        if source_uri not in gh_source_uris:
+            self.report(
+                BcrValidationResult.FAILED,
+                (
+                    f"{module_name}@{version}: Expected source URI {source_uri}, "
+                    f"but got {', '.join(gh_source_uris)}."
+                ),
+            )
+            return 
 
         success = True
         tmp_dir = tempfile.mkdtemp()
@@ -867,13 +888,17 @@ class BcrValidator:
                 f"Successfully verified attestations for {module_name}@{version}.",
             )
 
-    def get_source_uri(self, module_name):
+    def get_github_source_uris(self, module_name):
         repos = self.registry.get_metadata(module_name)["repository"]
-        if len(repos) != 1:
+        matches = [GITHUB_REPO_RE.match(r) for r in repos]
+        return [f"github.com/{m.group(1)}" for m in matches if m]
+
+    def get_expected_source_uri(self, attestation_url):
+        m = GITHUB_URL_RE.search(attestation_url)
+        if not m:
             return None
 
-        m = GITHUB_REPO_RE.match(repos[0])
-        return f"github.com/{m.group(2)}" if m else None
+        return f"github.com/{m.group(1)}"
 
     def global_checks(self):
         """General global checks for BCR"""
