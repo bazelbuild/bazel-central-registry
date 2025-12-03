@@ -869,7 +869,7 @@ class BcrValidator:
                     f"but got {', '.join(gh_source_uris)}."
                 ),
             )
-            return 
+            return
 
         success = True
         tmp_dir = tempfile.mkdtemp()
