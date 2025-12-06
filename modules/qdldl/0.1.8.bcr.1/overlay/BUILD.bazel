@@ -1,0 +1,103 @@
+# Copyright 2016 Robot Locomotion Group @ CSAIL. All rights reserved.
+#
+# All components of Drake are licensed under the BSD 3-Clause License.
+# See LICENSE.TXT or https://drake.mit.edu/ for details.
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load(
+    "@cmake_configure_file//:cmake_configure_file.bzl",
+    "cmake_configure_file",
+)
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+licenses(["notice"])
+
+bool_flag(
+    name = "use_float",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "qdldl_use_float",
+    flag_values = {
+        ":use_float": "true",
+    },
+)
+
+bool_flag(
+    name = "use_long",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "qdldl_use_long",
+    flag_values = {
+        ":use_long": "true",
+    },
+)
+
+cmake_configure_file(
+    name = "configure_file_types",
+    src = "configure/qdldl_types.h.in",
+    out = "include/qdldl_types.h",
+    # https://github.com/osqp/qdldl/blob/v0.1.6/README.md#custom-types-for-integer-floats-and-booleans
+    defines = [
+        "QDLDL_BOOL_TYPE=unsigned char",
+    ] + select({
+        ":qdldl_use_float": [
+            "QDLDL_FLOAT_TYPE=float",
+            "QDLDL_FLOAT=1",
+        ],
+        "//conditions:default": [
+            "QDLDL_FLOAT_TYPE=double",
+            "QDLDL_FLOAT=0",
+        ],
+    }) + select({
+        ":qdldl_use_long": [
+            "QDLDL_INT_TYPE=long long",
+            "QDLDL_INT_TYPE_MAX=LLONG_MAX",
+            "QDLDL_LONG=1",
+        ],
+        "//conditions:default": [
+            "QDLDL_INT_TYPE=int",
+            "QDLDL_INT_TYPE_MAX=INT_MAX",
+            "QDLDL_LONG=0",
+        ],
+    }),
+)
+
+cmake_configure_file(
+    name = "configure_file_version",
+    src = "configure/qdldl_version.h.in",
+    out = "include/qdldl_version.h",
+    cmakelists = [
+        "CMakeLists.txt",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "qdldl",
+    srcs = [
+        "src/qdldl.c",
+    ],
+    hdrs = [
+        "include/qdldl.h",
+        ":include/qdldl_types.h",
+        ":include/qdldl_version.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Werror=incompatible-pointer-types",
+        ],
+    }),
+    defines = [
+        "BUILDING_QDLDL",
+        "QDLDL_SHARED_LIB",
+    ],
+    includes = [
+        "include",
+    ],
+    visibility = ["//visibility:public"],
+)
