@@ -593,8 +593,7 @@ pip.parse(
     requirements_lock = "{origin_attrs["requirements_lock"]}",
     python_version = "{python_version}",
 )
-use_repo(pip, "{repo}")
-"""
+use_repo(pip, "{repo}")"""
     write_at_given_place(
         "MODULE.bazel",
         py_ext,
@@ -626,7 +625,7 @@ use_repo(pip, "{repo}")
     resolved("`" + repo + "` has been introduced as python extension, with python_version=" + python_version + ".")
     append_migration_info("## Migration of `" + repo + "`")
     append_migration_info("It has been introduced as a python extension, with python_version=" + python_version + ":\n")
-    append_migration_info("```" + py_ext + "\n" + py_toolchain_msg + "\n```")
+    append_migration_info("```" + py_ext + "\n" + py_toolchain_msg + "\n```\n")
 
 
 def address_unavailable_repo(repo, resolved_deps, workspace_name):
@@ -688,10 +687,9 @@ def address_unavailable_repo(repo, resolved_deps, workspace_name):
         add_python_extension(repo, origin_attrs, resolved_deps, workspace_name)
         return True
 
-    # Support python toolchain dependencies.
-    if "generator_function" in origin_attrs and re.match(r"python_.*toolchains", origin_attrs["generator_function"]):
-        add_python_repo(repo)
-        return True
+    if repo.startswith("pypi_") and "rules_python" in file_label:
+        address_pypi_reference(repo)
+        return False
 
     append_migration_info("## Migration of `" + repo + "`:")
     print_repo_definition(repo_def, dep)
@@ -780,6 +778,16 @@ def address_bind_issue(bind_target_location, resolved_repos):
         f"A bind target detected at {bind_target_location}! `bind` is already deprecated,"
         " you should reference the actual target directly instead of using //external:<target>"
         " (details at https://bazel.build/external/migration#bind-targets). After this fix, rerun this tool."
+    )
+    print("")
+
+
+def address_pypi_reference(repo):
+    repo_suffix = repo.removeprefix("pypi_")
+    print("")
+    error(
+        f"Update pip dependency reference from @pypi_{repo_suffix}//:<pkg> to @pypi//{repo_suffix}."
+        " The @pypi_<name> references are deprecated and the modern, supported, way is to go through the hub (@pypi)."
     )
     print("")
 
@@ -913,7 +921,7 @@ def parse_file(filename):
             # Parse for "@".
             matches_at = re.findall(r"@(\w+)//", line)
             for match_at in matches_at:
-                if match_at != "bazel_tools":
+                if match_at != "bazel_tools" and not match_at.startswith("pypi_"):
                     direct_deps.add(match_at)
 
             # Parse for "/external/{repo_name}/".
@@ -1043,19 +1051,13 @@ def main(argv=None):
         print("")
         direct_deps = query_direct_targets(args)
 
-        resolved_repos = []
-        unresolved_deps = []
         for direct_dep in direct_deps:
             if address_unavailable_repo(direct_dep, resolved_deps, workspace_name):
-                resolved_repos.append(direct_dep)
+                continue
             else:
-                unresolved_deps.append(direct_dep)
-
-        if unresolved_deps:
-            print(f"{RED}\nThese repos need manual support:")
-            for dep in unresolved_deps:
-                print(f"\t{RED}" + dep)
-            # TODO(kotlaja): Add these repos at the end.
+                important("Fix the error, then run this migration tool again.")
+                print("")
+                return 1
     else:
         info(
             "To create a MODULE.bazel file from scratch, either delete existing MODULE.bazel file or use the `--initial/-i` flag.\n"
