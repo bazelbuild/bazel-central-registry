@@ -57,45 +57,49 @@ class BazelBuildTest(unittest.TestCase):
 
     def test_migration_of_module_deps(self):
         self._cleanup_created_files()
+        try:
+            # Verify bazel build is successful with enabled workspace
+            print("\n--- Running bazel build with enabled workspace ---")
+            result = self._run_command(
+                ["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."]
+            )
+            assert result.returncode == 0
+            self._print_message("Success.")
 
-        # Verify bazel build is successful with enabled workspace
-        print("\n--- Running bazel build with enabled workspace ---")
-        result = self._run_command(["bazel", "build", "--nobuild", "--enable_workspace", "--noenable_bzlmod", "//..."])
-        assert result.returncode == 0
-        self._print_message("Success.")
+            # Run migration script
+            print("\n--- Running migration script ---")
+            result = self._run_command(
+                [sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True
+            )
+            assert result.returncode == 1
+            assert "A bind target detected at " in result.stderr
+            assert os.path.exists(
+                "migration_info.md"
+            ), "File 'migration_info.md' should be created during migration, but it doesn't exist."
+            self._print_message("Expected error: User need to modify bind rule.")
 
-        # Run migration script
-        print("\n--- Running migration script ---")
-        result = self._run_command([sys.executable, "../../migrate_to_bzlmod.py", "-t=//..."], expected_failure=True)
-        assert result.returncode == 1
-        assert "A bind target detected at " in result.stderr
-        assert os.path.exists(
-            "migration_info.md"
-        ), "File 'migration_info.md' should be created during migration, but it doesn't exist."
-        self._print_message("Expected error: User need to modify bind rule.")
+            # Verify Bzlmod have error
+            print("\n--- Running bazel build with enabled bzlmod ---")
+            result = self._run_command(
+                ["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."], expected_failure=True
+            )
+            assert result.returncode == 1
+            self._print_message("Expected error: Manual change for bind rule is needed.")
 
-        # Verify Bzlmod have error
-        print("\n--- Running bazel build with enabled bzlmod ---")
-        result = self._run_command(
-            ["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."], expected_failure=True
-        )
-        assert result.returncode == 1
-        self._print_message("Expected error: Manual change for bind rule is needed.")
+            # Modify BUILD file
+            self.modify_build_file("//external:gazelle_bind", "@bazel_gazelle//:deps")
+            print("\n--- Modifying BUILD file ---")
+            self._print_message("Success.")
 
-        # Modify BUILD file
-        self.modify_build_file("//external:gazelle_bind", "@bazel_gazelle//:deps")
-        print("\n--- Modifying BUILD file ---")
-        self._print_message("Success.")
-
-        # Verify MODULE.bazel was created successfully
-        print("\n--- Running bazel build with enabled bzlmod ---")
-        result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."])
-        assert result.returncode == 0
-        self._print_message("Success.")
-
-        # Restore BUILD file to the initial content
-        self.modify_build_file("@bazel_gazelle//:deps", "//external:gazelle_bind")
-        self._cleanup_created_files()
+            # Verify MODULE.bazel was created successfully
+            print("\n--- Running bazel build with enabled bzlmod ---")
+            result = self._run_command(["bazel", "build", "--noenable_workspace", "--enable_bzlmod", "//..."])
+            assert result.returncode == 0
+            self._print_message("Success.")
+        finally:
+            # Restore BUILD file to the initial content
+            self.modify_build_file("@bazel_gazelle//:deps", "//external:gazelle_bind")
+            self._cleanup_created_files()
 
 
 if __name__ == "__main__":
