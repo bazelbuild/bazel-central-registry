@@ -32,7 +32,7 @@ DEPENDENCY_VERSIONS = {
     "bazel_skylib": "1.8.2",
     "boringssl": "0.20251002.0",
     "bzip2": "1.0.8.bcr.3",
-    "onetbb": "2022.1.0",
+    "onetbb": "2022.2.0",
     "openssl": "3.3.1.bcr.9",
     "zlib": "1.3.1.bcr.7",
     "zstd": "1.5.7",
