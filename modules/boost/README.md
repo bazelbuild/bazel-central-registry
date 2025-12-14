@@ -1,6 +1,8 @@
 # Boost Meta-Module
 
-The `boost` module is a meta-module that provides convenient access to all Boost libraries in the Bazel Central Registry.
+The `boost` module is a meta-module that is not meant to be directly added as a bazel_dep.
+
+Its purpose is to ensure that all boost sub-modules included in a workspace are the same version.
 
 ## Adding a New Boost Version
 
@@ -8,6 +10,6 @@ The `boost` module is a meta-module that provides convenient access to all Boost
 python3 modules/boost/add_boost_version.py <version>
 ```
 
-## Module structure
+This script will create a new version of all the boost submodules.
 
-For all available modules in the given version, an alias will be generated in a subdirectory matching the library name. E.g. `@boost.filesystem` -> `@boost//filesystem`.
+It is only necessary to run this when creating a new version of boost, e.g. 1.89 -> 1.90. You do not need to run this script when just creatinga a new bcr version for a boost module.
