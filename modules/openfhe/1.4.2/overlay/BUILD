@@ -163,3 +163,8 @@ cc_shared_library(
         ":pke",
     ],
 )
+
+alias(
+    name = "openfhe",
+    actual = ":pke",
+)
