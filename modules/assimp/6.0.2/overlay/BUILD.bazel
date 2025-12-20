@@ -1,0 +1,842 @@
+"""
+This package contains Bazel build targets for the Assimp C++ library.
+
+There are two publicly visible targets:
+`@assimp` : This contains the Assimp library as well as all linked
+    importers and exporters. Some file formats are disabled, see `IO_DEFINES`
+    for a list of disabled file formats.
+`@assimp//:common` : This target contains just the Assimp library without any
+    importer or exporter.
+
+Assimp ships with several external libraries, located under the contrib/
+directory. Where available, a module available on BCR is used below instead of
+the library in contrib/ to avoid downstream compilation issues due to ODR
+violation.
+
+Lastly, a `filegroup` target is added below for each supported file format
+located under the code/AssetLib/ directory and listed in `srcs` under
+`@assimp`.
+"""
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+expand_template(
+    name = "config_tmpl",
+    out = "include/assimp/config.h",
+    substitutions = {"#cmakedefine": "// #undef"},
+    template = "include/assimp/config.h.in",
+)
+
+expand_template(
+    name = "revision_tmpl",
+    out = "include/assimp/revision.h",
+    substitutions = {
+        "@GIT_COMMIT_HASH@": "fb375dd8",
+        "@GIT_BRANCH@": "master",
+        "@ASSIMP_VERSION_MAJOR@": "6",
+        "@ASSIMP_VERSION_MINOR@": "0",
+        "@ASSIMP_VERSION_PATCH@": "2",
+        "@ASSIMP_PACKAGE_VERSION@": "0",
+        "@CMAKE_SHARED_LIBRARY_PREFIX@": "",
+    },
+    template = "include/assimp/revision.h.in",
+)
+
+cc_library(
+    name = "common",
+    srcs = glob(
+        [
+            "code/**/*.c",
+            "code/**/*.cpp",
+        ],
+        exclude = [
+            "code/Common/Importer.cpp",
+            "code/Common/Exporter.cpp",
+            "code/Common/ImporterRegistry.cpp",
+            "code/AssetLib/**",
+        ],
+    ),
+    hdrs = glob(
+        [
+            "code/**/*.h",
+            "code/**/*.inl",
+            "include/assimp/**/*.h",
+            "include/assimp/**/*.hpp",
+            "include/assimp/**/*.inl",
+        ],
+        exclude = ["code/AssetLib/**"],
+    ) + [
+        "include/assimp/config.h",
+        "include/assimp/revision.h",
+    ],
+    # Minimum C++ version to build code under PostProcessing.
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/std:c++17",
+        ],
+        "//conditions:default": [
+            "-std=c++17",
+        ],
+    }),
+    includes = [
+        "code",
+        "include",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":earcut",
+        ":stb",
+        ":unzip",
+        ":utf8",
+        "@pugixml",
+    ],
+)
+
+IO_DEFINES = [
+    # The 3MF exporter depends on libzip@0.3.0 which is available in contrib/zip.
+    # However, compiling against it could lead to ODR violations for downstream
+    # targets that also depend on libzip@1.10.1 from BCR.
+    "ASSIMP_BUILD_NO_3MF_EXPORTER",
+
+    # Following importers and exporters are disabled because they depend on
+    # external libraries that are not available in BCR.
+    "ASSIMP_BUILD_NO_C4D_IMPORTER",
+    "ASSIMP_BUILD_NO_USD_IMPORTER",
+
+    # Disabled due to vulnerabilities caught by fuzztesting import from
+    # memory.
+    "ASSIMP_BUILD_NO_MDC_IMPORTER",
+    "ASSIMP_BUILD_NO_MDL_IMPORTER",
+    "ASSIMP_BUILD_NO_HMP_IMPORTER",
+    "ASSIMP_BUILD_NO_M3D_IMPORTER",
+    "ASSIMP_BUILD_NO_M3D_EXPORTER",
+
+    # Disable VRML support since it requires Meshlab.
+    "ASSIMP_BUILD_NO_VRML_IMPORTER",
+]
+
+cc_library(
+    name = "assimp",
+    srcs = [
+        "code/Common/Exporter.cpp",
+        "code/Common/Importer.cpp",
+        "code/Common/ImporterRegistry.cpp",
+    ] + [
+        # I/O plugins
+        ":amf_io",
+        ":3ds_io",
+        ":ac_io",
+        ":ase_io",
+        ":assbin_io",
+        ":assjson_io",
+        ":assxml_io",
+        ":b3d_io",
+        ":bvh_io",
+        ":collada_io",
+        ":dxf_io",
+        ":csm_io",
+        ":irr_io",
+        ":lwo_io",
+        ":lws_io",
+        ":md2_io",
+        ":md3_io",
+        ":md5_io",
+        ":mdc_io",
+        ":nff_io",
+        ":ndo_io",
+        ":off_io",
+        ":obj_io",
+        ":ogre_io",
+        ":opengex_io",
+        ":ply_io",
+        ":ms3d_io",
+        ":cob_io",
+        ":blend_io",
+        ":ifc_io",
+        ":xgl_io",
+        ":fbx_io",
+        ":q3d_io",
+        ":q3bsp_io",
+        ":raw_io",
+        ":sib_io",
+        ":smd_io",
+        ":stl_io",
+        ":terragen_io",
+        ":3d_io",
+        ":x_io",
+        ":x3d_io",
+        ":vrml_io",
+        ":gltf_io",
+        ":mmd_io",
+        ":3mf_importer",
+        ":iqm_io",
+        ":pbrt_io",
+        ":step_exporter",
+    ],
+    hdrs = glob(
+        [
+            "include/assimp/**/*.h",
+            "include/assimp/**/*.hpp",
+            "include/assimp/**/*.inl",
+        ],
+    ) + [
+        "include/assimp/config.h",
+    ],
+    # IFC Loader does not build with C++20 due to
+    # https://github.com/assimp/assimp/issues/5798
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/std:c++17",
+        ],
+        "//conditions:default": [
+            "-std=c++17",
+            "-Wno-dangling-reference",
+            "-Wno-unknown-warning-option",  # -Wdangling-reference does not exist in clang
+        ],
+    }),
+    defines = IO_DEFINES + [
+        "ASSIMP_BUILD_NO_OWN_ZLIB",
+        "RAPIDJSON_HAS_STDSTRING",
+    ],
+    includes = [
+        "code",
+        "include",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":clipper",
+        ":common",
+        ":open3dgc",
+        ":openddlparser",
+        ":poly2tri",
+        ":stb",
+        ":unzip",
+        ":utf8",
+        "@pugixml",
+        "@rapidjson",
+        "@zlib",
+    ],
+)
+
+# ========== Contrib ==========
+# =============================
+
+cc_library(
+    name = "openddlparser",
+    srcs = glob(
+        ["contrib/openddlparser/code/*.cpp"],
+    ),
+    hdrs = glob(
+        ["contrib/openddlparser/include/openddlparser/*.h"],
+    ),
+    defines = ["OPENDDLPARSER_BUILD"],
+    includes = ["contrib/openddlparser/include"],
+)
+
+cc_library(
+    name = "unzip",
+    srcs = glob(
+        ["contrib/unzip/*.c"],
+    ),
+    hdrs = glob(
+        ["contrib/unzip/*.h"],
+    ),
+    includes = ["contrib/unzip"],
+    deps = ["@zlib"],
+)
+
+cc_library(
+    name = "poly2tri",
+    srcs = glob(
+        [
+            "contrib/poly2tri/poly2tri/**/*.h",
+            "contrib/poly2tri/poly2tri/**/*.cc",
+        ],
+        exclude = ["contrib/poly2tri/poly2tri/poly2tri.h"],
+    ),
+    hdrs = ["contrib/poly2tri/poly2tri/poly2tri.h"],
+)
+
+cc_library(
+    name = "clipper",
+    srcs = glob(
+        [
+            "contrib/clipper/*.hpp",
+            "contrib/clipper/*.cpp",
+        ],
+    ),
+)
+
+cc_library(
+    name = "open3dgc",
+    srcs = glob(
+        ["contrib/Open3DGC/*.cpp"],
+    ),
+    hdrs = glob(
+        [
+            "contrib/Open3DGC/*.h",
+            "contrib/Open3DGC/*.inl",
+        ],
+    ) + [
+        "include/assimp/config.h",
+        "include/assimp/defs.h",
+    ],
+    includes = ["include"],
+    defines = IO_DEFINES,  # Needed for assimp/defs.h
+)
+
+cc_library(
+    name = "utf8",
+    hdrs = glob(
+        [
+            "contrib/utf8cpp/source/*.h",
+            "contrib/utf8cpp/source/**/*.h",
+        ],
+    ),
+    includes = ["contrib/utf8cpp/source"],
+)
+
+cc_library(
+    name = "stb",
+    hdrs = glob(
+        ["contrib/stb/*.h"],
+    ),
+    includes = ["contrib"],
+)
+
+cc_library(
+    name = "earcut",
+    hdrs = glob(
+        ["contrib/earcut-hpp/*.hpp"],
+    ),
+)
+
+# ========= Importers/ Exporters =========
+# ========================================
+
+# There is one `filegroup` target below for each supported importer/ exporter
+# plugin. A `filegroup` is used to wrap the sources for each plugin rather than
+# a `cc_library` since we run into linker errors due to interdependencies
+# between the `assimp::Importer/Exporter` classes and the plugin classes.
+
+filegroup(
+    name = "amf_io",
+    srcs = glob(
+        [
+            "code/AssetLib/AMF/*.hpp",
+            "code/AssetLib/AMF/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "3ds_io",
+    srcs = glob(
+        [
+            "code/AssetLib/3DS/*.h",
+            "code/AssetLib/3DS/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ac_io",
+    srcs = glob(
+        [
+            "code/AssetLib/AC/*.h",
+            "code/AssetLib/AC/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ase_io",
+    srcs = glob(
+        [
+            "code/AssetLib/ASE/*.h",
+            "code/AssetLib/ASE/*.cpp",
+        ],
+    ) + [
+        "code/AssetLib/3DS/3DSHelper.h",
+        "code/AssetLib/3DS/3DSLoader.h",
+    ],
+)
+
+filegroup(
+    name = "assbin_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Assbin/*.h",
+            "code/AssetLib/Assbin/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "assjson_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Assjson/*.h",
+            "code/AssetLib/Assjson/*.c",
+            "code/AssetLib/Assjson/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "assxml_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Assxml/*.h",
+            "code/AssetLib/Assxml/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "b3d_io",
+    srcs = glob(
+        [
+            "code/AssetLib/B3D/*.h",
+            "code/AssetLib/B3D/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "bvh_io",
+    srcs = glob(
+        [
+            "code/AssetLib/BVH/*.h",
+            "code/AssetLib/BVH/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "collada_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Collada/*.h",
+            "code/AssetLib/Collada/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "dxf_io",
+    srcs = glob(
+        [
+            "code/AssetLib/DXF/*.h",
+            "code/AssetLib/DXF/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "csm_io",
+    srcs = glob(
+        [
+            "code/AssetLib/CSM/*.h",
+            "code/AssetLib/CSM/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "irr_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Irr/*.h",
+            "code/AssetLib/Irr/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "lwo_io",
+    srcs = glob(
+        [
+            "code/AssetLib/LWO/*.h",
+            "code/AssetLib/LWO/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "lws_io",
+    srcs = glob(
+        [
+            "code/AssetLib/LWS/*.h",
+            "code/AssetLib/LWS/*.cpp",
+        ],
+    ) + [
+        "code/AssetLib/LWO/LWOAnimation.h",
+        "code/AssetLib/LWO/LWOFileData.h",
+    ],
+)
+
+filegroup(
+    name = "md2_io",
+    srcs = glob(
+        [
+            "code/AssetLib/MD2/*.h",
+            "code/AssetLib/MD2/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "md3_io",
+    srcs = glob(
+        [
+            "code/AssetLib/MD3/*.h",
+            "code/AssetLib/MD3/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "md5_io",
+    srcs = glob(
+        [
+            "code/AssetLib/MD5/*.h",
+            "code/AssetLib/MD5/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "mdc_io",
+    srcs = glob(
+        [
+            "code/AssetLib/MDC/*.h",
+            "code/AssetLib/MDC/*.cpp",
+        ],
+    ) + ["code/AssetLib/MD3/MD3FileData.h"],
+)
+
+filegroup(
+    name = "nff_io",
+    srcs = glob(
+        [
+            "code/AssetLib/NFF/*.h",
+            "code/AssetLib/NFF/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ndo_io",
+    srcs = glob(
+        [
+            "code/AssetLib/NDO/*.h",
+            "code/AssetLib/NDO/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "off_io",
+    srcs = glob(
+        [
+            "code/AssetLib/OFF/*.h",
+            "code/AssetLib/OFF/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "obj_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Obj/*.h",
+            "code/AssetLib/Obj/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ogre_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Ogre/*.h",
+            "code/AssetLib/Ogre/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "opengex_io",
+    srcs = glob(
+        [
+            "code/AssetLib/OpenGEX/*.h",
+            "code/AssetLib/OpenGEX/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ply_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Ply/*.h",
+            "code/AssetLib/Ply/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ms3d_io",
+    srcs = glob(
+        [
+            "code/AssetLib/MS3D/*.h",
+            "code/AssetLib/MS3D/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "cob_io",
+    srcs = glob(
+        [
+            "code/AssetLib/COB/*.h",
+            "code/AssetLib/COB/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "blend_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Blender/*.h",
+            "code/AssetLib/Blender/*.inl",
+            "code/AssetLib/Blender/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "ifc_io",
+    srcs = glob(
+        [
+            "code/AssetLib/IFC/*.h",
+            "code/AssetLib/IFC/*.cpp",
+        ],
+        # Gen4 reader fails to compile and is also disabled in CMake build.
+        exclude = [
+            "code/AssetLib/IFC/IFCReaderGen_4.h",
+            "code/AssetLib/IFC/IFCReaderGen_4.cpp",
+        ],
+    ) + glob(
+        [
+            "code/AssetLib/STEPParser/*.h",
+            "code/AssetLib/STEPParser/*.cpp",
+        ],
+    ) + [
+        "code/AssetLib/Step/STEPFile.h",
+    ],
+)
+
+filegroup(
+    name = "xgl_io",
+    srcs = glob(
+        [
+            "code/AssetLib/XGL/*.h",
+            "code/AssetLib/XGL/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "fbx_io",
+    srcs = glob(
+        [
+            "code/AssetLib/FBX/*.cpp",
+            "code/AssetLib/FBX/*.h",
+        ],
+    ),
+)
+
+filegroup(
+    name = "q3d_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Q3D/*.h",
+            "code/AssetLib/Q3D/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "q3bsp_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Q3BSP/*.h",
+            "code/AssetLib/Q3BSP/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "raw_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Raw/*.h",
+            "code/AssetLib/Raw/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "sib_io",
+    srcs = glob(
+        [
+            "code/AssetLib/SIB/*.h",
+            "code/AssetLib/SIB/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "smd_io",
+    srcs = glob(
+        [
+            "code/AssetLib/SMD/*.h",
+            "code/AssetLib/SMD/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "stl_io",
+    srcs = glob(
+        [
+            "code/AssetLib/STL/*.h",
+            "code/AssetLib/STL/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "terragen_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Terragen/*.h",
+            "code/AssetLib/Terragen/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "3d_io",
+    srcs = glob(
+        [
+            "code/AssetLib/Unreal/*.h",
+            "code/AssetLib/Unreal/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "x_io",
+    srcs = glob(
+        [
+            "code/AssetLib/X/*.h",
+            "code/AssetLib/X/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "x3d_io",
+    srcs = glob(
+        [
+            "code/AssetLib/X3D/*.h",
+            "code/AssetLib/X3D/*.hpp",
+            "code/AssetLib/X3D/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "vrml_io",
+    srcs = glob(
+        [
+            "code/AssetLib/VRML/*.hpp",
+            "code/AssetLib/VRML/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "gltf_io",
+    srcs = glob(
+        [
+            "code/AssetLib/glTF/*.h",
+            "code/AssetLib/glTF/*.inl",
+            "code/AssetLib/glTF/*.cpp",
+            "code/AssetLib/glTF2/*.h",
+            "code/AssetLib/glTF2/*.inl",
+            "code/AssetLib/glTF2/*.cpp",
+            "code/AssetLib/glTFCommon/*.h",
+            "code/AssetLib/glTFCommon/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "mmd_io",
+    srcs = glob(
+        [
+            "code/AssetLib/MMD/*.h",
+            "code/AssetLib/MMD/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "3mf_importer",
+    srcs = glob(
+        [
+            "code/AssetLib/3MF/*.h",
+            "code/AssetLib/3MF/*.cpp",
+        ],
+        exclude = [
+            # The 3MF exporter is disabled as described above in `IO_DEFINES`.
+            "code/AssetLib/3MF/D3MFExporter.h",
+            "code/AssetLib/3MF/D3MFExporter.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "iqm_io",
+    srcs = glob(
+        [
+            "code/AssetLib/IQM/*.h",
+            "code/AssetLib/IQM/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "pbrt_io",
+    srcs = glob(
+        [
+            "code/Pbrt/*.h",
+            "code/Pbrt/*.cpp",
+        ],
+    ),
+)
+
+filegroup(
+    name = "step_exporter",
+    srcs = glob(
+        [
+            "code/AssetLib/Step/*.h",
+            "code/AssetLib/Step/*.cpp",
+        ],
+    ),
+)

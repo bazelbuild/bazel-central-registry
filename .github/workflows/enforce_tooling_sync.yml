@@ -1,0 +1,48 @@
+name: Enforce Tooling Sync
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check-file-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v6
+        with:
+          # We need full history to trace ancestry
+          fetch-depth: 0
+
+      - name: Verify tools/bcr_validation.py is up to date
+        run: |
+          FILE_PATH="tools/bcr_validation.py"
+          MAIN_BRANCH="origin/main"
+
+          # 1. Fetch main to ensure we have the latest reference
+          git fetch origin main
+
+          # 2. Find the last commit on main that touched this specific file
+          # 'git log -n 1' gets the most recent commit
+          # '--format=%H' gives us just the SHA
+          LATEST_MAIN_CHANGE=$(git log -n 1 --format=%H $MAIN_BRANCH -- $FILE_PATH)
+
+          if [ -z "$LATEST_MAIN_CHANGE" ]; then
+            echo "❌ Failure: $FILE_PATH not found in $MAIN_BRANCH history. This should not happen."
+            exit 1
+          fi
+
+          echo "Latest change to $FILE_PATH on main was in commit: $LATEST_MAIN_CHANGE"
+
+          # 3. Check if that commit exists in the CURRENT Pull Request history
+          # We use ${{ github.event.pull_request.head.sha }} to check the PR tip specifically
+          if git merge-base --is-ancestor "$LATEST_MAIN_CHANGE" ${{ github.event.pull_request.head.sha }}; then
+            echo "✅ Success: Your PR includes the latest version of $FILE_PATH."
+            exit 0
+          else
+            echo "❌ Failure: Your version of $FILE_PATH is outdated."
+            echo "The main branch updated this file in commit $LATEST_MAIN_CHANGE."
+            echo "👉 Action required: Merge or rebase 'main' into your branch."
+            exit 1
+          fi
