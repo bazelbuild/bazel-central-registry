@@ -33,7 +33,7 @@ bazel run //tools:add_module
 
 The script will generate all required changes based on your input, please review, modify and commit the change, then send a PR to the BCR repository.
 
-If you are the project owner, you can set up the [Publish to BCR](https://github.com/apps/publish-to-bcr) Github App for your repository to automatically send a PR to the BCR when cutting a new release.
+If you are the project owner, you can set up [Publish to BCR](https://github.com/bazel-contrib/publish-to-bcr) GitHub release automation for your repository to automatically send a PR to the BCR when cutting a new release.
 
 When manually editing files you may find `bazel run -- //tools:update_integrity foomod` useful to update the integrity hashes in foomod's source.json file.
 The tool also accepts a `--version` option to update the `source.json` of a specific version of the module (instead of latest).
