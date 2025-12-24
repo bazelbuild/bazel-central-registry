@@ -1,6 +1,6 @@
-load("//:compiler_select.bzl", "compiler_select")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_license//rules:license.bzl", "license")
+load("//:compiler_select.bzl", "compiler_select")
 
 package(default_applicable_licenses = [":license"])
 
@@ -86,7 +86,7 @@ cc_library(
         ":aws-c-http",
         ":crt",
         "@boringssl//:crypto",
-        "@curl//:curl",
+        "@curl",
         "@opentelemetry-cpp//api",
         "@opentelemetry-cpp//exporters/ostream:ostream_metric_exporter",
         "@opentelemetry-cpp//exporters/ostream:ostream_span_exporter",
@@ -407,7 +407,6 @@ cc_library(
     ),
     hdrs = ["crt/aws-crt-cpp/crt/s2n/api/s2n.h"],
     copts = common_copts + [
-        "-Iexternal/aws_sdk~/crt/aws-crt-cpp/crt/s2n",
         "-DS2N_NO_PQ",
         "-Wno-unknown-pragmas",
         "-Wno-unused-parameter",
