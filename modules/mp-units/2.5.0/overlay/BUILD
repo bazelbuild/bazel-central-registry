@@ -57,7 +57,7 @@ cc_library(
                  "test/static/iau_test.cpp",
                 ]) + ["test/static/test_tools.h"],
     deps = [
-        "@mp-units",
+        ":mp-units",
     ],
 )
 
@@ -67,7 +67,7 @@ cc_test(
                  "test/runtime/linear_algebra_test.cpp",
                 ]) + ["test/runtime/almost_equals.h"],
     deps = [
-        "@mp-units",
+        ":mp-units",
         "@catch2//:catch2",
         "@catch2//:catch2_main",
     ],
@@ -78,6 +78,6 @@ cc_binary(
     name = "hello_units",
     srcs = ["example/hello_units.cpp"],
     deps = [
-        "@mp-units",
+        ":mp-units",
     ],
 )
