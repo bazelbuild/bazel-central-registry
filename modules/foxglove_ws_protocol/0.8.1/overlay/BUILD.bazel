@@ -2,7 +2,7 @@
 licenses(["notice"])
 
 cc_library(
-    name = "com_github_foxglove_ws-protocol",
+    name = "foxglove_ws_protocol",
     srcs = [
         "cpp/foxglove-websocket/src/base64.cpp",
         "cpp/foxglove-websocket/src/parameter.cpp",
@@ -37,5 +37,5 @@ cc_library(
 cc_binary(
     name = "example_server_json",
     srcs = ["cpp/examples/src/example_server_json.cpp"],
-    deps = [":com_github_foxglove_ws-protocol"],
+    deps = [":foxglove_ws_protocol"],
 )
