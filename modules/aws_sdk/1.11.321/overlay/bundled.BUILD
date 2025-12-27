@@ -1,3 +1,5 @@
+# This BUILD file is a translation of the various CMakeLists.txt in the
+# original source.
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_license//rules:license.bzl", "license")
 load("//:compiler_select.bzl", "compiler_select")
@@ -72,7 +74,7 @@ cc_library(
     copts = common_copts + [
         "-DAWS_SDK_VERSION_MAJOR=10",
         "-DAWS_SDK_VERSION_MINOR=34",
-        "-DAWS_SDK_VERSION_PATCH=\"\\\"BRT\"\\\"",
+        "-DAWS_SDK_VERSION_PATCH=\"\\\"BCR\"\\\"",
         "-DENABLE_OPENSSL_ENCRYPTION",
         "-DENABLE_CURL_CLIENT",
         "-Wno-format-nonliteral",
