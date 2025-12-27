@@ -1,0 +1,427 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# List of all library source files
+LJLIB_SRCS = [
+    "src/lib_base.c",
+    "src/lib_math.c",
+    "src/lib_bit.c",
+    "src/lib_string.c",
+    "src/lib_table.c",
+    "src/lib_io.c",
+    "src/lib_os.c",
+    "src/lib_package.c",
+    "src/lib_debug.c",
+    "src/lib_jit.c",
+    "src/lib_ffi.c",
+    "src/lib_buffer.c",
+]
+
+# List of all core source files
+LJCORE_SRCS = [
+    "src/lj_assert.c",
+    "src/lj_gc.c",
+    "src/lj_err.c",
+    "src/lj_char.c",
+    "src/lj_bc.c",
+    "src/lj_obj.c",
+    "src/lj_buf.c",
+    "src/lj_str.c",
+    "src/lj_tab.c",
+    "src/lj_func.c",
+    "src/lj_udata.c",
+    "src/lj_meta.c",
+    "src/lj_debug.c",
+    "src/lj_prng.c",
+    "src/lj_state.c",
+    "src/lj_dispatch.c",
+    "src/lj_vmevent.c",
+    "src/lj_vmmath.c",
+    "src/lj_strscan.c",
+    "src/lj_strfmt.c",
+    "src/lj_strfmt_num.c",
+    "src/lj_serialize.c",
+    "src/lj_api.c",
+    "src/lj_profile.c",
+    "src/lj_lex.c",
+    "src/lj_parse.c",
+    "src/lj_bcread.c",
+    "src/lj_bcwrite.c",
+    "src/lj_load.c",
+    "src/lj_ir.c",
+    "src/lj_opt_mem.c",
+    "src/lj_opt_fold.c",
+    "src/lj_opt_narrow.c",
+    "src/lj_opt_dce.c",
+    "src/lj_opt_loop.c",
+    "src/lj_opt_split.c",
+    "src/lj_opt_sink.c",
+    "src/lj_mcode.c",
+    "src/lj_snap.c",
+    "src/lj_record.c",
+    "src/lj_crecord.c",
+    "src/lj_ffrecord.c",
+    "src/lj_asm.c",
+    "src/lj_trace.c",
+    "src/lj_gdbjit.c",
+    "src/lj_ctype.c",
+    "src/lj_cdata.c",
+    "src/lj_cconv.c",
+    "src/lj_ccall.c",
+    "src/lj_ccallback.c",
+    "src/lj_carith.c",
+    "src/lj_clib.c",
+    "src/lj_cparse.c",
+    "src/lj_lib.c",
+    "src/lj_alloc.c",
+    "src/lib_aux.c",
+] + LJLIB_SRCS + [
+    "src/lib_init.c",
+]
+
+# Build minilua (host tool)
+cc_binary(
+    name = "minilua",
+    srcs = ["src/host/minilua.c"],
+    linkopts = ["-lm"],
+)
+
+# Generate host/buildvm_arch.h from dynasm
+# This must be generated before buildvm is built since buildvm.c includes it.
+# Select the correct .dasc file based on host CPU architecture.
+genrule(
+    name = "buildvm_arch_h",
+    srcs = [
+        "src/lj_arch.h",
+        "src/lua.h",
+        "src/luaconf.h",
+    ] + select({
+        "@platforms//cpu:arm64": ["src/vm_arm64.dasc"],
+        "@platforms//cpu:armv7": ["src/vm_arm.dasc"],
+        "@platforms//cpu:mips64": ["src/vm_mips64.dasc"],
+        "@platforms//cpu:ppc": ["src/vm_ppc.dasc"],
+        "@platforms//cpu:x86_64": ["src/vm_x64.dasc"],
+        "//conditions:default": ["src/vm_x64.dasc"],
+    }) + glob([
+        "dynasm/*.lua",
+    ]),
+    outs = ["src/host/buildvm_arch.h"],
+    cmd = select({
+        "@platforms//cpu:arm64": "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_arm64.dasc)",
+        "@platforms//cpu:armv7": "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_arm.dasc)",
+        "@platforms//cpu:mips64": "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_mips64.dasc)",
+        "@platforms//cpu:ppc": "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_ppc.dasc)",
+        "@platforms//cpu:x86_64": "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_x64.dasc)",
+        "//conditions:default": "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_x64.dasc)",
+    }),
+    cmd_bat = "$(execpath :minilua) $(execpath dynasm/dynasm.lua) -o $@ $(execpath src/vm_x64.dasc)",
+    tools = [
+        ":minilua",
+    ],
+)
+
+# Build buildvm (host tool) - needs architecture-specific dasm headers and buildvm_arch.h
+cc_binary(
+    name = "buildvm",
+    srcs = [
+        "dynasm/dasm_proto.h",
+        "src/host/buildvm.c",
+        "src/host/buildvm.h",
+        "src/host/buildvm_asm.c",
+        "src/host/buildvm_fold.c",
+        "src/host/buildvm_lib.c",
+        "src/host/buildvm_libbc.h",
+        "src/host/buildvm_peobj.c",
+        "src/lj_arch.h",
+        "src/lj_bc.h",
+        "src/lj_ccall.h",
+        "src/lj_ctype.h",
+        "src/lj_def.h",
+        "src/lj_dispatch.h",
+        "src/lj_frame.h",
+        "src/lj_gc.h",
+        "src/lj_ir.h",
+        "src/lj_ircall.h",
+        "src/lj_jit.h",
+        "src/lj_lib.h",
+        "src/lj_obj.h",
+        "src/lj_traceerr.h",
+        "src/lua.h",
+        "src/luaconf.h",
+        ":src/host/buildvm_arch.h",
+        ":src/luajit.h",
+    ] + select({
+        "@platforms//cpu:arm64": ["dynasm/dasm_arm64.h"],
+        "@platforms//cpu:armv7": ["dynasm/dasm_arm.h"],
+        "@platforms//cpu:mips64": ["dynasm/dasm_mips64.h"],
+        "@platforms//cpu:ppc": ["dynasm/dasm_ppc.h"],
+        "@platforms//cpu:x86_64": [
+            "dynasm/dasm_x64.h",
+            "dynasm/dasm_x86.h",
+        ],
+        "//conditions:default": [
+            "dynasm/dasm_x64.h",
+            "dynasm/dasm_x86.h",
+        ],
+    }),
+    copts = [
+        "-fomit-frame-pointer",
+        "-w",
+    ],
+    includes = [
+        "dynasm",
+        "src",
+        "src/host",
+    ],
+)
+
+# Generate luajit_relver.txt (git timestamp)
+write_file(
+    name = "luajit_relver",
+    out = "src/luajit_relver.txt",
+    content = [
+        "0",
+        "",
+    ],
+)
+
+# Generate luajit.h
+genrule(
+    name = "luajit_h",
+    srcs = [
+        "src/host/genversion.lua",
+        "src/luajit_rolling.h",
+        ":luajit_relver",
+    ],
+    outs = ["src/luajit.h"],
+    cmd = "$(execpath :minilua) $(execpath src/host/genversion.lua) $(execpath src/luajit_rolling.h) $(execpath :luajit_relver) $(execpath src/luajit.h)",
+    cmd_bat = "$(execpath :minilua) $(execpath src/host/genversion.lua) $(execpath src/luajit_rolling.h) $(execpath :luajit_relver) $(execpath src/luajit.h)",
+    tools = [":minilua"],
+)
+
+# Generate lj_vm.S
+genrule(
+    name = "lj_vm_s",
+    srcs = [],
+    outs = ["src/lj_vm.S"],
+    cmd = select({
+        "@platforms//os:ios": "$(execpath :buildvm) -m machasm -o $@",
+        "@platforms//os:osx": "$(execpath :buildvm) -m machasm -o $@",
+        "@platforms//os:windows": "$(execpath :buildvm) -m peobj -o $@",
+        "//conditions:default": "$(execpath :buildvm) -m elfasm -o $@",
+    }),
+    cmd_bat = "$(execpath :buildvm) -m peobj -o $@",
+    tools = [":buildvm"],
+)
+
+# Generate lj_bcdef.h
+genrule(
+    name = "lj_bcdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_bcdef.h"],
+    cmd = "$(execpath :buildvm) -m bcdef -o $@ $(SRCS)",
+    cmd_bat = "$(execpath :buildvm) -m bcdef -o $@ $(SRCS)",
+    tools = [":buildvm"],
+)
+
+# Generate lj_ffdef.h
+genrule(
+    name = "lj_ffdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_ffdef.h"],
+    cmd = "$(execpath :buildvm) -m ffdef -o $@ $(SRCS)",
+    cmd_bat = "$(execpath :buildvm) -m ffdef -o $@ $(SRCS)",
+    tools = [":buildvm"],
+)
+
+# Generate lj_libdef.h
+genrule(
+    name = "lj_libdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_libdef.h"],
+    cmd = "$(execpath :buildvm) -m libdef -o $@ $(SRCS)",
+    cmd_bat = "$(execpath :buildvm) -m libdef -o $@ $(SRCS)",
+    tools = [":buildvm"],
+)
+
+# Generate lj_recdef.h
+genrule(
+    name = "lj_recdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_recdef.h"],
+    cmd = "$(execpath :buildvm) -m recdef -o $@ $(SRCS)",
+    cmd_bat = "$(execpath :buildvm) -m recdef -o $@ $(SRCS)",
+    tools = [":buildvm"],
+)
+
+# Generate lj_folddef.h
+genrule(
+    name = "lj_folddef_h",
+    srcs = ["src/lj_opt_fold.c"],
+    outs = ["src/lj_folddef.h"],
+    cmd = "$(execpath :buildvm) -m folddef -o $@ $(execpath src/lj_opt_fold.c)",
+    cmd_bat = "$(execpath :buildvm) -m folddef -o $@ $(execpath src/lj_opt_fold.c)",
+    tools = [":buildvm"],
+)
+
+# Generate jit/vmdef.lua
+genrule(
+    name = "jit_vmdef_lua",
+    srcs = LJLIB_SRCS,
+    outs = ["src/jit/vmdef.lua"],
+    cmd = "$(execpath :buildvm) -m vmdef -o $@ $(SRCS)",
+    cmd_bat = "$(execpath :buildvm) -m vmdef -o $@ $(SRCS)",
+    tools = [":buildvm"],
+)
+
+# Main LuaJIT library
+cc_library(
+    name = "luajit",
+    srcs = LJCORE_SRCS + [
+        ":lj_vm_s",
+    ],
+    hdrs = [
+        "src/lauxlib.h",
+        "src/lj_alloc.h",
+        "src/lj_arch.h",
+        "src/lj_asm.h",
+        "src/lj_asm_arm.h",
+        "src/lj_asm_arm64.h",
+        "src/lj_asm_mips.h",
+        "src/lj_asm_ppc.h",
+        "src/lj_asm_x86.h",
+        "src/lj_bc.h",
+        "src/lj_bcdump.h",
+        "src/lj_buf.h",
+        "src/lj_carith.h",
+        "src/lj_ccall.h",
+        "src/lj_ccallback.h",
+        "src/lj_cconv.h",
+        "src/lj_cdata.h",
+        "src/lj_char.h",
+        "src/lj_clib.h",
+        "src/lj_cparse.h",
+        "src/lj_crecord.h",
+        "src/lj_ctype.h",
+        "src/lj_debug.h",
+        "src/lj_def.h",
+        "src/lj_dispatch.h",
+        "src/lj_emit_arm.h",
+        "src/lj_emit_arm64.h",
+        "src/lj_emit_mips.h",
+        "src/lj_emit_ppc.h",
+        "src/lj_emit_x86.h",
+        "src/lj_err.h",
+        "src/lj_errmsg.h",
+        "src/lj_ff.h",
+        "src/lj_ffrecord.h",
+        "src/lj_frame.h",
+        "src/lj_func.h",
+        "src/lj_gc.h",
+        "src/lj_gdbjit.h",
+        "src/lj_ir.h",
+        "src/lj_ircall.h",
+        "src/lj_iropt.h",
+        "src/lj_jit.h",
+        "src/lj_lex.h",
+        "src/lj_lib.h",
+        "src/lj_mcode.h",
+        "src/lj_meta.h",
+        "src/lj_obj.h",
+        "src/lj_parse.h",
+        "src/lj_prng.h",
+        "src/lj_profile.h",
+        "src/lj_record.h",
+        "src/lj_serialize.h",
+        "src/lj_snap.h",
+        "src/lj_state.h",
+        "src/lj_str.h",
+        "src/lj_strfmt.h",
+        "src/lj_strscan.h",
+        "src/lj_tab.h",
+        "src/lj_target.h",
+        "src/lj_target_arm.h",
+        "src/lj_target_arm64.h",
+        "src/lj_target_mips.h",
+        "src/lj_target_ppc.h",
+        "src/lj_target_x86.h",
+        "src/lj_trace.h",
+        "src/lj_traceerr.h",
+        "src/lj_udata.h",
+        "src/lj_vm.h",
+        "src/lj_vmevent.h",
+        "src/lua.h",
+        "src/lua.hpp",
+        "src/luaconf.h",
+        "src/lualib.h",
+        ":lj_bcdef_h",
+        ":lj_ffdef_h",
+        ":lj_folddef_h",
+        ":lj_libdef_h",
+        ":lj_recdef_h",
+        ":luajit_h",
+    ],
+    copts = [
+        "-fomit-frame-pointer",
+        "-w",
+        "-U_FORTIFY_SOURCE",
+    ] + select({
+        "@platforms//cpu:arm64": [],
+        "@platforms//cpu:x86_32": [
+            "-march=i686",
+            "-msse",
+            "-msse2",
+            "-mfpmath=sse",
+        ],
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-fno-stack-protector"],
+    }),
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lm",
+            "-Wl,-E",
+        ],
+        "@platforms//os:osx": ["-lm"],
+        "//conditions:default": ["-lm"],
+    }),
+    local_defines = [
+        "LUA_CORE",
+        "_FILE_OFFSET_BITS=64",
+        "_LARGEFILE_SOURCE",
+    ] + select({
+        "@platforms//os:linux": ["LUAJIT_OS=LUAJIT_OS_LINUX"],
+        "@platforms//os:macos": [
+            "LUAJIT_OS=LUAJIT_OS_OSX",
+            "LUAJIT_UNWIND_EXTERNAL",
+        ],
+        "@platforms//os:windows": ["LUAJIT_OS=LUAJIT_OS_WINDOWS"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# LuaJIT executable
+cc_binary(
+    name = "bin/luajit",
+    srcs = ["src/luajit.c"],
+    copts = ["-w"],
+    defines = select({
+        "@platforms//os:linux": ["LUAJIT_OS=LUAJIT_OS_LINUX"],
+        "@platforms//os:osx": ["LUAJIT_OS=LUAJIT_OS_OSX"],
+        "@platforms//os:windows": ["LUAJIT_OS=LUAJIT_OS_WINDOWS"],
+        "//conditions:default": [],
+    }),
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-E"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":luajit"],
+)
