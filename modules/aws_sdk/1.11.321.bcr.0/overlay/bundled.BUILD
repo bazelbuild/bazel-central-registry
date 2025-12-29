@@ -411,7 +411,6 @@ cc_library(
     name = "s2n",
     srcs = glob(
         [
-            "crt/aws-crt-cpp/crt/s2n/**/*.h",
             "crt/aws-crt-cpp/crt/s2n/tls/**/*.c",
             "crt/aws-crt-cpp/crt/s2n/error/**/*.c",
             "crt/aws-crt-cpp/crt/s2n/utils/**/*.c",
@@ -421,7 +420,7 @@ cc_library(
         ],
         allow_empty = True,
     ),
-    hdrs = ["crt/aws-crt-cpp/crt/s2n/api/s2n.h"],
+    hdrs = glob(["crt/aws-crt-cpp/crt/s2n/**/*.h"]),
     copts = common_copts + [
         "-DS2N_NO_PQ",
         "-Wno-unknown-pragmas",
