@@ -1,0 +1,91 @@
+"""rules_docker_compose"""
+
+module(
+    name = "rules_docker_compose",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_go", version = "0.59.0")
+bazel_dep(name = "gazelle", version = "0.47.0")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.25.4")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "in_gopkg_yaml_v3",
+)
+
+docker_compose = use_extension("//docker_compose:extensions.bzl", "docker_compose", dev_dependency = True)
+docker_compose.toolchain(
+    name = "docker_compose_toolchains",
+    version = "2.24.0",
+)
+use_repo(docker_compose, "docker_compose_toolchains")
+
+register_toolchains(
+    "@docker_compose_toolchains//:all",
+    dev_dependency = True,
+)
+
+# TODO: https://github.com/bazel-contrib/rules_oci/issues/575
+# `aspect_bazel_lib` is unfortunately required by `rules_oci`
+bazel_dep(name = "aspect_bazel_lib", version = "2.20.0", dev_dependency = True)
+bazel_dep(name = "rules_oci", version = "2.2.6", dev_dependency = True)
+bazel_dep(name = "rules_img", version = "0.3.2", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "rules_rust_mdbook", version = "0.66.0", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.5.1", dev_dependency = True)
+
+img = use_extension("@rules_img//img:extensions.bzl", "images", dev_dependency = True)
+img.pull(
+    name = "rules_docker_compose_test_img_container_base",
+    digest = "sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62",
+    registry = "index.docker.io",
+    repository = "library/alpine",
+)
+img.pull(
+    name = "rules_docker_compose_test_img_nginx",
+    digest = "sha256:fb01117203ff38c2f9af91db1a7409459182a37c87cced5cb442d1d8fcc66d19",
+    registry = "index.docker.io",
+    repository = "library/nginx",
+)
+use_repo(
+    img,
+    "rules_img_images.bzl",
+)
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci", dev_dependency = True)
+oci.pull(
+    name = "rules_docker_compose_test_oci_container_base",
+    digest = "sha256:865b95f46d98cf867a156fe4a135ad3fe50d2056aa3f25ed31662dff6da4eb62",
+    image = "alpine",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+    tag = "latest",
+)
+oci.pull(
+    name = "rules_docker_compose_test_oci_nginx",
+    digest = "sha256:fb01117203ff38c2f9af91db1a7409459182a37c87cced5cb442d1d8fcc66d19",
+    image = "nginx",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+    tag = "latest",
+)
+use_repo(
+    oci,
+    "rules_docker_compose_test_oci_container_base",
+    "rules_docker_compose_test_oci_container_base_linux_amd64",
+    "rules_docker_compose_test_oci_container_base_linux_arm64_v8",
+    "rules_docker_compose_test_oci_nginx",
+    "rules_docker_compose_test_oci_nginx_linux_amd64",
+    "rules_docker_compose_test_oci_nginx_linux_arm64_v8",
+)
