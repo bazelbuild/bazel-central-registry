@@ -1,0 +1,297 @@
+diff --git Cargo.toml Cargo.toml
+index 012efc83..dfa3687d 100644
+--- Cargo.toml
++++ Cargo.toml
+@@ -58,6 +58,8 @@ default = [
+     "transport_udp",
+     "transport_unixsock-stream",
+     "transport_ws",
++    "shared-memory",
++    "unstable",
+ ]
+ 
+ [badges]
+diff --git build.rs build.rs
+index f2099a0b..331a717f 100644
+--- build.rs
++++ build.rs
+@@ -5,6 +5,10 @@ use fs_extra::{dir, file};
+ mod buildrs;
+ 
+ pub fn get_build_rs_path() -> std::path::PathBuf {
++    if let Some(dir) = env::var_os("CARGO_MANIFEST_DIR") {
++        return std::path::PathBuf::from(dir);
++    }
++
+     let file_path = file!();
+     let mut path_buf = std::path::PathBuf::new();
+     path_buf.push(file_path);
+@@ -16,6 +20,25 @@ pub fn get_out_rs_path() -> std::path::PathBuf {
+     std::path::Path::new(&out_dir).to_path_buf()
+ }
+ 
++pub fn ensure_cargo_home() -> std::path::PathBuf {
++    let fallback = get_out_rs_path().join("cargo_home");
++    let candidate = env::var_os("CARGO_HOME")
++        .map(std::path::PathBuf::from)
++        .unwrap_or_else(|| fallback.clone());
++    match std::fs::create_dir_all(&candidate) {
++        Ok(_) => {
++            env::set_var("CARGO_HOME", &candidate);
++            candidate
++        }
++        Err(_) if candidate != fallback => {
++            std::fs::create_dir_all(&fallback).expect("Failed to create fallback CARGO_HOME");
++            env::set_var("CARGO_HOME", &fallback);
++            fallback
++        }
++        Err(e) => panic!("Failed to create CARGO_HOME at {}: {e}", candidate.display()),
++    }
++}
++
+ pub fn dump_rust_sources(out_path: &std::path::Path) {
+     let build_rs_path = get_build_rs_path();
+     let src_path = build_rs_path.join("./src");
+@@ -41,6 +64,7 @@ pub fn dump_rust_sources(out_path: &std::path::Path) {
+ }
+ 
+ fn main() {
++    ensure_cargo_home();
+     buildrs::opaque_types_generator::generate_opaque_types();
+     buildrs::cbindgen_generator::generate_c_headers();
+     if let Some(out_path) = env::var_os("ZENOHC_DUMP_SRC_DIR") {
+diff --git buildrs/cbindgen_generator.rs buildrs/cbindgen_generator.rs
+index e678799e..dc7dda6b 100644
+--- buildrs/cbindgen_generator.rs
++++ buildrs/cbindgen_generator.rs
+@@ -2,7 +2,7 @@ use std::{
+     collections::HashSet,
+     fs::File,
+     io::{BufRead, Read, Write},
+-    path::{Path, PathBuf},
++    path::Path,
+ };
+ 
+ use fs2::FileExt;
+@@ -15,9 +15,11 @@ use super::{
+ };
+ use crate::get_out_rs_path;
+ 
+-const BUGGY_GENERATION_PATH: &str = "include/zenoh-gen-buggy.h";
+-const GENERATION_PATH: &str = "include/zenoh-gen.h";
+-const PREPROCESS_PATH: &str = "include/zenoh-cpp.h";
++const BUGGY_GENERATION_FILE: &str = "zenoh-gen-buggy.h";
++const GENERATION_FILE: &str = "zenoh-gen.h";
++const PREPROCESS_FILE: &str = "zenoh-cpp.h";
++const MACROS_FILE: &str = "zenoh_macros.h";
++const CONFIGURE_FILE: &str = "zenoh_configure.h";
+ 
+ static RUST_TO_C_FEATURES: phf::Map<&'static str, &'static str> = phf_map! {
+     "unstable" => "Z_FEATURE_UNSTABLE_API",
+@@ -37,6 +39,26 @@ static RUST_TO_C_FEATURES: phf::Map<&'static str, &'static str> = phf_map! {
+ 
+ pub fn generate_c_headers() {
+     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
++    let out_dir = get_out_rs_path();
++    let include_dir = out_dir.join("include");
++
++    if include_dir.exists() {
++        std::fs::remove_dir_all(&include_dir).unwrap();
++    }
++
++    fs_extra::copy_items(
++        &["include"],
++        &out_dir,
++        &fs_extra::dir::CopyOptions::new().overwrite(true),
++    )
++    .expect("include should be staged in OUT_DIR");
++
++    let buggy_generation_path = include_dir.join(BUGGY_GENERATION_FILE);
++    let generation_path = include_dir.join(GENERATION_FILE);
++    let preprocess_path = include_dir.join(PREPROCESS_FILE);
++    let macros_path = include_dir.join(MACROS_FILE);
++    let configure_path = include_dir.join(CONFIGURE_FILE);
++
+     let config = cbindgen::Config::from_root_or_default(crate_dir.clone());
+     cbindgen::Builder::new()
+         .with_config(config)
+@@ -44,25 +66,28 @@ pub fn generate_c_headers() {
+         .with_src(get_out_rs_path().join("./opaque_types.rs"))
+         .generate()
+         .expect("Unable to generate bindings")
+-        .write_to_file(BUGGY_GENERATION_PATH);
++        .write_to_file(&buggy_generation_path);
+ 
+-    fix_cbindgen(BUGGY_GENERATION_PATH, GENERATION_PATH);
+-    std::fs::remove_file(BUGGY_GENERATION_PATH).unwrap();
++    fix_cbindgen(&buggy_generation_path, &generation_path);
++    std::fs::remove_file(&buggy_generation_path).unwrap();
+ 
+-    preprocess_header(GENERATION_PATH, PREPROCESS_PATH);
+-    create_generics_header(PREPROCESS_PATH, "include/zenoh_macros.h");
+-    std::fs::remove_file(PREPROCESS_PATH).unwrap();
++    preprocess_header(&generation_path, &preprocess_path);
++    create_generics_header(&preprocess_path, &macros_path);
++    std::fs::remove_file(&preprocess_path).unwrap();
+ 
+-    configure();
+-    let files = split_bindings(GENERATION_PATH).unwrap();
+-    text_replace(files.iter());
++    configure(&configure_path);
++    let files = split_bindings(&generation_path, &include_dir).unwrap();
++    text_replace(files.iter(), &include_dir);
+ 
+-    fs_extra::copy_items(
+-        &["include"],
+-        cargo_target_dir(),
+-        &fs_extra::dir::CopyOptions::default().overwrite(true),
+-    )
+-    .expect("include should be copied to CARGO_TARGET_DIR");
++    let target_dir = cargo_target_dir();
++    if target_dir != include_dir.parent().unwrap_or(&target_dir) {
++        fs_extra::copy_items(
++            &[include_dir],
++            target_dir,
++            &fs_extra::dir::CopyOptions::default().overwrite(true),
++        )
++        .expect("include should be copied to CARGO_TARGET_DIR");
++    }
+ }
+ 
+ fn add_deprecated_z_locality_enum_values(bindings: String) -> String {
+@@ -91,7 +116,7 @@ fn add_deprecated_z_locality_enum_values(bindings: String) -> String {
+     .to_string()
+ }
+ 
+-fn fix_cbindgen(input: &str, output: &str) {
++fn fix_cbindgen(input: &Path, output: &Path) {
+     let bindings = std::fs::read_to_string(input).expect("failed to open input file");
+     let bindings = bindings.replace("\n#endif\n  ;", ";\n#endif");
+ 
+@@ -101,13 +126,13 @@ fn fix_cbindgen(input: &str, output: &str) {
+     out.write_all(bindings.as_bytes()).unwrap();
+ }
+ 
+-fn preprocess_header(input: &str, output: &str) {
++fn preprocess_header(input: &Path, output: &Path) {
+     let parsed = process_feature_defines(input).expect("failed to open input file");
+     let mut out = File::create(output).expect("failed to open output file");
+     out.write_all(parsed.as_bytes()).unwrap();
+ }
+ 
+-fn create_generics_header(path_in: &str, path_out: &str) {
++fn create_generics_header(path_in: &Path, path_out: &Path) {
+     let mut file_out = std::fs::File::options()
+         .read(false)
+         .write(true)
+@@ -140,18 +165,20 @@ fn create_generics_header(path_in: &str, path_out: &str) {
+         )
+         .unwrap();
+ 
++    let path_in = path_in.to_string_lossy();
++
+     // Collect all function signatures to be wrapped by macros and verify that all necessary functions are present for each entity
+-    let (move_funcs, take_funcs) = make_move_take_signatures(path_in);
+-    let loan_funcs = find_loan_functions(path_in);
+-    let loan_mut_funcs = find_loan_mut_functions(path_in);
+-    let take_from_loaned_funcs = find_take_from_loaned_functions(path_in);
+-    let drop_funcs = find_drop_functions(path_in);
+-    let null_funcs = find_null_functions(path_in);
+-    let check_funcs = find_check_functions(path_in);
+-    let call_funcs = find_call_functions(path_in);
+-    let closure_constructors = find_closure_constructors(path_in);
+-    let recv_funcs = find_recv_functions(path_in);
+-    let clone_funcs = find_clone_functions(path_in);
++    let (move_funcs, take_funcs) = make_move_take_signatures(&path_in);
++    let loan_funcs = find_loan_functions(&path_in);
++    let loan_mut_funcs = find_loan_mut_functions(&path_in);
++    let take_from_loaned_funcs = find_take_from_loaned_functions(&path_in);
++    let drop_funcs = find_drop_functions(&path_in);
++    let null_funcs = find_null_functions(&path_in);
++    let check_funcs = find_check_functions(&path_in);
++    let call_funcs = find_call_functions(&path_in);
++    let closure_constructors = find_closure_constructors(&path_in);
++    let recv_funcs = find_recv_functions(&path_in);
++    let clone_funcs = find_clone_functions(&path_in);
+ 
+     let drops = drop_funcs
+         .iter()
+@@ -341,13 +368,13 @@ fn create_generics_header(path_in: &str, path_out: &str) {
+         .unwrap();
+ }
+ 
+-fn configure() {
++fn configure(configure_path: &Path) {
+     let mut file = std::fs::File::options()
+         .write(true)
+         .truncate(true)
+         .append(false)
+         .create(true)
+-        .open("include/zenoh_configure.h")
++        .open(configure_path)
+         .unwrap();
+     file.lock_exclusive().unwrap();
+ 
+@@ -397,9 +424,9 @@ fn configure() {
+     fs2::FileExt::unlock(&file).unwrap();
+ }
+ 
+-fn text_replace(files: impl Iterator<Item = impl AsRef<Path>>) {
++fn text_replace(files: impl Iterator<Item = impl AsRef<Path>>, include_dir: &Path) {
+     for name in files {
+-        let path = PathBuf::from("include").join(name);
++        let path = include_dir.join(name);
+ 
+         // Read content
+         let mut file = std::fs::File::options()
+@@ -439,7 +466,7 @@ fn text_replace(files: impl Iterator<Item = impl AsRef<Path>>) {
+ /// Evaluates conditional feature macros in the form #if (logical expression of define(FEATURE_NAME))
+ /// and removes the code under those that evaluate to false
+ /// Note: works only on single string conditional expressions
+-fn process_feature_defines(input_path: &str) -> Result<String, Box<dyn std::error::Error>> {
++fn process_feature_defines(input_path: &Path) -> Result<String, Box<dyn std::error::Error>> {
+     let file = std::fs::File::open(input_path)?;
+     let lines = std::io::BufReader::new(file).lines();
+     let mut out = String::new();
+diff --git buildrs/common_helpers.rs buildrs/common_helpers.rs
+index 4f4dae7c..36302802 100644
+--- buildrs/common_helpers.rs
++++ buildrs/common_helpers.rs
+@@ -45,7 +45,5 @@ pub fn cargo_target_dir() -> PathBuf {
+         out_dir_path = parent;
+     }
+ 
+-    target_dir
+-        .expect("OUT_DIR should be a child of a PROFILE directory")
+-        .to_path_buf()
++    target_dir.unwrap_or(&out_dir).to_path_buf()
+ }
+diff --git buildrs/splitguide.rs buildrs/splitguide.rs
+index 4332402d..1940b170 100644
+--- buildrs/splitguide.rs
++++ buildrs/splitguide.rs
+@@ -567,8 +567,13 @@ impl FunctionSignature {
+     }
+ }
+ 
+-pub fn split_bindings(genetation_path: impl AsRef<Path>) -> Result<Vec<PathBuf>, String> {
+-    let bindings = std::fs::read_to_string(&genetation_path).unwrap();
++pub fn split_bindings(
++    genetation_path: impl AsRef<Path>,
++    include_path: impl AsRef<Path>,
++) -> Result<Vec<PathBuf>, String> {
++    let genetation_path = genetation_path.as_ref();
++    let include_path = include_path.as_ref();
++    let bindings = std::fs::read_to_string(genetation_path).unwrap();
+     let split_guide = SplitGuide::from_yaml(SPLITGUIDE_PATH);
+     let mut files = split_guide
+         .rules
+@@ -579,7 +584,7 @@ pub fn split_bindings(genetation_path: impl AsRef<Path>) -> Result<Vec<PathBuf>,
+                 .truncate(true)
+                 .append(false)
+                 .create(true)
+-                .open(PathBuf::from("include").join(path))
++                .open(include_path.join(path))
+                 .unwrap();
+             file.lock_exclusive().unwrap();
+             file.set_len(0).unwrap();
