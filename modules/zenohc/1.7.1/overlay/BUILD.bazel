@@ -5,27 +5,80 @@ load("@rules_rust//rust:defs.bzl", "rust_shared_library")
 
 package(default_visibility = ["//visibility:public"])
 
+ZENOHC_FEATURES = [
+    "auth_pubkey",
+    "auth_usrpwd",
+    "shared-memory",
+    "unstable",
+    "transport_compression",
+    "transport_multilink",
+    "transport_quic",
+    "transport_tcp",
+    "transport_tls",
+    "transport_udp",
+    "transport_unixsock-stream",
+    "transport_ws",
+]
+
 cargo_build_script(
     name = "build_script",
     srcs = glob(["buildrs/**"]) + ["build.rs"],
+    crate_features = ZENOHC_FEATURES,
     crate_root = "build.rs",
-    data = glob([
-        "src/**",
-        "build-resources/**",
-        "Cargo.toml",
-        "cbindgen.toml",
-        "version.txt",
-        "splitguide.yaml",
-    ]),
+    data = glob(
+        [
+            "src/**",
+            "include/*.h",
+            "build-resources/**",
+            "Cargo.toml",
+            "cbindgen.toml",
+            "version.txt",
+            "splitguide.yaml",
+        ],
+        exclude = [
+            "include/zenoh_commons.h",
+            "include/zenoh_macros.h",
+        ],
+    ),
     deps = all_crate_deps(build = True),
+)
+
+genrule(
+    name = "zenoh_configure_header",
+    srcs = [":build_script"],
+    outs = ["include/zenoh_configure.h"],
+    cmd = "cp $(location :build_script)/include/zenoh_configure.h $@",
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "zenoh_opaque_header",
+    srcs = [":build_script"],
+    outs = ["include/zenoh_opaque.h"],
+    cmd = "cp $(location :build_script)/include/zenoh_opaque.h $@",
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "zenoh_commons_header",
+    srcs = [":build_script"],
+    outs = ["include/zenoh_commons.h"],
+    cmd = "cp $(location :build_script)/include/zenoh_commons.h $@",
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "zenoh_macros_header",
+    srcs = [":build_script"],
+    outs = ["include/zenoh_macros.h"],
+    cmd = "cp $(location :build_script)/include/zenoh_macros.h $@",
+    visibility = ["//visibility:private"],
 )
 
 rust_shared_library(
     name = "zenohc_shared",
     srcs = glob(["src/**/*.rs"]),
-    crate_features = [
-        "shared_memory",
-    ],
+    crate_features = ZENOHC_FEATURES,
     deps = all_crate_deps(normal = True) + [
         ":build_script",
     ],
@@ -34,7 +87,15 @@ rust_shared_library(
 cc_library(
     name = "zenohc",
     srcs = [":zenohc_shared"],
-    hdrs = glob(["include/*.h"]),
+    hdrs = glob(
+        ["include/*.h"],
+        exclude = ["include/zenoh_commons.h"],
+    ) + [
+        ":zenoh_commons_header",
+        ":zenoh_configure_header",
+        ":zenoh_macros_header",
+        ":zenoh_opaque_header",
+    ],
     defines = ["ZENOHC_DYN_LIB"],
     includes = ["include"],
 )
