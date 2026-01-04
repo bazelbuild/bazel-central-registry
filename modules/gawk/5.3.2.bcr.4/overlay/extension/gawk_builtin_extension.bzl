@@ -14,6 +14,11 @@ DEFAULT_EXTENSION_DEPS = [
     "//extension:config",
 ]
 
+SHARED_LIB_EXTENSION = select({
+    "@platforms//os:windows": ".dll",
+    "//conditions:default": ".so",
+})
+
 def gawk_builtin_extension(name, srcs, extra_deps = [], visibility = []):
     lib_name = name + "_lib"
     cc_library(
@@ -25,7 +30,7 @@ def gawk_builtin_extension(name, srcs, extra_deps = [], visibility = []):
 
     cc_shared_library(
         name = name,
-        shared_lib_name = name + ".so",
+        shared_lib_name = name + SHARED_LIB_EXTENSION,
         deps = [lib_name],
         visibility = visibility,
     )

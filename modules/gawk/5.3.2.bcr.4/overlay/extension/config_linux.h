@@ -173,7 +173,7 @@
 #define PACKAGE_NAME "GNU Awk Bundled Extensions"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "GNU Awk Bundled Extensions 5.3.1"
+#define PACKAGE_STRING "GNU Awk Bundled Extensions 5.3.2"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gawk-extensions"
@@ -182,7 +182,7 @@
 #define PACKAGE_URL "https://www.gnu.org/software/gawk-extensions/"
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "5.3.1"
+#define PACKAGE_VERSION "5.3.2"
 
 /* The size of `void *', as computed by sizeof. */
 #define SIZEOF_VOID_P 8
@@ -284,7 +284,7 @@
 
 
 /* Version number of package */
-#define VERSION "5.3.1"
+#define VERSION "5.3.2"
 
 /* Number of bits in a file offset, on hosts where this is settable. */
 /* #undef _FILE_OFFSET_BITS */
