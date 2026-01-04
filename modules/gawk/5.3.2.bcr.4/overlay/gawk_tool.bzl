@@ -37,12 +37,6 @@ def _gawk_tool_impl(ctx):
 
     return [DefaultInfo(executable = script, runfiles = runfiles)]
 
-def _runfiles_relative_path(ctx, file):
-    repo_name = ctx.workspace_name
-    if file.owner and file.owner.repo_name:
-        repo_name = file.owner.repo_name
-    return "{}/{}".format(repo_name, file.short_path)
-
 gawk_tool = rule(
     implementation = _gawk_tool_impl,
     doc = """\
