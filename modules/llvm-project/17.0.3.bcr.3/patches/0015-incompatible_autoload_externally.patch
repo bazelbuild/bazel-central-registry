@@ -1,0 +1,573 @@
+diff --git a/bolt/BUILD.bazel b/bolt/BUILD.bazel
+index 172620adc..da1d14766 100644
+--- a/bolt/BUILD.bazel
++++ b/bolt/BUILD.bazel
+@@ -3,6 +3,8 @@
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
+ load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/clang/BUILD.bazel b/clang/BUILD.bazel
+index 3cc9d21cb..f79dc3e3c 100644
+--- a/clang/BUILD.bazel
++++ b/clang/BUILD.bazel
+@@ -3,10 +3,9 @@
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
+ load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+-load("//:workspace_root.bzl", "workspace_root")
+-load("//llvm:tblgen.bzl", "gentbl")
+-load("//llvm:binary_alias.bzl", "binary_alias")
+-load("//llvm:cc_plugin_library.bzl", "cc_plugin_library")
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_python//python:defs.bzl", "py_binary")
+ load(
+     "//:vars.bzl",
+     "LLVM_VERSION",
+@@ -14,6 +13,10 @@ load(
+     "LLVM_VERSION_MINOR",
+     "LLVM_VERSION_PATCH",
+ )
++load("//:workspace_root.bzl", "workspace_root")
++load("//llvm:binary_alias.bzl", "binary_alias")
++load("//llvm:cc_plugin_library.bzl", "cc_plugin_library")
++load("//llvm:tblgen.bzl", "gentbl")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/clang/unittests/BUILD.bazel b/clang/unittests/BUILD.bazel
+index c1f2cb928..2db890b5c 100644
+--- a/clang/unittests/BUILD.bazel
++++ b/clang/unittests/BUILD.bazel
+@@ -2,6 +2,9 @@
+ # See https://llvm.org/LICENSE.txt for license information.
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
++
+ package(
+     default_visibility = ["//visibility:public"],
+ )
+diff --git a/libc/BUILD.bazel b/libc/BUILD.bazel
+index 51676d039..a1cf15188 100644
+--- a/libc/BUILD.bazel
++++ b/libc/BUILD.bazel
+@@ -2,6 +2,10 @@
+ # See https://llvm.org/LICENSE.txt for license information.
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
++load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ # LLVM libc project.
+ load(
+     ":libc_build_rules.bzl",
+@@ -10,8 +14,6 @@ load(
+     "libc_support_library",
+ )
+ load(":platforms.bzl", "PLATFORM_CPU_ARM64", "PLATFORM_CPU_X86_64")
+-load("@bazel_skylib//lib:selects.bzl", "selects")
+-load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/libc/libc_build_rules.bzl b/libc/libc_build_rules.bzl
+index 2007d1219..fb53a81a8 100644
+--- a/libc/libc_build_rules.bzl
++++ b/libc/libc_build_rules.bzl
+@@ -4,8 +4,9 @@
+ 
+ """LLVM libc starlark rules for building individual functions."""
+ 
+-load(":platforms.bzl", "PLATFORM_CPU_ARM64", "PLATFORM_CPU_X86_64")
+ load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load(":platforms.bzl", "PLATFORM_CPU_ARM64", "PLATFORM_CPU_X86_64")
+ 
+ LIBC_ROOT_TARGET = ":libc_root"
+ INTERNAL_SUFFIX = ".__internal__"
+@@ -24,7 +25,7 @@ def _libc_library(name, copts = None, **kwargs):
+     # The public symbols will be given "default" visibility explicitly.
+     # See src/__support/common.h for more information.
+     copts = copts + ["-fvisibility=hidden"]
+-    native.cc_library(
++    cc_library(
+         name = name,
+         copts = copts,
+         linkstatic = 1,
+@@ -75,7 +76,7 @@ def libc_function(
+     # We compile the code twice, the first target is suffixed with ".__internal__" and contains the
+     # C++ functions in the "__llvm_libc" namespace. This allows us to test the function in the
+     # presence of another libc.
+-    native.cc_library(
++    cc_library(
+         name = name + INTERNAL_SUFFIX,
+         srcs = srcs,
+         deps = deps,
+diff --git a/libc/test/UnitTest/BUILD.bazel b/libc/test/UnitTest/BUILD.bazel
+index 395664eab..091e5301b 100644
+--- a/libc/test/UnitTest/BUILD.bazel
++++ b/libc/test/UnitTest/BUILD.bazel
+@@ -4,6 +4,8 @@
+ 
+ # LLVM libc unittest library.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ package(default_visibility = ["//visibility:public"])
+ 
+ licenses(["notice"])
+diff --git a/libc/test/libc_test_rules.bzl b/libc/test/libc_test_rules.bzl
+index 693545a81..09ac874ea 100644
+--- a/libc/test/libc_test_rules.bzl
++++ b/libc/test/libc_test_rules.bzl
+@@ -12,6 +12,7 @@ They come in two flavors:
+ When performing tests we make sure to always use the internal version.
+ """
+ 
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
+ load("//libc:libc_build_rules.bzl", "INTERNAL_SUFFIX")
+ 
+ def libc_test(name, srcs, libc_function_deps, deps = [], **kwargs):
+@@ -25,7 +26,7 @@ def libc_test(name, srcs, libc_function_deps, deps = [], **kwargs):
+       **kwargs: Attributes relevant for a cc_test. For example, name, srcs.
+     """
+     all_function_deps = libc_function_deps + ["//libc:errno"]
+-    native.cc_test(
++    cc_test(
+         name = name,
+         srcs = srcs,
+         deps = [d + INTERNAL_SUFFIX for d in all_function_deps] + [
+diff --git a/libc/test/src/math/BUILD.bazel b/libc/test/src/math/BUILD.bazel
+index 429b9d7f6..e39de21fa 100644
+--- a/libc/test/src/math/BUILD.bazel
++++ b/libc/test/src/math/BUILD.bazel
+@@ -4,6 +4,7 @@
+ 
+ # Tests for LLVM libc math.h functions.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("//libc/test/src/math:libc_math_test_rules.bzl", "math_test")
+ 
+ package(default_visibility = ["//visibility:public"])
+diff --git a/libc/test/src/stdlib/BUILD.bazel b/libc/test/src/stdlib/BUILD.bazel
+index 1c0ae698a..46e1a0420 100644
+--- a/libc/test/src/stdlib/BUILD.bazel
++++ b/libc/test/src/stdlib/BUILD.bazel
+@@ -4,6 +4,7 @@
+ 
+ # Tests for LLVM libc stdlib.h functions.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("//libc/test:libc_test_rules.bzl", "libc_test")
+ 
+ package(default_visibility = ["//visibility:public"])
+diff --git a/libc/test/src/string/BUILD.bazel b/libc/test/src/string/BUILD.bazel
+index 2138ed5e8..09df1d847 100644
+--- a/libc/test/src/string/BUILD.bazel
++++ b/libc/test/src/string/BUILD.bazel
+@@ -4,6 +4,7 @@
+ 
+ # Tests for LLVM libc string.h functions.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load("//libc/test:libc_test_rules.bzl", "libc_test")
+ 
+ package(default_visibility = ["//visibility:public"])
+diff --git a/libc/utils/MPFRWrapper/BUILD.bazel b/libc/utils/MPFRWrapper/BUILD.bazel
+index c833cdc6b..1b02a144a 100644
+--- a/libc/utils/MPFRWrapper/BUILD.bazel
++++ b/libc/utils/MPFRWrapper/BUILD.bazel
+@@ -4,6 +4,8 @@
+ 
+ # A wrapper library over MPFR for use with LLVM libc math unittests.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ package(default_visibility = ["//visibility:public"])
+ 
+ licenses(["notice"])
+diff --git a/libunwind/BUILD.bazel b/libunwind/BUILD.bazel
+index f8448fb0e..81bbf1602 100644
+--- a/libunwind/BUILD.bazel
++++ b/libunwind/BUILD.bazel
+@@ -2,6 +2,8 @@
+ # See https://llvm.org/LICENSE.txt for license information.
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ package(
+     default_visibility = ["//visibility:public"],
+ )
+diff --git a/lld/BUILD.bazel b/lld/BUILD.bazel
+index 2cb2fab44..dfd07e7e3 100644
+--- a/lld/BUILD.bazel
++++ b/lld/BUILD.bazel
+@@ -3,11 +3,13 @@
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
+ load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+-load("//llvm:tblgen.bzl", "gentbl")
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load(
+     "//:vars.bzl",
+     "LLVM_VERSION",
+ )
++load("//llvm:tblgen.bzl", "gentbl")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/llvm/BUILD.bazel b/llvm/BUILD.bazel
+index ffbdee993..f2dabd478 100644
+--- a/llvm/BUILD.bazel
++++ b/llvm/BUILD.bazel
+@@ -4,11 +4,15 @@
+ 
+ load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+ load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+-load(":tblgen.bzl", "gentbl")
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_python//python:defs.bzl", "py_binary")
++load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
++load(":binary_alias.bzl", "binary_alias")
+ load(":config.bzl", "llvm_config_defines")
+-load(":targets.bzl", "llvm_targets")
+ load(":enum_targets_gen.bzl", "enum_targets_gen")
+-load(":binary_alias.bzl", "binary_alias")
++load(":targets.bzl", "llvm_targets")
++load(":tblgen.bzl", "gentbl")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/llvm/lit_test.bzl b/llvm/lit_test.bzl
+index ce2a0a00c..80faa3688 100644
+--- a/llvm/lit_test.bzl
++++ b/llvm/lit_test.bzl
+@@ -4,6 +4,7 @@
+ """Rules for running lit tests."""
+ 
+ load("@bazel_skylib//lib:paths.bzl", "paths")
++load("@rules_python//python:defs.bzl", "py_test")
+ 
+ def lit_test(
+         name,
+@@ -27,8 +28,7 @@ def lit_test(
+ 
+     args = args or []
+     data = data or []
+-
+-    native.py_test(
++    py_test(
+         name = name,
+         srcs = [Label("//llvm:lit")],
+         main = Label("//llvm:utils/lit/lit.py"),
+diff --git a/llvm/tblgen.bzl b/llvm/tblgen.bzl
+index 9486edf29..1885e039f 100644
+--- a/llvm/tblgen.bzl
++++ b/llvm/tblgen.bzl
+@@ -12,6 +12,8 @@ TODO(chandlerc): Currently this expresses include-based dependencies as
+ correctly understood by the build system.
+ """
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ def gentbl(
+         name,
+         tblgen,
+@@ -38,7 +40,7 @@ def gentbl(
+     llvm_project_execroot_path = Label("//llvm:tblgen.bzl").workspace_root or "."
+ 
+     if td_file not in td_srcs:
+-        td_srcs += [td_file]
++        td_srcs.append(td_file)
+     for (opts, out) in tbl_outs:
+         rule_suffix = "_".join(opts.replace("-", "_").replace("=", "_").split(" "))
+         native.genrule(
+@@ -65,7 +67,7 @@ def gentbl(
+     # If this is not true, you should specify library = False
+     # and list the generated '.inc' files in "srcs".
+     if library:
+-        native.cc_library(
++        cc_library(
+             name = name,
+             # FIXME: This should be `textual_hdrs` instead of `hdrs`, but
+             # unfortunately that doesn't work with `strip_include_prefix`:
+diff --git a/llvm/unittests/BUILD.bazel b/llvm/unittests/BUILD.bazel
+index 0355a7896..8b1f538eb 100644
+--- a/llvm/unittests/BUILD.bazel
++++ b/llvm/unittests/BUILD.bazel
+@@ -2,6 +2,8 @@
+ # See https://llvm.org/LICENSE.txt for license information.
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
+ load("//llvm:tblgen.bzl", "gentbl")
+ 
+ package(
+diff --git a/mlir/BUILD.bazel b/mlir/BUILD.bazel
+index 17c28e149..b355c9cce 100644
+--- a/mlir/BUILD.bazel
++++ b/mlir/BUILD.bazel
+@@ -7,14 +7,16 @@
+ 
+ load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+ load("@bazel_skylib//rules:write_file.bzl", "write_file")
+-load(":tblgen.bzl", "gentbl_cc_library", "td_library")
+-load(":linalggen.bzl", "genlinalg")
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ load(
+     ":build_defs.bzl",
+     "cc_headers_only",
+     "if_cuda_available",
+     "mlir_c_api_cc_library",
+ )
++load(":linalggen.bzl", "genlinalg")
++load(":tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/mlir/build_defs.bzl b/mlir/build_defs.bzl
+index fe39dbe21..8768b5c96 100644
+--- a/mlir/build_defs.bzl
++++ b/mlir/build_defs.bzl
+@@ -4,6 +4,9 @@
+ 
+ """Rules and macros for MLIR"""
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
++
+ def if_cuda_available(if_true, if_false = []):
+     return select({
+         # CUDA is not yet supported.
+@@ -48,20 +51,20 @@ def mlir_c_api_cc_library(
+     """
+     capi_header_deps = ["%sHeaders" % d for d in capi_deps]
+     capi_object_deps = ["%sObjects" % d for d in capi_deps]
+-    native.cc_library(
++    cc_library(
+         name = name,
+         srcs = srcs,
+         hdrs = hdrs,
+         deps = deps + capi_deps + header_deps,
+         **kwargs
+     )
+-    native.cc_library(
++    cc_library(
+         name = name + "Headers",
+         hdrs = hdrs,
+         deps = header_deps + capi_header_deps,
+         **kwargs
+     )
+-    native.cc_library(
++    cc_library(
+         name = name + "Objects",
+         srcs = srcs,
+         hdrs = hdrs,
+diff --git a/mlir/examples/toy/Ch1/BUILD.bazel b/mlir/examples/toy/Ch1/BUILD.bazel
+index 2d4e1b5d6..e47f32323 100644
+--- a/mlir/examples/toy/Ch1/BUILD.bazel
++++ b/mlir/examples/toy/Ch1/BUILD.bazel
+@@ -1,3 +1,5 @@
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++
+ # Description:
+ #   MLIR Tutorial
+ licenses(["notice"])
+diff --git a/mlir/examples/toy/Ch2/BUILD.bazel b/mlir/examples/toy/Ch2/BUILD.bazel
+index 5ef7c6c1d..4dc58d125 100644
+--- a/mlir/examples/toy/Ch2/BUILD.bazel
++++ b/mlir/examples/toy/Ch2/BUILD.bazel
+@@ -1,6 +1,7 @@
+ # Description:
+ #   MLIR Tutorial
+ 
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ licenses(["notice"])
+diff --git a/mlir/examples/toy/Ch3/BUILD.bazel b/mlir/examples/toy/Ch3/BUILD.bazel
+index 81e46e8d7..e6489bf0d 100644
+--- a/mlir/examples/toy/Ch3/BUILD.bazel
++++ b/mlir/examples/toy/Ch3/BUILD.bazel
+@@ -1,6 +1,7 @@
+ # Description:
+ #   MLIR Tutorial
+ 
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ licenses(["notice"])
+diff --git a/mlir/examples/toy/Ch4/BUILD.bazel b/mlir/examples/toy/Ch4/BUILD.bazel
+index f77a6b7dd..a42f8eabd 100644
+--- a/mlir/examples/toy/Ch4/BUILD.bazel
++++ b/mlir/examples/toy/Ch4/BUILD.bazel
+@@ -1,6 +1,7 @@
+ # Description:
+ #   MLIR Tutorial
+ 
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ licenses(["notice"])
+diff --git a/mlir/examples/toy/Ch5/BUILD.bazel b/mlir/examples/toy/Ch5/BUILD.bazel
+index 40f5ab5c6..c6dc9facb 100644
+--- a/mlir/examples/toy/Ch5/BUILD.bazel
++++ b/mlir/examples/toy/Ch5/BUILD.bazel
+@@ -1,6 +1,7 @@
+ # Description:
+ #   MLIR Tutorial
+ 
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ licenses(["notice"])
+diff --git a/mlir/examples/toy/Ch6/BUILD.bazel b/mlir/examples/toy/Ch6/BUILD.bazel
+index 9c4d7affa..75f6896ac 100644
+--- a/mlir/examples/toy/Ch6/BUILD.bazel
++++ b/mlir/examples/toy/Ch6/BUILD.bazel
+@@ -1,6 +1,7 @@
+ # Description:
+ #   MLIR Tutorial
+ 
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ licenses(["notice"])
+diff --git a/mlir/examples/toy/Ch7/BUILD.bazel b/mlir/examples/toy/Ch7/BUILD.bazel
+index 630ceb332..d8854cf13 100644
+--- a/mlir/examples/toy/Ch7/BUILD.bazel
++++ b/mlir/examples/toy/Ch7/BUILD.bazel
+@@ -1,6 +1,7 @@
+ # Description:
+ #   MLIR Tutorial
+ 
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+ 
+ licenses(["notice"])
+diff --git a/mlir/linalggen.bzl b/mlir/linalggen.bzl
+index d893471e6..7e7dacade 100644
+--- a/mlir/linalggen.bzl
++++ b/mlir/linalggen.bzl
+@@ -4,6 +4,8 @@
+ 
+ """BUILD extensions for MLIR linalg generation."""
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ def genlinalg(name, linalggen, src, linalg_outs):
+     """genlinalg() generates code from a tc spec file.
+ 
+@@ -35,7 +37,7 @@ def genlinalg(name, linalggen, src, linalg_outs):
+         )
+ 
+     hdrs = [f for (opts, f) in linalg_outs]
+-    native.cc_library(
++    cc_library(
+         name = name,
+         hdrs = hdrs,
+         textual_hdrs = hdrs,
+diff --git a/mlir/tblgen.bzl b/mlir/tblgen.bzl
+index 9d26822ac..b5df25e60 100644
+--- a/mlir/tblgen.bzl
++++ b/mlir/tblgen.bzl
+@@ -4,6 +4,7 @@
+ """BUILD extensions for MLIR table generation."""
+ 
+ load("@bazel_skylib//lib:paths.bzl", "paths")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
+ 
+ TdInfo = provider(
+     "Holds TableGen files and the dependencies and include paths necessary to" +
+@@ -424,7 +425,7 @@ def gentbl_cc_library(
+         skip_opts = ["-gen-op-doc"],
+         **kwargs
+     )
+-    native.cc_library(
++    cc_library(
+         name = name,
+         # strip_include_prefix does not apply to textual_hdrs.
+         # https://github.com/bazelbuild/bazel/issues/12424
+diff --git a/mlir/test/BUILD.bazel b/mlir/test/BUILD.bazel
+index 28908c851..d9291c691 100644
+--- a/mlir/test/BUILD.bazel
++++ b/mlir/test/BUILD.bazel
+@@ -3,9 +3,10 @@
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
+ load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("//llvm:lit_test.bzl", "package_path")
+ load("//mlir:build_defs.bzl", "if_cuda_available")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+-load("//llvm:lit_test.bzl", "package_path")
+ 
+ package(
+     default_visibility = ["//visibility:public"],
+diff --git a/mlir/unittests/BUILD.bazel b/mlir/unittests/BUILD.bazel
+index 2ed41ad52..245338484 100644
+--- a/mlir/unittests/BUILD.bazel
++++ b/mlir/unittests/BUILD.bazel
+@@ -2,6 +2,7 @@
+ # See https://llvm.org/LICENSE.txt for license information.
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
+ load("//mlir:tblgen.bzl", "gentbl_cc_library")
+ 
+ package(
+diff --git a/third-party/benchmark/bindings/python/build_defs.bzl b/third-party/benchmark/bindings/python/build_defs.bzl
+index 45907aaa5..f94681aa1 100644
+--- a/third-party/benchmark/bindings/python/build_defs.bzl
++++ b/third-party/benchmark/bindings/python/build_defs.bzl
+@@ -1,3 +1,6 @@
++load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
++load("@rules_python//python:defs.bzl", "py_library")
++
+ _SHARED_LIB_SUFFIX = {
+     "//conditions:default": ".so",
+     "//:windows": ".dll",
+@@ -6,7 +9,7 @@ _SHARED_LIB_SUFFIX = {
+ def py_extension(name, srcs, hdrs = [], copts = [], features = [], deps = []):
+     for shared_lib_suffix in _SHARED_LIB_SUFFIX.values():
+         shared_lib_name = name + shared_lib_suffix
+-        native.cc_binary(
++        cc_binary(
+             name = shared_lib_name,
+             linkshared = 1,
+             linkstatic = 1,
+@@ -16,7 +19,7 @@ def py_extension(name, srcs, hdrs = [], copts = [], features = [], deps = []):
+             deps = deps,
+         )
+ 
+-    return native.py_library(
++    return py_library(
+         name = name,
+         data = select({
+             platform: [name + shared_lib_suffix]
+diff --git a/third-party/unittest/BUILD.bazel b/third-party/unittest/BUILD.bazel
+index 2a6b81052..2d9a396cf 100644
+--- a/third-party/unittest/BUILD.bazel
++++ b/third-party/unittest/BUILD.bazel
+@@ -2,6 +2,8 @@
+ # See https://llvm.org/LICENSE.txt for license information.
+ # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ package(default_visibility = ["//visibility:public"])
+ 
+ licenses(["notice"])

@@ -189,6 +189,8 @@ class Module:
         self.test_module_path = None
         self.test_module_build_targets = []
         self.test_module_test_targets = []
+        self.matrix_bazel_versions = []
+        self.matrix_platforms = []
 
     def add_dep(self, module_name, version):
         self.deps.append((module_name, version))
@@ -280,7 +282,7 @@ module(
         return module_versions
 
     def get_metadata(self, module_name):
-        return json.loads(self.get_metadata_path(module_name).read_text())
+        return json.loads(self.get_metadata_path(module_name).read_text(encoding="utf-8"))
 
     def get_metadata_path(self, module_name):
         return self.root / "modules" / module_name / "metadata.json"
@@ -295,7 +297,7 @@ module(
         return self.get_version_dir(module_name, version) / "overlay"
 
     def get_source(self, module_name, version):
-        return json.loads(self.get_source_json_path(module_name, version).read_text())
+        return json.loads(self.get_source_json_path(module_name, version).read_text(encoding="utf-8"))
 
     def get_source_json_path(self, module_name, version):
         return self.get_version_dir(module_name, version) / "source.json"
@@ -431,12 +433,14 @@ module(
         if module.presubmit_yml:
             shutil.copy(module.presubmit_yml, presubmit_yml)
         else:
-            PLATFORMS = ["debian11", "ubuntu2204", "macos", "macos_arm64", "windows"]
-            BAZEL_VERSIONS = ["8.x", "7.x", "6.x"]
+            DEFAULT_PLATFORMS = ["debian11", "ubuntu2204", "macos", "macos_arm64", "windows"]
+            DEFAULT_BAZEL_VERSIONS = ["8.x", "7.x", "6.x"]
+            platforms = module.matrix_platforms or DEFAULT_PLATFORMS
+            bazel_versions = module.matrix_bazel_versions or DEFAULT_BAZEL_VERSIONS
             presubmit = {
                 "matrix": {
-                    "platform": PLATFORMS.copy(),
-                    "bazel": BAZEL_VERSIONS.copy(),
+                    "platform": platforms.copy(),
+                    "bazel": bazel_versions.copy(),
                 },
                 "tasks": {
                     "verify_targets": {
@@ -461,8 +465,8 @@ module(
                 presubmit["bcr_test_module"] = {
                     "module_path": module.test_module_path,
                     "matrix": {
-                        "platform": PLATFORMS.copy(),
-                        "bazel": BAZEL_VERSIONS.copy(),
+                        "platform": platforms.copy(),
+                        "bazel": bazel_versions.copy(),
                     },
                     "tasks": {"run_test_module": task},
                 }

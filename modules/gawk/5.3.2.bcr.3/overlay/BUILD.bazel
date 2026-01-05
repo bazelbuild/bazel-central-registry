@@ -1,0 +1,166 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+GAWK_COPTS = ["-w"]
+
+filegroup(
+    name = "missing_d",
+    srcs = [
+        "missing_d/strcoll.c",
+        "missing_d/strftime.c",
+        "missing_d/strncasecmp.c",
+        "missing_d/timegm.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "gettext",
+    hdrs = ["gettext.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "gawkapi",
+    hdrs = ["gawkapi.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "pc",
+    srcs = glob(["pc/*.c"]),
+    hdrs = glob(["pc/*.h"]) + ["pc/gawkmisc.pc"],
+    defines = [
+        "__MINGW32__",
+        "__USE_MINGW_ANSI_STDIO",
+        'LOCALEDIR="\\\"c:/gnu/share/locale\\\""',
+        'DEFLIBPATH="\\\"c:/gnu/lib/gawk\\\""',
+        'SHLIBEXT="\\\"dll\\\""',
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+)
+
+cc_library(
+    name = "posix",
+    hdrs = ["posix/gawkmisc.c"],
+    defines = [
+        """LOCALEDIR='"/usr/local/share/locale"'""",
+        'DEFLIBPATH="\\\"/usr/local/lib/gawk\\\""',
+        'SHLIBEXT="\\\"so\\\""',
+        """DEFPATH='".:/usr/local/share/awk"'""",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "support",
+    srcs = [
+        "support/dfa.c",
+        "support/getopt.c",
+        "support/getopt1.c",
+        "support/localeinfo.c",
+        "support/malloc/dynarray_at_failure.c",
+        "support/malloc/dynarray_emplace_enlarge.c",
+        "support/malloc/dynarray_finalize.c",
+        "support/malloc/dynarray_resize.c",
+        "support/malloc/dynarray_resize_clear.c",
+        "support/random.c",
+        "support/regex.c",
+    ] + select({
+        "@platforms//os:linux": [
+            "support/pma.c",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = glob([
+        "support/*.h",
+        "support/malloc/*.h",
+    ]) + [
+        "support/malloc/dynarray-skeleton.c",
+        "support/regcomp.c",
+        "support/regex_internal.c",
+        "support/regexec.c",
+    ],
+    copts = GAWK_COPTS,
+    includes = [
+        "support",
+        "support/malloc",
+    ] + select({
+        "@platforms//os:windows": [
+            "pc",
+        ],
+        "//conditions:default": [
+            "config",
+            "posix",
+        ],
+    }),
+    deps = [
+        ":config",
+        ":custom",
+        ":gettext",
+    ],
+)
+
+cc_library(
+    name = "custom",
+    hdrs = ["custom.h"],
+    visibility = ["//visibility:public"],
+)
+
+copy_file(
+    name = "config_h",
+    src = select({
+        "@platforms//os:linux": "posix/config_linux.h",
+        "@platforms//os:macos": "posix/config_darwin.h",
+        "@platforms//os:windows": "pc/config.h",
+    }),
+    out = "config/config.h",
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    defines = [
+        "GAWK",
+        "HAVE_CONFIG_H",
+    ],
+    deps = select({
+        "@platforms//os:windows": [":pc"],
+        "//conditions:default": [":posix"],
+    }),
+)
+
+cc_library(
+    name = "awk",
+    srcs = glob(["*.c"], exclude = ["main.c"]),
+    hdrs = glob(["*.h"]) + [":missing_d"],
+    copts = GAWK_COPTS,
+    includes = ["./support"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+        ],
+        "@platforms//os:windows": [
+            "-lws2_32",
+            # TODO: why there is multiple definitions?
+            "-Wl,-allow-multiple-definition",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":support",
+    ],
+)
+
+cc_binary(
+    name = "gawk",
+    srcs = ["main.c"],
+    copts = GAWK_COPTS,
+    visibility = ["//visibility:public"],
+    deps = [":awk"],
+)

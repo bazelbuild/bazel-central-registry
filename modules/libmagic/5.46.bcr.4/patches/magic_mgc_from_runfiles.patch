@@ -1,0 +1,45 @@
+diff --git a/src/magic.c b/src/magic.c
+index def46fa3..8dcf1666 100644
+--- a/src/magic.c
++++ b/src/magic.c
+@@ -60,6 +60,10 @@ FILE_RCSID("@(#)$File: magic.c,v 1.123 2023/12/29 18:04:48 christos Exp $")
+ #include <unistd.h>	/* for read() */
+ #endif
+ 
++#ifdef __APPLE__
++#include <mach-o/dyld.h>
++#endif
++
+ #ifndef PIPE_BUF
+ /* Get the PIPE_BUF from pathconf */
+ #ifdef _PC_PIPE_BUF
+@@ -185,6 +189,29 @@ get_default_magic(void)
+ 		free(default_magic);
+ 		default_magic = NULL;
+ 	}
++
++	// Limited runfiles lookup bootstrap.
++	char exe_path[PATH_MAX];
++#ifdef __linux__
++	ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
++	if (len < 0) {
++		return MAGIC;
++	}
++	exe_path[len] = '\0';
++#elif defined(__APPLE__)
++	uint32_t size = sizeof(exe_path);
++	if (_NSGetExecutablePath(exe_path, &size) != 0) {
++		return MAGIC;
++	}
++#endif
++
++	// Build runfiles path and make sure it exists.
++	if (asprintf(&default_magic, "%s.runfiles/%s", exe_path, MAGIC) >= 0 && access(default_magic, R_OK) == 0) {
++		return default_magic;
++	}
++
++	default_magic = NULL;
++
+ 	if ((home = getenv("HOME")) == NULL)
+ 		return MAGIC;
+ 
