@@ -1,0 +1,87 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_applicable_licenses = ["//:license"])
+
+expand_template(
+    name = "gmoduleconf_h",
+    out = "gmoduleconf.h",
+    substitutions = select({
+        "@platforms//os:windows": {
+            "@G_MODULE_IMPL@": "G_MODULE_IMPL_WIN32",
+            "@G_MODULE_HAVE_DLERROR@": "1",
+            "@G_MODULE_NEED_USCORE@": "0",
+            "@G_MODULE_BROKEN_RTLD_GLOBAL@": "0",
+        },
+        "//conditions:default": {
+            "@G_MODULE_IMPL@": "G_MODULE_IMPL_DL",
+            "@G_MODULE_HAVE_DLERROR@": "1",
+            "@G_MODULE_NEED_USCORE@": "0",
+            "@G_MODULE_BROKEN_RTLD_GLOBAL@": "0",
+        },
+    }),
+    template = "gmoduleconf.h.in",
+)
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+run_binary(
+    name = "gmodule-visibility_h",
+    outs = ["include_glib-2.0/gmodule/gmodule-visibility.h"],
+    args = [
+        UPSTREAM_VERSION,
+        "visibility-macros",
+        "GMODULE",
+        "$(location include_glib-2.0/gmodule/gmodule-visibility.h)",
+    ],
+    tool = "//tools:gen-visibility-macros",
+)
+
+expand_template(
+    name = "public_hdr_gmodule.h",
+    out = "include_glib-2.0/gmodule.h",
+    substitutions = {},
+    template = "gmodule.h",
+)
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+cc_library(
+    name = "gmodule",
+    srcs = [
+        "gmodule.c",
+        "gmodule-deprecated.c",
+        ":gmodule-visibility_h",
+        ":gmoduleconf_h",
+    ],
+    hdrs = [
+        ":gmodule-visibility_h",
+        ":public_hdr_gmodule.h",
+    ],
+    copts = [
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+        "-I%s/gmodule" % (INCLUDE_PREFIX,),
+        "-I$(BINDIR)/%s/gmodule" % (INCLUDE_PREFIX,),
+    ],
+    implementation_deps = ["//:config_h"],
+    includes = ["include_glib-2.0"],
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "G_LOG_DOMAIN='\"GModule\"'",
+        "GMODULE_COMPILATION",
+    ],
+    textual_hdrs = [
+        "gmodule-ar.c",
+        "gmodule-dl.c",
+        "gmodule-win32.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//glib"],
+)
