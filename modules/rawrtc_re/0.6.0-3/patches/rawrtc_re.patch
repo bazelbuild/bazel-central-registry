@@ -1,0 +1,89 @@
+diff --git a/include/re_main.h b/include/re_main.h
+index cc9ac4bab..c4e6293b1 100644
+--- a/include/re_main.h
++++ b/include/re_main.h
+@@ -29,8 +29,13 @@ typedef void (fd_h)(int flags, void *arg);
+  *
+  * @param sig Signal number
+  */
++typedef int(re_fd_listen_h)(int fd, int flags, fd_h *fh, void *arg);
++typedef void(re_fd_close_h)(int fd);
++
+ typedef void (re_signal_h)(int sig);
+ 
++void re_fd_set_listen_callback(re_fd_listen_h *listenh);
++void re_fd_set_close_callback(re_fd_close_h *closeh);
+ 
+ int   fd_listen(int fd, int flags, fd_h *fh, void *arg);
+ void  fd_close(int fd);
+diff --git a/src/main/main.c b/src/main/main.c
+index 0243b4bde..de3e68bdb 100644
+--- a/src/main/main.c
++++ b/src/main/main.c
+@@ -222,6 +222,25 @@ static struct re *re_get(void)
+ #endif
+ 
+ 
++static re_fd_listen_h *global_fd_listen_h = NULL;
++static re_fd_close_h *global_fd_close_h = NULL;
++
++void re_fd_set_listen_callback(re_fd_listen_h *listenh) {
++  struct re *re = re_get();
++
++  re_lock(re);
++  global_fd_listen_h = listenh;
++  re_unlock(re);
++}
++void re_fd_set_close_callback(re_fd_close_h *closeh) {
++  struct re *re = re_get();
++
++  re_lock(re);
++  global_fd_close_h = closeh;
++  re_unlock(re);
++}
++
++
+ #if MAIN_DEBUG
+ /**
+  * Call the application event handler
+@@ -566,7 +585,11 @@ int fd_listen(int fd, int flags, fd_h *fh, void *arg)
+ 	struct re *re = re_get();
+ 	int err = 0;
+ 
+-	DEBUG_INFO("fd_listen: fd=%d flags=0x%02x\n", fd, flags);
++        if (global_fd_listen_h != NULL) {
++          return (*global_fd_listen_h)(fd, flags, fh, arg);
++        }
++
++        DEBUG_INFO("fd_listen: fd=%d flags=0x%02x\n", fd, flags);
+ 
+ 	if (fd < 0) {
+ 		DEBUG_WARNING("fd_listen: corrupt fd %d\n", fd);
+@@ -642,6 +665,11 @@ int fd_listen(int fd, int flags, fd_h *fh, void *arg)
+  */
+ void fd_close(int fd)
+ {
++        if (global_fd_close_h != NULL) {
++          (*global_fd_close_h)(fd);
++          return;
++        }
++
+ 	(void)fd_listen(fd, 0, NULL, NULL);
+ }
+ 
+diff --git a/src/tls/openssl/tls.h b/src/tls/openssl/tls.h
+index 2c621d547..c0c4d51da 100644
+--- a/src/tls/openssl/tls.h
++++ b/src/tls/openssl/tls.h
+@@ -20,9 +20,11 @@
+ 
+ #if OPENSSL_VERSION_NUMBER >= 0x10100000L && \
+ 	!defined(LIBRESSL_VERSION_NUMBER)
++#ifndef OPENSSL_IS_BORINGSSL
+ #define SSL_state SSL_get_state
+ #define SSL_ST_OK TLS_ST_OK
+ #endif
++#endif
+ 
+ 
+ struct tls {

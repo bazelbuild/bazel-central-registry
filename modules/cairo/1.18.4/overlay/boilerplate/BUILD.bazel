@@ -1,0 +1,54 @@
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+boilerplate_sources = [
+    "cairo-boilerplate-getopt.c",
+    "cairo-boilerplate-system.c",
+    "cairo-boilerplate.c",
+    "cairo-boilerplate-pdf.c",
+    "cairo-boilerplate-svg.c",
+]
+
+py_binary(
+    name = "make-cairo-boilerplate-constructors",
+    srcs = ["make-cairo-boilerplate-constructors.py"],
+    main = "make-cairo-boilerplate-constructors.py",
+)
+
+run_binary(
+    name = "cairo_boilerplate_constructors_src",
+    srcs = boilerplate_sources,
+    outs = ["cairo-boilerplate-constructors.c"],
+    tool = ":make-cairo-boilerplate-constructors",
+    args = [
+        "$(location cairo-boilerplate-constructors.c)",
+    ] + ["$(location %s)" % f for f in boilerplate_sources],
+)
+
+cc_library(
+    name = "cairo_boilerplate",
+    srcs = [
+        "cairo-boilerplate-getopt.c",
+        "cairo-boilerplate-system.c",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["cairo-boilerplate.c"],
+    }) + [
+        "cairo-boilerplate-pdf.c",
+        "cairo-boilerplate-svg.c",
+    ] + [":cairo_boilerplate_constructors_src"],
+    hdrs = glob(["*.h"]),
+    copts = [
+        "-D_GNU_SOURCE",
+        "-DCAIRO_COMPILATION",
+    ],
+    includes = ["."],
+    deps = [
+        "//:config",
+        "//src:cairo",
+        "@libpng//:libpng",
+        "@zlib//:zlib",
+    ],
+    visibility = ["//visibility:public"],
+)
