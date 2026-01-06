@@ -1,0 +1,44 @@
+# Cleans up after dependabot. It often sends PRs that change requirements_lock.txt, but
+# fail to properly run //tools:requirements.update, causing the PR checks to fail.
+# This workflow runs //tools:requirements.update and commits the changes.
+
+name: Run //tools:requirements.update
+
+on:
+  pull_request_target:
+    paths:
+      - 'tools/requirements_lock.txt'
+
+jobs:
+  update-requirements:
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'bazelbuild/bazel-central-registry'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.BCR_PR_REVIEW_HELPER_TOKEN }}
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.16.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Run //tools:requirements.update
+        run: bazel run //tools:requirements.update
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "bazel.build machine account"
+          git config --global user.email "ci.bazel@gmail.com"
+          git add tools/requirements_lock.txt
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Run //tools:requirements.update"
+            git push
+          fi

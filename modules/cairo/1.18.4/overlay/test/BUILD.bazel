@@ -1,0 +1,100 @@
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+filegroup(
+    name = "selected_test_sources",
+    # Minimal set of tests that work with the available deps.
+    srcs = ["png.c"],
+)
+
+py_binary(
+    name = "make-cairo-test-constructors",
+    srcs = ["make-cairo-test-constructors.py"],
+    main = "make-cairo-test-constructors.py",
+)
+
+run_binary(
+    name = "cairo_test_constructors_src",
+    srcs = [":selected_test_sources"],
+    outs = ["cairo-test-constructors.c"],
+    tool = ":make-cairo-test-constructors",
+    args = [
+        "$(location cairo-test-constructors.c)",
+        "$(locations :selected_test_sources)",
+    ],
+)
+
+cc_library(
+    name = "pdiff",
+    srcs = [
+        "pdiff/lpyramid.c",
+        "pdiff/pdiff.c",
+    ],
+    hdrs = [
+        "pdiff/lpyramid.h",
+        "pdiff/pdiff.h",
+    ],
+    includes = ["."],
+    deps = [
+        "//:config",
+        "//src:cairo",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "cairo_tests",
+    linkstatic = True,
+    srcs = [
+        "buffer-diff.c",
+        "cairo-test-runner.c",
+        "buffer-diff.h",
+        "cairo-test-private.h",
+        "cairo-test.h",
+        ":cairo_test_constructors_src",
+        ":selected_test_sources",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["cairo-test.c"]
+    }),
+    local_defines = [
+        "_GNU_SOURCE",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:clang": [
+            "-Wno-incompatible-pointer-types-discards-qualifiers",
+            "-Wno-unused-const-variable",
+            "-Wno-unused-variable",
+         ],
+        "//conditions:default": [],
+    }),
+    includes = ["pdiff", "."],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lm",
+            "-pthread",
+        ],
+    }),
+    deps = [
+        ":pdiff",
+        "//:config",
+        "//boilerplate:cairo_boilerplate",
+        "//src:cairo",
+        "@libpng//:libpng",
+        "@pixman//:pixman",
+        "@zlib//:zlib",
+    ],
+    data = glob(
+        ["**/*"],
+        exclude = [
+            "**/*.c",
+            "**/*.h",
+            "**/*.py",
+            "**/*.rsp",
+            "**/BUILD.bazel",
+        ],
+    ),
+    visibility = ["//visibility:public"],
+)
