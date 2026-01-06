@@ -1,23 +1,17 @@
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
 string_flag(
     name = "ssl",
-    build_setting_default = "no_ssl",
+    build_setting_default = "boringssl",
     values = [
-        "no_ssl",
         "openssl",
         "boringssl",
     ],
     visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "no_ssl",
-    flag_values = {":ssl": "no_ssl"},
 )
 
 config_setting(
@@ -31,6 +25,22 @@ config_setting(
 )
 
 write_file(
+    name = "src_win",
+    out = "boost.mysql.src.win.cpp",
+    content = select({
+        ":boringssl": [
+            "#include <boost/mysql/src.hpp>",
+        ],
+        ":openssl": [
+            "#include <winsock2.h>",
+            "#include <windows.h>",
+            "#include <boost/mysql/src.hpp>",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+write_file(
     name = "src",
     out = "boost.mysql.src.cpp",
     content = ["#include <boost/mysql/src.hpp>"],
@@ -39,7 +49,10 @@ write_file(
 
 cc_library(
     name = "boost.mysql",
-    srcs = [":src"],
+    srcs = select({
+        "@platforms//os:windows": [":src_win"],
+        "//conditions:default": [":src"],
+    }),
     defines = ["BOOST_MYSQL_SEPARATE_COMPILATION"],
     features = [
         "parse_headers",
@@ -77,7 +90,6 @@ cc_library(
             "@boringssl//:crypto",
             "@boringssl//:ssl",
         ],
-        ":no_ssl": [],
         ":openssl": [
             "@openssl//:crypto",
             "@openssl//:ssl",
