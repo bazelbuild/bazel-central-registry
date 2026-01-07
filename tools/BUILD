@@ -10,6 +10,7 @@ compile_pip_requirements_3_11(
     name = "requirements",
     requirements_in = "requirements.in",
     requirements_txt = "requirements_lock.txt",
+    extra_args = ["--index-url=https://pypi.org/simple"],
 )
 
 py_binary(
