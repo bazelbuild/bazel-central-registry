@@ -1,87 +1,64 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
-filegroup(
-    name = "headers",
-    srcs = glob(["include/**/*.hpp"]),
+cc_library(
+    name = "cucumber_lib",
+    srcs = [
+        "src/ContextManager.cpp",
+        "src/CukeCommands.cpp",
+        "src/CukeEngine.cpp",
+        "src/CukeEngineImpl.cpp",
+        "src/HookRegistrar.cpp",
+        "src/Regex.cpp",
+        "src/Scenario.cpp",
+        "src/StepManager.cpp",
+        "src/Table.cpp",
+        "src/Tag.cpp",
+        "src/connectors/wire/WireProtocol.cpp",
+        "src/connectors/wire/WireProtocolCommands.cpp",
+        "src/connectors/wire/WireServer.cpp",
+        "src/drivers/GTestDriver.cpp",
+        "src/drivers/GenericDriver.cpp",
+    ],
+    hdrs = glob(["include/**/*.hpp"]),
+    copts = [
+        "-DCUCUMBER_CPP_STATIC_DEFINE",
+        "-DCUKE_ENABLE_GTEST=1",
+    ],
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": [],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "@asio",
+        "@googletest//:gtest",
+        "@nlohmann_json//:json",
+    ],
 )
-
-CUKE_SOURCES = [
-    "src/drivers/GenericDriver.cpp",
-    "src/drivers/GTestDriver.cpp",
-    "src/ContextManager.cpp",
-    "src/CukeCommands.cpp",
-    "src/CukeEngine.cpp",
-    "src/CukeEngineImpl.cpp",
-    "src/StepManager.cpp",
-    "src/HookRegistrar.cpp",
-    "src/Regex.cpp",
-    "src/Scenario.cpp",
-    "src/Table.cpp",
-    "src/Tag.cpp",
-    "src/connectors/wire/WireServer.cpp",
-    "src/connectors/wire/WireProtocol.cpp",
-    "src/connectors/wire/WireProtocolCommands.cpp",
-]
 
 VERSION = module_version().split(".bcr.", 1)[0]
 
 cc_library(
-    name = "cucumber_main",
-    srcs = CUKE_SOURCES + ["src/main.cpp"] + ["//:headers"],
+    name = "cucumber-cpp",
+    srcs = ["src/main.cpp"],
     copts = [
-        "-DCUCUMBER_CPP_STATIC_DEFINE",
-        "-DCUKE_ENABLE_GTEST=1",
-        "-DCUKE_VERSION=\\\"{version}\\\"".format(version=VERSION),
+        "-DCUKE_VERSION=\\\"{version}\\\"".format(version = VERSION),
     ],
-    includes = ["include"],
-    linkopts = select({
-        "@platforms//os:linux": ["-lpthread"],
-        "@platforms//os:macos": [],
-        "//conditions:default": [],
-    }),
+    visibility = ["//visibility:public"],
     deps = [
-        "@asio",
-        "@googletest//:gtest",
-        "@nlohmann_json//:json",
+        ":cucumber_lib",
         "@tclap",
     ],
     alwayslink = True,
-    visibility = ["//visibility:public"],
-)
-
-alias(
-    name = "cucumber-cpp",
-    actual = ":cucumber_main",
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name = "cucumber_cpp_nomain",
-    srcs = CUKE_SOURCES + ["//:headers"],
-    copts = [
-        "-DCUCUMBER_CPP_STATIC_DEFINE",
-        "-DCUKE_ENABLE_GTEST=1",
-    ],
-    includes = ["include"],
-    linkopts = select({
-        "@platforms//os:linux": ["-lpthread"],
-        "@platforms//os:macos": [],
-        "//conditions:default": [],
-    }),
-    deps = [
-        "@asio",
-        "@googletest//:gtest",
-        "@nlohmann_json//:json",
-    ],
-    visibility = ["//visibility:public"]
 )
 
 cc_library(
     name = "test_library",
     hdrs = glob(["tests/utils/*.hpp"]),
     strip_include_prefix = "tests",
-    deps = [":cucumber_cpp_nomain"],
+    deps = [":cucumber_lib"],
 )
 
 cc_test(
@@ -89,7 +66,7 @@ cc_test(
     srcs = glob(["tests/unit/*.cpp"]),
     includes = ["include"],
     deps = [
-        ":cucumber_cpp_nomain",
+        ":cucumber_lib",
         ":test_library",
         "@googletest//:gtest_main",
     ],
