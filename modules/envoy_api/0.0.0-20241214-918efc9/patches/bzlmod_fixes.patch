@@ -1,0 +1,163 @@
+diff --git a/bazel/api_build_system.bzl b/bazel/api_build_system.bzl
+index 729e7716..563c9467 100644
+--- a/bazel/api_build_system.bzl
++++ b/bazel/api_build_system.bzl
+@@ -23,6 +23,7 @@ _CC_GRPC_SUFFIX = "_cc_grpc"
+ _GO_PROTO_SUFFIX = "_go_proto"
+ _GO_IMPORTPATH_PREFIX = "github.com/envoyproxy/go-control-plane/"
+ _JAVA_PROTO_SUFFIX = "_java_proto"
++_IS_BZLMOD = str(Label("//:invalid")).startswith("@@")
+ 
+ _COMMON_PROTO_DEPS = [
+     "@com_google_protobuf//:any_proto",
+@@ -42,7 +43,8 @@ _COMMON_PROTO_DEPS = [
+ def _proto_mapping(dep, proto_dep_map, proto_suffix):
+     mapped = proto_dep_map.get(dep)
+     if mapped == None:
+-        prefix = "@" + Label(dep).workspace_name if not dep.startswith("//") else ""
++        prefix = "@@" if _IS_BZLMOD else "@"
++        prefix = prefix + Label(dep).repo_name if not dep.startswith("//") else ""
+         return prefix + "//" + Label(dep).package + ":" + Label(dep).name + proto_suffix
+     return mapped
+ 
+diff --git a/bazel/cc_proto_descriptor_library/BUILD b/bazel/cc_proto_descriptor_library/BUILD
+index 993d1080..6d013919 100644
+--- a/bazel/cc_proto_descriptor_library/BUILD
++++ b/bazel/cc_proto_descriptor_library/BUILD
+@@ -37,7 +37,6 @@ cc_library(
+         "@com_google_absl//absl/strings:str_format",
+         "@com_google_protobuf//:protobuf",
+         "@com_google_protobuf//src/google/protobuf/compiler:code_generator",
+-        "@com_google_protobuf//src/google/protobuf/compiler:retention",
+     ],
+ )
+ 
+diff --git a/bazel/external_proto_deps.bzl b/bazel/external_proto_deps.bzl
+index 5f08d68e..da477d5b 100644
+--- a/bazel/external_proto_deps.bzl
++++ b/bazel/external_proto_deps.bzl
+@@ -12,7 +12,7 @@ EXTERNAL_PROTO_IMPORT_BAZEL_DEP_MAP = {
+     "google/api/expr/v1alpha1/checked.proto": "@com_google_googleapis//google/api/expr/v1alpha1:checked_proto",
+     "google/api/expr/v1alpha1/syntax.proto": "@com_google_googleapis//google/api/expr/v1alpha1:syntax_proto",
+     "io/prometheus/client/metrics.proto": "@prometheus_metrics_model//:client_model",
+-    "opentelemetry/proto/common/v1/common.proto": "@opentelemetry_proto//:common",
++    "opentelemetry/proto/common/v1/common.proto": "@opentelemetry_proto//:common_proto",
+ }
+ 
+ # This maps from the Bazel proto_library target to the Go language binding target for external dependencies.
+@@ -28,18 +28,24 @@ EXTERNAL_PROTO_GO_BAZEL_DEP_MAP = {
+     #    go_googleapis in https://github.com/bazelbuild/rules_go/blob/master/go/dependencies.rst#overriding-dependencies
+     "@com_google_googleapis//google/api/expr/v1alpha1:checked_proto": "@org_golang_google_genproto_googleapis_api//expr/v1alpha1",
+     "@com_google_googleapis//google/api/expr/v1alpha1:syntax_proto": "@org_golang_google_genproto_googleapis_api//expr/v1alpha1",
+-    "@opentelemetry_proto//:trace": "@opentelemetry_proto//:trace_go_proto",
+-    "@opentelemetry_proto//:logs": "@opentelemetry_proto//:logs_go_proto",
+-    "@opentelemetry_proto//:metrics": "@opentelemetry_proto//:metrics_go_proto",
+-    "@opentelemetry_proto//:common": "@opentelemetry_proto//:common_go_proto",
++    "@opentelemetry_proto//:trace_proto": "@opentelemetry_proto//:trace_proto_go",
++    "@opentelemetry_proto//:trace_service_proto": "@opentelemetry_proto//:trace_service_grpc_go",
++    "@opentelemetry_proto//:logs_proto": "@opentelemetry_proto//:logs_proto_go",
++    "@opentelemetry_proto//:logs_service_proto": "@opentelemetry_proto//:logs_service_grpc_go",
++    "@opentelemetry_proto//:metrics_proto": "@opentelemetry_proto//:metrics_proto_go",
++    "@opentelemetry_proto//:metrics_service_proto": "@opentelemetry_proto//:metrics_service_grpc_go",
++    "@opentelemetry_proto//:common_proto": "@opentelemetry_proto//:common_proto_go",
+ }
+ 
+ # This maps from the Bazel proto_library target to the C++ language binding target for external dependencies.
+ EXTERNAL_PROTO_CC_BAZEL_DEP_MAP = {
+     "@com_google_googleapis//google/api/expr/v1alpha1:checked_proto": "@com_google_googleapis//google/api/expr/v1alpha1:checked_cc_proto",
+     "@com_google_googleapis//google/api/expr/v1alpha1:syntax_proto": "@com_google_googleapis//google/api/expr/v1alpha1:syntax_cc_proto",
+-    "@opentelemetry_proto//:trace": "@opentelemetry_proto//:trace_cc_proto",
+-    "@opentelemetry_proto//:logs": "@opentelemetry_proto//:logs_cc_proto",
+-    "@opentelemetry_proto//:metrics": "@opentelemetry_proto//:metrics_cc_proto",
+-    "@opentelemetry_proto//:common": "@opentelemetry_proto//:common_cc_proto",
++    "@opentelemetry_proto//:trace_proto": "@opentelemetry_proto//:trace_proto_cc",
++    "@opentelemetry_proto//:trace_service_proto": "@opentelemetry_proto//:trace_service_grpc_cc",
++    "@opentelemetry_proto//:logs_proto": "@opentelemetry_proto//:logs_proto_cc",
++    "@opentelemetry_proto//:logs_service_proto": "@opentelemetry_proto//:logs_service_grpc_cc",
++    "@opentelemetry_proto//:metrics_proto": "@opentelemetry_proto//:metrics_proto_cc",
++    "@opentelemetry_proto//:metrics_service_proto": "@opentelemetry_proto//:metrics_service_grpc_cc",
++    "@opentelemetry_proto//:common_proto": "@opentelemetry_proto//:common_proto_cc",
+ }
+diff --git a/bazel/repositories.bzl b/bazel/repositories.bzl
+index ebf04fd2..058b05aa 100644
+--- a/bazel/repositories.bzl
++++ b/bazel/repositories.bzl
+@@ -12,7 +12,22 @@ def external_http_archive(name, **kwargs):
+         **kwargs
+     )
+ 
+-def api_dependencies():
++def api_dependencies(bzlmod = False):
++    external_http_archive(
++        name = "prometheus_metrics_model",
++        build_file_content = PROMETHEUSMETRICS_BUILD_CONTENT,
++    )
++    external_http_archive(
++        name = "com_github_bufbuild_buf",
++        build_file_content = BUF_BUILD_CONTENT,
++    )
++    external_http_archive(
++        name = "envoy_toolshed",
++    )
++
++    if bzlmod:
++        return
++
+     external_http_archive(
+         name = "bazel_skylib",
+     )
+@@ -27,15 +42,9 @@ def api_dependencies():
+     external_http_archive(
+         name = "com_google_googleapis",
+     )
+-
+     external_http_archive(
+         name = "com_github_cncf_xds",
+     )
+-
+-    external_http_archive(
+-        name = "prometheus_metrics_model",
+-        build_file_content = PROMETHEUSMETRICS_BUILD_CONTENT,
+-    )
+     external_http_archive(
+         name = "rules_proto",
+     )
+@@ -47,20 +56,12 @@ def api_dependencies():
+         name = "opentelemetry_proto",
+         build_file_content = OPENTELEMETRY_BUILD_CONTENT,
+     )
+-    external_http_archive(
+-        name = "com_github_bufbuild_buf",
+-        build_file_content = BUF_BUILD_CONTENT,
+-    )
+     external_http_archive(
+         name = "dev_cel",
+     )
+-
+     external_http_archive(
+         name = "com_github_chrusty_protoc_gen_jsonschema",
+     )
+-    external_http_archive(
+-        name = "envoy_toolshed",
+-    )
+ 
+ PROMETHEUSMETRICS_BUILD_CONTENT = """
+ load("@envoy_api//bazel:api_build_system.bzl", "api_cc_py_proto_library")
+@@ -202,3 +203,5 @@ filegroup(
+     tags = ["manual"], # buf is downloaded as a linux binary; tagged manual to prevent build for non-linux users
+ )
+ """
++
++non_module_deps = module_extension(implementation = lambda ctx: api_dependencies(bzlmod = True))
+diff --git a/envoy/extensions/access_loggers/open_telemetry/v3/BUILD b/envoy/extensions/access_loggers/open_telemetry/v3/BUILD
+index dad7cd1a..39d57c5e 100644
+--- a/envoy/extensions/access_loggers/open_telemetry/v3/BUILD
++++ b/envoy/extensions/access_loggers/open_telemetry/v3/BUILD
+@@ -9,6 +9,6 @@ api_proto_package(
+         "//envoy/config/core/v3:pkg",
+         "//envoy/extensions/access_loggers/grpc/v3:pkg",
+         "@com_github_cncf_xds//udpa/annotations:pkg",
+-        "@opentelemetry_proto//:common",
++        "@opentelemetry_proto//:common_proto",
+     ],
+ )

@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Proof-of-concept program to verify provenance attestations for direct module dependencies
+
+set -o errexit -o nounset -o pipefail
+
+# Minimum required version: https://github.com/cli/cli/releases/tag/v2.49.0
+REQUIRED_GH_VERSION="2.49.0"
+
+# Check if gh is available
+if ! command -v gh &> /dev/null; then
+    echo "Error: GitHub CLI (gh) is not installed or not in your PATH."
+    exit 1
+fi
+
+# Get installed gh version (strip 'gh version ' prefix)
+INSTALLED_VERSION=$(gh --version | head -n 1 | awk '{print $3}')
+
+# Function to compare versions
+version_ge() {
+    # returns 0 if $1 >= $2
+    [[ "$(printf '%s\n' "$1" "$2" | sort -V | head -n 1)" == "$2" ]]
+}
+
+# Compare versions
+if ! version_ge "$INSTALLED_VERSION" "$REQUIRED_GH_VERSION"; then
+    echo "Error: gh version $REQUIRED_GH_VERSION or higher is required for the 'attestation' subcommand. Found version: $INSTALLED_VERSION"
+    exit 1
+fi
+
+yellow='\033[0;33m'
+bold_blue='\033[1;34m'
+reset='\033[0m'
+
+# List direct dependency module names
+bazel mod deps --depth 1 '<root>' --output json | jq '.dependencies[] | .name' --raw-output | while IFS= read -r module; do
+    echo "┌────────────────────────────────────────────"
+
+    # Find the module's source URL
+    source_url=$(bazel mod show_repo "$module" | grep 'urls = \[' | sed -E 's/.*urls = \[(.*)\],/\1/' | tr -d '"' | tr -d ' ')
+    org=$(echo "$source_url" | sed -E 's|https://github.com/([^/]+)/.*|\1|')
+    echo -e "| ${bold_blue}Verifying ${org}/${module} ${reset}[fetched from $source_url] ..."
+
+    # Download the file
+    release_artifact=$(mktemp)
+    curl --fail --silent --show-error --location "$source_url" --output "$release_artifact"
+
+    # Are there attestations for it?
+    # This is a clumsy way to detect, by attempting a download. Perhaps it can be improved by calling the GH API manually.
+    if ! 2>&1 >/dev/null gh attestation download "$release_artifact" --owner "${org}"; then
+        echo -e "| ⚠️  ${yellow}Warning: no attestations found for this module, skipping.${reset}"
+        echo "└────────────────────────────────────────────"
+        continue
+    fi
+    # cleanup the file that was downloaded
+    rm sha256:*.jsonl
+
+    # Perform the verification
+    gh attestation verify "$release_artifact" --owner "${org}" --signer-repo bazel-contrib/.github
+    echo "└────────────────────────────────────────────"
+done
+

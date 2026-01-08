@@ -1,0 +1,347 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..9b7c8c6
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,341 @@
++# Copyright The OpenTelemetry Authors
++# SPDX-License-Identifier: Apache-2.0
++
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
++load("@bazel_skylib//lib:selects.bzl", "selects")
++
++package(features = ["no_copts_tokenization"])
++
++bool_flag(
++    name = "use_mbedtls",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "use_mbedtls_setting",
++    flag_values = {":use_mbedtls": "true"},
++)
++
++config_setting(
++    name = "not_use_mbedtls_setting",
++    flag_values = {":use_mbedtls": "false"},
++)
++
++selects.config_setting_group(
++    name = "use_boringssl",
++    match_all = [":not_use_mbedtls_setting", "@platforms//os:linux"],
++)
++
++selects.config_setting_group(
++    name = "use_sectransport",
++    match_all = [":not_use_mbedtls_setting", "@platforms//os:macos"],
++)
++
++bool_flag(
++    name = "http_only",
++    build_setting_default = True,
++)
++
++config_setting(
++    name = "http_only_setting",
++    flag_values = {":http_only": "true"},
++)
++
++# Curl's default CA path depends on the OS. If CURL_CA_BUNDLE/CURL_CA_PATH are not set,
++# (and you don't `curl_easy_setopt(curl_, CURLOPT_CAPATH, "/etc/ssl/certs");`), curl
++# will fail to verify server certificates.
++# The string_flag below allows the user to specify their (OS-specific) default CA path
++# like `--@curl//:ca_bundle=/etc/ssl/certs/ca-certificates.crt` on the command line or
++# in .bazelrc. See also https://github.com/curl/curl/blob/curl-8_8_0/acinclude.m4#L1202
++
++string_flag(
++    name = "ca_bundle",
++    build_setting_default = "",
++    make_variable = "CURL_CA_BUNDLE",
++)
++
++config_setting(
++    name = "ca_bundle_is_unset",
++    flag_values = {":ca_bundle": ""},
++)
++
++string_flag(
++    name = "ca_path",
++    build_setting_default = "",
++    make_variable = "CURL_CA_PATH",
++)
++
++config_setting(
++    name = "ca_path_is_unset",
++    flag_values = {":ca_path": ""},
++)
++
++_BASE_CURL_COPTS = [
++    "-DCURL_DISABLE_LDAP=1",
++    "-DENABLE_IPV6=1",
++    "-DGETHOSTNAME_TYPE_ARG2=size_t",
++    "-DGETSERVBYPORT_R_ARGS=6",
++    "-DGETSERVBYPORT_R_BUFSIZE=4096",
++    "-DHAVE_ALARM=1",
++    "-DHAVE_ALLOCA_H=1",
++    "-DHAVE_ARPA_INET_H=1",
++    "-DHAVE_ARPA_TFTP_H=1",
++    "-DHAVE_ASSERT_H=1",
++    "-DHAVE_BASENAME=1",
++    "-DHAVE_BOOL_T=1",
++    "-DHAVE_CLOCK_GETTIME_MONOTONIC=1",
++    "-DHAVE_CONNECT=1",
++    "-DHAVE_DIRENT_H=1",
++    "-DHAVE_DLFCN_H=1",
++    "-DHAVE_ENGINE_LOAD_BUILTIN_ENGINES=1",
++    "-DHAVE_ERRNO_H=1",
++    "-DHAVE_FCNTL=1",
++    "-DHAVE_FCNTL_H=1",
++    "-DHAVE_FCNTL_O_NONBLOCK=1",
++    "-DHAVE_FDOPEN=1",
++    "-DHAVE_FREEADDRINFO=1",
++    "-DHAVE_FREEIFADDRS=1",
++    "-DHAVE_FSETXATTR=1",
++    "-DHAVE_FSETXATTR_5=1",
++    "-DHAVE_FTRUNCATE=1",
++    "-DHAVE_GAI_STRERROR=1",
++    "-DHAVE_GETADDRINFO=1",
++    "-DHAVE_GETADDRINFO_THREADSAFE=1",
++    "-DHAVE_GETEUID=1",
++    "-DHAVE_GETHOSTBYADDR=1",
++    "-DHAVE_GETHOSTBYADDR_R=1",
++    "-DHAVE_GETHOSTBYADDR_R_8=1",
++    "-DHAVE_GETHOSTBYNAME=1",
++    "-DHAVE_GETHOSTBYNAME_R=1",
++    "-DHAVE_GETHOSTBYNAME_R_6=1",
++    "-DHAVE_GETHOSTNAME=1",
++    "-DHAVE_GETIFADDRS=1",
++    "-DHAVE_GETNAMEINFO=1",
++    "-DHAVE_GETPPID=1",
++    "-DHAVE_GETPWUID=1",
++    "-DHAVE_GETPWUID_R=1",
++    "-DHAVE_GETRLIMIT=1",
++    "-DHAVE_GETSERVBYPORT_R=1",
++    "-DHAVE_GETSOCKNAME=1",
++    "-DHAVE_GETTIMEOFDAY=1",
++    "-DHAVE_GMTIME_R=1",
++    "-DHAVE_IFADDRS_H=1",
++    "-DHAVE_IF_NAMETOINDEX=1",
++    "-DHAVE_INET_NTOP=1",
++    "-DHAVE_INET_PTON=1",
++    "-DHAVE_INTTYPES_H=1",
++    "-DHAVE_IOCTL=1",
++    "-DHAVE_IOCTL_FIONBIO=1",
++    "-DHAVE_IOCTL_SIOCGIFADDR=1",
++    "-DHAVE_LIBGEN_H=1",
++    "-DHAVE_LL=1",
++    "-DHAVE_LOCALE_H=1",
++    "-DHAVE_LOCALTIME_R=1",
++    "-DHAVE_LONGLONG=1",
++    "-DHAVE_MALLOC_H=1",
++    "-DHAVE_MEMORY_H=1",
++    "-DHAVE_NETDB_H=1",
++    "-DHAVE_NETINET_IN_H=1",
++    "-DHAVE_NETINET_TCP_H=1",
++    "-DHAVE_NET_IF_H=1",
++    "-DHAVE_OPENDIR=1",
++    "-DHAVE_PIPE=1",
++    "-DHAVE_POLL=1",
++    "-DHAVE_POLL_FINE=1",
++    "-DHAVE_POLL_H=1",
++    "-DHAVE_POSIX_STRERROR_R=1",
++    "-DHAVE_PTHREAD_H=1",
++    "-DHAVE_PWD_H=1",
++    "-DHAVE_RECV=1",
++    "-DHAVE_SELECT=1",
++    "-DHAVE_SEND=1",
++    "-DHAVE_SETJMP_H=1",
++    "-DHAVE_SETLOCALE=1",
++    "-DHAVE_SETRLIMIT=1",
++    "-DHAVE_SETSOCKOPT=1",
++    "-DHAVE_SGTTY_H=1",
++    "-DHAVE_SIGACTION=1",
++    "-DHAVE_SIGINTERRUPT=1",
++    "-DHAVE_SIGNAL=1",
++    "-DHAVE_SIGNAL_H=1",
++    "-DHAVE_SIGSETJMP=1",
++    "-DHAVE_SIG_ATOMIC_T=1",
++    "-DHAVE_SOCKADDR_IN6_SIN6_SCOPE_ID=1",
++    "-DHAVE_SOCKET=1",
++    "-DHAVE_SOCKETPAIR=1",
++    "-DHAVE_STDBOOL_H=1",
++    "-DHAVE_STDINT_H=1",
++    "-DHAVE_STDIO_H=1",
++    "-DHAVE_STDLIB_H=1",
++    "-DHAVE_STRCASECMP=1",
++    "-DHAVE_STRDUP=1",
++    "-DHAVE_STRERROR_R=1",
++    "-DHAVE_STRINGS_H=1",
++    "-DHAVE_STRING_H=1",
++    "-DHAVE_STRNCASECMP=1",
++    "-DHAVE_STRSTR=1",
++    "-DHAVE_STRTOK_R=1",
++    "-DHAVE_STRTOLL=1",
++    "-DHAVE_STRUCT_SOCKADDR_STORAGE=1",
++    "-DHAVE_STRUCT_TIMEVAL=1",
++    "-DHAVE_SYS_IOCTL_H=1",
++    "-DHAVE_SYS_PARAM_H=1",
++    "-DHAVE_SYS_POLL_H=1",
++    "-DHAVE_SYS_RESOURCE_H=1",
++    "-DHAVE_SYS_SELECT_H=1",
++    "-DHAVE_SYS_SOCKET_H=1",
++    "-DHAVE_SYS_STAT_H=1",
++    "-DHAVE_SYS_TIME_H=1",
++    "-DHAVE_SYS_TYPES_H=1",
++    "-DHAVE_SYS_UIO_H=1",
++    "-DHAVE_SYS_UN_H=1",
++    "-DHAVE_SYS_WAIT_H=1",
++    "-DHAVE_SYS_XATTR_H=1",
++    "-DHAVE_TERMIOS_H=1",
++    "-DHAVE_TERMIO_H=1",
++    "-DHAVE_TIME_H=1",
++    "-DHAVE_UNISTD_H=1",
++    "-DHAVE_UTIME=1",
++    "-DHAVE_UTIMES=1",
++    "-DHAVE_UTIME_H=1",
++    "-DHAVE_VARIADIC_MACROS_C99=1",
++    "-DHAVE_VARIADIC_MACROS_GCC=1",
++    "-DHAVE_WRITABLE_ARGV=1",
++    "-DHAVE_WRITEV=1",
++    "-DRECV_TYPE_ARG1=int",
++    "-DRECV_TYPE_ARG2=void*",
++    "-DRECV_TYPE_ARG3=size_t",
++    "-DRECV_TYPE_ARG4=int",
++    "-DRECV_TYPE_RETV=ssize_t",
++    "-DRETSIGTYPE=void",
++    "-DSELECT_QUAL_ARG5=",
++    "-DSELECT_TYPE_ARG1=int",
++    "-DSELECT_TYPE_ARG234=fd_set*",
++    "-DSELECT_TYPE_RETV=int",
++    "-DSEND_QUAL_ARG2=const",
++    "-DSEND_TYPE_ARG1=int",
++    "-DSEND_TYPE_ARG2=void*",
++    "-DSEND_TYPE_ARG3=size_t",
++    "-DSEND_TYPE_ARG4=int",
++    "-DSEND_TYPE_RETV=ssize_t",
++    "-DSIZEOF_CURL_OFF_T=8",
++    "-DSIZEOF_INT=4",
++    "-DSIZEOF_LONG=8",
++    "-DSIZEOF_OFF_T=8",
++    "-DSIZEOF_SHORT=2",
++    "-DSIZEOF_SIZE_T=8",
++    "-DSIZEOF_TIME_T=8",
++    "-DSTDC_HEADERS=1",
++    "-DSTRERROR_R_TYPE_ARG3=size_t",
++    "-DTIME_WITH_SYS_TIME=1",
++    "-DUSE_THREADS_POSIX=1",
++    "-DUSE_UNIX_SOCKETS=1",
++
++    # Extra defines needed by curl
++    "-DBUILDING_LIBCURL",
++    "-DCURL_HIDDEN_SYMBOLS",
++]
++
++cc_library(
++    name = "curl",
++    srcs = glob([
++        "lib/**/*.c",
++        "lib/**/*.h",
++    ]),
++    hdrs = glob(["include/curl/*.h"]),
++    copts = select({
++        "@platforms//os:windows": [
++            "/DWIN32",
++            "/DBUILDING_LIBCURL",
++            "/DUSE_WIN32_IDN",
++            "/DWANT_IDN_PROTOTYPES",
++            "/DUSE_IPV6",
++            "/DUSE_WINDOWS_SSPI",
++            "/DUSE_SCHANNEL",
++        ],
++        "@platforms//os:macos": _BASE_CURL_COPTS,
++        "//conditions:default": _BASE_CURL_COPTS + [
++            "-DHAVE_LINUX_TCP_H=1",
++            "-DHAVE_MSG_NOSIGNAL=1",
++        ],
++    }) + [
++        "-DOS=\"os\"",
++    ],
++    defines = ["CURL_STATICLIB"],
++    includes = [
++        "include/",
++        "lib/",
++    ],
++    linkopts = select({
++        ":use_sectransport": [
++            "-Wl,-framework,CoreFoundation",
++            "-Wl,-framework,Security",
++        ],
++        "//conditions:default": [],
++    }) + select({
++        "@platforms//os:windows": [
++            "-DEFAULTLIB:ws2_32.lib",
++            "-DEFAULTLIB:advapi32.lib",
++            "-DEFAULTLIB:crypt32.lib",
++            "-DEFAULTLIB:Normaliz.lib",
++        ],
++        "@platforms//os:macos": [
++            "-Wl,-framework,SystemConfiguration",
++        ],
++        "//conditions:default": [
++            "-lpthread",
++        ],
++    }),
++    local_defines = select({
++        "@platforms//os:macos": [
++            'CURL_CA_BUNDLE=\\"/etc/ssl/cert.pem\\"',
++            'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
++        ],
++        "@platforms//os:linux": [
++            'CURL_CA_BUNDLE=\\"/etc/ssl/certs/ca-certificates.crt\\"',
++            'CURL_CA_PATH=\\"/etc/ssl/certs\\"',
++        ],
++        "//conditions:default": [],
++    }) + select({
++        ":use_mbedtls_setting": ["USE_MBEDTLS"],
++        "//conditions:default": [],
++    }) + select({
++        ":use_sectransport": ["USE_SECTRANSP"],
++        "//conditions:default": [],
++    }) + select({
++        ":use_boringssl": ["USE_OPENSSL", "HAVE_BORING_SSL=1"],
++        "//conditions:default": [],
++    }) + select({
++        ":http_only_setting": ["HTTP_ONLY"],
++        "//conditions:default": [],
++    }) + select({
++        ":ca_bundle_is_unset": [],
++        "//conditions:default": ['CURL_CA_BUNDLE=\\"$(CURL_CA_BUNDLE)\\"'],
++    }) + select({
++        ":ca_path_is_unset": [],
++        "//conditions:default": ['CURL_CA_PATH=\\"$(CURL_CA_PATH)\\"'],
++    }),
++    toolchains = [
++        ":ca_bundle",
++        ":ca_path",
++    ],
++    visibility = ["//visibility:public"],
++    deps = select({
++        ":use_mbedtls_setting": ["@mbedtls"],
++        "//conditions:default": [],
++    }) + select({
++        ":use_boringssl": ["@boringssl//:ssl", "@boringssl//:crypto"],
++        "//conditions:default": [],
++    }),
++)
++
++cc_binary(
++    name = "linktest",
++    linkopts = select({
++        "@platforms//os:macos": ["-all_load"],
++        "//conditions:default": [],
++    }),
++    linkshared = True,
++    visibility = ["//visibility:private"],
++    deps = [":curl"],
++)

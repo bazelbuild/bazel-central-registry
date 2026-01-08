@@ -1,0 +1,73 @@
+diff --git iceoryx2-ffi/ffi/BUILD.bazel iceoryx2-ffi/ffi/BUILD.bazel
+index 68b448d5..f43aded5 100644
+--- iceoryx2-ffi/ffi/BUILD.bazel
++++ iceoryx2-ffi/ffi/BUILD.bazel
+@@ -20,9 +20,10 @@ filegroup(
+     srcs = glob(["**"]),
+ )
+ 
+-filegroup(
+-    name = "cbindgen-cli",
+-    srcs = ["@cbindgen//file"],
++alias(
++    name = "cbindgen",
++    actual = "@crate_index//:cbindgen__cbindgen",
++    tags = ["manual"],
+ )
+ 
+ genrule(
+@@ -31,11 +32,18 @@ genrule(
+         "//:all_srcs",
+         "Cargo.toml",
+         "cbindgen.toml",
+-        ":cbindgen-cli",
++        ":cbindgen",
+     ],
+     outs = ["include/iox2/iceoryx2.h"],
+     # this is actually just 'cbindgen iceoryx2-ffi/ffi --quiet --config iceoryx2-ffi/ffi/cbindgen.toml --output include/iox2/iceoryx2.h'
+-    cmd = "$(execpath :cbindgen-cli) $$(dirname $(location Cargo.toml)) --quiet --config $(location cbindgen.toml) --output $(OUTS)",
++    cmd = """
++export PATH=$$(dirname $$(realpath $(location @rules_rust//rust/toolchain:current_cargo_files))):$$PATH
++export CARGO_HOME=$(BINDIR)/cargo/home
++$(execpath :cbindgen) $$(dirname $(location Cargo.toml)) --quiet --config $(location cbindgen.toml) --output $(OUTS) --clean
++""",
++    tools = [
++        "@rules_rust//rust/toolchain:current_cargo_files",
++    ],
+ )
+ 
+ rust_shared_library(
+diff --git iceoryx2-pal/posix/BUILD.bazel iceoryx2-pal/posix/BUILD.bazel
+index d969751e..89c84fab 100644
+--- iceoryx2-pal/posix/BUILD.bazel
++++ iceoryx2-pal/posix/BUILD.bazel
+@@ -15,6 +15,7 @@ package(default_visibility = ["//visibility:public"])
+ load("@rules_cc//cc:defs.bzl", "cc_library")
+ load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test_suite")
++load("@rules_rust_bindgen//:defs.bzl", "rust_bindgen")
+ 
+ filegroup(
+     name = "all_srcs",
+@@ -34,14 +35,14 @@ cc_library(
+ )
+ 
+ # Generate the Rust binding file
+-genrule(
+-    name = "iceoryx2-pal-posix-bindgen",
+-    srcs = [
+-        "src/c/posix.h",
+-        "@bindgen//:bindgen-cli",
++rust_bindgen(
++    name = "posix_generated",
++    cc_lib = ":iceoryx2-pal-posix-c-lib",
++    header = "src/c/posix.h",
++    bindgen_flags = [
++        "--use-core",
++        "--blocklist-type=max_align_t",
+     ],
+-    outs = ["posix_generated.rs"],
+-    cmd = "$(execpath @bindgen//:bindgen-cli) --use-core --blocklist-type max_align_t $(location src/c/posix.h) --output $(OUTS)",
+ )
+ 
+ cargo_build_script(

@@ -1,0 +1,200 @@
+module(
+    name = "rules_wasm",
+    version = "1.0.16",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "rules_rust", version = "0.53.0")
+
+bazel_dep(name = "buildifier_prebuilt", version = "7.3.1", dev_dependency = True, repo_name = "buildtools")
+
+# The example module (which contains basic tests)
+# is itself referenced by tests in the main module,
+# which verify that some example tests are running properly.
+bazel_dep(name = "example", dev_dependency = True)
+local_path_override(
+    module_name = "example",
+    path = "example",
+)
+
+# Supported execution platforms for pre-built binaries.
+# TODO: Figure out how to dedupe this list with `private.bzl`.
+execution_platforms = [
+    "aarch64-linux",
+    "aarch64-macos",
+    "x86_64-linux",
+    "x86_64-macos",
+]
+
+# Version for WebAssembly Compositions: https://github.com/bytecodealliance/wac/releases.
+wac_version = "0.6.1"
+
+wac_integrity = {
+    "aarch64-linux": "sha384-a/w+0nesiZRqMqid2W9mrjBA4S/qU4iGXRgHZjA+3Ydq7/efLT3XE41mGBNNqkeC",
+    "aarch64-macos": "sha384-cEtDDp4io01CLGUuZVZu9LPbk3/Ib7yYn88Q0XG785OltXG81NibGfZVSD9C/+n/",
+    "x86_64-linux": "sha384-90D0wJeI35nuWmkZMHrOd79pVequX7kbAWHqpcmsG6ZKJdwmfLZVTSGyuvPhjlpo",
+    "x86_64-macos": "sha384-+hH0YcJEeLeih4NULigzzFgJ3pCKnKq70oB5hEJGKC0E+xU4Hd/kH6NUV9BX/IV+",
+}
+
+# Version for WASI interface definitions: https://github.com/WebAssembly/WASI/releases.
+wasi_version = "0.2.2"
+
+wasi_integrity = "sha384-rEua24bGo/umBK+J5IYrre5vJlv7HPQashxuHzN/a0/Q63/ZYFamAcqsEzL54gxo"
+
+# Version for wasmtime: https://github.com/bytecodealliance/wasmtime/releases
+wasmtime_version = "25.0.2"
+
+wasmtime_integrity = {
+    "aarch64-linux": "sha384-7Qy3QOIQNuWtL66QplN3IXVFThzQic5IlG2Tp9eWqjdejS33T1hB6OYkRKK1g8G+",
+    "aarch64-macos": "sha384-90+LDoYVzfhJ9cT2fwMlvWtVjtDo9dTlCMhzGdlbzrIdsnigVjGA+V3FHfI5V5zj",
+    "x86_64-linux": "sha384-7INZ/bTSIBo+Mp7r6lsKSa9g1uwPmHwYhp0JW3H7qiEwgdCP5SP2xzqnVCvg8D8d",
+    "x86_64-macos": "sha384-kqW9twRC7+yjWKXeoALamsYWu8songtQnl5X1M7ajAkAluNufx7VTPn011kEdeC3",
+}
+
+# Version for `wasm-tools`: https://github.com/bytecodealliance/wasm-tools/releases.
+wasm_tools_version = "1.219.1"
+
+wasm_tools_integrity = {
+    "aarch64-linux": "sha384-fMGoTqD8ojuIjh3bfULf4civ3fHkweX2JvsYJBr78jWLL/EeyWF/jbucyeXwe+9M",
+    "aarch64-macos": "sha384-bA7N8OBAsOjYH4O1/n3WsIlXoBPdPRhhltrZwjID9ftELtqAoGIDx+itzWE8tUjl",
+    "x86_64-linux": "sha384-E1/QFP7rYM6kvRBe0YUitkAEjkkfsCd9CQl/DdnpqQb9jXld7GI/mYVN81cX5p2e",
+    "x86_64-macos": "sha384-5OOs5j3jc/HWi4dbDuqVBXeLRTuONLZkhiGooJndvD4kf9qYiS+ghcSCAN1cRxQw",
+}
+
+# Version for `wit-bindgen`: https://github.com/bytecodealliance/wit-bindgen/releases.
+wit_bindgen_version = "0.34.0"
+
+wit_bindgen_integrity = {
+    "aarch64-linux": "sha384-WzVAuiAKmb2jE3tjCdMlfoRo/+4exUyWFxNAnN0+LOXaAUM/rWAvSOjyHcv4O+8Y",
+    "aarch64-macos": "sha384-uBK4dWWJIvO2veGCVnt5Ys9F36PrU6aHCJ8Hj+YVS3O3//mJLw2mlzjMbWSFo2OI",
+    "x86_64-linux": "sha384-oCxAhKR/GAIuokdcYzbmV2IMomIuzUHj1FngJD7QknU1t9kqPhB4WpXxJ/8OTxVV",
+    "x86_64-macos": "sha384-e7FrH1XCnMD0/nsM9dfS6fOyN7sKOEHdPthqnCA0Y8ayIl8O8p/WTkyLNg20It+Y",
+}
+
+# Rust setup: wit-bindgen-generated Rust files depend on the wit-bindgen crate.
+crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+crate.spec(
+    package = "wit-bindgen",
+    version = wit_bindgen_version,
+)
+crate.from_specs(name = "rules-wasm-crates")
+use_repo(crate, "rules-wasm-crates")
+
+# Manually download prebuilt binaries for various dependencies:
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+[http_file(
+    name = "wac-" + exe_platform,
+    executable = True,
+    integrity = wac_integrity[exe_platform],
+    url = "https://github.com/bytecodealliance/wac/releases/download/v{version}/wac-cli-{platform}".format(
+        # WAC uses non-canonical platform strings in the URLs:
+        platform = {
+            "aarch64-linux": "aarch64-unknown-linux-musl",
+            "aarch64-macos": "aarch64-apple-darwin",
+            "x86_64-linux": "x86_64-unknown-linux-musl",
+            "x86_64-macos": "x86_64-apple-darwin",
+        }[exe_platform],
+        version = wac_version,
+    ),
+) for exe_platform in execution_platforms]
+
+http_archive(
+    name = "wasi",
+    build_file_content = """
+load(":wasm.bzl", "wasi_packages")
+
+[filegroup(
+    name = package,
+    srcs = glob(["WASI-{version}/wasip2/" + package + "/*.wit"]),
+    visibility = ["//visibility:public"],
+) for package in wasi_packages.keys()]
+""".format(version = wasi_version),
+    integrity = wasi_integrity,
+    patch_args = [],
+    # By abusing `cat` as a "patch" tool,
+    # we simply copy the "patch" file into the root of the archive.
+    # This hack involves hardwiring the file name in multiple places :/.
+    # Ideally there would be something like `remote_file_urls` for local files.
+    # Copying this file allows us to keep a single source of truth
+    # for the set of WASI package names.
+    patch_tool = "cat > wasm.bzl",
+    patches = [":wasm.bzl"],
+    url = "https://github.com/WebAssembly/WASI/archive/refs/tags/v{version}.tar.gz".format(version = wasi_version),
+)
+
+[http_archive(
+    name = "wasmtime-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wasmtime",
+    actual = "wasmtime-v{version}-{platform}/wasmtime",
+    visibility = ["//visibility:public"],
+)
+""".format(
+        platform = exe_platform,
+        version = wasmtime_version,
+    ),
+    integrity = wasmtime_integrity[exe_platform],
+    url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{version}/wasmtime-v{version}-{platform}.tar.xz".format(
+        platform = exe_platform,
+        version = wasmtime_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "wasm-tools-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wasm-tools",
+    actual = "wasm-tools-{version}-{platform}/wasm-tools",
+    visibility = ["//visibility:public"],
+)
+""".format(
+        platform = exe_platform,
+        version = wasm_tools_version,
+    ),
+    integrity = wasm_tools_integrity[exe_platform],
+    url = "https://github.com/bytecodealliance/wasm-tools/releases/download/v{version}/wasm-tools-{version}-{platform}.tar.gz".format(
+        platform = exe_platform,
+        version = wasm_tools_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "wit-bindgen-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wit-bindgen",
+    actual = "wit-bindgen-{version}-{platform}/wit-bindgen",
+    visibility = ["//visibility:public"],
+)
+""".format(
+        platform = exe_platform,
+        version = wit_bindgen_version,
+    ),
+    integrity = wit_bindgen_integrity[exe_platform],
+    url = "https://github.com/bytecodealliance/wit-bindgen/releases/download/v{version}/wit-bindgen-{version}-{platform}.tar.gz".format(
+        platform = exe_platform,
+        version = wit_bindgen_version,
+    ),
+) for exe_platform in execution_platforms]
+
+http_file(
+    name = "libwit-bindgen-cabi-realloc",
+    integrity = "sha384-6dQJsdPJKAphLtWp1KbulCUONNavNtn9dsfOFNdbcuQMiajUZl9hwFRnn7d4REvr",
+    url = "https://github.com/bytecodealliance/wit-bindgen/raw/v{version}/crates/guest-rust/rt/src/libwit_bindgen_cabi_realloc.a".format(version = wit_bindgen_version),
+)
+
+# Temporary crutch until we can build against wasip2 directly.
+http_file(
+    name = "wasi-snapshot-preview1-reactor",
+    integrity = "sha384-hzGEnAMVlUQiEQZc9qcP0XI1i2mSo1rFZ2jA1Zfuvanxh3TRbSnj3e9tkoyt57VL",
+    url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{version}/wasi_snapshot_preview1.reactor.wasm".format(version = wasmtime_version),
+)
+
+register_toolchains("//:wasm32-wasi-toolchain")

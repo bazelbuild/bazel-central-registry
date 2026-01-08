@@ -1,0 +1,161 @@
+module(
+    name = "pre-commit-hooks",
+    version = "1.3.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "rules_license", version = "1.0.0")
+bazel_dep(name = "pre-commit", version = "1.0.9")
+bazel_dep(name = "buildifier_prebuilt", version = "8.0.0")
+bazel_dep(name = "download_utils", version = "1.2.0")
+bazel_dep(name = "toolchain_utils", version = "1.2.0")
+bazel_dep(name = "rules_shellcheck", version = "0.3.3")
+bazel_dep(name = "rules_python", version = "1.0.0")
+
+# TODO: Remove this in favour of `rules_python//uv:lock.bzl` when released
+bazel_dep(name = "rules_uv", version = "0.56.0", dev_dependency = True)
+bazel_dep(name = "hermetic_cc_toolchain", version = "3.1.0", dev_dependency = True)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+python.toolchain(
+    # TODO: remove this when `ignore_root_user_error` is hermetic
+    # https://github.com/bazelbuild/rules_python/issues/2016
+    ignore_root_user_error = True,
+    python_version = "3.13",
+)
+
+download = use_extension("@download_utils//download/template:defs.bzl", "download_template")
+
+# Ruff binaries
+download.archive(
+    name = "pre-commit-hooks-ruff-{cpu}-{os}",
+    srcs = ["ruff{executable.extension}"],
+    lock = "//ruff:lock.json",
+    strip_prefix = "ruff-{rust.triplet}",
+    substitutions = {
+        "version": [
+            "0.9.7",
+        ],
+        "triplet": [
+            "amd64-linux-musl",
+            "arm64-linux-musl",
+            "amd64-windows-msvc",
+            "arm64-windows-msvc",
+            "amd64-macos-darwin",
+            "arm64-macos-darwin",
+        ],
+    },
+    uploads = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fpre-commit-hooks/packages/generic/ruff/{version}/{rust.archive.basename}",
+    ],
+    urls = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fpre-commit-hooks/packages/generic/ruff/{version}/{rust.archive.basename}",
+        "https://github.com/astral-sh/ruff/releases/download/{version}/ruff-{rust.archive.basename}",
+    ],
+)
+
+# `shfmt` binaries
+download.substitution(
+    key = "shfmt.os",
+    match = "{os}",
+    select = {
+        "macos": "darwin",
+        "//conditions:default": "{os}",
+    },
+)
+download.file(
+    name = "pre-commit-hooks-shfmt-{cpu}-{os}",
+    executable = True,
+    lock = "//shfmt:lock.json",
+    output = "shfmt{executable.extension}",
+    substitutions = {
+        "version": [
+            "3.10.0",
+        ],
+        "triplet": [
+            "amd64-linux-musl",
+            "arm64-linux-musl",
+            "amd64-windows-msvc",
+            # TODO: https://github.com/mvdan/sh/issues/1077
+            # "arm64-windows-msvc",
+            "amd64-macos-darwin",
+            "arm64-macos-darwin",
+        ],
+    },
+    uploads = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fpre-commit-hooks/packages/generic/shfmt/{version}/shfmt-{cpu}-{os}{executable.extension}",
+    ],
+    urls = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fpre-commit-hooks/packages/generic/shfmt/{version}/shfmt-{cpu}-{os}{executable.extension}",
+        "https://github.com/mvdan/sh/releases/download/v{version}/shfmt_v{version}_{shfmt.os}_{cpu}{executable.extension}",
+    ],
+)
+use_repo(download, "pre-commit-hooks-ruff-amd64-linux", "pre-commit-hooks-ruff-amd64-macos", "pre-commit-hooks-ruff-amd64-windows", "pre-commit-hooks-ruff-arm64-linux", "pre-commit-hooks-ruff-arm64-macos", "pre-commit-hooks-ruff-arm64-windows", "pre-commit-hooks-shfmt-amd64-linux", "pre-commit-hooks-shfmt-amd64-macos", "pre-commit-hooks-shfmt-amd64-windows", "pre-commit-hooks-shfmt-arm64-linux", "pre-commit-hooks-shfmt-arm64-macos", "pre-commit-hooks-yamlfmt-amd64-linux", "pre-commit-hooks-yamlfmt-amd64-macos", "pre-commit-hooks-yamlfmt-amd64-windows", "pre-commit-hooks-yamlfmt-arm64-linux", "pre-commit-hooks-yamlfmt-arm64-macos", "pre-commit-hooks-yamlfmt-arm64-windows")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+# `clang-format`
+# Ensure there is a `pip` hub for each Python version
+# The project performs a `select` to grab the correct packages for the executing Python
+# This is important to provide Python package aliases downstream such as `//pre-commit:pkg`
+[
+    (
+        pip.parse(
+            experimental_index_url = "https://pypi.org/simple",
+            hub_name = "clang-format-%s" % version,
+            python_version = version,
+            requirements_lock = "//clang-format/requirements:lock.txt",
+        ),
+        use_repo(
+            pip,
+            "clang-format-%s" % version,
+        ),
+    )
+    # Keep this in sync with `//pre-commit/python:versions.bzl`
+    # TODO: load from `//pre-commit/python:version.bzl` when possible
+    for version in ("3.10", "3.11", "3.12", "3.13")
+]
+
+# Yamlfmt binaries
+download.substitution(
+    key = "yamlfmt.os",
+    match = "{os}",
+    select = {
+        "macos": "Darwin",
+        "windows": "Windows",
+        "linux": "Linux",
+    },
+)
+download.substitution(
+    key = "yamlfmt.cpu",
+    match = "{cpu}",
+    select = {
+        "amd64": "x86_64",
+        "//conditions:default": "{cpu}",
+    },
+)
+download.archive(
+    name = "pre-commit-hooks-yamlfmt-{cpu}-{os}",
+    srcs = ["yamlfmt{executable.extension}"],
+    lock = "//yamlfmt:lock.json",
+    substitutions = {
+        "version": [
+            "0.17.2",
+        ],
+        "triplet": [
+            "amd64-linux-musl",
+            "arm64-linux-musl",
+            "amd64-windows-msvc",
+            "arm64-windows-msvc",
+            "amd64-macos-darwin",
+            "arm64-macos-darwin",
+        ],
+    },
+    uploads = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fpre-commit-hooks/packages/generic/yamlfmt/{version}/yamlfmt-{cpu}-{os}.tar.gz",
+    ],
+    urls = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fpre-commit-hooks/packages/generic/yamlfmt/{version}/yamlfmt-{cpu}-{os}.tar.gz",
+        "https://github.com/google/yamlfmt/releases/download/v{version}/yamlfmt_{version}_{yamlfmt.os}_{yamlfmt.cpu}.tar.gz",
+    ],
+)

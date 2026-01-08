@@ -1,0 +1,140 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+# Generate version header
+expand_template(
+    name = "generate_version_header",
+    out = "version_gen.h",
+    substitutions = {
+        "@VCS_TAG@": "1.7.2",
+    },
+    template = "//:version_gen.h.in",
+)
+
+# Lexer and parser generation
+genrule(
+    name = "generate_dtc_lexer",
+    srcs = ["dtc-lexer.l"],
+    outs = ["dtc-lexer.lex.c"],
+    cmd = "M4=$(M4) $(FLEX) -o $@ $<",
+    toolchains = [
+        "@rules_flex//flex:current_flex_toolchain",
+        "@rules_m4//m4:current_m4_toolchain",  # A dependency for rules_flex
+    ],
+)
+
+genrule(
+    name = "generate_dtc_parser",
+    srcs = ["dtc-parser.y"],
+    outs = [
+        "dtc-parser.tab.c",
+        "dtc-parser.tab.h",
+    ],
+    cmd = "M4=$(M4) $(BISON) --defines=$(location dtc-parser.tab.h) --output=$(location dtc-parser.tab.c) $<",
+    toolchains = [
+        "@rules_bison//bison:current_bison_toolchain",
+        "@rules_m4//m4:current_m4_toolchain",  # A dependency for rules_bison
+    ],
+)
+
+genrule(
+    name = "generate_convert_dtsv0_lexer",
+    srcs = ["convert-dtsv0-lexer.l"],
+    outs = ["convert-dtsv0-lexer.lex.c"],
+    cmd = "M4=$(M4) $(FLEX) -o $@ $<",
+    toolchains = [
+        "@rules_flex//flex:current_flex_toolchain",
+        "@rules_m4//m4:current_m4_toolchain",  # A dependency for rules_flex
+    ],
+)
+
+# dtc util library
+cc_library(
+    name = "utils",
+    srcs = [
+        "util.c",
+    ],
+    hdrs = [
+        "util.h",
+        "version_gen.h",
+    ],
+    deps = [
+        "//libfdt",
+    ],
+)
+
+# Binaries
+cc_binary(
+    name = "dtc",
+    srcs = [
+        "checks.c",
+        "data.c",
+        "dtc.c",
+        "dtc.h",
+        "dtc-lexer.lex.c",
+        "dtc-parser.tab.c",
+        "dtc-parser.tab.h",
+        "flattree.c",
+        "fstree.c",
+        "livetree.c",
+        "srcpos.c",
+        "srcpos.h",
+        "treesource.c",
+        "yamltree.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils",
+        "@libyaml",
+    ],
+)
+
+cc_binary(
+    name = "fdtget",
+    srcs = ["fdtget.c"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils",
+    ],
+)
+
+cc_binary(
+    name = "fdtdump",
+    srcs = ["fdtdump.c"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils",
+    ],
+)
+
+cc_binary(
+    name = "fdtput",
+    srcs = ["fdtput.c"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils",
+    ],
+)
+
+cc_binary(
+    name = "fdtoverlay",
+    srcs = ["fdtoverlay.c"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils",
+    ],
+)
+
+cc_binary(
+    name = "convert-dtsv0",
+    srcs = [
+        "convert-dtsv0-lexer.lex.c",
+        "dtc.h",
+        "srcpos.c",
+        "srcpos.h",
+        "version_gen.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":utils",
+    ],
+)

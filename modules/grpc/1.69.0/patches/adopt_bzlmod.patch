@@ -1,0 +1,107 @@
+diff --git a/bazel/cc_grpc_library.bzl b/bazel/cc_grpc_library.bzl
+index f23ac0d5b6..f56ed1441c 100644
+--- a/bazel/cc_grpc_library.bzl
++++ b/bazel/cc_grpc_library.bzl
+@@ -102,7 +102,7 @@ def cc_grpc_library(
+         generate_cc(
+             name = codegen_grpc_target,
+             srcs = proto_targets,
+-            plugin = "@com_github_grpc_grpc//src/compiler:grpc_cpp_plugin",
++            plugin = Label("//src/compiler:grpc_cpp_plugin"),
+             well_known_protos = well_known_protos,
+             generate_mocks = generate_mocks,
+             **kwargs
+@@ -114,6 +114,6 @@ def cc_grpc_library(
+             hdrs = [":" + codegen_grpc_target],
+             deps = deps +
+                    extra_deps +
+-                   ["@com_github_grpc_grpc//:grpc++_codegen_proto"],
++                   [Label("//:grpc++_codegen_proto")],
+             **kwargs
+         )
+diff --git a/bazel/cython_library.bzl b/bazel/cython_library.bzl
+index dc2ef7a890..93e99962db 100644
+--- a/bazel/cython_library.bzl
++++ b/bazel/cython_library.bzl
+@@ -72,7 +72,10 @@ def pyx_library(name, deps = [], py_deps = [], srcs = [], **kwargs):
+         native.cc_binary(
+             name = shared_object_name,
+             srcs = [stem + ".cpp"],
+-            deps = deps + ["@local_config_python//:python_headers"],
++            deps = deps + [
++                "@rules_python//python/cc:current_py_cc_headers",
++                "@rules_python//python/cc:current_py_cc_libs",
++            ],
+             defines = defines,
+             linkshared = 1,
+         )
+diff --git a/bazel/grpc_deps.bzl b/bazel/grpc_deps.bzl
+index f90cce94a7..0d7cfc6a62 100644
+--- a/bazel/grpc_deps.bzl
++++ b/bazel/grpc_deps.bzl
+@@ -17,9 +17,23 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+ load("//bazel:grpc_python_deps.bzl", "grpc_python_deps")
+ 
+ # buildifier: disable=unnamed-macro
+-def grpc_deps():
++def grpc_deps(bzlmod = False):
+     """Loads dependencies need to compile and test the grpc library."""
+ 
++    if "google_cloud_cpp" not in native.existing_rules():
++        http_archive(
++            name = "google_cloud_cpp",
++            sha256 = "7ca7f583b60d2aa1274411fed3b9fb3887119b2e84244bb3fc69ea1db819e4e5",
++            strip_prefix = "google-cloud-cpp-2.16.0",
++            urls = [
++                "https://storage.googleapis.com/grpc-bazel-mirror/github.com/googleapis/google-cloud-cpp/archive/refs/tags/v2.16.0.tar.gz",
++                "https://github.com/googleapis/google-cloud-cpp/archive/refs/tags/v2.16.0.tar.gz",
++            ],
++        )
++
++    if bzlmod:
++        return
++
+     if "platforms" not in native.existing_rules():
+         http_archive(
+             name = "platforms",
+@@ -349,17 +363,6 @@ def grpc_deps():
+             ],
+         )
+ 
+-    if "google_cloud_cpp" not in native.existing_rules():
+-        http_archive(
+-            name = "google_cloud_cpp",
+-            sha256 = "7ca7f583b60d2aa1274411fed3b9fb3887119b2e84244bb3fc69ea1db819e4e5",
+-            strip_prefix = "google-cloud-cpp-2.16.0",
+-            urls = [
+-                "https://storage.googleapis.com/grpc-bazel-mirror/github.com/googleapis/google-cloud-cpp/archive/refs/tags/v2.16.0.tar.gz",
+-                "https://github.com/googleapis/google-cloud-cpp/archive/refs/tags/v2.16.0.tar.gz",
+-            ],
+-        )
+-
+     grpc_python_deps()
+ 
+ # TODO: move some dependencies from "grpc_deps" here?
+@@ -441,3 +444,5 @@ def grpc_test_only_deps():
+             strip_prefix = "libprotobuf-mutator-1f95f8083066f5b38fd2db172e7e7f9aa7c49d2d",
+             build_file = "@com_github_grpc_grpc//third_party:libprotobuf_mutator.BUILD",
+         )
++
++grpc_repo_deps_ext = module_extension(implementation = lambda ctx: grpc_deps(bzlmod = True))
+diff --git a/bazel/python_rules.bzl b/bazel/python_rules.bzl
+index f5fa1a0550..56b2a2d42c 100644
+--- a/bazel/python_rules.bzl
++++ b/bazel/python_rules.bzl
+@@ -191,11 +191,7 @@ def _generate_pb2_grpc_src_impl(context):
+     arguments = []
+     tools = [context.executable._protoc, context.executable._grpc_plugin]
+     out_dir = get_out_dir(protos, context)
+-    if out_dir.import_path:
+-        # is virtual imports
+-        out_path = out_dir.path
+-    else:
+-        out_path = context.genfiles_dir.path
++    out_path = out_dir.path
+     arguments += get_plugin_args(
+         context.executable._grpc_plugin,
+         plugin_flags,

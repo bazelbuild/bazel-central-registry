@@ -1,0 +1,285 @@
+load("@rules_bison//bison:bison.bzl", "bison")
+load("@rules_flex//flex:flex.bzl", "flex")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+flex(
+    name = "lexer",
+    src = "grammar/lexer.l",
+    visibility = ["//visibility:private"],
+)
+
+bison(
+    name = "grammar",
+    src = "grammar/grammar.y",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "hdrs",
+    deps = [
+        "@libfastjson",
+        "@libestr",
+        "@zlib",
+    ],
+    defines = ["HAVE_CONFIG_H"],
+    hdrs = glob(["**/*.h"]),
+    includes = [
+        "grammar",
+        "runtime",
+        "tools",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "librsyslog",
+    deps = [
+        ":hdrs",
+        "@libuuid",
+        "@libfastjson",
+        "@libestr",
+    ],
+    srcs = [
+        "runtime/rsyslog.c",
+        "runtime/dnscache.c",
+        "runtime/glbl.c",
+        "runtime/conf.c",
+        "runtime/janitor.c",
+        "runtime/rsconf.c",
+        "runtime/parser.c",
+        "runtime/strgen.c",
+        "runtime/msg.c",
+        "runtime/linkedlist.c",
+        "runtime/objomsr.c",
+        "runtime/stringbuf.c",
+        "runtime/datetime.c",
+        "runtime/srutils.c",
+        "runtime/errmsg.c",
+        "runtime/operatingstate.c",
+        "runtime/debug.c",
+        "runtime/obj.c",
+        "runtime/modules.c",
+        "runtime/statsobj.c",
+        "runtime/dynstats.c",
+        "runtime/perctile_ringbuf.c",
+        "runtime/perctile_stats.c",
+        "runtime/stream.c",
+        "runtime/var.c",
+        "runtime/wtp.c",
+        "runtime/wti.c",
+        "runtime/queue.c",
+        "runtime/ruleset.c",
+        "runtime/prop.c",
+        "runtime/ratelimit.c",
+        "runtime/lookup.c",
+        "runtime/cfsysline.c",
+        "action.c",
+        "threads.c",
+        "parse.c",
+        "outchannel.c",
+        "template.c",
+        "runtime/hashtable.c",
+        "runtime/hashtable_itr.c",
+        "runtime/timezones.c",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libgrammar",
+    hdrs = [
+        ":lexer",
+        ":grammar",
+    ],
+    copts = [
+        "-Wno-documentation",
+    ],
+    srcs = [
+        ":lexer",
+        ":grammar",
+         "grammar/rainerscript.c",
+    ],
+    deps = [
+        ":hdrs",
+        "@libfastjson",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_binary(
+    name = "rsyslogd",
+    deps = [
+        ":libgrammar",
+        ":librsyslog",
+    ],
+    srcs = [
+        "tools/syslogd.c",
+        "tools/rsyslogd.c",
+        "tools/omshell.c",
+        "tools/omusrmsg.c",
+        "tools/omfwd.c",
+        "tools/omfile.c",
+        "tools/ompipe.c",
+        "tools/omdiscard.c",
+        "tools/pmrfc5424.c",
+        "tools/pmrfc3164.c",
+        "tools/smtradfile.c",
+        "tools/smfile.c",
+        "tools/smfwd.c",
+        "tools/smtradfwd.c",
+        "tools/iminternal.c",
+    ],
+    linkopts = [
+        "-Wl,-export-dynamic",
+    ],
+)
+
+sh_test(
+    name = "smoke_test",
+    srcs = ["smoke_test.sh"],
+    data = [
+        ":rsyslogd",
+        "test.conf",
+        ":plugins/lmnet.so",
+        ":plugins/imudp.so",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+filegroup(
+    name = "plugins",
+    srcs = [
+        ":plugins/lmnet.so",
+        ":plugins/imudp.so",
+        ":plugins/lmregexp.so",
+        ":plugins/lmzlibw.so",
+        ":plugins/lmnetstrms.so",
+        ":plugins/lmnsd_ptcp.so",
+        ":plugins/lmtcpsrv.so",
+        ":plugins/lmtcpclt.so",
+        ":plugins/imuxsock.so",
+        ":plugins/immark.so",
+        ":plugins/mmexternal.so",
+        ":plugins/imklog.so",
+        ":plugins/fmhttp.so",
+        ":plugins/fmhash.so",
+    ],
+)
+
+cc_binary(
+    name = "plugins/lmnet.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/net.c"],
+)
+
+cc_binary(
+    name = "plugins/imudp.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["plugins/imudp/imudp.c"],
+)
+
+
+cc_binary(
+    name = "plugins/lmregexp.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/regexp.c"],
+)
+
+cc_binary(
+    name = "plugins/lmzlibw.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/zlibw.c"],
+)
+
+cc_binary(
+    name = "plugins/lmnetstrms.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/netstrm.c"],
+)
+
+cc_binary(
+    name = "plugins/lmnsd_ptcp.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/nsd_ptcp.c"],
+)
+
+cc_binary(
+    name = "plugins/lmtcpsrv.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/tcpsrv.c"],
+)
+
+
+cc_binary(
+    name = "plugins/lmtcpclt.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["runtime/tcpclt.c"],
+)
+
+cc_binary(
+    name = "plugins/imuxsock.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["plugins/imuxsock/imuxsock.c"],
+)
+
+cc_binary(
+    name = "plugins/immark.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["plugins/immark/immark.c"],
+)
+
+cc_binary(
+    name = "plugins/mmexternal.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["plugins/mmexternal/mmexternal.c"],
+)
+
+cc_binary(
+    name = "plugins/imklog.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = [
+        "plugins/imklog/imklog.c",
+        "plugins/imklog/imklog.h",
+        "plugins/imklog/bsd.c",
+     ],
+)
+
+cc_binary(
+    name = "plugins/fmhttp.so",
+    linkshared = True,
+    deps = [
+        ":hdrs",
+        "@curl",
+    ],
+    srcs = ["plugins/fmhttp/fmhttp.c"],
+)
+
+cc_binary(
+    name = "plugins/fmhash.so",
+    linkshared = True,
+    deps = [":hdrs"],
+    srcs = ["contrib/fmhash/fmhash.c"],
+)
+
+filegroup(
+    name = "rsyslog",
+    srcs = [
+        ":rsyslogd",
+        ":plugins",
+    ],
+)

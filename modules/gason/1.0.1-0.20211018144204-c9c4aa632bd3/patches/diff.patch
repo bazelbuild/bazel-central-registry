@@ -1,0 +1,220 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..25412d3
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,82 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
++load("//:tools.bzl", "download_data")
++
++cc_library(
++    name = "gason",
++    srcs = ["src/gason.cpp"],
++    hdrs = ["src/gason.h"],
++    includes = ["src"],  # Expose for import without src prefix
++    visibility = ["//visibility:public"],
++)
++
++cc_binary(
++    name = "pretty-print",
++    srcs = ["src/pretty-print.cpp"],
++    deps = [":gason"],
++)
++
++test_suite(
++    name = "all_tests",
++    tests = [
++        "benchmark",
++        "test-suite",
++    ],
++)
++
++COPTS = select({
++    "@platforms//os:windows": [],
++    "//conditions:default": [
++        "-g",  # Debug symbols
++        "-Wall",  # All warnings
++    ],
++})
++
++cc_test(
++    name = "test-suite",
++    size = "small",
++    srcs = ["src/test-suite.cpp"],
++    copts = COPTS,
++    deps = [":gason"],
++)
++
++# NOTE: To see benchmark output, use `bazel test //:benchmark --test_output=all`
++cc_test(
++    name = "benchmark",
++    size = "small",
++    srcs = ["src/benchmark.cpp"],
++    args = [
++        "$(location :canada_data)",
++        "$(location :big_data)",
++        "$(location :citm_catalog_data)",
++        "-n",
++        "10",
++    ],
++    copts = COPTS,
++    data = [
++        ":big_data",
++        ":canada_data",
++        ":citm_catalog_data",
++    ],
++    deps = [
++        ":gason",
++        "@rapidjson",
++    ],
++)
++
++download_data(
++    name = "canada_data",
++    sha256 = "bfbc12b8b6da35cdcc15046304be1739a82a335de17ef9959ea3dd75225467a4",
++    url = "https://raw.githubusercontent.com/mloskot/json_benchmark/master/data/canada.json",
++)
++
++download_data(
++    name = "big_data",
++    sha256 = "73b421d426fd561d0828970a46ccfe2a6e7213c97079676fb8574d4cd42f6527",
++    url = "https://raw.githubusercontent.com/Newbilius/big_json_import_demo/master/test_data/big.json",
++)
++
++download_data(
++    name = "citm_catalog_data",
++    sha256 = "a73e7a883f6ea8de113dff59702975e60119b4b58d451d518a929f31c92e2059",
++    url = "https://raw.githubusercontent.com/RichardHightower/json-parsers-benchmark/master/data/citm_catalog.json",
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..8441dee
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,16 @@
++"""
++Module: gason
++Purpose: Provides the gason library compileable as a Bazel target. Includes unit and performance tests through Bazel
++Note: pretty-print is also supplied buildable to a binary for testing/example
++"""
++
++module(
++    name = "gason",
++    version = "1.0.1-0.20211018144204-c9c4aa632bd3",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "rules_cc", version = "0.1.1")
++bazel_dep(name = "platforms", version = "0.0.11")
++
++bazel_dep(name = "rapidjson", version = "1.1.0.bcr.20241007", dev_dependency = True)  # For comparison benchmarking test
+diff --git a/src/benchmark.cpp b/src/benchmark.cpp
+index f4e01c4..5e81da9 100644
+--- a/src/benchmark.cpp
++++ b/src/benchmark.cpp
+@@ -213,0 +214,4 @@ static void print(const Stat &stat) {
++#elif defined(_MSC_VER)
++#define COMPILER "MSVC"
++#else
++#define COMPILER "Unknown"
+@@ -225 +229,6 @@ int main(int argc, const char **argv) {
+-    printf("gason benchmark, %s, x86_64 %d, SIZEOF_POINTER %d, NDEBUG %d\n", COMPILER, __x86_64__, __SIZEOF_POINTER__, NDEBUG);
++    printf("argc: %d\n", argc);
++    for (int i = 0; i < argc; ++i) {
++        printf("argv[%d]: %s\n", i, argv[i]);
++    }
++
++    printf("gason benchmark, %s, x86_64 %d, SIZEOF_POINTER %zu, NDEBUG %d\n", COMPILER, __x86_64__, sizeof(void*), NDEBUG);
+@@ -230,0 +240,5 @@ int main(int argc, const char **argv) {
++    if (argc < 2) {
++        fprintf(stderr, "Error: No input file specified\n");
++        return 1;
++    }
++
+@@ -237 +251 @@ int main(int argc, const char **argv) {
+-        FILE *fp = fopen(argv[i], "r");
++        FILE *fp = fopen(argv[i], "rb");
+diff --git a/src/test-suite.cpp b/src/test-suite.cpp
+index c52e2c9..8f73403 100644
+--- a/src/test-suite.cpp
++++ b/src/test-suite.cpp
+@@ -141 +141,2 @@ break"])json");
+-        fprintf(stderr, "%d/%d TESTS FAILED\n", failed, parsed);
++       { fprintf(stderr, "%d/%d TESTS FAILED\n", failed, parsed);
++        return 1;}
+@@ -143,3 +144,2 @@ break"])json");
+-        fprintf(stderr, "ALL TESTS PASSED\n");
+-
+-    return 0;
++        {fprintf(stderr, "ALL TESTS PASSED\n");
++        return 0;}
+diff --git a/tools.bzl b/tools.bzl
+new file mode 100644
+index 0000000..07a096b
+--- /dev/null
++++ b/tools.bzl
+@@ -0,0 +1,64 @@
++"""Rule for downloading and verifying test data"""
++
++def _download_data_impl(ctx):
++    # Fetch the URL and SHA-256 from attributes
++    url = ctx.attr.url
++    expected_sha256 = ctx.attr.sha256
++    output_file = ctx.actions.declare_file(ctx.label.name + ".json")  # Downloaded file
++    hash_output = ctx.actions.declare_file(ctx.label.name + ".sha256")  # File to store computed hash
++
++    # Determine if we're on Windows based on the host platform
++    is_windows = ctx.var.get("HOST_OS", "linux").lower() == "windows"
++
++    if is_windows:
++        # Windows-specific commands
++        download_command = 'curl -L "%s" -o "%s"' % (url, output_file.path)
++
++        # Use certutil for SHA256 on Windows
++        hash_command = 'certutil -hashfile "%s" SHA256 | findstr /v "hash" > "%s"' % (output_file.path, hash_output.path)
++        verify_command = """
++            set /p computed=<"%s"
++            set "computed=!computed: =!"
++            if /i "!computed!" NEQ "%s" (
++                echo SHA-256 mismatch!
++                echo Expected: %s
++                echo Got:      !computed!
++                exit /b 1
++            )
++        """ % (hash_output.path, expected_sha256, expected_sha256)
++        full_command = " && ".join([download_command, hash_command, verify_command])
++    else:
++        # Unix-specific commands
++        download_command = "curl -s %s -o %s" % (url, output_file.path)
++        hash_command = "openssl dgst -sha256 %s | cut -d' ' -f2 > %s" % (output_file.path, hash_output.path)
++        verify_command = """
++            computed=$(cat %s)
++            if [ "$computed" != "%s" ]; then
++                echo "SHA-256 mismatch!"
++                echo "Expected: %s"
++                echo "Got:      $computed"
++                exit 1
++            fi
++        """ % (hash_output.path, expected_sha256, expected_sha256)
++        full_command = " && ".join([download_command, hash_command, verify_command])
++
++    # Execute the download and verification
++    ctx.actions.run_shell(
++        inputs = [],
++        outputs = [output_file, hash_output],
++        command = full_command,
++        mnemonic = "DownloadAndVerify",
++        progress_message = "Downloading and verifying test data from %s" % url,
++        arguments = ["/C" if is_windows else "-c", full_command],  # Specify the shell to use
++    )
++
++    # Return the downloaded file as a provider
++    return [DefaultInfo(files = depset([output_file]))]
++
++download_data = rule(
++    implementation = _download_data_impl,
++    attrs = {
++        "url": attr.string(mandatory = True, doc = "URL of the data file to download"),
++        "sha256": attr.string(mandatory = True, doc = "Expected SHA-256 checksum of the downloaded file"),
++    },
++)

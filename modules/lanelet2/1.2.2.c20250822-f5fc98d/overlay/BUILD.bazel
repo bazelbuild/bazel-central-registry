@@ -1,0 +1,258 @@
+"""Bazel build file for lanelet2 libraries"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = "LICENSE",
+)
+
+# NOTE: This can take a long time to compile. If you are just using one of the smaller libs,
+# consider directly depending it instead of depending on this aggregated library.
+cc_library(
+    name = "lanelet2",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_io",
+        ":lanelet2_matching",
+        ":lanelet2_projection",
+        ":lanelet2_routing",
+        ":lanelet2_traffic_rules",
+        ":lanelet2_validation",
+    ],
+)
+
+cc_library(
+    name = "lanelet2_core",
+    srcs = glob(["lanelet2_core/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_core/include/**/*.h"]),
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Wno-sign-compare",
+            "-Wno-unused-function",
+            "-Wno-unused-local-typedefs",
+        ],
+    }),
+    includes = ["lanelet2_core/include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.config",
+        "@boost.core",
+        "@boost.geometry",
+        "@boost.iterator",
+        "@boost.lexical_cast",
+        "@boost.optional",
+        "@boost.polygon",
+        "@boost.type_traits",
+        "@boost.units",
+        "@boost.variant",
+        "@eigen",
+    ],
+)
+
+cc_library(
+    name = "lanelet2_io",
+    srcs = glob(["lanelet2_io/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_io/include/**/*.h"]),
+    includes = ["lanelet2_io/include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lanelet2_core",
+        "@boost.filesystem",
+        "@boost.format",
+        "@boost.geometry",
+        "@boost.serialization",
+        "@pugixml",
+    ],
+)
+
+filegroup(
+    name = "lanelet2_maps_osm_files",
+    srcs = glob(["lanelet2_maps/res/*.osm"]),
+)
+
+cc_library(
+    name = "lanelet2_matching",
+    srcs = glob(["lanelet2_matching/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_matching/include/**/*.h"]),
+    includes = [
+        "lanelet2_matching/include",
+        # This has to be exposed as a public include because the headers include other headers using
+        # the local path.
+        "lanelet2_matching/include/lanelet2_matching",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_traffic_rules",
+        "@eigen",
+    ],
+)
+
+cc_library(
+    name = "lanelet2_projection",
+    srcs = glob(["lanelet2_projection/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_projection/include/**/*.h"]),
+    includes = ["lanelet2_projection/include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_io",
+        "@geographiclib",
+    ],
+)
+
+cc_library(
+    name = "lanelet2_routing",
+    srcs = glob(["lanelet2_routing/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_routing/include/**/*.h"]),
+    includes = ["lanelet2_routing/include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_traffic_rules",
+        "@boost.geometry",
+        "@boost.graph",
+        "@boost.property_map",
+    ],
+)
+
+cc_library(
+    name = "lanelet2_traffic_rules",
+    srcs = glob(["lanelet2_traffic_rules/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_traffic_rules/include/**/*.h"]),
+    includes = ["lanelet2_traffic_rules/include"],
+    visibility = ["//visibility:public"],
+    deps = [":lanelet2_core"],
+)
+
+cc_library(
+    name = "lanelet2_validation",
+    srcs = glob(["lanelet2_validation/src/**/*.cpp"]),
+    hdrs = glob(["lanelet2_validation/include/**/*.h"]),
+    includes = ["lanelet2_validation/include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_io",
+        ":lanelet2_projection",
+        ":lanelet2_routing",
+        ":lanelet2_traffic_rules",
+        "@boost.program_options",
+    ],
+)
+
+#################################################################################
+# Tests
+#################################################################################
+cc_test(
+    name = "lanelet2_core_test",
+    size = "small",
+    srcs = glob([
+        "lanelet2_core/test/*.cpp",
+        "lanelet2_core/test/*.h",
+    ]),
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-Wno-sign-compare"],
+    }),
+    deps = [
+        ":lanelet2_core",
+        "@boost.geometry",
+        "@boost.optional",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lanelet2_io_test",
+    size = "small",
+    srcs = glob([
+        "lanelet2_io/test/*.cpp",
+        "lanelet2_io/test/*.h",
+    ]),
+    data = [":lanelet2_maps_osm_files"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_io",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@boost.filesystem",
+        "@boost.serialization",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lanelet2_matching_test",
+    size = "small",
+    srcs = glob(["lanelet2_matching/test/*.cpp"]),
+    deps = [
+        ":lanelet2_io",
+        ":lanelet2_matching",
+        ":lanelet2_projection",
+        ":lanelet2_traffic_rules",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lanelet2_projection_test",
+    size = "small",
+    srcs = glob(["lanelet2_projection/test/*.cpp"]),
+    deps = [
+        ":lanelet2_projection",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lanelet2_routing_test",
+    size = "small",
+    srcs = glob([
+        "lanelet2_routing/test/*.cpp",
+        "lanelet2_routing/test/*.h",
+    ]),
+    # For some unknown reason, this test fails without optimization enabled.
+    copts = ["-O3"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_routing",
+        ":lanelet2_traffic_rules",
+        "@boost.filesystem",
+        "@boost.geometry",
+        "@boost.optional",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lanelet2_traffic_rules_test",
+    size = "small",
+    srcs = glob(["lanelet2_traffic_rules/test/*.cpp"]),
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_traffic_rules",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "lanelet2_validation_test",
+    size = "small",
+    srcs = glob(["lanelet2_validation/test/*.cpp"]),
+    data = [":lanelet2_maps_osm_files"],
+    deps = [
+        ":lanelet2_core",
+        ":lanelet2_io",
+        ":lanelet2_projection",
+        ":lanelet2_validation",
+        "@bazel_tools//tools/cpp/runfiles",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

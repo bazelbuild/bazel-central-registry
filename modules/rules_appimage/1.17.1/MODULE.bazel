@@ -1,0 +1,82 @@
+"""AppImage rules for Bazel."""
+
+module(
+    name = "rules_appimage",
+    version = "1.17.1",
+)
+
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "rules_cc", version = "0.1.1")
+bazel_dep(name = "rules_python", version = "1.1.0")
+bazel_dep(name = "squashfs-tools", version = "4.6.1")
+bazel_dep(name = "zstd", version = "1.5.7")
+
+bazel_dep(name = "container_structure_test", version = "1.19.1", dev_dependency = True)
+bazel_dep(name = "rules_oci", version = "2.2.2", dev_dependency = True)
+bazel_dep(name = "rules_pkg", version = "1.0.1", dev_dependency = True)
+bazel_dep(name = "rules_pycross", version = "0.7.1", dev_dependency = True)
+bazel_dep(name = "rules_testing", version = "0.7.0", dev_dependency = True)
+bazel_dep(name = "with_cfg.bzl", version = "0.9.1", dev_dependency = True)
+
+rules_appimage = use_extension("//:extensions.bzl", "appimage_ext_dependencies")
+use_repo(
+    rules_appimage,
+    "appimage_runtime_aarch64",
+    "appimage_runtime_armv7e-m",
+    "appimage_runtime_i386",
+    "appimage_runtime_x86_64",
+)
+
+register_toolchains("//appimage:all")
+
+# 3.13 is blocked by https://github.com/jvolkman/rules_pycross/issues/128
+_DEFAULT_PYTHON = "3.12"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = _DEFAULT_PYTHON,
+)
+use_repo(python, "python_" + _DEFAULT_PYTHON.replace(".", "_"), "python_versions", "pythons_hub")
+
+register_toolchains("@pythons_hub//:all")
+
+dev_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+dev_pip.parse(
+    hub_name = "rules_appimage_py_deps",
+    python_version = _DEFAULT_PYTHON,
+    requirements_lock = "//:requirements.txt",
+)
+use_repo(dev_pip, "rules_appimage_py_deps")
+
+pycross = use_extension("@rules_pycross//pycross/extensions:pycross.bzl", "pycross", dev_dependency = True)
+pycross.configure_environments(
+    platforms = ["x86_64-unknown-linux-gnu"],
+    python_versions = [_DEFAULT_PYTHON],
+)
+
+lock_import = use_extension("@rules_pycross//pycross/extensions:lock_import.bzl", "lock_import", dev_dependency = True)
+lock_import.import_pdm(
+    lock_file = "//tests/rules_pycross:pdm.lock",
+    project_file = "//tests/rules_pycross:pyproject.toml",
+    repo = "pdm_deps",
+)
+
+lock_repos = use_extension("@rules_pycross//pycross/extensions:lock_repos.bzl", "lock_repos", dev_dependency = True)
+use_repo(lock_repos, "pdm_deps")
+
+# Keep in sync with WORKSPACE
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci", dev_dependency = True)
+oci.pull(
+    name = "python3-slim",
+    digest = "sha256:69ce3aed05675d284bee807e7c45e560e98db21fb1e4c670252b4ee0f2496b6d",  # "3.12-slim" as of 2025-01-25
+    image = "docker.io/library/python",
+    platforms = ["linux/amd64"],
+)
+oci.pull(
+    name = "alpine-3.21",
+    digest = "sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c",  # "3.21" as of 2025-03-03
+    image = "docker.io/library/alpine",
+    platforms = ["linux/amd64"],
+)
+use_repo(oci, "alpine-3.21", "alpine-3.21_linux_amd64", "python3-slim", "python3-slim_linux_amd64")
