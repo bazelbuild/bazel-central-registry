@@ -618,10 +618,10 @@ class BcrValidator:
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(overlay_src, overlay_dst)
 
+        bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
         source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
         if source_module_dot_bazel.exists():
             source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
-            bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
             bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
             source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
             bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
