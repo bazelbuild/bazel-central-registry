@@ -1,0 +1,60 @@
+matrix:
+  platform_unix:
+    - debian11
+    - ubuntu2004
+    - ubuntu2204
+    - ubuntu2404
+    - macos
+    - macos_arm64
+  bazel: [7.x, 8.x, rolling]
+tasks:
+  verify_targets:
+    platform: ${{ platform_unix }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@boost.test//..."
+    test_targets:
+      - "@boost.test//..."
+
+  verify_targets:
+    platform: windows
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@boost.test//..."
+    test_flags:
+      - --enable_runfiles # required for rootpath to work on Windows
+    test_targets:
+      - "@boost.test//..."
+
+  # boost.test has a header-only version and a source version. If you include
+  # boost.test using "boost/test/included" and link the source version, you will
+  # get an odr-violation if compiling with ASan. Without ASan it will compile,
+  # but the BCR CI tests seem to run with some form of ASan. These tests ensure
+  # the BCR boost.test library always provides both a header-only target and a
+  # sources target.
+  verify_targets_asan:
+    platform: ${{ platform_unix }}  # doesn't work on Windows
+    bazel: ${{ bazel }}
+    build_flags:
+      - --copt=-fsanitize=address
+      - --compilation_mode=dbg
+      - --copt=-fno-omit-frame-pointer
+      - --linkopt=-fsanitize=address
+    build_targets:
+      - "@boost.test//..."
+    test_flags:
+      - --copt=-fsanitize=address
+      - --compilation_mode=dbg
+      - --copt=-fno-omit-frame-pointer
+      - --linkopt=-fsanitize=address
+    test_targets:
+      - "@boost.test//..."
+      # These tests have memory leaks, so skip it for ASan.
+      - "-@boost.test//test/execution_monitor-ts:boost_exception_test"
+      - "-@boost.test//test/execution_monitor-ts:errors_handling_test"
+      - "-@boost.test//test/framework-ts:check_streams_on_exit_test"
+      - "-@boost.test//test/framework-ts:decorators_datatestcase_test"
+      - "-@boost.test//test/framework-ts:log_count_skipped_test"
+      - "-@boost.test//test/framework-ts:macro_global_fixture_test"
+      - "-@boost.test//test/framework-ts:result_report_test"
+      - "-@boost.test//test/framework-ts:version_uses_module_name_test"
