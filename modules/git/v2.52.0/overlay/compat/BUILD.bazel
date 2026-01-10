@@ -1,0 +1,190 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//contrib/bazel:defs.bzl", "GIT_COPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(
+        ["**/*.h"],
+        allow_empty = True,
+    ),
+    deps = [
+        "//:sane_ctype",
+    ],
+)
+
+# Core compatibility sources shared across platforms.
+cc_library(
+    name = "common",
+    srcs = [
+        "fopen.c",
+        "nonblock.c",
+        "obstack.c",
+        "open.c",
+        "qsort_s.c",
+        "strlcpy.c",
+        "terminal.c",
+    ] + select({
+        "@platforms//os:macos": [
+            "memmem.c",
+            "regcomp_enhanced.c",
+        ],
+        "//conditions:default": [],
+    }),
+    copts = GIT_COPTS,
+    deps = [
+        ":headers",
+        "//:abspath",
+        "//:alloc",
+        "//:config",
+        "//:dir",
+        "//:environment",
+        "//:gettext",
+        "//:git_compat_util",
+        "//:hash",
+        "//:hashmap",
+        "//:path",
+        "//:quote",
+        "//:run_command",
+        "//:sigchain",
+        "//:strbuf",
+        "//:string_list",
+        "//:symlinks",
+        "//:trace2",
+        "//:utf8",
+    ],
+)
+
+# Platform-specific trace2 process info.
+cc_library(
+    name = "procinfo",
+    srcs = select({
+        "@platforms//os:linux": ["linux/procinfo.c"],
+        "@platforms//os:windows": ["win32/trace2_win32_process_info.c"],
+        "//conditions:default": ["stub/procinfo.c"],
+    }),
+    copts = GIT_COPTS,
+    deps = [
+        ":headers",
+        "//:git_compat_util",
+        "//:json_writer",
+        "//:repository",
+        "//:strbuf",
+        "//:strvec",
+        "//:trace2",
+    ],
+)
+
+# Windows-only compatibility sources.
+cc_library(
+    name = "windows",
+    srcs = [
+        "mingw.c",
+        "win32/dirent.c",
+        "win32/flush.c",
+        "win32/path-utils.c",
+        "win32/pthread.c",
+        "win32/syslog.c",
+        "winansi.c",
+    ],
+    copts = GIT_COPTS,
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        ":headers",
+        "//:abspath",
+        "//:alloc",
+        "//:config",
+        "//:dir",
+        "//:environment",
+        "//:gettext",
+        "//:git_compat_util",
+        "//:path",
+        "//:run_command",
+        "//:strbuf",
+        "//:symlinks",
+        "//:trace2",
+    ],
+)
+
+# macOS-only compatibility sources.
+cc_library(
+    name = "macos",
+    srcs = ["precompose_utf8.c"],
+    copts = GIT_COPTS,
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [
+        ":headers",
+        "//:config",
+        "//:environment",
+        "//:gettext",
+        "//:git_compat_util",
+        "//:path",
+        "//:strbuf",
+        "//:utf8",
+    ],
+)
+
+# Fsmonitor platform backends (macOS/Windows).
+cc_library(
+    name = "fsmonitor",
+    srcs = select({
+        "@platforms//os:macos": [
+            "fsmonitor/fsm-health-darwin.c",
+            "fsmonitor/fsm-ipc-darwin.c",
+            "fsmonitor/fsm-listen-darwin.c",
+            "fsmonitor/fsm-path-utils-darwin.c",
+            "fsmonitor/fsm-settings-darwin.c",
+        ],
+        "@platforms//os:windows": [
+            "fsmonitor/fsm-health-win32.c",
+            "fsmonitor/fsm-ipc-win32.c",
+            "fsmonitor/fsm-listen-win32.c",
+            "fsmonitor/fsm-path-utils-win32.c",
+            "fsmonitor/fsm-settings-win32.c",
+        ],
+        "//conditions:default": [],
+    }),
+    copts = GIT_COPTS,
+    deps = [
+        ":headers",
+        "//:config",
+        "//:fsmonitor_daemon",
+        "//:fsmonitor_ipc",
+        "//:fsmonitor_ll",
+        "//:fsmonitor_path_utils",
+        "//:fsmonitor_settings",
+        "//:gettext",
+        "//:git_compat_util",
+        "//:hash",
+        "//:hex",
+        "//:path",
+        "//:repository",
+        "//:simple_ipc",
+        "//:strbuf",
+        "//:string_list",
+        "//:trace",
+        "//:trace2",
+        "//sha1dc",
+        "//sha256",
+    ],
+)
+
+# Implementation library - can safely depend on git-compat-util.h
+cc_library(
+    name = "compat",
+    deps = [
+        ":common",
+        ":procinfo",
+    ] + select({
+        "@platforms//os:macos": [
+            ":fsmonitor",
+            ":macos",
+        ],
+        "@platforms//os:windows": [
+            ":fsmonitor",
+            ":windows",
+        ],
+        "//conditions:default": [],
+    }),
+)
