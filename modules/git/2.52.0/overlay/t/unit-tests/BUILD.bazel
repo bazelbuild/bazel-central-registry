@@ -1,0 +1,96 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("//contrib/bazel:defs.bzl", "GIT_COPTS", "GIT_LINKOPTS")
+
+package(default_visibility = ["//visibility:public"])
+
+CLAR_TEST_SUITES = [
+    "u-ctype.c",
+    "u-dir.c",
+    "u-example-decorate.c",
+    "u-hash.c",
+    "u-hashmap.c",
+    "u-mem-pool.c",
+    "u-oid-array.c",
+    "u-oidmap.c",
+    "u-oidtree.c",
+    "u-prio-queue.c",
+    "u-reftable-basics.c",
+    "u-reftable-block.c",
+    "u-reftable-merged.c",
+    "u-reftable-pq.c",
+    "u-reftable-readwrite.c",
+    "u-reftable-record.c",
+    "u-reftable-stack.c",
+    "u-reftable-table.c",
+    "u-reftable-tree.c",
+    "u-strbuf.c",
+    "u-strcmp-offset.c",
+    "u-string-list.c",
+    "u-strvec.c",
+    "u-trailer.c",
+    "u-urlmatch-normalization.c",
+]
+
+genrule(
+    name = "clar_decls",
+    srcs = CLAR_TEST_SUITES,
+    outs = ["clar-decls.h"],
+    cmd = "$(location generate-clar-decls.sh) $@ $(SRCS)",
+    tools = ["generate-clar-decls.sh"],
+)
+
+genrule(
+    name = "clar_suite",
+    srcs = [":clar_decls"],
+    outs = ["clar.suite"],
+    cmd = "$(location generate-clar-suites.sh) $(location :clar_decls) $@",
+    tools = ["generate-clar-suites.sh"],
+)
+
+cc_library(
+    name = "unit_test_lib",
+    srcs = ["test-lib.c"],
+    hdrs = ["test-lib.h"],
+    copts = GIT_COPTS,
+    include_prefix = "t/unit-tests",
+    deps = [
+        "//:libgit",
+    ],
+)
+
+cc_library(
+    name = "unit_test_sources",
+    srcs = [
+        "clar/clar.c",
+        "lib-oid.c",
+        "lib-reftable.c",
+        "unit-test.c",
+    ] + CLAR_TEST_SUITES,
+    hdrs = glob([
+        "*.h",
+        "clar/*.h",
+        "clar/clar/*.h",
+    ]) + [
+        ":clar_decls",
+        ":clar_suite",
+    ],
+    copts = GIT_COPTS,
+    includes = [
+        ".",
+        "clar",
+    ],
+    deps = [
+        "//:libgit",
+    ],
+)
+
+cc_test(
+    name = "unit_tests",
+    srcs = ["//:common-main.c"],
+    copts = GIT_COPTS,
+    linkopts = GIT_LINKOPTS,
+    linkstatic = True,
+    deps = [
+        ":unit_test_sources",
+    ],
+)
