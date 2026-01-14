@@ -1,0 +1,264 @@
+"aspect-build/rules_py"
+
+module(
+    name = "aspect_rules_py",
+    compatibility_level = 1,
+    version = "1.8.1",
+)
+
+# NOTE: when publishing to BCR, we patch this to True, as we publish pre-built binaries along with our releases.
+IS_RELEASE = True
+
+bazel_dep(name = "bazel_features", version = "1.38.0")
+bazel_dep(name = "bazel_lib", version = "3.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.4.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_python", version = "1.0.0")
+bazel_dep(name = "with_cfg.bzl", version = "0.11.0")
+bazel_dep(name = "rules_cc", version = "0.2.11")
+bazel_dep(name = "tar.bzl", version = "0.5.5")
+
+bazel_lib_toolchains = use_extension("@tar.bzl//tar:extensions.bzl", "toolchains")
+use_repo(bazel_lib_toolchains, "bsd_tar_toolchains")
+
+single_version_override(
+    module_name = "rules_cc",
+    patch_strip = 1,
+    patches = ["//bazel/patches:rules_cc_visibility.patch"],
+    version = "0.2.11",
+)
+
+tools = use_extension("//py:extensions.bzl", "py_tools")
+tools.rules_py_tools()
+use_repo(tools, "rules_py_tools")
+use_repo(tools, "rules_py_pex_2_3_1")
+
+register_toolchains(
+    "@rules_py_tools//:all",
+    "@aspect_rules_py//py/private/toolchain/venv/...",
+    "@aspect_rules_py//py/private/toolchain/unpack/...",
+    "@aspect_rules_py//py/private/toolchain/shim/...",
+)
+
+toml = use_extension("//uv/private/tomltool:extension.bzl", "tomltool")
+use_repo(
+    toml,
+    "toml2json_aarch64_linux_gnu",
+    "toml2json_aarch64_osx_libsystem",
+    "toml2json_x86_64_linux_gnu",
+    "toml2json_x86_64_osx_libsystem",
+)
+
+host = use_extension("//uv/private/host:extension.bzl", "host_platform")
+use_repo(host, "aspect_rules_py_uv_host")
+
+bazel_dep(name = "aspect_tools_telemetry", version = "0.3.3")
+
+tel = use_extension("@aspect_tools_telemetry//:extension.bzl", "telemetry")
+use_repo(tel, "aspect_tools_telemetry_report")
+
+################################################################################
+# Dev deps are the remainder of the file
+
+# LLVM configuration
+bazel_dep(name = "toolchains_llvm_bootstrapped", version = "0.2.5", dev_dependency = IS_RELEASE)
+archive_override(
+    module_name = "toolchains_llvm_bootstrapped",
+    integrity = "sha256-+nddimV34BYO8YExiKLYG2kMoA2Sv+5ZoMRPQLJxNfE=",
+    patch_strip = 1,
+    patches = [
+        "//bazel/patches:llvm_darwin_sysroot.patch",
+    ],
+    strip_prefix = "toolchains_llvm_bootstrapped-121c8419394e76b5652c161369743c564799b2e3",
+    urls = ["https://github.com/cerisier/toolchains_llvm_bootstrapped/archive/121c8419394e76b5652c161369743c564799b2e3/master.tar.gz"],
+)
+
+register_toolchains(
+    "@toolchains_llvm_bootstrapped//toolchain:all",
+    dev_dependency = IS_RELEASE,
+)
+
+# Rust configuration
+bazel_dep(name = "rules_rust", version = "0.68.1", dev_dependency = IS_RELEASE)
+
+rust = use_extension(
+    "@rules_rust//rust:extensions.bzl",
+    "rust",
+    dev_dependency = IS_RELEASE,
+)
+rust.toolchain(
+    edition = "2024",
+    extra_target_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl",
+    ],
+    versions = ["1.88.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:all",
+    dev_dependency = IS_RELEASE,
+)
+
+bazel_dep(name = "bazelrc-preset.bzl", version = "1.4.0", dev_dependency = IS_RELEASE)
+bazel_dep(name = "bazel_env.bzl", version = "0.5.0", dev_dependency = IS_RELEASE)
+bazel_dep(name = "bzip2", version = "1.0.8.bcr.3", dev_dependency = IS_RELEASE)
+bazel_dep(name = "gazelle", version = "0.45.0", dev_dependency = IS_RELEASE)
+bazel_dep(name = "rules_pkg", version = "1.1.0", dev_dependency = IS_RELEASE)
+bazel_dep(name = "rules_rs", version = "0.0.16", dev_dependency = IS_RELEASE)
+bazel_dep(name = "xz", version = "5.4.5.bcr.5", dev_dependency = IS_RELEASE)
+bazel_dep(name = "zstd", version = "1.5.7", dev_dependency = IS_RELEASE)
+bazel_dep(name = "rules_multitool", version = "1.9.0", dev_dependency = IS_RELEASE)
+
+multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool", dev_dependency = IS_RELEASE)
+multitool.hub(lockfile = "//tools:tools.lock.json")
+use_repo(multitool, "multitool")
+
+crate = use_extension(
+    "@rules_rs//rs:extensions.bzl",
+    "crate",
+    dev_dependency = IS_RELEASE,
+)
+crate.from_cargo(
+    name = "crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-musl",
+    ],
+)
+crate.annotation(
+    crate = "backtrace",
+    # This just compiles code on Android, we don't need it.
+    gen_build_script = "off",
+    repositories = ["crates"],
+)
+crate.annotation(
+    crate = "zstd-sys",
+    # This build script is naughty and tries to depend on system zstd or build it from source.
+    gen_build_script = "off",
+    repositories = ["crates"],
+    deps = ["@@zstd+//:zstd"],
+)
+crate.annotation(
+    crate = "bzip2-sys",
+    gen_build_script = "off",
+    repositories = ["crates"],
+    deps = ["@@bzip2+//:bz2"],
+)
+crate.annotation(
+    crate = "lzma-sys",
+    gen_build_script = "off",
+    repositories = ["crates"],
+    deps = ["@@xz+//:lzma"],
+)
+use_repo(crate, "crates")
+
+# TODO: Replace with bazel_features?
+# cf. https://github.com/bazel-contrib/bazelrc-preset.bzl/blob/main/MODULE.bazel#L8C1-L10C70
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = IS_RELEASE)
+
+version = use_extension("@bazel_features//private:extensions.bzl", "version_extension", dev_dependency = IS_RELEASE)
+use_repo(version, "bazel_features_globals", "bazel_features_version")
+
+# rules_oci and friends
+bazel_dep(name = "rules_oci", version = "2.2.6", dev_dependency = IS_RELEASE)
+
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci", dev_dependency = IS_RELEASE)
+oci.pull(
+    name = "ubuntu",
+    digest = "sha256:c35e29c9450151419d9448b0fd75374fec4fff364a27f176fb458d472dfc9e54",
+    image = "public.ecr.aws/docker/library/ubuntu",
+    platforms = [
+        "linux/arm64/v8",
+        "linux/amd64",
+    ],
+    tag = "latest",
+)
+use_repo(oci, "ubuntu", "ubuntu_linux_amd64", "ubuntu_linux_arm64_v8")
+
+# For building test images with py_image_layer
+bazel_dep(name = "container_structure_test", version = "1.19.1", dev_dependency = IS_RELEASE)
+git_override(
+    module_name = "container_structure_test",
+    commit = "63ee63e15fae64f00b1c1ace1eb5cc99251b9e02",
+    remote = "https://github.com/GoogleContainerTools/container-structure-test.git",
+)
+
+# rules_python and friends
+bazel_dep(name = "rules_python_gazelle_plugin", version = "1.0.0", dev_dependency = IS_RELEASE)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = IS_RELEASE)
+python.toolchain(
+    is_default = True,
+    python_version = "3.9",
+)
+python.toolchain(
+    is_default = False,
+    python_version = "3.12",
+)
+
+# We still use pip for testing the virtual deps machinery
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = IS_RELEASE)
+pip.parse(
+    hub_name = "django",
+    python_version = "3.9",
+    requirements_lock = "//py/tests/virtual/django:requirements.txt",
+)
+use_repo(pip, "django")
+
+# For everything else, we use our own uv machinery
+uv = use_extension("//uv/unstable:extension.bzl", "uv", dev_dependency = IS_RELEASE)
+uv.declare_hub(
+    hub_name = "pypi",
+)
+uv.declare_venv(
+    hub_name = "pypi",
+    venv_name = "default",
+)
+uv.lockfile(
+    src = "//:uv.lock",
+    hub_name = "pypi",
+    venv_name = "default",
+)
+uv.unstable_annotate_requirements(
+    src = "//:annotations.toml",
+    hub_name = "pypi",
+    venv_name = "default",
+)
+use_repo(uv, "pypi")
+
+http_file = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_file",
+)
+
+http_file(
+    name = "django_4_2_4",
+    dev_dependency = IS_RELEASE,
+    downloaded_file_path = "Django-4.2.4-py3-none-any.whl",
+    sha256 = "860ae6a138a238fc4f22c99b52f3ead982bb4b1aad8c0122bcd8c8a3a02e409d",
+    urls = ["https://files.pythonhosted.org/packages/7f/9e/fc6bab255ae10bc57fa2f65646eace3d5405fbb7f5678b90140052d1db0f/Django-4.2.4-py3-none-any.whl"],
+)
+
+http_file(
+    name = "django_4_1_10",
+    dev_dependency = IS_RELEASE,
+    downloaded_file_path = "Django-4.1.10-py3-none-any.whl",
+    sha256 = "26d0260c2fb8121009e62ffc548b2398dea2522b6454208a852fb0ef264c206c",
+    urls = ["https://files.pythonhosted.org/packages/34/25/8a218de57fc9853297a1a8e4927688eff8107d5bc6dcf6c964c59801f036/Django-4.1.10-py3-none-any.whl"],
+)
+
+http_file(
+    name = "sqlparse_0_4_0",
+    dev_dependency = IS_RELEASE,
+    downloaded_file_path = "sqlparse-0.4.0-py3-none-any.whl",
+    sha256 = "0523026398aea9c8b5f7a4a6d5c0829c285b4fbd960c17b5967a369342e21e01",
+    urls = ["https://files.pythonhosted.org/packages/10/96/36c136013c4a6ecb8c6aa3eed66e6dcea838f85fd80e1446499f1dabfac7/sqlparse-0.4.0-py3-none-any.whl"],
+)
