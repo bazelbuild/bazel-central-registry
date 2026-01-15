@@ -40,6 +40,7 @@ OPENFHE_COPTS = [
     "-Wno-shift-op-parentheses",
     "-Wno-unused-private-field",
     "-fexceptions",
+    "-std=c++17",
 ]
 
 config_setting(
