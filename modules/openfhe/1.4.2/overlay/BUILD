@@ -1,7 +1,6 @@
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load("@openfhe_config//:config.bzl", "MATHBACKEND", "HAS_INT128")
-
+load("@openfhe_config//:config.bzl", "HAS_INT128", "MATHBACKEND")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 
 package(
     default_visibility = ["//visibility:public"],
@@ -27,6 +26,7 @@ config_setting(
 )
 
 OPENFHE_VERSION = "1.4.2"
+
 OPENFHE_DEFINES = [
     "MATHBACKEND=" + str(MATHBACKEND),
     "OPENFHE_VERSION=" + OPENFHE_VERSION,
@@ -42,24 +42,44 @@ OPENFHE_COPTS = [
     "-fexceptions",
 ]
 
-_OPENFHE_LINKOPTS = [
+config_setting(
+    name = "clang_openmp",
+    flag_values = {
+        "@rules_cc//cc/compiler:compiler": "clang",
+        "//:enable_openmp": "True",
+    },
+)
+
+config_setting(
+    name = "gcc_openmp",
+    flag_values = {
+        "@rules_cc//cc/compiler:compiler": "gcc",
+        "//:enable_openmp": "True",
+    },
+)
+
+_OPENMP_CLANG_LINKOPTS = [
     "-fopenmp",
     "-lomp",
 ]
 
-_OPENMP_COPTS = [
+_OPENMP_GCC_LINKOPTS = [
     "-fopenmp",
-    "-Xpreprocessor",
-    "-Wno-unused-command-line-argument",
+    "-lgomp",
 ]
 
-MAYBE_OPENFHE_LINKOPTS = select({
-    "//:config_enable_openmp": _OPENFHE_LINKOPTS,
+OPENMP_LINKOPTS = select({
+    "//:clang_openmp": _OPENMP_CLANG_LINKOPTS,
+    "//:gcc_openmp": _OPENMP_GCC_LINKOPTS,
     "//conditions:default": [],
 })
 
-MAYBE_OPENMP_COPTS = select({
-    "//:config_enable_openmp": _OPENMP_COPTS,
+OPENMP_COPTS = select({
+    "//:config_enable_openmp": [
+        "-fopenmp",
+        "-Xpreprocessor",
+        "-Wno-unused-command-line-argument",
+    ],
     "//conditions:default": [],
 })
 
@@ -85,7 +105,7 @@ cc_library(
         "src/core/lib/**/*.c",
         "src/core/lib/**/*.cpp",
     ]),
-    copts = OPENFHE_COPTS + MAYBE_OPENMP_COPTS + [
+    copts = OPENFHE_COPTS + OPENMP_COPTS + [
         # /utils/blockAllocator/blockAllocator.cpp has misaligned-pointer-use
         "-fno-sanitize=alignment",
     ],
@@ -94,7 +114,7 @@ cc_library(
         "src/core/include",
         "src/core/lib",
     ],
-    linkopts = MAYBE_OPENFHE_LINKOPTS,
+    linkopts = OPENMP_LINKOPTS,
     linkstatic = True,
     textual_hdrs = [":generate_config_core_h"] + glob([
         "src/core/include/**/*.h",
@@ -111,13 +131,13 @@ cc_library(
     srcs = [":generate_config_core_h"] + glob([
         "src/binfhe/lib/**/*.cpp",
     ]),
-    copts = OPENFHE_COPTS + MAYBE_OPENMP_COPTS,
+    copts = OPENFHE_COPTS + OPENMP_COPTS,
     defines = OPENFHE_DEFINES,
     includes = [
         "src/binfhe/include",
         "src/binfhe/lib",
     ],
-    linkopts = MAYBE_OPENFHE_LINKOPTS,
+    linkopts = OPENMP_LINKOPTS,
     linkstatic = True,
     textual_hdrs = [":generate_config_core_h"] + glob(["src/binfhe/include/**/*.h"]),
     deps = [
@@ -131,7 +151,7 @@ cc_library(
     srcs = [":generate_config_core_h"] + glob([
         "src/pke/lib/**/*.cpp",
     ]),
-    copts = OPENFHE_COPTS + MAYBE_OPENMP_COPTS + [
+    copts = OPENFHE_COPTS + OPENMP_COPTS + [
         "-Wno-vla-extension",
     ],
     defines = OPENFHE_DEFINES,
@@ -139,7 +159,7 @@ cc_library(
         "src/pke/include",
         "src/pke/lib",
     ],
-    linkopts = MAYBE_OPENFHE_LINKOPTS,
+    linkopts = OPENMP_LINKOPTS,
     linkstatic = True,
     textual_hdrs = [":generate_config_core_h"] + glob([
         "src/pke/include/**/*.h",
