@@ -1,0 +1,260 @@
+--- /dev/null
++++ a/BUILD.bazel
+@@ -0,0 +1,257 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
++
++RSYNC_CORE_SRCS = [
++    "access.c",
++    "acls.c",
++    "authenticate.c",
++    "backup.c",
++    "batch.c",
++    "chmod.c",
++    "cleanup.c",
++    "clientname.c",
++    "clientserver.c",
++    "compat.c",
++    "connection.c",
++    "checksum.c",
++    "delete.c",
++    "exclude.c",
++    "fileio.c",
++    "flist.c",
++    "generator.c",
++    "hashtable.c",
++    "hlink.c",
++    "io.c",
++    "loadparm.c",
++    "log.c",
++    "main.c",
++    "match.c",
++    "options.c",
++    "params.c",
++    "pipe.c",
++    "progress.c",
++    "receiver.c",
++    "rsync.c",
++    "sender.c",
++    "socket.c",
++    "syscall.c",
++    "token.c",
++    "uidlist.c",
++    "usage.c",
++    "util1.c",
++    "util2.c",
++    "xattrs.c",
++]
++
++RSYNC_LIB_SRCS = [
++    "lib/compat.c",
++    "lib/md5.c",
++    "lib/mdfour.c",
++    "lib/permstring.c",
++    "lib/pool_alloc.c",
++    "lib/snprintf.c",
++    "lib/sysacls.c",
++    "lib/sysxattrs.c",
++    "lib/wildmatch.c",
++]
++
++
++genrule(
++    name = "daemon_parm_h",
++    srcs = [
++        "daemon-parm.awk",
++        "daemon-parm.txt",
++    ],
++    outs = ["daemon-parm.h"],
++    cmd = "awk -f $(location daemon-parm.awk) $(location daemon-parm.txt) && cp daemon-parm.h $@",
++)
++
++genrule(
++    name = "default_cvsignore_h",
++    srcs = [
++        "define-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["default-cvsignore.h"],
++    cmd = "awk -f $(location define-from-md.awk) -v hfile=$@ $(location rsync.1.md)",
++)
++
++genrule(
++    name = "default_dont_compress_h",
++    srcs = [
++        "define-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["default-dont-compress.h"],
++    cmd = "awk -f $(location define-from-md.awk) -v hfile=$@ $(location rsync.1.md)",
++)
++
++genrule(
++    name = "help_rsync_h",
++    srcs = [
++        "help-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["help-rsync.h"],
++    cmd = "awk -f $(location help-from-md.awk) -v hfile=help-rsync.h $(location rsync.1.md) && cp help-rsync.h $@",
++)
++
++genrule(
++    name = "help_rsyncd_h",
++    srcs = [
++        "help-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["help-rsyncd.h"],
++    cmd = "awk -f $(location help-from-md.awk) -v hfile=help-rsyncd.h $(location rsync.1.md) && cp help-rsyncd.h $@",
++)
++
++genrule(
++    name = "rounding_h",
++    srcs = [
++        "byteorder.h",
++        "config.h",
++        "errcode.h",
++        "lib/addrinfo.h",
++        "lib/md-defines.h",
++        "lib/mdigest.h",
++        "lib/pool_alloc.h",
++        "lib/permstring.h",
++        "lib/wildmatch.h",
++        "rounding.c",
++        "rsync.h",
++        ":proto_h",
++        "@openssl//:gen_dir",
++    ],
++    outs = ["rounding.h"],
++    toolchains = ["@rules_cc//cc:toolchain_type"],
++    cmd = """
++cp $(location :proto_h) proto.h
++GEN_DIR="$(location @openssl//:gen_dir)"
++OPENSSL_INC_DIR="$$GEN_DIR/include"
++for r in 0 1 3; do
++  if $(CC) -o rounding -DEXTRA_ROUNDING=$$r -I. -I"$$OPENSSL_INC_DIR" $(location rounding.c) >rounding.out 2>&1; then
++    echo "#define EXTRA_ROUNDING $$r" > $@
++    if test -n "$${HOME-}" && test -f "$${HOME-}/build_farm/build_test.fns"; then
++      echo "EXTRA_ROUNDING is $$r" >&2
++    fi
++    break
++  fi
++done
++rm -f rounding
++if test -f "$@"; then
++  :
++else
++  cat rounding.out >&2
++  echo "Failed to create rounding.h!" >&2
++  exit 1
++fi
++rm -f rounding.out proto.h
++""",
++)
++
++genrule(
++    name = "git_version_h",
++    outs = ["git-version.h"],
++    cmd = """
++if [ -x $(location mkgitver) ]; then
++  $(location mkgitver) || true
++fi
++if [ -s git-version.h ]; then
++  cp git-version.h $@
++else
++  echo '#define RSYNC_GITVER ""' > $@
++fi
++""",
++    tools = ["mkgitver"],
++)
++
++genrule(
++    name = "proto_h",
++    srcs = glob(["*.c"]) + [
++        "lib/compat.c",
++        ":daemon_parm_h",
++    ],
++    outs = ["proto.h"],
++    cmd = "awk -f $(location mkproto.awk) $(SRCS) && cp proto.h $@",
++    tools = ["mkproto.awk"],
++)
++
++filegroup(
++    name = "generated_headers",
++    srcs = [
++        ":daemon_parm_h",
++        ":default_cvsignore_h",
++        ":default_dont_compress_h",
++        ":git_version_h",
++        ":help_rsync_h",
++        ":help_rsyncd_h",
++        ":proto_h",
++        ":rounding_h",
++    ],
++)
++
++cc_library(
++    name = "popt",
++    srcs = [
++        "popt/popt.c",
++        "popt/poptconfig.c",
++        "popt/popthelp.c",
++        "popt/poptint.c",
++        "popt/poptparse.c",
++    ],
++    hdrs = glob(["popt/*.h"]) + [
++        "config.h",
++        "popt/lookup3.c",
++    ],
++    defines = ["HAVE_CONFIG_H"],
++    includes = ["popt"],
++)
++
++cc_library(
++    name = "zlib",
++    srcs = glob(["zlib/*.c"]),
++    hdrs = glob(["zlib/*.h"]) + glob([
++        "*.h",
++        "lib/*.h",
++    ]) + [
++        ":generated_headers",
++    ],
++    includes = ["zlib"],
++    deps = [
++        "@openssl//:crypto",
++    ],
++)
++
++cc_library(
++    name = "rsync_lib",
++    srcs = RSYNC_CORE_SRCS + RSYNC_LIB_SRCS,
++    hdrs = glob([
++        "*.h",
++        "lib/*.h",
++    ]) + [
++        ":generated_headers",
++    ],
++    defines = ["HAVE_CONFIG_H"],
++    includes = [
++        "lib",
++        "popt",
++        "zlib",
++    ],
++    linkopts = [
++        "-liconv",
++    ],
++    deps = [
++        ":popt",
++        ":zlib",
++        "@lz4",
++        "@openssl//:crypto",
++        "@xxhash",
++        "@zstd",
++    ],
++)
++
++cc_binary(
++    name = "rsync",
++    visibility = ["//visibility:public"],
++    deps = [":rsync_lib"],
++)
