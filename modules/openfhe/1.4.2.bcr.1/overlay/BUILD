@@ -118,7 +118,7 @@ cc_library(
 
 cc_library(
     name = "core",
-    srcs = [":generate_config_core_h"] + glob([
+    srcs = glob([
         "src/core/lib/**/*.cpp",
     ]),
     copts = OPENFHE_COPTS + OPENMP_COPTS + [
@@ -134,7 +134,6 @@ cc_library(
     linkstatic = True,
     textual_hdrs = [":generate_config_core_h"] + glob([
         "src/core/include/**/*.h",
-        "src/core/lib/**/*.cpp",
     ]),
     deps = [
         ":generate_config_core_h",
