@@ -580,7 +580,7 @@ class BcrValidator:
                         f"The patch file `{patch_name}` is a symlink to `{patch_file.readlink()}`, "
                         "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
                     )
-                apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
+                apply_patch(source_root, int(source.get("patch_strip", 0)), str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
             for overlay_file, expected_integrity in source["overlay"].items():
@@ -618,10 +618,10 @@ class BcrValidator:
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(overlay_src, overlay_dst)
 
+        bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
         source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
         if source_module_dot_bazel.exists():
             source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
-            bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
             bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
             source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
             bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
