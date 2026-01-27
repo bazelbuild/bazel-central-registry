@@ -94,6 +94,7 @@ GITHUB_USER_ID_CACHE = {}
 # TODO(fweikert): enforce compliance once attestation feature is more widely used.
 ATTESTATION_HISTORY_CHECK_OPT_OUT = frozenset(["protobuf"])
 
+
 def print_collapsed_group(name):
     print("\n\n--- {0}\n\n".format(name))
 
