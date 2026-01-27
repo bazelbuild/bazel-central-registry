@@ -871,7 +871,11 @@ class BcrValidator:
         attestations_json = self.registry.get_attestations(module_name, version)
         if not attestations_json:
             if head_attestations_json:  # Prevent regressions.
-                verdict = BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW if module_name in ATTESTATION_HISTORY_CHECK_OPT_OUT else BcrValidationResult.FAILED
+                verdict = (
+                    BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW
+                    if module_name in ATTESTATION_HISTORY_CHECK_OPT_OUT
+                    else BcrValidationResult.FAILED
+                )
                 self.report(
                     verdict,
                     f"{module_name}@{version}: No attestations.json file even though "
