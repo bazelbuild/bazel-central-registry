@@ -89,6 +89,11 @@ GITHUB_URL_RE = re.compile(r"^https://github.com/([^/]+/[^/]+)")
 # Global cache for GitHub user IDs
 GITHUB_USER_ID_CACHE = {}
 
+# For the following modules, going from a release with attestations to one without
+# is merely a warning, not a fatal error.
+# TODO(fweikert): enforce compliance once attestation feature is more widely used.
+ATTESTATION_HISTORY_CHECK_OPT_OUT = frozenset(["protobuf"])
+
 
 def print_collapsed_group(name):
     print("\n\n--- {0}\n\n".format(name))
@@ -867,8 +872,13 @@ class BcrValidator:
         attestations_json = self.registry.get_attestations(module_name, version)
         if not attestations_json:
             if head_attestations_json:  # Prevent regressions.
+                verdict = (
+                    BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW
+                    if module_name in ATTESTATION_HISTORY_CHECK_OPT_OUT
+                    else BcrValidationResult.FAILED
+                )
                 self.report(
-                    BcrValidationResult.FAILED,
+                    verdict,
                     f"{module_name}@{version}: No attestations.json file even though "
                     f"{module_name}@{head_snapshot.version} has one.",
                 )
