@@ -1,0 +1,743 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:macros.bzl", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load(":libpcap_utils.bzl", "libpcap_bison", "libpcap_flex")
+
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+# Package information from AC_INIT
+package_info(
+    name = "package",
+    package_name = "pcap",
+    package_version = "1.10.5",
+)
+
+# Autoconf configuration checks
+autoconf(
+    name = "autoconf",
+    checks = [
+        # AC_PROG_CC_C99 - require C99
+        macros.AC_PROG_CC(),
+
+        # AC_CHECK_SIZEOF checks
+        macros.AC_CHECK_SIZEOF("void *"),
+        macros.AC_CHECK_SIZEOF(
+            "time_t",
+            headers = ["time.h"],
+        ),
+
+        # AC_CHECK_HEADERS - standard headers and libpcap-specific headers
+        # Standard headers are checked via gnulib/m4 targets in deps (see below)
+        # Platform-specific and libpcap-specific headers
+        macros.AC_CHECK_HEADER("sys/ioccom.h"),
+        macros.AC_CHECK_HEADER("sys/sockio.h"),
+        macros.AC_CHECK_HEADER("netpacket/packet.h"),
+        macros.AC_CHECK_HEADER("ifaddrs.h"),
+        macros.AC_CHECK_HEADER("pthread.h"),
+        macros.AC_CHECK_HEADER("net/bpf.h"),
+        macros.AC_CHECK_HEADER("net/if_media.h"),
+        macros.AC_CHECK_HEADER("linux/socket.h"),
+        macros.AC_CHECK_HEADER("linux/wireless.h"),
+        macros.AC_CHECK_HEADER("linux/net_tstamp.h"),
+        macros.AC_CHECK_HEADER("bluetooth/bluetooth.h"),
+
+        # AC_CHECK_FUNCS - libpcap-specific functions
+        # Note: Standard functions like snprintf, vsnprintf, strerror_r, vasprintf, asprintf, strtok_r, ffs
+        # are checked by gnulib modules, so we only check libpcap-specific ones
+        # Note: HAVE_ASPRINTF and HAVE_VASPRINTF are provided by gnulib if the functions exist
+        macros.AC_CHECK_FUNC("fseeko"),
+        macros.AC_CHECK_FUNC("vsyslog"),
+        macros.AC_CHECK_FUNC("strlcat"),
+        macros.AC_CHECK_FUNC("strlcpy"),
+        macros.AC_CHECK_FUNC("ether_hostton"),
+        macros.AC_CHECK_FUNC("pthread_create"),
+        macros.AC_CHECK_FUNC("getifaddrs"),
+        macros.AC_CHECK_FUNC("crypt"),
+        macros.AC_CHECK_FUNC("getspnam"),
+        # macros.AC_CHECK_FUNC("_wcserror_s"),
+
+        # AC_CHECK_LIB checks
+        macros.AC_CHECK_LIB("bsd", "getpass"),
+        macros.AC_CHECK_LIB("pthreads", "pthread_create"),
+        macros.AC_CHECK_LIB("pthread", "pthread_create"),
+        macros.AC_CHECK_LIB("crypt", "crypt"),
+        macros.AC_CHECK_LIB("m", "cos"),
+
+        # AC_CHECK_TYPES - use code parameter for includes
+        macros.AC_CHECK_TYPE(
+            "socklen_t",
+            code = "#include <sys/types.h>\n#include <sys/socket.h>",
+        ),
+        macros.AC_CHECK_TYPE(
+            "struct sockaddr_storage",
+            code = "#include <sys/types.h>\n#include <sys/socket.h>",
+        ),
+        macros.AC_CHECK_TYPE(
+            "struct ether_addr",
+            code = "#include <sys/types.h>\n#include <sys/socket.h>\n#include <net/if.h>\n#include <netinet/in.h>\n#include <netinet/if_ether.h>",
+        ),
+        macros.AC_CHECK_TYPE(
+            "dl_passive_req_t",
+            code = "#include <sys/types.h>\n#include <sys/dlpi.h>",
+        ),
+        macros.AC_CHECK_TYPE(
+            "struct BPF_TIMEVAL",
+            code = "#include <sys/types.h>\n#include <sys/ioctl.h>\n#include <net/bpf.h>",
+        ),
+        macros.AC_CHECK_TYPE(
+            "struct rte_ether_addr",
+            code = "#include <rte_ether.h>",
+        ),
+
+        # AC_CHECK_MEMBERS - split struct/union.member into aggregate and member, use headers parameter
+        macros.AC_CHECK_MEMBER(
+            "struct stat",
+            "st_rdev",
+            headers = ["sys/stat.h"],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "struct sockaddr",
+            "sa_len",
+            headers = [
+                "sys/types.h",
+                "sys/socket.h",
+            ],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "struct tpacket_auxdata",
+            "tp_vlan_tci",
+            headers = [
+                "sys/types.h",
+                "linux/if_packet.h",
+            ],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "struct msghdr",
+            "msg_control",
+            headers = ["sys/socket.h"],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "struct msghdr",
+            "msg_flags",
+            headers = ["sys/socket.h"],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "struct sockaddr_hci",
+            "hci_channel",
+            headers = [
+                "bluetooth/bluetooth.h",
+                "bluetooth/hci.h",
+            ],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "struct usbdevfs_ctrltransfer",
+            "bRequestType",
+            headers = ["linux/usbdevice_fs.h"],
+        ),
+        macros.AC_CHECK_MEMBER(
+            "dl_hp_ppa_info_t",
+            "dl_module_id_1",
+            headers = [
+                "sys/types.h",
+                "sys/dlpi.h",
+                "sys/dlpi_ext.h",
+            ],
+        ),
+
+        # Check strerror_r style (GNU vs POSIX)
+        # strerror_r is provided by gnulib, so it should exist
+        # Check if it's GNU-style (configure.ac logic: if strerror_r exists, check style)
+        macros.AC_TRY_COMPILE(
+            code = """\
+#define _GNU_SOURCE
+#include <string.h>
+
+/* Define it GNU-style; that will cause an error if it's not GNU-style */
+extern char *strerror_r(int, char *, size_t);
+
+int main(void) { return 0; }
+""",
+            define = "HAVE_GNU_STRERROR_R",
+        ),
+        # If GNU-style check failed (not defined), define POSIX-style
+        # Note: configure.ac defines this with empty value (/**/), use empty string
+        # This assumes strerror_r exists (provided by gnulib)
+        # Since we can't check "not defined", we define POSIX unconditionally
+        # and let the code handle it (GNU takes precedence if both are defined)
+        macros.AC_DEFINE(
+            "HAVE_POSIX_STRERROR_R",
+            "",
+        ),
+
+        # AC_CHECK_DECL for ffs - only if ffs function exists (checked by gnulib)
+        # Note: configure.ac defines this with empty value (/**/), but AC_CHECK_DECL
+        # with define parameter will create it with value 1. We'll need to override it.
+        macros.AC_CHECK_DECL(
+            "ffs",
+            define = "STRINGS_H_DECLARES_FFS_TEST",
+            headers = ["strings.h"],
+        ),
+        # Override to use empty value as configure.ac does
+        macros.AC_DEFINE(
+            "STRINGS_H_DECLARES_FFS",
+            "/**/",
+            requires = ["STRINGS_H_DECLARES_FFS_TEST=1"],
+        ),
+
+        # Check ether_hostton declarations in different headers
+        # Only check if ether_hostton function exists
+        # Sequential fallback: check headers in order, only try next if previous failed
+        # Check in order: net/ethernet.h, netinet/ether.h, sys/ethernet.h, arpa/inet.h, netinet/if_ether.h
+        macros.AC_CHECK_DECL(
+            "ether_hostton",
+            define = "NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST",
+            headers = ["net/ethernet.h"],
+            requires = ["HAVE_ETHER_HOSTTON=1"],
+        ),
+        # Note: configure.ac defines this with empty value (/**/), use empty string
+        macros.AC_DEFINE(
+            "NET_ETHERNET_H_DECLARES_ETHER_HOSTTON",
+            "",
+            requires = ["NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=1"],
+        ),
+        # Only check next header if previous failed (value = 0)
+        macros.AC_CHECK_DECL(
+            "ether_hostton",
+            define = "NETINET_ETHER_H_DECLARES_ETHER_HOSTTON_TEST",
+            headers = ["netinet/ether.h"],
+            requires = [
+                "HAVE_ETHER_HOSTTON=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+            ],
+        ),
+        macros.AC_DEFINE(
+            "NETINET_ETHER_H_DECLARES_ETHER_HOSTTON",
+            requires = ["NETINET_ETHER_H_DECLARES_ETHER_HOSTTON_TEST=1"],
+        ),
+        # Only check next header if previous failed (value = 0)
+        macros.AC_CHECK_DECL(
+            "ether_hostton",
+            define = "SYS_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST",
+            headers = ["sys/ethernet.h"],
+            requires = [
+                "HAVE_ETHER_HOSTTON=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+                "NETINET_ETHER_H_DECLARES_ETHER_HOSTTON_TEST=0",
+            ],
+        ),
+        macros.AC_DEFINE(
+            "SYS_ETHERNET_H_DECLARES_ETHER_HOSTTON",
+            requires = ["SYS_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=1"],
+        ),
+        # Only check next header if previous failed (value = 0)
+        macros.AC_CHECK_DECL(
+            "ether_hostton",
+            define = "ARPA_INET_H_DECLARES_ETHER_HOSTTON_TEST",
+            headers = ["arpa/inet.h"],
+            requires = [
+                "HAVE_ETHER_HOSTTON=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+                "NETINET_ETHER_H_DECLARES_ETHER_HOSTTON_TEST=0",
+                "SYS_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+            ],
+        ),
+        macros.AC_DEFINE(
+            "ARPA_INET_H_DECLARES_ETHER_HOSTTON",
+            requires = ["ARPA_INET_H_DECLARES_ETHER_HOSTTON_TEST=1"],
+        ),
+        # Only check next header if previous failed (value = 0)
+        macros.AC_CHECK_DECL(
+            "ether_hostton",
+            define = "NETINET_IF_ETHER_H_DECLARES_ETHER_HOSTTON_TEST",
+            headers = [
+                "sys/types.h",
+                "sys/socket.h",
+                "net/if.h",
+                "netinet/in.h",
+                "netinet/if_ether.h",
+            ],
+            requires = [
+                "HAVE_ETHER_HOSTTON=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+                "NETINET_ETHER_H_DECLARES_ETHER_HOSTTON_TEST=0",
+                "SYS_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+                "ARPA_INET_H_DECLARES_ETHER_HOSTTON_TEST=0",
+            ],
+        ),
+        macros.AC_DEFINE(
+            "NETINET_IF_ETHER_H_DECLARES_ETHER_HOSTTON",
+            requires = ["NETINET_IF_ETHER_H_DECLARES_ETHER_HOSTTON_TEST=1"],
+        ),
+        # Define HAVE_DECL_ETHER_HOSTTON if any of the header checks succeeded
+        # Since we can't have multiple AC_DEFINE with same name and can't express OR in requires,
+        # we define it if the first (most common) header check succeeded.
+        # The code will also check the individual header defines, so this is mainly for compatibility.
+        macros.AC_DEFINE(
+            "HAVE_DECL_ETHER_HOSTTON",
+            "1",
+            requires = ["NET_ETHERNET_H_DECLARES_ETHER_HOSTTON_TEST=1"],
+        ),
+
+        # Check getnetbyname_r and getprotobyname_r declarations
+        macros.AC_CHECK_DECL(
+            "getnetbyname_r",
+            headers = ["netdb.h"],
+        ),
+        macros.AC_CHECK_DECL(
+            "getprotobyname_r",
+            headers = ["netdb.h"],
+        ),
+
+        # Check getnetbyname_r API variants (only if declared)
+        # Linux API: getnetbyname_r(name, result_buf, buf, buflen, result, h_errnop)
+        macros.AC_TRY_COMPILE(
+            code = """\
+#include <netdb.h>
+int main(void) {
+    struct netent netent_buf;
+    char buf[1024];
+    struct netent *resultp;
+    int h_errnoval;
+    return getnetbyname_r((const char *)0, &netent_buf, buf, sizeof buf, &resultp, &h_errnoval);
+}
+""",
+            define = "HAVE_LINUX_GETNETBYNAME_R",
+            requires = ["HAVE_DECL_GETNETBYNAME_R=1"],
+        ),
+        # Solaris/IRIX API: getnetbyname_r(name, result_buf, buf, buflen)
+        # Only check if Linux API check failed (value = 0)
+        macros.AC_TRY_COMPILE(
+            code = """\
+#include <netdb.h>
+int main(void) {
+    struct netent netent_buf;
+    char buf[1024];
+    return getnetbyname_r((const char *)0, &netent_buf, buf, (int)sizeof buf) != NULL;
+}
+""",
+            define = "HAVE_SOLARIS_IRIX_GETNETBYNAME_R",
+            requires = [
+                "HAVE_DECL_GETNETBYNAME_R=1",
+                "HAVE_LINUX_GETNETBYNAME_R=0",
+            ],
+        ),
+        # AIX API: getnetbyname_r(name, result_buf, net_data)
+        # Only check if both Linux and Solaris/IRIX checks failed
+        macros.AC_TRY_COMPILE(
+            code = """\
+#include <netdb.h>
+int main(void) {
+    struct netent netent_buf;
+    struct netent_data net_data;
+    return getnetbyname_r((const char *)0, &netent_buf, &net_data);
+}
+""",
+            define = "HAVE_AIX_GETNETBYNAME_R",
+            requires = [
+                "HAVE_DECL_GETNETBYNAME_R=1",
+                "HAVE_LINUX_GETNETBYNAME_R=0",
+                "HAVE_SOLARIS_IRIX_GETNETBYNAME_R=0",
+            ],
+        ),
+
+        # Check getprotobyname_r API variants (only if declared)
+        # Linux API: getprotobyname_r(name, result_buf, buf, buflen, result)
+        macros.AC_TRY_COMPILE(
+            code = """\
+#include <netdb.h>
+int main(void) {
+    struct protoent protoent_buf;
+    char buf[1024];
+    struct protoent *resultp;
+    return getprotobyname_r((const char *)0, &protoent_buf, buf, sizeof buf, &resultp);
+}
+""",
+            define = "HAVE_LINUX_GETPROTOBYNAME_R",
+            requires = ["HAVE_DECL_GETPROTOBYNAME_R=1"],
+        ),
+        # Solaris/IRIX API: getprotobyname_r(name, result_buf, buf, buflen)
+        # Only check if Linux API check failed (value = 0)
+        macros.AC_TRY_COMPILE(
+            code = """\
+#include <netdb.h>
+int main(void) {
+    struct protoent protoent_buf;
+    char buf[1024];
+    return getprotobyname_r((const char *)0, &protoent_buf, buf, (int)sizeof buf) != NULL;
+}
+""",
+            define = "HAVE_SOLARIS_IRIX_GETPROTOBYNAME_R",
+            requires = [
+                "HAVE_DECL_GETPROTOBYNAME_R=1",
+                "HAVE_LINUX_GETPROTOBYNAME_R=0",
+            ],
+        ),
+        # AIX API: getprotobyname_r(name, result_buf, proto_data)
+        # Only check if both Linux and Solaris/IRIX checks failed
+        macros.AC_TRY_COMPILE(
+            code = """\
+#include <netdb.h>
+int main(void) {
+    struct protoent protoent_buf;
+    struct protoent_data proto_data;
+    return getprotobyname_r((const char *)0, &protoent_buf, &proto_data);
+}
+""",
+            define = "HAVE_AIX_GETPROTOBYNAME_R",
+            requires = [
+                "HAVE_DECL_GETPROTOBYNAME_R=1",
+                "HAVE_LINUX_GETPROTOBYNAME_R=0",
+                "HAVE_SOLARIS_IRIX_GETPROTOBYNAME_R=0",
+            ],
+        ),
+
+        # Check for atomic operations (AC_PCAP_C___ATOMICS)
+        macros.AC_TRY_COMPILE(
+            code = """\
+int main(void) {
+    int x = 0;
+    __atomic_load_n(&x, __ATOMIC_RELAXED);
+    __atomic_store_n(&x, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+""",
+            define = "HAVE___ATOMIC_LOAD_N",
+        ),
+        macros.AC_TRY_COMPILE(
+            code = """\
+int main(void) {
+    int x = 0;
+    __atomic_store_n(&x, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+""",
+            define = "HAVE___ATOMIC_STORE_N",
+        ),
+
+        # AC_DEFINE - unconditional defines
+        # Note: PACKAGE_NAME, PACKAGE_VERSION, PACKAGE_BUGREPORT, etc. are provided by package_info rule
+        macros.AC_DEFINE("INET6", "1"),
+        macros.AC_DEFINE("BUILDING_PCAP", "1"),
+
+        # AC_SYS_LARGEFILE sets _FILE_OFFSET_BITS=64 on some platforms, but not on macOS
+        # On macOS, _FILE_OFFSET_BITS should be undefined (config.h.bak.h shows it's undefined)
+        # Only define it on non-macOS platforms
+    ] + select({
+        "@platforms//os:macos": [
+            # macOS doesn't need _FILE_OFFSET_BITS (it's undefined in config.h.bak.h)
+        ],
+        "//conditions:default": [
+            macros.AC_DEFINE("_FILE_OFFSET_BITS", "64"),
+        ],
+    }) + [
+
+        # AC_HEADER_STDC defines STDC_HEADERS
+        macros.AC_DEFINE("STDC_HEADERS", "1"),
+
+        # AC_PROG_LEX defines YYTEXT_POINTER if lex declares yytext as char *
+        macros.AC_DEFINE("YYTEXT_POINTER", "1"),
+
+        # AC_C_INLINE defines inline
+        macros.AC_DEFINE("inline", "inline"),
+
+        # Needed by Bison
+        macros.AC_DEFINE("REENTRANT_PARSER", "%define api.pure"),
+
+        # Platform-specific checks using select()
+    ] + select({
+        "@platforms//os:haiku": [
+            macros.AC_DEFINE("_BSD_SOURCE", "1"),
+        ],
+        "@platforms//os:linux": [
+            macros.AC_DEFINE("LINUX_USB_MON_DEV", '"/dev/usbmon"'),
+            macros.AC_DEFINE("PCAP_SUPPORT_LINUX_USBMON", "1"),
+            macros.AC_DEFINE("PCAP_SUPPORT_NETFILTER", "1"),
+        ],
+        "@platforms//os:macos": [
+            macros.AC_DEFINE("_DARWIN_USE_64_BIT_INODE", "1"),
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":package",
+        # Gnulib modules for standard function checks
+        # Note: vasprintf provides both vasprintf and asprintf functions
+        "@rules_cc_autoconf//gnulib/m4/vsnprintf",
+        "@rules_cc_autoconf//gnulib/m4/snprintf",
+        "@rules_cc_autoconf//gnulib/m4/vasprintf",
+        "@rules_cc_autoconf//gnulib/m4/strtok_r",
+        "@rules_cc_autoconf//gnulib/m4/ffs",
+        "@rules_cc_autoconf//gnulib/m4/strerror_r",
+        # Gnulib modules for standard header checks
+        "@rules_cc_autoconf//gnulib/m4/inttypes_h",
+        "@rules_cc_autoconf//gnulib/m4/stdint_h",
+        "@rules_cc_autoconf//gnulib/m4/stdlib_h",
+        "@rules_cc_autoconf//gnulib/m4/string_h",
+        "@rules_cc_autoconf//gnulib/m4/sys_stat_h",
+        "@rules_cc_autoconf//gnulib/m4/sys_types_h",
+        "@rules_cc_autoconf//gnulib/m4/unistd_h",
+    ],
+)
+
+# Generate config.h from config.h.in template
+autoconf_hdr(
+    name = "config",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+# Generate grammar.y from grammar.y.in
+# REENTRANT_PARSER substitution - use modern bison syntax (%define api.pure)
+# since rules_bison provides bison 3.3.2 which supports it
+autoconf_hdr(
+    name = "grammar_y",
+    out = "grammar.y",
+    template = "grammar.y.in",
+    deps = [":autoconf"],
+)
+
+# Generate grammar.c and grammar.h from grammar.y using bison
+# The bison rule automatically generates both .c and .h files
+# Prefix and other options should be specified in the .y file itself
+# Based on Makefile.in: $(BISON_BYACC) -p pcap_ -o grammar.c -d $<
+libpcap_bison(
+    name = "grammar",
+    srcs = [":grammar_y"],
+    outs = [
+        "grammar.c",
+        "grammar.h",
+    ],
+    args = [
+        "-p",
+        "pcap_",
+        "-o",
+        "$(execpath grammar.c)",
+        "-d",
+        "$(execpath :grammar_y)",
+    ],
+    bison = "@bison",
+)
+
+# Generate scanner.c and scanner.h from scanner.l using flex
+# Based on Makefile.in: $(LEX) -P pcap_ --header-file=scanner.h --nounput -o scanner.c $<
+libpcap_flex(
+    name = "scanner",
+    srcs = ["scanner.l"],
+    outs = [
+        "scanner.c",
+        "scanner.h",
+    ],
+    args = [
+        "-P",
+        "pcap_",
+        "--header-file=$(execpath scanner.h)",
+        "--nounput",
+        "-o",
+        "$(execpath scanner.c)",
+        "$(execpath scanner.l)",
+    ],
+    flex = "@flex",
+)
+
+# Common source files for all platforms
+LIBPCAP_COMMON_SRCS = [
+    "bpf_dump.c",
+    "bpf_filter.c",
+    "bpf_image.c",
+    "etherent.c",
+    "fmtutils.c",
+    "gencode.c",
+    "nametoaddr.c",
+    "optimize.c",
+    "pcap-common.c",
+    "pcap-util.c",
+    "pcap.c",
+    "savefile.c",
+    "sf-pcapng.c",
+    "sf-pcap.c",
+    "missing/asprintf.c",
+]
+
+# Platform-specific missing implementations
+# strlcpy is not available on Linux, so include the missing implementation
+LIBPCAP_MISSING_SRCS = select({
+    "@platforms//os:linux": ["missing/strlcpy.c"],
+    "//conditions:default": [],
+})
+
+# Platform-specific capture sources
+LIBPCAP_PLATFORM_SRCS = select({
+    "@platforms//os:freebsd": ["pcap-bpf.c"],
+    "@platforms//os:linux": [
+        "pcap-linux.c",
+        "pcap-usb-linux.c",
+        "pcap-netfilter-linux.c",
+    ],
+    "@platforms//os:macos": ["pcap-bpf.c"],
+    "@platforms//os:openbsd": ["pcap-bpf.c"],
+    "@platforms//os:windows": ["pcap-win32.c"],
+    "//conditions:default": ["pcap-null.c"],
+})
+
+# Find all devices implementation
+LIBPCAP_FAD_SRCS = select({
+    "@platforms//os:freebsd": ["fad-getad.c"],
+    "@platforms//os:linux": ["fad-getad.c"],
+    "@platforms//os:macos": ["fad-getad.c"],
+    "@platforms//os:openbsd": ["fad-getad.c"],
+    "//conditions:default": ["fad-getad.c"],
+})
+
+# Remote capture support (optional but commonly used)
+LIBPCAP_REMOTE_SRCS = [
+    # "pcap-rpcap.c",
+    # "rpcap-protocol.c",
+    # "sockutils.c",
+]
+
+# Headers
+LIBPCAP_PUBLIC_HDRS = [
+    "pcap.h",
+    "pcap-bpf.h",
+    "pcap-namedb.h",
+] + glob(["pcap/*.h"])
+
+LIBPCAP_PRIVATE_HDRS = glob(
+    ["*.h"],
+    exclude = [
+        "pcap.h",
+        "pcap-bpf.h",
+        "pcap-namedb.h",
+    ],
+)
+
+[
+    cc_library(
+        name = name,
+        srcs = LIBPCAP_COMMON_SRCS +
+               LIBPCAP_PLATFORM_SRCS +
+               LIBPCAP_FAD_SRCS +
+               LIBPCAP_REMOTE_SRCS +
+               LIBPCAP_MISSING_SRCS +
+               LIBPCAP_PRIVATE_HDRS + [
+            ":grammar",
+            ":scanner",
+        ],
+        hdrs = LIBPCAP_PUBLIC_HDRS,
+        # copts = LIBPCAP_COPTS,
+        includes = ["."],
+        linkstatic = linkstatic,
+        local_defines = [
+            "HAVE_CONFIG_H",
+        ],
+        textual_hdrs = [":config"],
+        visibility = ["//visibility:public"],
+    )
+    for name, linkstatic in {
+        "pcap": False,
+        "pcap_static": True,
+    }.items()
+]
+
+alias(
+    name = "libpcap",
+    actual = ":pcap",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libpcap_static",
+    actual = ":pcap_static",
+    visibility = ["//visibility:public"],
+)
+
+##############################################################################
+## Tests
+##############################################################################
+
+# can_set_rfmon_test requires a device name as argument
+# Usage: can_set_rfmon_test <device>
+cc_test(
+    name = "can_set_rfmon_test",
+    srcs = ["testprogs/can_set_rfmon_test.c"],
+    # Mark as manual since it requires a network device argument
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
+
+# capturetest requires device name and other options
+# Usage: capturetest [options] [filter expression]
+cc_test(
+    name = "capturetest",
+    srcs = ["testprogs/capturetest.c"],
+    # Mark as manual since it requires a network device
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
+
+# filtertest requires datalink type and filter expression
+# Usage: filtertest [options] <datalink type> <filter expression>
+# Can test with pcap_open_dead() which doesn't require a real device
+cc_test(
+    name = "filtertest",
+    srcs = ["testprogs/filtertest.c"],
+    # Test with a simple filter expression using EN10MB datalink type
+    args = [
+        "EN10MB",
+        "host",
+        "192.168.1.1",
+    ],
+    deps = [":libpcap"],
+)
+
+# findalldevstest can run without arguments (just lists devices)
+cc_test(
+    name = "findalldevstest",
+    srcs = ["testprogs/findalldevstest.c"],
+    # Can run without arguments, but may fail if no devices available
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
+
+# findalldevstest-perf performance test
+cc_test(
+    name = "findalldevstest-perf",
+    srcs = ["testprogs/findalldevstest-perf.c"],
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
+
+# opentest requires device name and options
+# Usage: opentest [options] <device>
+cc_test(
+    name = "opentest",
+    srcs = ["testprogs/opentest.c"],
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
+
+# reactivatetest doesn't require arguments (hardcoded to use "lo0" or "lo")
+# It tests that pcap_activate() fails on an already-activated pcap_t
+cc_test(
+    name = "reactivatetest",
+    srcs = ["testprogs/reactivatetest.c"],
+    # May fail if loopback interface is not available
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
+
+# writecaptest requires device name, savefile, and other options
+# Usage: writecaptest [options] -w <savefile> [filter expression]
+cc_test(
+    name = "writecaptest",
+    srcs = ["testprogs/writecaptest.c"],
+    tags = ["manual"],
+    deps = [":libpcap"],
+)
