@@ -13,8 +13,7 @@ def libarchive_test(name = None, tests = None, data = None, deps = [], **kwargs)
     )
     cc_test(
         name = name,
-        includes = ["."],
-        strip_include_prefix = "_{}_list_h".format(name),
+        includes = ["_{}_list_h".format(name)],
         srcs = ["//test_utils:test_main.c"] + ["{}.c".format(name)] + ["_{}_list_h/list.h".format(name)],
         data = data,
         deps = deps + [
