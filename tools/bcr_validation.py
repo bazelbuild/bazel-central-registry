@@ -89,6 +89,11 @@ GITHUB_URL_RE = re.compile(r"^https://github.com/([^/]+/[^/]+)")
 # Global cache for GitHub user IDs
 GITHUB_USER_ID_CACHE = {}
 
+# For the following modules, going from a release with attestations to one without
+# is merely a warning, not a fatal error.
+# TODO(fweikert): enforce compliance once attestation feature is more widely used.
+ATTESTATION_HISTORY_CHECK_OPT_OUT = frozenset(["protobuf"])
+
 
 def print_collapsed_group(name):
     print("\n\n--- {0}\n\n".format(name))
@@ -580,7 +585,7 @@ class BcrValidator:
                         f"The patch file `{patch_name}` is a symlink to `{patch_file.readlink()}`, "
                         "which is not allowed because https://raw.githubusercontent.com/ will not follow it.",
                     )
-                apply_patch(source_root, source["patch_strip"], str(patch_file.resolve()))
+                apply_patch(source_root, int(source.get("patch_strip", 0)), str(patch_file.resolve()))
         if "overlay" in source:
             overlay_dir = self.registry.get_overlay_dir(module_name, version)
             for overlay_file, expected_integrity in source["overlay"].items():
@@ -618,10 +623,10 @@ class BcrValidator:
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(overlay_src, overlay_dst)
 
+        bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
         source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
         if source_module_dot_bazel.exists():
             source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
-            bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
             bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
             source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
             bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
@@ -867,8 +872,13 @@ class BcrValidator:
         attestations_json = self.registry.get_attestations(module_name, version)
         if not attestations_json:
             if head_attestations_json:  # Prevent regressions.
+                verdict = (
+                    BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW
+                    if module_name in ATTESTATION_HISTORY_CHECK_OPT_OUT
+                    else BcrValidationResult.FAILED
+                )
                 self.report(
-                    BcrValidationResult.FAILED,
+                    verdict,
                     f"{module_name}@{version}: No attestations.json file even though "
                     f"{module_name}@{head_snapshot.version} has one.",
                 )

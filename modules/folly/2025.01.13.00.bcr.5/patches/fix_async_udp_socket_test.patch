@@ -1,0 +1,57 @@
+diff --git a/folly/io/async/test/AsyncUDPSocketTest.cpp b/folly/io/async/test/AsyncUDPSocketTest.cpp
+index 632873c8c..1d71c9bf1 100644
+--- a/folly/io/async/test/AsyncUDPSocketTest.cpp
++++ b/folly/io/async/test/AsyncUDPSocketTest.cpp
+@@ -130,7 +130,10 @@ class UDPServer {
+       acceptors_.emplace_back(
+           &evb, i, changePortForWrites_, socket_->address());
+ 
+-      std::thread t([&]() { evb.loopForever(); });
++      // Store a pointer to evb so the capture below does not capture the local reference, which
++      // will point to the last evb instead of the intended instance.
++      auto* evbPtr = &evb;
++      std::thread t([evbPtr]() { evbPtr->loopForever(); });
+ 
+       evb.waitUntilRunning();
+ 
+@@ -146,16 +149,25 @@ class UDPServer {
+ 
+   void shutdown() {
+     CHECK(evb_->isInEventBaseThread());
++    if (!socket_) {
++      return;
++    }
++    socket_->pauseAccepting();
+     socket_->close();
+-    socket_.reset();
+ 
+     for (auto& evb : evbs_) {
++      evb.runInEventBaseThreadAndWait([] {
++        // barrier: ensures prior queued callbacks execute before we terminate
++      });
+       evb.terminateLoopSoon();
+     }
+ 
+     for (auto& t : threads_) {
+       t.join();
+     }
++
++    threads_.clear();
++    socket_.reset();
+   }
+ 
+   void pauseAccepting() { socket_->pauseAccepting(); }
+@@ -470,8 +482,11 @@ class AsyncSocketIntegrationTest : public Test {
+ 
+   void TearDown() override {
+     // Shutdown server
+-    sevb.runInEventBaseThread([&]() {
+-      server->shutdown();
++    sevb.runInEventBaseThreadAndWait([&]() {
++      if (server) {
++        server->shutdown();
++        server.reset();  // destroy on sevb thread
++      }
+       sevb.terminateLoopSoon();
+     });
+ 
