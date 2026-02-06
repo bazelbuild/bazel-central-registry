@@ -1,0 +1,245 @@
+diff --git tests/api.sh tests/api.sh
+old mode 100644
+new mode 100755
+index 01f37c49..0c8c6960
+--- tests/api.sh
++++ tests/api.sh
+@@ -15,6 +15,8 @@
+ 
+ TESTBIN="$1"
+ TESTDIR=$(dirname "$0")
++ZENOHD="${2:-zenohd}"
++LOGFILE=$(basename "$1")
+ 
+ if [ "$OSTYPE" = "msys" ]; then
+   TESTBIN="$TESTDIR/Debug/$TESTBIN.exe"
+@@ -28,7 +30,7 @@ echo "------------------ Running test $TESTBIN -------------------"
+ 
+ sleep 5
+ 
+-if [ ! -f zenohd ]; then
++if [ ! -f $ZENOHD ]; then
+     git clone https://github.com/eclipse-zenoh/zenoh.git zenoh-git
+     cd zenoh-git || exit
+     if [ -n "$ZENOH_BRANCH" ]; then
+@@ -36,18 +38,16 @@ if [ ! -f zenohd ]; then
+     fi
+     rustup show
+     cargo build --lib --bin zenohd
+-    cp ./target/debug/zenohd "$TESTDIR"/
++    ZENOHD="./target/debug/zenohd"
+     cd "$TESTDIR"|| exit
+ fi
+ 
+-chmod +x zenohd
+-
+ LOCATORS="tcp/127.0.0.1:7447"
+ for LOCATOR in $(echo "$LOCATORS" | xargs); do
+     sleep 1
+ 
+     echo "> Running zenohd ... $LOCATOR"
+-    RUST_LOG=debug ./zenohd --plugin-search-dir "$TESTDIR/zenoh-git/target/debug" -l "$LOCATOR" > zenohd."$1".log 2>&1 &
++    RUST_LOG=debug $ZENOHD --plugin-search-dir ".." -l "$LOCATOR" > $PWD/zenohd."$LOGFILE".log 2>&1 &
+     ZPID=$!
+ 
+     sleep 5
+@@ -62,7 +62,7 @@ for LOCATOR in $(echo "$LOCATORS" | xargs); do
+     sleep 1
+ 
+     echo "> Logs of zenohd ..."
+-    cat zenohd."$1".log
++    cat $PWD/zenohd."$LOGFILE".log
+ 
+     [ "$RETCODE" -lt 0 ] && exit "$RETCODE"
+ done
+diff --git tests/routed.sh tests/routed.sh
+old mode 100644
+new mode 100755
+index 9608b0ef..1b075836
+--- tests/routed.sh
++++ tests/routed.sh
+@@ -15,6 +15,9 @@
+ 
+ TESTBIN="$1"
+ TESTDIR=$(dirname "$0")
++ZENOHD="${3:-zenohd}"
++LOGFILE=$(basename "$1")
++OPENSSL="${4:-openssl}"
+ 
+ if [ "$OSTYPE" = "msys" ]; then
+   TESTBIN="$TESTDIR/Debug/$TESTBIN.exe"
+@@ -28,7 +31,7 @@ echo "------------------ Running test $TESTBIN -------------------"
+ 
+ sleep 5
+ 
+-if [ ! -f zenohd ]; then
++if [ ! -f $ZENOHD ]; then
+     git clone https://github.com/eclipse-zenoh/zenoh.git zenoh-git
+     cd zenoh-git || exit
+     if [ -n "$ZENOH_BRANCH" ]; then
+@@ -36,11 +39,10 @@ if [ ! -f zenohd ]; then
+     fi
+     rustup show
+     cargo build --lib --bin zenohd
+-    cp ./target/debug/zenohd "$TESTDIR"/
++    ZENOHD="./target/debug/zenohd"
+     cd "$TESTDIR" || exit
+ fi
+ 
+-chmod +x zenohd
+ 
+ LOCATORS="tcp/127.0.0.1:7447 tcp/[::1]:7447 udp/127.0.0.1:7447 udp/[::1]:7447"
+ ENABLE_TLS=0
+@@ -63,9 +65,9 @@ CN = localhost
+ subjectAltName = DNS:localhost,IP:127.0.0.1,IP:::1
+ EOF
+ 
+-    openssl req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca.pem -days 365 -nodes -subj "/CN=Test CA"
+-    openssl req -newkey rsa:2048 -keyout server-key.pem -out server.csr -nodes -config server.cnf
+-    openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server.pem -days 365 \
++    $OPENSSL req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca.pem -days 365 -nodes -subj "/CN=Test CA"
++    $OPENSSL req -newkey rsa:2048 -keyout server-key.pem -out server.csr -nodes -config server.cnf
++    $OPENSSL x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server.pem -days 365 \
+         -extfile server.cnf -extensions san
+     rm server.csr server.cnf
+ fi
+@@ -87,16 +89,16 @@ for LOCATOR in $(echo "$LOCATORS" | xargs); do
+   }
+ }
+ EOF
+-        RUST_LOG=debug ./zenohd -c zenohd_tls.json --plugin-search-dir "$TESTDIR/zenoh-git/target/debug" -l "$LOCATOR" > zenohd."$1".log 2>&1 &
++        RUST_LOG=debug $ZENOHD -c zenohd_tls.json --plugin-search-dir ".." -l "$LOCATOR" > $PWD/zenohd."$LOGFILE".log 2>&1 &
+     else
+-        RUST_LOG=debug ./zenohd --plugin-search-dir "$TESTDIR/zenoh-git/target/debug" -l "$LOCATOR" > zenohd."$1".log 2>&1 &
++        RUST_LOG=debug $ZENOHD --plugin-search-dir ".." -l "$LOCATOR" > $PWD/zenohd."$LOGFILE".log 2>&1 &
+     fi
+     ZPID=$!
+ 
+     sleep 5
+ 
+     echo "> Running $TESTBIN ..."
+-    "$TESTBIN" "$LOCATOR" > client."$1".log 2>&1
++    "$TESTBIN" "$LOCATOR" > $PWD/client."$LOGFILE".log 2>&1
+     RETCODE=$?
+ 
+     echo "> Stopping zenohd ..."
+@@ -106,9 +108,9 @@ EOF
+ 
+     if [ "$RETCODE" -lt 0 ]; then
+         echo "> Logs of client ..."
+-        cat client."$1".log
++        cat $PWD/client."$LOGFILE".log
+         echo "> Logs of zenohd ..."
+-        cat zenohd."$1".log
++        cat $PWD/client."$LOGFILE".log
+         exit "$RETCODE"
+     fi
+ done
+diff --git tests/tls_verify.sh tests/tls_verify.sh
+index 673d6d80..a72a6426 100755
+--- tests/tls_verify.sh
++++ tests/tls_verify.sh
+@@ -15,6 +15,9 @@
+ 
+ TESTBIN="$1"
+ TESTDIR=$(dirname "$0")
++ZENOHD="${2:-zenohd}"
++LOGFILE=$(basename "$1")
++OPENSSL="${3:-openssl}"
+ 
+ if [ "$OSTYPE" = "msys" ]; then
+   TESTBIN="$TESTDIR/Debug/$TESTBIN.exe"
+@@ -24,19 +27,17 @@ fi
+ 
+ cd "$TESTDIR" || exit 1
+ 
+-if [ ! -f zenohd ]; then
++if [ ! -f $ZENOHD ]; then
+     git clone https://github.com/eclipse-zenoh/zenoh.git zenoh-git
+     cd zenoh-git || exit 1
+     if [ -n "$ZENOH_BRANCH" ]; then
+         git switch "$ZENOH_BRANCH"
+     fi
+     cargo build --lib --bin zenohd
+-    cp ./target/debug/zenohd "$TESTDIR"/
++    ZENOHD="./target/debug/zenohd"
+     cd "$TESTDIR" || exit 1
+ fi
+ 
+-chmod +x zenohd
+-
+ rm -f ca.pem ca-key.pem ca.srl server.pem server-key.pem server.csr
+ cat > server.cnf <<EOF
+ [ req ]
+@@ -51,9 +52,9 @@ CN = localhost
+ subjectAltName = DNS:localhost
+ EOF
+ 
+-openssl req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca.pem -days 30 -nodes -subj "/CN=Test CA"
+-openssl req -newkey rsa:2048 -keyout server-key.pem -out server.csr -nodes -config server.cnf
+-openssl x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server.pem -days 30 \
++$OPENSSL req -x509 -newkey rsa:2048 -keyout ca-key.pem -out ca.pem -days 30 -nodes -subj "/CN=Test CA"
++$OPENSSL req -newkey rsa:2048 -keyout server-key.pem -out server.csr -nodes -config server.cnf
++$OPENSSL x509 -req -in server.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out server.pem -days 30 \
+     -extfile server.cnf -extensions san
+ rm -f server.csr server.cnf
+ 
+@@ -72,8 +73,8 @@ keyUsage = critical, digitalSignature, keyEncipherment
+ extendedKeyUsage = clientAuth
+ EOF
+ 
+-openssl req -newkey rsa:2048 -keyout client-key.pem -out client.csr -nodes -config client.cnf
+-openssl x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out client.pem -days 30 \
++$OPENSSL req -newkey rsa:2048 -keyout client-key.pem -out client.csr -nodes -config client.cnf
++$OPENSSL x509 -req -in client.csr -CA ca.pem -CAkey ca-key.pem -CAcreateserial -out client.pem -days 30 \
+     -extfile client.cnf -extensions v3_req
+ rm -f client.csr client.cnf
+ 
+@@ -82,9 +83,9 @@ cat > zenohd_tls.json <<EOF
+   "transport": {
+     "link": {
+       "tls": {
+-        "root_ca_certificate": "$TESTDIR/ca.pem",
+-        "listen_private_key": "$TESTDIR/server-key.pem",
+-        "listen_certificate": "$TESTDIR/server.pem"
++        "root_ca_certificate": "ca.pem",
++        "listen_private_key": "server-key.pem",
++        "listen_certificate": "server.pem"
+       }
+     }
+   }
+@@ -98,14 +99,14 @@ run_test() {
+     expect_success="$2"
+     config_file="${3:-zenohd_tls.json}"
+ 
+-    echo "> Running ./zenohd -c $config_file -l ${LOC_BASE} ..."
+-    RUST_LOG=warn ./zenohd -c "$config_file" --plugin-search-dir "$TESTDIR/zenoh-git/target/debug" \
+-        -l "$LOC_BASE" > zenohd.z_tls_verify.log 2>&1 &
++    echo "> Running $ZENOHD -c $config_file -l ${LOC_BASE} ..."
++    RUST_LOG=debug $ZENOHD -c "$config_file" --plugin-search-dir ".." \
++        -l "$LOC_BASE" > $PWD/zenohd.z_tls_verify.log 2>&1 &
+     ZPID=$!
+     sleep 5
+ 
+     echo "> Running $TESTBIN \"$locator\" ..."
+-    "$TESTBIN" "$locator" --msgs=1 > client.z_tls_verify.log 2>&1
++    "$TESTBIN" "$locator" --msgs=1 > $PWD/client.z_tls_verify.log 2>&1
+     RETCODE=$?
+ 
+     echo "> Stopping zenohd ..."
+@@ -116,13 +117,13 @@ run_test() {
+     if [ "$expect_success" = "1" ]; then
+         if [ "$RETCODE" -ne 0 ]; then
+             echo "Expected success but client exited with $RETCODE" >&2
+-            cat client.z_tls_verify.log >&2
++            cat $PWD/client.z_tls_verify.log >&2
+             exit 1
+         fi
+     else
+         if [ "$RETCODE" -eq 0 ]; then
+             echo "Expected failure but client succeeded" >&2
+-            cat client.z_tls_verify.log >&2
++            cat $PWD/client.z_tls_verify.log >&2
+             exit 1
+         fi
+     fi

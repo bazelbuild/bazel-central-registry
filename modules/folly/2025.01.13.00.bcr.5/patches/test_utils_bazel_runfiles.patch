@@ -1,0 +1,33 @@
+diff --git a/folly/testing/TestUtil.cpp b/folly/testing/TestUtil.cpp
+index cadf8757f..3b756bbed 100644
+--- a/folly/testing/TestUtil.cpp
++++ b/folly/testing/TestUtil.cpp
+@@ -38,6 +38,8 @@
+ // in various headers that we include.
+ #include <boost/regex.hpp>
+ 
++#include "tools/cpp/runfiles/runfiles.h"
++
+ namespace folly {
+ namespace test {
+ 
+@@ -236,10 +238,15 @@ fs::path find_resource(const std::string& resource) {
+   if (pos == std::string::npos) {
+     throw std::invalid_argument("invalid: " + resource);
+   }
+-  auto const ext = folly::ext::test_find_resource;
+-  auto fn = ext //
+-      ? fs::path(ext(resource)) // hooked, eg via internal extension
+-      : fs::executable_path().parent_path() / resource; // current cmake build
++
++  using bazel::tools::cpp::runfiles::Runfiles;
++  std::string error;
++  std::unique_ptr<Runfiles> runfiles(Runfiles::CreateForTest(BAZEL_CURRENT_REPOSITORY, &error));
++  if (runfiles == nullptr) {
++    throw std::runtime_error("error initializing bazel runfiles: " + error);
++  }
++  const fs::path fn = runfiles->Rlocation(std::string("folly/") + resource);
++
+   if (!fs::exists(fn)) {
+     throw std::runtime_error("missing: " + resource);
+   }

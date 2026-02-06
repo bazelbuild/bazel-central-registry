@@ -38,7 +38,7 @@ modules/
       presubmit.yml
       # optional:
       patches/*.patch
-      overlays/**/*
+      overlay/**/*
       README.md (e.g., document BUILD overlays)
 ```
 
