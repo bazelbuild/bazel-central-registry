@@ -14,6 +14,7 @@
 
 # Adapted from https://github.com/bazelbuild/rules_rust/pull/392
 
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_rust//rust:rust_common.bzl", "CrateInfo", "DepInfo")
 load(":cargo_manifest.bzl", "CargoManifestInfo", "cargo_manifest_aspect")
 
