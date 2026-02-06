@@ -1,0 +1,204 @@
+# Copyright 2025 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Config flag to enable zenoh-pico
+
+bool_flag(
+    name = "use_zenoh_pico",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "use_zenoh_pico_true",
+    flag_values = {
+        ":use_zenoh_pico": "True",
+    },
+)
+
+# Build the library
+
+cc_library(
+    name = "zenoh-cpp",
+    hdrs = glob(["include/**"]),
+    defines = select({
+        ":use_zenoh_pico_true": ["ZENOHCXX_ZENOHPICO"],
+        "//conditions:default": ["ZENOHCXX_ZENOHC"],
+    }),
+    includes = ["include"],
+    deps = select({
+        ":use_zenoh_pico_true": ["@zenoh-pico"],
+        "//conditions:default": ["@zenoh-c"],
+    }),
+)
+
+# Universal tests
+
+alias(
+    name = "zenohd",
+    actual = "@zenoh//zenohd",
+)
+
+UNIVERSAL_TESTS = {
+    "tests_build_warnings": "tests/build/warnings.cxx",
+    "tests_universal_bytes": "tests/universal/bytes.cxx",
+    "tests_universal_closures": "tests/universal/closures.cxx",
+    "tests_universal_details": "tests/universal/details.cxx",
+    "tests_universal_network_advanced_pub_sub": "tests/universal/network/advanced_pub_sub.cxx",
+    "tests_universal_network_cancellation": "tests/universal/network/cancellation.cxx",
+    "tests_universal_network_keyexpr": "tests/universal/network/keyexpr.cxx",
+    "tests_universal_network_liveliness": "tests/universal/network/liveliness.cxx",
+    "tests_universal_network_pub_sub": "tests/universal/network/pub_sub.cxx",
+    "tests_universal_network_queryable_get": "tests/universal/network/queryable_get.cxx",
+    "tests_universal_network_source_info": "tests/universal/network/source_info.cxx",
+    "tests_universal_serialization": "tests/universal/serialization.cxx",
+}
+
+[
+    cc_binary(
+        name = "{}_bin".format(name),
+        srcs = [src],
+        copts = [
+            "-Wno-parentheses",
+            "-Wno-sign-compare",
+            "-Wno-unused-variable",
+        ],
+        deps = ["//:zenoh-cpp"],
+    )
+    for name, src in UNIVERSAL_TESTS.items()
+]
+
+[
+    sh_test(
+        name = name,
+        srcs = ["tests/run_with_router.sh"],
+        args = [
+            "$(location :{}_bin)".format(name),
+            "$(location :zenohd)",
+        ],
+        data = [
+            ":{}_bin".format(name),
+            ":zenohd",
+        ],
+        tags = [
+            "exclusive",
+            "requires-network",
+        ],
+    )
+    for name in UNIVERSAL_TESTS.keys()
+]
+
+# zenoh-pico tests
+
+ZENOH_PICO_TESTS = {
+    "tests_zenohpico_network_batching": "tests/zenohpico/network/batching.cxx",
+    "tests_zenohpico_config": "tests/zenohpico/config.cxx",
+    "tests_zenohpico_network_tasks": "tests/zenohpico/network/tasks.cxx",
+}
+
+[
+    cc_binary(
+        name = "{}_bin".format(name),
+        srcs = [src],
+        copts = [
+            "-Wno-parentheses",
+            "-Wno-sign-compare",
+            "-Wno-unused-variable",
+        ],
+        target_compatible_with = select({
+            "//:use_zenoh_pico_true": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+        deps = ["//:zenoh-cpp"],
+    )
+    for name, src in ZENOH_PICO_TESTS.items()
+]
+
+[
+    sh_test(
+        name = name,
+        srcs = ["tests/run_with_router.sh"],
+        args = [
+            "$(location :{}_bin)".format(name),
+            "$(location :zenohd)",
+        ],
+        data = [
+            ":{}_bin".format(name),
+            ":zenohd",
+        ],
+        tags = [
+            "exclusive",
+            "requires-network",
+        ],
+        target_compatible_with = select({
+            "//:use_zenoh_pico_true": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+    )
+    for name in ZENOH_PICO_TESTS.keys()
+]
+
+# zenoh-c tests
+
+ZENOH_C_TESTS = {
+    "tests_zenohc_config": "tests/zenohc/config.cxx",
+    "tests_zenohc_shm_api": "tests/zenohc/shm_api.cxx",
+}
+
+[
+    cc_binary(
+        name = "{}_bin".format(name),
+        srcs = [src],
+        copts = [
+            "-Wno-parentheses",
+            "-Wno-sign-compare",
+            "-Wno-unused-variable",
+        ],
+        target_compatible_with = select({
+            "//:use_zenoh_pico_true": ["@platforms//:incompatible"],
+            "//conditions:default": [],
+        }),
+        deps = ["//:zenoh-cpp"],
+    )
+    for name, src in ZENOH_C_TESTS.items()
+]
+
+[
+    sh_test(
+        name = name,
+        srcs = ["tests/run_with_router.sh"],
+        args = [
+            "$(location :{}_bin)".format(name),
+            "$(location :zenohd)",
+        ],
+        data = [
+            ":{}_bin".format(name),
+            ":zenohd",
+        ],
+        tags = [
+            "exclusive",
+            "requires-network",
+        ],
+        target_compatible_with = select({
+            "//:use_zenoh_pico_true": ["@platforms//:incompatible"],
+            "//conditions:default": [],
+        }),
+    )
+    for name in ZENOH_C_TESTS.keys()
+]
