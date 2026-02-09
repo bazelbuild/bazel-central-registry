@@ -1,6 +1,37 @@
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
+ELF_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_sysv_elf_gas",
+    "@platforms//cpu:x86_32": "i386_sysv_elf_gas",
+    "@platforms//cpu:aarch64": "arm64_aapcs_elf_gas",
+    "@platforms//cpu:arm": "arm_aapcs_elf_gas",
+    "@platforms//cpu:riscv64": "riscv64_sysv_elf_gas",
+    "@platforms//cpu:ppc64le": "ppc64_sysv_elf_gas",
+    "@platforms//cpu:mips64": "mips64_n64_elf_gas",
+    "@platforms//cpu:s390x": "s390x_sysv_elf_gas",
+}
+
+# 2. Apple (macOS / iOS) Platforms
+MACHO_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_sysv_macho_gas",
+    "@platforms//cpu:x86_32": "i386_sysv_macho_gas",
+    "@platforms//cpu:aarch64": "arm64_aapcs_macho_gas",
+    "@platforms//cpu:arm": "arm_aapcs_macho_gas",
+}
+
+# 3. Windows MSVC (PE / MASM)
+MSVC_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_ms_pe_masm",
+    "@platforms//cpu:x86_32": "i386_ms_pe_masm",
+}
+
+# 4. Windows MinGW / Clang (PE / GAS)
+MINGW_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_ms_pe_clang_gas",
+    "@platforms//cpu:x86_32": "i386_ms_pe_clang_gas",
+}
+
 string_flag(
     name = "win-compile",
     build_setting_default = "win-msvc",
@@ -21,61 +52,55 @@ config_setting(
     flag_values = {":win-compile": "win-mingw"},
 )
 
+# ELF (Linux)
 filegroup(
     name = "elf_asm",
     srcs = select({
-        "@platforms//cpu:aarch64": [
-            "src/asm/jump_arm64_aapcs_elf_gas.S",
-            "src/asm/make_arm64_aapcs_elf_gas.S",
-            "src/asm/ontop_arm64_aapcs_elf_gas.S",
-        ],
-        "@platforms//cpu:arm": [
-            "src/asm/jump_arm_aapcs_elf_gas.S",
-            "src/asm/make_arm_aapcs_elf_gas.S",
-            "src/asm/ontop_arm_aapcs_elf_gas.S",
-        ],
-        "@platforms//cpu:x86_32": [
-            "src/asm/jump_i386_sysv_elf_gas.S",
-            "src/asm/make_i386_sysv_elf_gas.S",
-            "src/asm/ontop_i386_sysv_elf_gas.S",
-        ],
-        "@platforms//cpu:x86_64": [
-            "src/asm/jump_x86_64_sysv_elf_gas.S",
-            "src/asm/make_x86_64_sysv_elf_gas.S",
-            "src/asm/ontop_x86_64_sysv_elf_gas.S",
-        ],
+        target: [
+            "src/asm/jump_" + suffix + ".S",
+            "src/asm/make_" + suffix + ".S",
+            "src/asm/ontop_" + suffix + ".S",
+        ]
+        for target, suffix in ELF_PLATFORMS.items()
     }),
 )
 
+# Apple
+filegroup(
+    name = "apple_asm",
+    srcs = select({
+        target: [
+            "src/asm/jump_" + suffix + ".S",
+            "src/asm/make_" + suffix + ".S",
+            "src/asm/ontop_" + suffix + ".S",
+        ]
+        for target, suffix in MACHO_PLATFORMS.items()
+    }),
+)
+
+# Windows MSVC (.asm)
 filegroup(
     name = "windows_asm_msvc",
     srcs = select({
-        "@platforms//cpu:x86_32": [
-            "src/asm/jump_i386_ms_pe_masm.asm",
-            "src/asm/make_i386_ms_pe_masm.asm",
-            "src/asm/ontop_i386_ms_pe_masm.asm",
-        ],
-        "@platforms//cpu:x86_64": [
-            "src/asm/jump_x86_64_ms_pe_masm.asm",
-            "src/asm/make_x86_64_ms_pe_masm.asm",
-            "src/asm/ontop_x86_64_ms_pe_masm.asm",
-        ],
+        target: [
+            "src/asm/jump_" + suffix + ".asm",
+            "src/asm/make_" + suffix + ".asm",
+            "src/asm/ontop_" + suffix + ".asm",
+        ]
+        for target, suffix in MSVC_PLATFORMS.items()
     }),
 )
 
+# Windows MinGW ( .S)
 filegroup(
     name = "windows_asm_mingw",
     srcs = select({
-        "@platforms//cpu:x86_32": [
-            "src/asm/jump_i386_ms_pe_clang_gas.S",
-            "src/asm/make_i386_ms_pe_clang_gas.S",
-            "src/asm/ontop_i386_ms_pe_clang_gas.S",
-        ],
-        "@platforms//cpu:x86_64": [
-            "src/asm/jump_x86_64_ms_pe_clang_gas.S",
-            "src/asm/make_x86_64_ms_pe_clang_gas.S",
-            "src/asm/ontop_x86_64_ms_pe_clang_gas.S",
-        ],
+        target: [
+            "src/asm/jump_" + suffix + ".S",
+            "src/asm/make_" + suffix + ".S",
+            "src/asm/ontop_" + suffix + ".S",
+        ]
+        for target, suffix in MINGW_PLATFORMS.items()
     }),
 )
 
@@ -87,36 +112,15 @@ filegroup(
     }),
 )
 
-filegroup(
-    name = "apple_asm",
-    srcs = select({
-        "@platforms//cpu:aarch64": [
-            "src/asm/jump_arm64_aapcs_macho_gas.S",
-            "src/asm/make_arm64_aapcs_macho_gas.S",
-            "src/asm/ontop_arm64_aapcs_macho_gas.S",
-        ],
-        "@platforms//cpu:arm": [
-            "src/asm/jump_arm_aapcs_macho_gas.S",
-            "src/asm/make_arm_aapcs_macho_gas.S",
-            "src/asm/ontop_arm_aapcs_macho_gas.S",
-        ],
-        "@platforms//cpu:x86_32": [
-            "src/asm/jump_i386_sysv_macho_gas.S",
-            "src/asm/make_i386_sysv_macho_gas.S",
-            "src/asm/ontop_i386_sysv_macho_gas.S",
-        ],
-        "@platforms//cpu:x86_64": [
-            "src/asm/jump_x86_64_sysv_macho_gas.S",
-            "src/asm/make_x86_64_sysv_macho_gas.S",
-            "src/asm/ontop_x86_64_sysv_macho_gas.S",
-        ],
-    }),
-)
-
 cc_library(
     name = "boost.context",
     srcs = select({
         "@platforms//os:macos": [
+            "src/fcontext.cpp",
+            "src/posix/stack_traits.cpp",
+            ":apple_asm",
+        ],
+        "@platforms//os:ios": [
             "src/fcontext.cpp",
             "src/posix/stack_traits.cpp",
             ":apple_asm",
