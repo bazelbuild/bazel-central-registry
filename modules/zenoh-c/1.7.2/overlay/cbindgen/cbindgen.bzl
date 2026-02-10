@@ -19,45 +19,6 @@ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@rules_rust//rust:rust_common.bzl", "CrateInfo", "DepInfo")
 load(":cargo_manifest.bzl", "CargoManifestInfo", "cargo_manifest_aspect")
 
-_rust_cbindgen_library_doc = """\
-Generate C/C++ bindings to Rust code from `rust_library` targets
-
-`cbindgen` (see https://crates.io/crates/cbindgen) is a tool for generating C bindings to Rust code. This rule \
-allows for `rust_library` targets that have also specified `cdylib` or `staticlib` as their `crate_type` to \
-generate C/C++ bindings to be used in other rules that otherwise expect `cc_library` targets.
-
-Note that in order to use these rules, the following snippet must be added to your projects `WORKSPACE.bazel` file:
-
-```python
-load("@io_bazel_rules_rust//cbindgen:repositories.bzl", "rust_cbindgen_repositories")
-
-rust_cbindgen_repositories()
-```
-
-Basic Example:
-
-Below demonstrates a `rust_cbindgen_library` target being used with a `cc_binary` target. More thorough examples can \
-be seen in the `examples/cbindgen` directory of the `rules_rust` repository.
-
-```python
-rust_library(
-    name = "lib",
-    crate_type = "staticlib",
-)
-
-rust_cbindgen_library(
-    name = "lib_cbindgen",
-    lib = ":lib",
-)
-
-cc_binary(
-    name = "bin",
-    srcs = ["main.cc"],
-    deps = [":lib_cbindgen"],
-)
-```
-"""
-
 def _rust_cbindgen_library_impl(ctx):
     """'rust_cbindgen' rule implementation
 
@@ -220,7 +181,6 @@ def _rust_cbindgen_library_impl(ctx):
 
 rust_cbindgen_library = rule(
     implementation = _rust_cbindgen_library_impl,
-    doc = _rust_cbindgen_library_doc,
     attrs = {
         "lib": attr.label(
             doc = (
