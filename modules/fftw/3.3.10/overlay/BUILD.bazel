@@ -1,0 +1,320 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:private"])
+
+cc_library(
+    name = "config",
+    hdrs = ["config.h"],
+    deps = ["@rules_autoconf//:config"],
+)
+
+cc_library(
+    name = "internal_hdrs",
+    hdrs = glob(
+        [
+            "**/*.h",
+            "dft/simd/common/*.c",
+            "rdft/simd/common/*.c",
+        ],
+        exclude = ["api/fftw3.h"],
+    ),
+    deps = [":config"],
+)
+
+SIMD_BASE_INCLUDES = [
+    "api",
+    "kernel",
+    "dft",
+    "rdft",
+    "simd-support",
+]
+
+COMMON_COPTS = [
+    "-fno-strict-aliasing",
+    "-fomit-frame-pointer",
+    "-ffast-math",
+]
+
+# FFTW libraries for double and float precision
+[
+    [
+        cc_library(
+            name = "simd_support_sse2_{}".format(precision),
+            srcs = glob(
+                [
+                    "dft/simd/sse2/**/*.c",
+                    "rdft/simd/sse2/**/*.c",
+                ],
+                exclude = ["**/common/**"],
+            ) + [
+                "simd-support/sse2.c",
+                "simd-support/taint.c",
+            ],
+            copts = COMMON_COPTS + [
+                "-w",
+                "-msse2",
+            ],
+            includes = SIMD_BASE_INCLUDES + [
+                "dft/simd/sse2",
+                "rdft/simd/sse2",
+            ],
+            local_defines = ["FFTW_SINGLE"] if precision == "float" else [],
+            deps = [":internal_hdrs"],
+        ),
+        cc_library(
+            name = "simd_support_avx_{}".format(precision),
+            srcs = glob(
+                [
+                    "dft/simd/avx/**/*.c",
+                    "rdft/simd/avx/**/*.c",
+                ],
+                exclude = ["**/common/**"],
+            ) + ["simd-support/avx.c"],
+            copts = COMMON_COPTS + [
+                "-w",
+                "-mavx",
+            ],
+            includes = SIMD_BASE_INCLUDES + [
+                "dft/simd/avx",
+                "rdft/simd/avx",
+            ],
+            local_defines = ["FFTW_SINGLE"] if precision == "float" else [],
+            deps = [":internal_hdrs"],
+        ),
+        cc_library(
+            name = "simd_support_avx2_{}".format(precision),
+            srcs = glob(
+                [
+                    "dft/simd/avx2/**/*.c",
+                    "dft/simd/avx2-128/**/*.c",
+                    "rdft/simd/avx2/**/*.c",
+                    "rdft/simd/avx2-128/**/*.c",
+                ],
+                exclude = ["**/common/**"],
+            ) + ["simd-support/avx2.c"],
+            copts = COMMON_COPTS + [
+                "-w",
+                "-mavx2",
+                "-mfma",
+            ],
+            includes = SIMD_BASE_INCLUDES + [
+                "dft/simd/avx2",
+                "dft/simd/avx2-128",
+                "rdft/simd/avx2",
+                "rdft/simd/avx2-128",
+            ],
+            local_defines = ["FFTW_SINGLE"] if precision == "float" else [],
+            deps = [":internal_hdrs"],
+        ),
+        cc_library(
+            name = "simd_support_avx512_{}".format(precision),
+            srcs = glob(
+                [
+                    "dft/simd/avx512/**/*.c",
+                    "rdft/simd/avx512/**/*.c",
+                ],
+                exclude = ["**/common/**"],
+            ) + ["simd-support/avx512.c"],
+            copts = COMMON_COPTS + [
+                "-w",
+                "-mavx512f",
+                "-mavx512dq",
+            ],
+            includes = SIMD_BASE_INCLUDES + [
+                "dft/simd/avx512",
+                "rdft/simd/avx512",
+            ],
+            local_defines = ["FFTW_SINGLE"] if precision == "float" else [],
+            deps = [":internal_hdrs"],
+        ),
+        cc_library(
+            name = "simd_support_neon_{}".format(precision),
+            srcs = glob(
+                [
+                    "dft/simd/neon/**/*.c",
+                    "rdft/simd/neon/**/*.c",
+                ],
+                exclude = ["**/common/**"],
+            ) + ["simd-support/neon.c"],
+            copts = COMMON_COPTS + ["-w"] + select({
+                "@platforms//cpu:armv7": ["-mfpu=neon"],
+                "//conditions:default": [],
+            }),
+            includes = SIMD_BASE_INCLUDES + [
+                "dft/simd/neon",
+                "rdft/simd/neon",
+            ],
+            local_defines = ["FFTW_SINGLE"] if precision == "float" else [],
+            deps = [":internal_hdrs"],
+        ),
+        cc_library(
+            name = "fftw_{}".format(precision),
+            srcs = glob([
+                "kernel/*.c",
+                "api/*.c",
+                "dft/*.c",
+                "dft/scalar/**/*.c",
+                "rdft/*.c",
+                "rdft/scalar/**/*.c",
+                "reodft/*.c",
+            ]),
+            hdrs = ["api/fftw3.h"],
+            copts = COMMON_COPTS,
+            implementation_deps = [":internal_hdrs"] + select({
+                "@platforms//cpu:x86_64": [
+                    ":simd_support_sse2_{}".format(precision),
+                    ":simd_support_avx_{}".format(precision),
+                    ":simd_support_avx2_{}".format(precision),
+                    ":simd_support_avx512_{}".format(precision),
+                ],
+                "@platforms//cpu:aarch64": [
+                    ":simd_support_neon_{}".format(precision),
+                ],
+                "@platforms//cpu:armv7": (
+                    [":simd_support_neon_float"] if precision == "float" else []
+                ),
+                "//conditions:default": [],
+            }),
+            includes = ["api"],
+            linkopts = ["-lm"],
+            local_defines = ["FFTW_SINGLE"] if precision == "float" else [],
+            visibility = ["//visibility:public"],
+        ),
+    ]
+    for precision in [
+        "double",
+        "float",
+    ]
+]
+
+# Combined double and float libraries
+cc_library(
+    name = "fftw",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":fftw_double",
+        ":fftw_float",
+    ],
+)
+
+# Benchmarking and testing
+[
+    [
+        cc_library(
+            name = "libbench2_{}".format(precision),
+            srcs = glob(["libbench2/*.c"]),
+            hdrs = glob(["libbench2/*.h"]),
+            copts = (["-DBENCHFFT_SINGLE"] if precision == "float" else []),
+            includes = [
+                ".",
+                "libbench2",
+            ],
+            deps = [":internal_hdrs"],
+        ),
+        cc_test(
+            name = "bench_{}".format(precision),
+            srcs = [
+                "tests/bench.c",
+                "tests/fftw-bench.c",
+                "tests/fftw-bench.h",
+                "tests/hook.c",
+            ],
+            args = [
+                "--verify",
+                "ofc16",
+                "--verify",
+                "ifc16",
+                "--verify",
+                "obc16",
+                "--verify",
+                "ibc16",
+                "--verify",
+                "ofc17",
+                "--verify",
+                "ofc32",
+                "--verify",
+                "ifc32",
+                "--verify",
+                "ofc64",
+                "--verify",
+                "ifc64",
+                "--verify",
+                "ofc128",
+                "--verify",
+                "ifc128",
+                "--verify",
+                "ofc256",
+                "--verify",
+                "ofc512",
+                "--verify",
+                "ofc1024",
+                "--verify",
+                "ofr16",
+                "--verify",
+                "obr16",
+                "--verify",
+                "ofr32",
+                "--verify",
+                "obr32",
+                "--verify",
+                "ofr64",
+                "--verify",
+                "obr64",
+                "--verify",
+                "ofr128",
+                "--verify",
+                "obr128",
+                "--verify",
+                "ofr256",
+                "--verify",
+                "ofr512",
+                "--verify",
+                "ofc8x8",
+                "--verify",
+                "obc8x8",
+                "--verify",
+                "ofc16x16",
+                "--verify",
+                "obc16x16",
+                "--verify",
+                "ofc32x32",
+                "--verify",
+                "obc32x32",
+                "--verify",
+                "ofc64x64",
+                "--verify",
+                "ofc16x32",
+                "--verify",
+                "ofc32x16",
+                "--verify",
+                "ofr8x8",
+                "--verify",
+                "obr8x8",
+                "--verify",
+                "ofr16x16",
+                "--verify",
+                "obr16x16",
+                "--verify",
+                "ofr32x32",
+                "--verify",
+                "ofr16x32",
+                "--verify",
+                "//ofc64",
+                "--verify",
+                "//ofr64",
+            ],
+            copts = ([
+                "-DBENCHFFT_SINGLE",
+                "-DFFTW_SINGLE",
+            ] if precision == "float" else []),
+            deps = [
+                ":fftw_{}".format(precision),
+                ":libbench2_{}".format(precision),
+            ],
+        ),
+    ]
+    for precision in [
+        "double",
+        "float",
+    ]
+]
