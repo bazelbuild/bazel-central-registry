@@ -422,7 +422,9 @@ cc_binary(
 )
 
 cc_library(
-    name = "verilator_coverage_lib",
+    # `VlcMain.cpp` pulls in several implementation files directly (see textual_hdrs),
+    # so this stays separate from `verilator_libV3` to avoid duplicate symbol linkage.
+    name = "verilator_coverage_bin_dbg_lib",
     srcs = ["src/VlcMain.cpp"],
     hdrs = glob(["src/V3*.h", "src/Vlc*.h"]) + [
         "src/config_build.h",
@@ -430,6 +432,7 @@ cc_library(
         "src/config_rev.h",
     ],
     copts = select({
+        # Keep the Windows branch aligned with existing `verilator` targets.
         "@platforms//os:windows": [],
         "//conditions:default": [
             "-std=c++17",
@@ -439,6 +442,7 @@ cc_library(
     defines = ["YYDEBUG"],
     strip_include_prefix = "src/",
     textual_hdrs = [
+        # `VlcMain.cpp` intentionally includes these implementation files.
         "src/V3Error.cpp",
         "src/V3OptionParser.cpp",
         "src/V3Os.cpp",
@@ -449,6 +453,7 @@ cc_library(
 )
 
 cc_binary(
+    # Upstream `bin/verilator_coverage` resolves this exact basename by default.
     name = "bin/verilator_coverage_bin_dbg",
     linkopts = select({
         "@platforms//os:linux": [
@@ -461,10 +466,10 @@ cc_binary(
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
-    deps = [":verilator_coverage_lib"],
+    deps = [":verilator_coverage_bin_dbg_lib"],
 )
 
-
+# Wrapper for Bazel runfiles: execute upstream Perl entrypoint with our Bazel-built binary.
 write_file(
     name = "verilator_coverage_launcher_script",
     out = "verilator_coverage_launcher.sh",
