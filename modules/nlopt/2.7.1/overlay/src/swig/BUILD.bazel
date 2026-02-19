@@ -1,0 +1,143 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library")
+load("@rules_python//python:pip.bzl", "whl_filegroup")
+
+package(default_visibility = ["//visibility:public"])
+
+# Extract NumPy headers from pip package
+whl_filegroup(
+    name = "numpy_headers",
+    pattern = "numpy/_core/include/numpy",
+    whl = "@nlopt_pip//numpy:whl",
+)
+
+cc_library(
+    name = "numpy_cc_headers",
+    hdrs = [":numpy_headers"],
+    includes = [
+        "numpy_headers/numpy/_core/include",
+    ],
+)
+
+# Generate nlopt-enum-renames.i from nlopt.h
+genrule(
+    name = "generate_enum_renames",
+    srcs = ["//:src/api/nlopt.h"],
+    outs = ["nlopt-enum-renames.i"],
+    cmd = """
+        echo "// AUTOMATICALLY GENERATED -- DO NOT EDIT" > $@
+        # Extract NLOPT_ enum constants and generate SWIG rename directives
+        while IFS= read -r line; do
+            if echo "$$line" | grep -q '    NLOPT_[A-Z0-9_]'; then
+                enum_name=$$(echo "$$line" | sed -E 's/.*NLOPT_([A-Z0-9_]+).*/\\1/')
+                echo "%%rename(NLOPT_$$enum_name) nlopt::$$enum_name;" >> $@
+            fi
+        done < $(location //:src/api/nlopt.h)
+    """,
+)
+
+# Generate Python wrapper using SWIG
+genrule(
+    name = "swig_python_wrapper",
+    srcs = [
+        "nlopt.i",
+        "nlopt-python.i",
+        "nlopt-exceptions.i",
+        "numpy.i",
+        ":generate_enum_renames",
+        "//:src/api/nlopt.h",
+        "//:generate_cpp_header",  # nlopt.hpp
+    ],
+    outs = [
+        "nlopt_wrap.cxx",
+        "nlopt.py",
+    ],
+    cmd = """
+        SWIG="$$PWD/$(execpath @swig//:swig)"
+
+        for lib in $(locations @swig//:lib_python); do
+          if [ -f "$$(dirname "$$lib")/swig.swg" ]; then
+            SWIG_LIB="$$PWD/$$(dirname "$$lib")"
+            break
+          fi
+        done
+
+        OUTDIR=$$(cd $(@D) 2>/dev/null || echo $(@D); pwd -P 2>/dev/null || echo $(@D))
+        mkdir -p "$$OUTDIR"
+
+        TMPDIR=$$(mktemp -d)
+        trap "rm -rf $$TMPDIR" EXIT
+
+        cp $(location nlopt.i) $$TMPDIR/
+        cp $(location nlopt-python.i) $$TMPDIR/
+        cp $(location nlopt-exceptions.i) $$TMPDIR/
+        cp $(location numpy.i) $$TMPDIR/
+        cp $(location :generate_enum_renames) $$TMPDIR/
+        cp $(location //:src/api/nlopt.h) $$TMPDIR/
+        cp $(location //:generate_cpp_header) $$TMPDIR/nlopt.hpp
+
+        cd $$TMPDIR
+        SWIG_LIB=$$SWIG_LIB $$SWIG -c++ -python -DSWIGPYTHON \\
+            -I. \\
+            -outdir . \\
+            -o nlopt_wrap.cxx \\
+            nlopt.i
+
+        cp nlopt_wrap.cxx "$$OUTDIR"/nlopt_wrap.cxx
+        cp nlopt.py "$$OUTDIR"/nlopt.py
+    """,
+    tools = [
+        "@swig//:swig",
+        "@swig//:lib_python",
+    ],
+)
+
+# Python extension module (_nlopt.so)
+cc_binary(
+    name = "_nlopt.so",
+    srcs = [":nlopt_wrap.cxx"],
+    copts = [
+        "-fPIC",
+        "-Wno-unused-parameter",
+        "-Wno-missing-field-initializers",
+        "-Wno-deprecated-declarations",
+        "-Wno-unused-variable",
+        "-Wno-unused-but-set-variable",
+        "-Wno-maybe-uninitialized",
+        "-Wno-nonnull",
+    ] + select({
+        "@platforms//os:windows": ["/D_CRT_SECURE_NO_WARNINGS"],
+        "//conditions:default": [],
+    }),
+    linkshared = True,
+    linkstatic = False,
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-undefined",
+            "dynamic_lookup",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//:nlopt",
+        ":numpy_cc_headers",
+        "@rules_python//python/cc:current_py_cc_headers",
+    ],
+)
+
+# Python library
+py_library(
+    name = "nlopt_python",
+    srcs = ["nlopt.py"],
+    data = [":_nlopt.so"],
+    imports = ["."],
+)
+
+# Convenience filegroup for installation
+filegroup(
+    name = "python_lib",
+    srcs = [
+        "nlopt.py",
+        ":_nlopt.so",
+    ],
+)

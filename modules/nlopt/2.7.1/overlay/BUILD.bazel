@@ -1,32 +1,169 @@
-"""Builds nlopt"""
+"""
+Bazel build file for NLopt
+"""
 
-load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+package(default_visibility = ["//visibility:public"])
 
-filegroup(
-    name = "all_srcs",
-    srcs = glob(["**"]),
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+
+# Generate nlopt_config.h from template
+cmake_configure_file(
+    name = "generate_config_header",
+    src = "nlopt_config.h.in",
+    out = "src/api/nlopt_config.h",
+    defines = [
+        # Version numbers
+        "NLOPT_MAJOR_VERSION=2",
+        "NLOPT_MINOR_VERSION=7",
+        "NLOPT_BUGFIX_VERSION=1",
+        # Feature detection
+        "HAVE_COPYSIGN",
+        "HAVE_FPCLASSIFY",
+        "HAVE_GETOPT_H",
+        "HAVE_GETOPT",
+        "HAVE_GETPID",
+        "HAVE_GETTIMEOFDAY",
+        "HAVE_ISINF",
+        "HAVE_ISNAN",
+        "HAVE_QSORT_R",
+        "HAVE_STDINT_H",
+        "HAVE_SYS_TIME_H",
+        "HAVE_TIME",
+        "HAVE_UINT32_T",
+        "HAVE_UNISTD_H",
+        # C++ support
+        "NLOPT_CXX",
+        "NLOPT_CXX11",
+        # Thread local storage
+        "THREADLOCAL=__thread",
+        # Type sizes
+        "SIZEOF_UNSIGNED_INT=4",
+        "SIZEOF_UNSIGNED_LONG=8",
+        # Time handling
+        "TIME_WITH_SYS_TIME",
+    ],
 )
 
-cmake(
+# Generate C++ header (nlopt.hpp) from template
+genrule(
+    name = "generate_cpp_header",
+    srcs = [
+        "src/api/nlopt-in.hpp",
+        "src/api/nlopt.h",
+    ],
+    outs = ["nlopt.hpp"],
+    cmd = """
+        $(location //tools:generate_cpp) \
+            $(location src/api/nlopt-in.hpp) \
+            $(location src/api/nlopt.h) \
+            $(location nlopt.hpp)
+    """,
+    tools = ["//tools:generate_cpp"],
+)
+
+# Generate Fortran interface (nlopt.f) from C header
+genrule(
+    name = "generate_fortran_header",
+    srcs = ["src/api/nlopt.h"],
+    outs = ["nlopt.f"],
+    cmd = """
+        $(location //tools:generate_fortran) \
+            $(location src/api/nlopt.h) \
+            $(location nlopt.f)
+    """,
+    tools = ["//tools:generate_fortran"],
+)
+
+# Compile NLopt library
+cc_library(
     name = "nlopt",
-    cache_entries = {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_INSTALL_LIBDIR": "lib",
-        "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
-        "BUILD_SHARED_LIBS": "OFF",
-        "NLOPT_CXX": "ON",
-        "NLOPT_TESTS": "OFF",
-        "NLOPT_PYTHON": "ON",
-        "NLOPT_SWIG": "ON",
-        "INSTALL_PYTHON_DIR": "python",
-        "NLOPT_OCTAVE": "OFF",
-        "NLOPT_MATLAB": "OFF",
-        "NLOPT_GUILE": "OFF",
-        "NLOPT_FORTRAN": "OFF",
-    },
-    lib_source = ":all_srcs",
-    out_data_dirs = ["python"],
-    out_include_dir = "include",
-    out_static_libs = ["libnlopt.a"],
-    visibility = ["//visibility:public"],
+    srcs = glob(
+        [
+            "src/algs/**/*.c",
+            "src/algs/**/*.cc",
+            "src/api/*.c",
+            "src/util/*.c",
+            "src/algs/**/*.h",
+            "src/algs/**/*.hpp",
+            "src/api/nlopt-internal.h",
+            "src/api/f77funcs.h",
+            "src/api/f77funcs_.h",
+            "src/util/*.h",
+        ],
+        exclude = [
+            "src/util/nlopt-getopt.c",
+            "src/util/*_test.c",
+            "src/algs/cquad/**",
+            "src/algs/direct/DIRparallel.c",
+            "src/algs/direct/tstc.c",
+            "src/algs/stogo/tstc.c",
+            "src/algs/stogo/testros.cc",
+            "src/algs/stogo/tst.cc",
+            "src/algs/stogo/prog.cc",
+            "src/algs/ags/tst.cc",
+        ],
+    ) + select({
+        "@platforms//os:windows": ["src/util/nlopt-getopt.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "src/api/nlopt.h",
+        ":generate_cpp_header",
+        ":generate_config_header",
+    ],
+    copts = select({
+        "@platforms//os:windows": [
+            "/D_CRT_SECURE_NO_WARNINGS",
+        ],
+        "//conditions:default": [
+            "-fPIC",
+            "-Wno-unused-parameter",
+            "-Wno-deprecated-declarations",
+            "-Wno-unused-variable",
+            "-Wno-nonnull",
+            "-Wno-unused-value",
+        ],
+    }),
+    defines = select({
+        "@platforms//os:windows": ["NLOPT_DLL"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        ".",
+        "src/api",
+        "src/util",
+        "src/algs/direct",
+        "src/algs/cdirect",
+        "src/algs/praxis",
+        "src/algs/luksan",
+        "src/algs/crs",
+        "src/algs/mlsl",
+        "src/algs/mma",
+        "src/algs/cobyla",
+        "src/algs/newuoa",
+        "src/algs/neldermead",
+        "src/algs/auglag",
+        "src/algs/bobyqa",
+        "src/algs/isres",
+        "src/algs/slsqp",
+        "src/algs/esch",
+        "src/algs/stogo",
+        "src/algs/ags",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lm"],
+        "@platforms//os:macos": ["-lm"],
+        "@platforms//os:freebsd": ["-lm"],
+        "//conditions:default": [],
+    }),
+)
+
+# Convenience filegroup for generated headers
+filegroup(
+    name = "generated_headers",
+    srcs = [
+        ":generate_cpp_header",
+        ":generate_fortran_header",
+    ],
 )
