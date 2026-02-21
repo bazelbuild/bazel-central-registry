@@ -1,0 +1,251 @@
+diff --git a/swig.bzl b/swig.bzl
+new file mode 100644
+index 000000000..b28d366dd
+--- /dev/null
++++ b/swig.bzl
+@@ -0,0 +1,245 @@
++"""Bazel rules for generating SWIG language bindings.
++
++This module provides Bazel rules for generating language bindings
++using SWIG.
++
++Example usage:
++    load("@swig//:swig.bzl", "swig_library")
++
++    swig_library(
++        name = "my_python_wrapper",
++        srcs = [
++            "my_interface.i",
++            "additional.i",
++            "header.h",
++        ],
++        main = "my_interface.i",
++        language = "python",
++        module = "my_module",
++    )
++"""
++
++def _swig_library_impl(ctx):
++    """Implementation function for swig_library rule.
++
++    Args:
++        ctx: Rule context
++
++    Returns:
++        DefaultInfo provider with generated wrapper and module files
++    """
++
++    # Map language to the corresponding SWIG library attribute and extension
++    # Add more languages as lib_<language> filegroups are added to @swig//:BUILD
++    _LANGUAGE_TO_LIB_ATTR = {
++        "python": ctx.files._swig_lib_python,
++        "java": ctx.files._swig_lib_java,
++    }
++    _LANGUAGE_MODULE_EXT = {
++        "python": ".py",
++        "java": ".java",
++    }
++
++    if (ctx.attr.language not in _LANGUAGE_TO_LIB_ATTR or ctx.attr.language not in _LANGUAGE_MODULE_EXT):
++        fail("Language '%s' is not supported. Supported languages: %s. " %
++             (ctx.attr.language, ", ".join(sorted(_LANGUAGE_TO_LIB_ATTR.keys()))) +
++             "To add support for a new language, ensure @swig//:BUILD has a " +
++             "'lib_%s' filegroup and add the mapping in swig.bzl." % ctx.attr.language)
++
++    swig_lib_files = _LANGUAGE_TO_LIB_ATTR[ctx.attr.language]
++    swig_lib_dir = ctx.file._swig_swg.dirname
++
++    interface_file = None
++    if ctx.attr.main:
++        for src in ctx.files.srcs:
++            if src.basename == ctx.attr.main or src.path.endswith("/" + ctx.attr.main):
++                interface_file = src
++                break
++        if not interface_file:
++            fail("Main interface file '%s' not found in srcs" % ctx.attr.main)
++    else:
++        # Default: use the first .i file in srcs
++        for src in ctx.files.srcs:
++            if src.extension == "i":
++                interface_file = src
++                break
++        if not interface_file:
++            fail("No .i interface file found in srcs")
++
++    module = ctx.attr.module if ctx.attr.module else ctx.label.name
++
++    if ctx.attr.out:
++        wrapper_out = ctx.actions.declare_file(ctx.attr.out)
++    else:
++        # Default: {rule_name}_wrap.{c|cpp}
++        wrapper_ext = ".c" if ctx.attr.out_c_mode else ".cpp"
++        wrapper_out = ctx.actions.declare_file(ctx.label.name + "_wrap" + wrapper_ext)
++
++    module_ext = _LANGUAGE_MODULE_EXT[ctx.attr.language]
++    if ctx.attr.outdir:
++        module_out = ctx.actions.declare_file(ctx.attr.outdir + "/" + module + module_ext)
++    else:
++        # Default: same directory as the rule
++        module_out = ctx.actions.declare_file(module + module_ext)
++
++    include_dirs = {}
++    for src in ctx.files.srcs:
++        include_dirs[src.dirname] = True
++    for include in ctx.attr.includes:
++        include_dirs[include] = True
++    include_dir_list = include_dirs.keys()
++
++    swig_args = ctx.actions.args()
++    swig_args.add("-" + ctx.attr.language)
++    if not ctx.attr.out_c_mode:
++        swig_args.add("-c++")
++
++    swig_args.add_all(ctx.attr.defines, format_each = "-D%s")
++
++    swig_args.add_all(include_dir_list, format_each = "-I%s")
++
++    swig_args.add_all(ctx.attr.opts)
++
++    swig_args.add("-module", module)
++    swig_args.add("-outdir", module_out.dirname)
++    swig_args.add("-o", wrapper_out)
++
++    swig_args.add(interface_file)
++    
++    ctx.actions.run(
++        executable = ctx.executable._swig,
++        arguments = [swig_args],
++        inputs = depset(swig_lib_files + ctx.files.srcs),
++        outputs = [wrapper_out, module_out],
++        env = {"SWIG_LIB": swig_lib_dir},
++        mnemonic = "SwigGenerate",
++        progress_message = "Generating SWIG %s bindings for %s" % (ctx.attr.language, ctx.label.name),
++    )
++
++    return [DefaultInfo(files = depset([wrapper_out, module_out]))]
++
++
++swig_library = rule(
++    implementation = _swig_library_impl,
++    attrs = {
++        "srcs": attr.label_list(
++            mandatory = True,
++            allow_files = True,
++            doc = "SWIG interface files (.i) and headers. All files are available for " +
++                  "%include directives. The main interface file is specified by 'main' " +
++                  "attribute, or defaults to the first .i file.",
++        ),
++        "main": attr.string(
++            doc = "Main SWIG interface file (optional). If not specified, the first .i " +
++                  "file in srcs is used. Only the main file is passed to SWIG; other " +
++                  "files should be %include'd from the main file.",
++        ),
++        "language": attr.string(
++            mandatory = True,
++            doc = "Target language for binding generation.",
++        ),
++        "module": attr.string(
++            doc = "SWIG module name. Defaults to the rule name if not specified.",
++        ),
++        "out": attr.string(
++            doc = "Explicit name for the wrapper output file. If not specified, " +
++                  "defaults to '{rule_name}_wrap.{c|cpp}'.",
++        ),
++        "outdir": attr.string(
++            doc = "Output directory for language-specific module files (e.g., .py, .java). " +
++                  "If specified, the module file will be placed in this subdirectory. " +
++                  "If not specified, module files are placed in the rule's directory.",
++        ),
++        "out_c_mode": attr.bool(
++            default = False,
++            doc = "If True, generate C wrapper instead of C++ (default: False).",
++        ),
++        "defines": attr.string_list(
++            default = [],
++            doc = "Preprocessor defines to pass to SWIG using -D flags.",
++        ),
++        "includes": attr.string_list(
++            default = [],
++            doc = "Additional include paths to pass to SWIG using -I flags. " +
++                  "Source file directories are automatically included.",
++        ),
++        "opts": attr.string_list(
++            default = [],
++            doc = "Additional SWIG command-line options.",
++        ),
++        "_swig": attr.label(
++            default = "@swig//:swig",
++            executable = True,
++            cfg = "exec",
++            doc = "The SWIG executable (internal attribute).",
++        ),
++        "_swig_swg": attr.label(
++            default = "@swig//:swig_swg",
++            allow_single_file = True,
++            doc = "SWIG swig.swg library file used for determining SWIG_LIB " +
++                  "env variable (internal attribute).",
++        ),
++        "_swig_lib_python": attr.label(
++            default = "@swig//:lib_python",
++            allow_files = True,
++            doc = "SWIG library files for Python (internal attribute).",
++        ),
++        "_swig_lib_java": attr.label(
++            default = "@swig//:lib_java",
++            allow_files = True,
++            doc = "SWIG library files for Java (internal attribute).",
++        ),
++    },
++    doc = """Generate SWIG wrapper code for language bindings.
++
++This rule simplifies SWIG binding generation.
++
++The rule automatically selects the appropriate SWIG library files based on the
++'language' attribute. To add support for additional languages, ensure the
++@swig repository has a corresponding 'lib_<language>' filegroup in its BUILD file,
++then add the language mapping in the _LANGUAGE_TO_LIB_ATTR dictionary.
++
++Attributes:
++    srcs: SWIG interface files (.i) and headers
++    language: Target language (python, java, etc.)
++    module: Module name (optional, defaults to rule name)
++    out: Wrapper output filename (optional, defaults to {name}_wrap.{c|cpp})
++    outdir: Module file output directory (optional, defaults to rule directory)
++    out_c_mode: Generate C wrapper instead of C++ (optional, default: False)
++    defines: Preprocessor defines (optional)
++    includes: Additional include paths (optional)
++    opts: Additional SWIG options (optional)
++
++Example (Python - basic):
++    swig_library(
++        name = "my_python_wrapper",
++        srcs = ["interface.i", "header.h"],
++        language = "python",
++        module = "my_module",
++        defines = ["SWIGPYTHON"],
++    )
++    # Generates: my_python_wrapper_wrap.cpp, my_module.py
++
++Example (Python - custom output):
++    swig_library(
++        name = "nlopt_swig",
++        srcs = ["nlopt.i", "nlopt.h"],
++        language = "python",
++        module = "nlopt",
++        out = "nlopt_wrap.cpp",
++        outdir = "generated",
++        defines = ["SWIGPYTHON"],
++    )
++    # Generates: nlopt_wrap.cpp, generated/nlopt.py
++
++Example (Java):
++    swig_library(
++        name = "my_java_wrapper",
++        srcs = ["interface.i", "header.h"],
++        language = "java",
++        module = "MyModule",
++        defines = ["SWIGJAVA"],
++    )
++    # Generates: my_java_wrapper_wrap.cpp, MyModule.java
++""",
++)
