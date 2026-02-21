@@ -1,0 +1,175 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+ELF_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_sysv_elf_gas",
+    "@platforms//cpu:x86_32": "i386_sysv_elf_gas",
+    "@platforms//cpu:aarch64": "arm64_aapcs_elf_gas",
+    "@platforms//cpu:arm": "arm_aapcs_elf_gas",
+    "@platforms//cpu:riscv64": "riscv64_sysv_elf_gas",
+    "@platforms//cpu:ppc64le": "ppc64_sysv_elf_gas",
+    "@platforms//cpu:mips64": "mips64_n64_elf_gas",
+    "@platforms//cpu:s390x": "s390x_sysv_elf_gas",
+}
+
+# 2. Apple (macOS / iOS) Platforms
+MACHO_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_sysv_macho_gas",
+    "@platforms//cpu:x86_32": "i386_sysv_macho_gas",
+    "@platforms//cpu:aarch64": "arm64_aapcs_macho_gas",
+    "@platforms//cpu:arm": "arm_aapcs_macho_gas",
+}
+
+# 3. Windows MSVC (PE / MASM)
+MSVC_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_ms_pe_masm",
+    "@platforms//cpu:x86_32": "i386_ms_pe_masm",
+}
+
+# 4. Windows MinGW / Clang (PE / GAS)
+MINGW_PLATFORMS = {
+    "@platforms//cpu:x86_64": "x86_64_ms_pe_clang_gas",
+    "@platforms//cpu:x86_32": "i386_ms_pe_clang_gas",
+}
+
+string_flag(
+    name = "win-compile",
+    build_setting_default = "win-msvc",
+    values = [
+        "win-msvc",
+        "win-mingw",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "win-msvc",
+    flag_values = {":win-compile": "win-msvc"},
+)
+
+config_setting(
+    name = "win-mingw",
+    flag_values = {":win-compile": "win-mingw"},
+)
+
+# ELF (Linux)
+filegroup(
+    name = "elf_asm",
+    srcs = select({
+        target: [
+            "src/asm/jump_" + suffix + ".S",
+            "src/asm/make_" + suffix + ".S",
+            "src/asm/ontop_" + suffix + ".S",
+        ]
+        for target, suffix in ELF_PLATFORMS.items()
+    }),
+)
+
+# Apple
+filegroup(
+    name = "apple_asm",
+    srcs = select({
+        target: [
+            "src/asm/jump_" + suffix + ".S",
+            "src/asm/make_" + suffix + ".S",
+            "src/asm/ontop_" + suffix + ".S",
+        ]
+        for target, suffix in MACHO_PLATFORMS.items()
+    }),
+)
+
+# Windows MSVC (.asm)
+filegroup(
+    name = "windows_asm_msvc",
+    srcs = select({
+        target: [
+            "src/asm/jump_" + suffix + ".asm",
+            "src/asm/make_" + suffix + ".asm",
+            "src/asm/ontop_" + suffix + ".asm",
+        ]
+        for target, suffix in MSVC_PLATFORMS.items()
+    }),
+)
+
+# Windows MinGW ( .S)
+filegroup(
+    name = "windows_asm_mingw",
+    srcs = select({
+        target: [
+            "src/asm/jump_" + suffix + ".S",
+            "src/asm/make_" + suffix + ".S",
+            "src/asm/ontop_" + suffix + ".S",
+        ]
+        for target, suffix in MINGW_PLATFORMS.items()
+    }),
+)
+
+filegroup(
+    name = "windows_asm",
+    srcs = select({
+        ":win-mingw": [":windows_asm_mingw"],
+        ":win-msvc": [":windows_asm_msvc"],
+    }),
+)
+
+cc_library(
+    name = "boost.context",
+    srcs = select({
+        "@platforms//os:macos": [
+            "src/fcontext.cpp",
+            "src/posix/stack_traits.cpp",
+            ":apple_asm",
+        ],
+        "@platforms//os:ios": [
+            "src/fcontext.cpp",
+            "src/posix/stack_traits.cpp",
+            ":apple_asm",
+        ],
+        "@platforms//os:windows": [
+            "src/fcontext.cpp",
+            "src/windows/stack_traits.cpp",
+            ":windows_asm",
+        ],
+        "//conditions:default": [
+            "src/fcontext.cpp",
+            "src/posix/stack_traits.cpp",
+            ":elf_asm",
+        ],
+    }),
+    hdrs = glob(
+        [
+            "include/**/*.hpp",
+        ],
+        exclude = [
+            "include/boost/context/continuation_winfib.hpp",
+            "include/boost/context/fiber_winfib.hpp",
+            "include/boost/context/posix/segmented_stack.hpp",
+            "include/boost/context/preallocated.hpp",
+            "include/boost/context/windows/protected_fixedsize_stack.hpp",
+        ],
+    ),
+    defines = ["BOOST_ALL_NO_LIB"],
+    features = ["parse_headers"],
+    includes = ["include"],
+    local_defines = select({
+        "@platforms//os:windows": ["BOOST_CONTEXT_EXPORT="],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "include/boost/context/continuation_winfib.hpp",
+        "include/boost/context/fiber_winfib.hpp",
+        "include/boost/context/posix/segmented_stack.hpp",
+        "include/boost/context/preallocated.hpp",
+        "include/boost/context/windows/protected_fixedsize_stack.hpp",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.assert",
+        "@boost.config",
+        "@boost.core",
+        "@boost.mp11",
+        "@boost.pool",
+        "@boost.predef",
+        "@boost.smart_ptr",
+    ],
+)

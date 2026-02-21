@@ -1,0 +1,207 @@
+diff --git visualization/include/pcl/visualization/common/common.h visualization/include/pcl/visualization/common/common.h
+index 67f337407..6dec24c3a 100644
+--- visualization/include/pcl/visualization/common/common.h
++++ visualization/include/pcl/visualization/common/common.h
+@@ -44,9 +44,6 @@
+ #include <Eigen/Core> // for Matrix, ...
+ 
+ #include <pcl/pcl_macros.h>
+-#include <vtkMatrix4x4.h>
+-#include <vtkSmartPointer.h>
+-#include <vtkLookupTable.h>
+ 
+ class vtkCamera;
+ class vtkRenderWindow;
+@@ -75,8 +72,6 @@ namespace pcl
+     PCL_EXPORTS void
+     getRandomColors (pcl::RGB &rgb, double min = 0.2, double max = 2.8);
+ 
+-    PCL_EXPORTS Eigen::Matrix4d
+-    vtkToEigen (vtkMatrix4x4* vtk_matrix);
+ 
+     PCL_EXPORTS Eigen::Vector2i
+     worldToView (const Eigen::Vector4d &world_pt, const Eigen::Matrix4d &view_projection_matrix, int width, int height);
+@@ -139,13 +134,6 @@ namespace pcl
+       PCL_VISUALIZER_LUT_VIRIDIS        /**< Viridis colormap */
+     };
+ 
+-    /** \brief Generate a lookup table for a colormap.
+-      * \param[in] colormap_type
+-      * \param[out] table a vtk lookup table
+-      * \note The list of available colormaps can be found in \ref pcl::visualization::LookUpTableRepresentationProperties.
+-      */
+-    PCL_EXPORTS bool
+-    getColormapLUT  (LookUpTableRepresentationProperties colormap_type, vtkSmartPointer<vtkLookupTable> &table);
+ 
+     //////////////////////////////////////////////////////////////////////////////////////////////
+     /** \brief Camera class holds a set of camera parameters together with the window pos/size. */
+diff --git visualization/src/common/common.cpp visualization/src/common/common.cpp
+index 2eeb72e37..2e67b56b3 100644
+--- visualization/src/common/common.cpp
++++ visualization/src/common/common.cpp
+@@ -35,8 +35,6 @@
+  *
+  */
+ 
+-#include <vtkCamera.h>
+-#include <vtkRenderWindow.h>
+ 
+ #include <Eigen/Geometry> // for cross
+ 
+@@ -82,22 +80,6 @@ pcl::visualization::getRandomColors (pcl::RGB &rgb, double min, double max)
+   rgb.b = static_cast<std::uint8_t>(b * 255.0);
+ }
+ 
+-/////////////////////////////////////////////////////////////////////////////////////////////
+-
+-Eigen::Matrix4d
+-pcl::visualization::vtkToEigen (vtkMatrix4x4* vtk_matrix)
+-{
+-  Eigen::Matrix4d eigen_matrix = Eigen::Matrix4d::Identity ();
+-  for (int i=0; i < 4; i++)
+-  {
+-    for (int j=0; j < 4; j++)
+-    {
+-      // VTK
+-      eigen_matrix (i, j) = vtk_matrix->GetElement (i, j);
+-    }
+-  }
+-  return eigen_matrix;
+-}
+ 
+ /////////////////////////////////////////////////////////////////////////////////////////////
+ Eigen::Vector2i
+@@ -362,106 +344,6 @@ pcl::visualization::viewScreenArea (
+   return (std::abs (static_cast<float>(sum * 0.5f)));
+ }
+ 
+-/////////////////////////////////////////////////////////////////////////////////////////////
+-bool
+-pcl::visualization::getColormapLUT (LookUpTableRepresentationProperties colormap_type, vtkSmartPointer<vtkLookupTable> &table)
+-{
+-  table = vtkSmartPointer<vtkLookupTable>::New ();
+-  switch (colormap_type)
+-  {
+-    case PCL_VISUALIZER_LUT_JET:
+-    {
+-      table->SetHueRange (0, 0.667);
+-      table->SetSaturationRange (1, 1);
+-      table->SetAlphaRange (1, 1);
+-      break;
+-    }
+-      
+-    case PCL_VISUALIZER_LUT_JET_INVERSE:
+-    {
+-      table->SetHueRange (0.667, 0);
+-      table->SetSaturationRange (1, 1);
+-      table->SetAlphaRange (1, 1);
+-      break;
+-    }
+-      
+-    case PCL_VISUALIZER_LUT_HSV:
+-    {
+-      table->SetHueRange (0, 1);
+-      table->SetSaturationRange (1, 1);
+-      table->SetAlphaRange (1, 1);
+-      break;
+-    }
+-      
+-    case PCL_VISUALIZER_LUT_HSV_INVERSE:
+-    {
+-      table->SetHueRange (1, 0);
+-      table->SetSaturationRange (1, 1);
+-      table->SetAlphaRange (1, 1);
+-      break;
+-    }
+-      
+-    case PCL_VISUALIZER_LUT_GREY:
+-    {
+-      table->SetValueRange (0, 1);
+-      table->SetHueRange (0, 0);
+-      table->SetSaturationRange (0, 0);
+-      table->SetAlphaRange (1, 1);
+-      break;
+-    }
+-      
+-    case PCL_VISUALIZER_LUT_BLUE2RED:
+-    {
+-      table->SetSaturationRange (1, 1);
+-      table->SetAlphaRange (1, 1);
+-      table->SetNumberOfTableValues (256);
+-
+-      double red[3]   = {1.0, 0.0, 0.0};
+-      double white[3] = {1.0, 1.0, 1.0};
+-      double blue[3]  = {0.0, 0.0, 1.0};
+-      
+-      for (std::size_t i = 0; i < 128; i++)
+-      {
+-        double weight = static_cast<double>(i) / 128.0;
+-        table->SetTableValue  ( i,
+-                                white[0] * weight + blue[0] * (1 - weight),
+-                                white[1] * weight + blue[1] * (1 - weight),
+-                                white[2] * weight + blue[2] * (1 - weight)  );
+-      }
+-      
+-      for (std::size_t i = 128; i < 256; i++)
+-      {
+-        double weight = (static_cast<double>(i) -128.0) / 128.0;
+-        table->SetTableValue  ( i,
+-                                red[0] * weight + white[0] * (1 - weight),
+-                                red[1] * weight + white[1] * (1 - weight),
+-                                red[2] * weight + white[2] * (1 - weight)  );
+-      }
+-      break;
+-    }
+-
+-    case PCL_VISUALIZER_LUT_VIRIDIS:
+-    {
+-      table->SetSaturationRange (1, 1);
+-      table->SetAlphaRange (1, 1);
+-      table->SetNumberOfTableValues (pcl::ViridisLUT::size ());
+-      for (std::size_t i = 0; i < pcl::ViridisLUT::size (); i++)
+-      {
+-        pcl::RGB c = pcl::ViridisLUT::at (i);
+-        table->SetTableValue (i, static_cast<double> (c.r) / 255.0,
+-                                 static_cast<double> (c.g) / 255.0,
+-                                 static_cast<double> (c.b) / 255.0);
+-      }
+-      break;
+-    }
+-
+-    default:
+-      PCL_WARN ("[pcl::visualization::getColormapLUT] Requested colormap type does not exist!\n");
+-      return false;
+-  }
+-  table->Build ();
+-  return true;
+-}
+ 
+ pcl::visualization::Camera::Camera ()
+ {
+@@ -493,26 +375,6 @@ pcl::visualization::Camera::Camera ()
+   window_size[1] = 1;
+ }
+ 
+-pcl::visualization::Camera::Camera (vtkCamera& camera)
+-{
+-  camera.GetFocalPoint (focal);
+-  camera.GetPosition (pos);
+-  camera.GetViewUp (view);
+-  camera.GetClippingRange (clip);
+-  fovy = camera.GetViewAngle () / 180.0 * M_PI;
+-}
+-
+-pcl::visualization::Camera::Camera (vtkCamera& camera, vtkRenderWindow& window)
+-: Camera (camera)
+-{
+-  int *win_pos = window.GetPosition ();
+-  int *win_size = window.GetSize ();
+-  window_pos[0] = win_pos[0];
+-  window_pos[1] = win_pos[1];
+-  window_size[0] = win_size[0];
+-  window_size[1] = win_size[1];
+-}
+-
+ /////////////////////////////////////////////////////////////////////////////////////////////
+ void
+ pcl::visualization::Camera::computeViewMatrix (Eigen::Matrix4d &view_mat) const
