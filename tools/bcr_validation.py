@@ -279,7 +279,13 @@ class BcrValidationException(Exception):
 
 
 class BcrValidator:
-    def __init__(self, registry, upstream, should_fix, slsa_verifier_version=DEFAULT_SLSA_VERIFIER_VERSION):
+    def __init__(
+        self,
+        registry: RegistryClient,
+        upstream: UpstreamRegistry,
+        should_fix: bool,
+        slsa_verifier_version: str = DEFAULT_SLSA_VERIFIER_VERSION,
+    ):
         self.validation_results = []
         self.registry = registry
         self.upstream = upstream
@@ -287,12 +293,12 @@ class BcrValidator:
         self.should_fix = should_fix
         self._verifier = slsa.Verifier(slsa_verifier_version, tempfile.mkdtemp())
 
-    def report(self, type, message):
+    def report(self, type: BcrValidationResult, message: str) -> None:
         color = COLOR[type]
         print(f"{color}{type}{RESET}: {message}\n")
         self.validation_results.append((type, message))
 
-    def verify_module_existence(self, module_name, version):
+    def verify_module_existence(self, module_name: str, version: str) -> None:
         """Verify the directory exists and the version is recorded in metadata.json."""
         if not self.registry.contains(module_name, version):
             self.report(BcrValidationResult.FAILED, f"{module_name}@{version} doesn't exist.")
@@ -309,7 +315,7 @@ class BcrValidator:
                 "The module exists and is recorded in metadata.json.",
             )
 
-    def verify_source_archive_url_match_github_repo(self, module_name, version):
+    def verify_source_archive_url_match_github_repo(self, module_name: str, version: str) -> None:
         """Verify the source archive URL matches the github repo. For now, we only support github repositories check."""
         source = self.registry.get_source(module_name, version)
         if source.get("type", None) == "git_repository":
@@ -329,7 +335,7 @@ class BcrValidator:
             source_url = f"{source_url}/archive/{commit}.zip"
         else:
             source_url = source["url"]
-        source_repositories = self.registry.get_metadata(module_name).get("repository", [])
+        source_repositories: list[str] = self.registry.get_metadata(module_name).get("repository", [])
         matched = not source_repositories
         for source_repository in source_repositories:
             if matched:
@@ -348,6 +354,13 @@ class BcrValidator:
                     and parts.netloc == repo.netloc
                     and os.path.abspath(parts.path).startswith(expected_path)
                 )
+        else:
+            homepage: str = self.registry.get_metadata(module_name).get("homepage")
+            if homepage:
+                archive_host = urlparse(source_url).hostname  # "https://archive.mesa3d.org/..."
+                homepage_host = urlparse(homepage).hostname  # "https://mesa3d.org/"
+                if archive_host and homepage_host and archive_host.endswith(homepage_host):
+                    matched = True
         if not matched:
             self.report(
                 BcrValidationResult.FAILED,
