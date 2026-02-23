@@ -1,0 +1,84 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "config",
+    hdrs = ["config.h"],
+    deps = ["@rules_autoconf//:config"],
+)
+
+cc_binary(
+    name = "wayland_scanner",
+    srcs = [
+        "src/scanner.c",
+        "src/wayland-util.c",
+    ] + glob(["src/*.h"]),
+    deps = [
+        ":config",
+        "@libexpat",
+    ],
+)
+
+filegroup(
+    name = "wayland_core_protocol",
+    srcs = ["protocol/wayland.xml"],
+)
+
+genrule(
+    name = "wayland_core_protocol_sources_static",
+    srcs = [":wayland_core_protocol"],
+    outs = ["wayland-protocol.c"],
+    cmd = "$(location :wayland_scanner) -s public-code < $(location :wayland_core_protocol) > $(location wayland-protocol.c)",
+    tools = [":wayland_scanner"],
+)
+
+genrule(
+    name = "wayland_core_server_protocol_headers",
+    srcs = [":wayland_core_protocol"],
+    outs = ["wayland-server-protocol.h"],
+    cmd = "$(location :wayland_scanner) -s server-header < $(location :wayland_core_protocol) > $(location wayland-server-protocol.h)",
+    tools = [":wayland_scanner"],
+)
+
+genrule(
+    name = "wayland_core_client_protocol_headers",
+    srcs = [":wayland_core_protocol"],
+    outs = ["wayland-client-protocol.h"],
+    cmd = "$(location :wayland_scanner) -s client-header < $(location :wayland_core_protocol) > $(location wayland-client-protocol.h)",
+    tools = [":wayland_scanner"],
+)
+
+cc_library(
+    name = "wayland_server",
+    srcs = [
+        "src/connection.c",
+        "src/event-loop.c",
+        "src/wayland-os.c",
+        "src/wayland-server.c",
+        "src/wayland-shm.c",
+        "src/wayland-util.c",
+        ":wayland_core_protocol_sources_static",
+    ],
+    hdrs = [
+        ":wayland_core_client_protocol_headers",
+        ":wayland_core_server_protocol_headers",
+        "wayland-version.h",
+    ] + glob(["src/*.h"]),
+    copts = ["-Wno-unused-variable"],
+    includes = [
+        ".",
+        "src",
+    ],
+    deps = [
+        ":config",
+        "@libffi//:libffi",
+    ],
+)
+
+alias(
+    name = "wayland",
+    actual = ":wayland_server",
+    visibility = ["//visibility:public"],
+)
