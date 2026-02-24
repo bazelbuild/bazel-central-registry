@@ -92,7 +92,12 @@ GITHUB_USER_ID_CACHE = {}
 # For the following modules, going from a release with attestations to one without
 # is merely a warning, not a fatal error.
 # TODO(fweikert): enforce compliance once attestation feature is more widely used.
-ATTESTATION_HISTORY_CHECK_OPT_OUT = frozenset(["protobuf"])
+ATTESTATION_HISTORY_CHECK_OPT_OUT = frozenset(
+    [
+        "gcc_toolchain",  # unmaintained or just very slow to respond
+        "protobuf",  # accidentally introduced attestations.json
+    ]
+)
 
 
 def print_collapsed_group(name):
