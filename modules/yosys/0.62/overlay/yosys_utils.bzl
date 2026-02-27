@@ -187,17 +187,19 @@ share_tree = rule(
         "files in the source repository."
     ),
     attrs = {
+        "dir_name": attr.string(
+            doc = "Name of the top-level output directory for the generated share tree.",
+            default = "share",
+        ),
         "file_map": attr.label_keyed_string_dict(
             doc = "Primary 1:1 mappings: {source_label: destination_within_share}",
-            allow_files = True),
+            allow_files = True,
+        ),
         "renames": attr.string_list(
             doc = (
                 "Extra rename mappings for files needing multiple destinations.\n" +
                 "Format: workspace/relative/src:dest/within/share"
             ),
         ),
-        "dir_name": attr.string(
-            doc = "Name of the top-level output directory for the generated share tree.",
-            default = "share"),
     },
 )
