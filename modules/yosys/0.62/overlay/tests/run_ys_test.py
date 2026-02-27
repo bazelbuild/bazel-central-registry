@@ -3,21 +3,19 @@
 Expected environment variables (set via Bazel env/rlocationpath):
   YOSYS      - rlocation path to the yosys binary
   YS_SCRIPT  - rlocation path to the .ys script to run
-
-Bazel sets TEST_SRCDIR to the root of the runfiles tree, so
-combining TEST_SRCDIR with an rlocation path gives the real file path.
 """
 
 import os
 import subprocess
 import sys
 
+from python.runfiles import runfiles
 
 def main():
-    test_srcdir = os.environ.get("TEST_SRCDIR", "")
+    r = runfiles.Create()
 
-    yosys_bin = os.path.join(test_srcdir, os.environ["YOSYS"])
-    script_path = os.path.join(test_srcdir, os.environ["YS_SCRIPT"])
+    yosys_bin = r.Rlocation(os.environ["YOSYS"])
+    script_path = r.Rlocation(os.environ["YS_SCRIPT"])
 
     script_dir = os.path.dirname(script_path)
     script_file = os.path.basename(script_path)
