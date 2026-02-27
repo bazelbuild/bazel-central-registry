@@ -1,6 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load("@rules_python//python:pip.bzl", "whl_filegroup")
+load("@swig//:swig.bzl", "swig_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -37,8 +38,8 @@ genrule(
 )
 
 # Generate Python wrapper using SWIG
-genrule(
-    name = "swig_python_wrapper",
+swig_library(
+    name = "swig_python",
     srcs = [
         "nlopt.i",
         "nlopt-python.i",
@@ -48,54 +49,15 @@ genrule(
         "//:src/api/nlopt.h",
         "//:generate_cpp_header",  # nlopt.hpp
     ],
-    outs = [
-        "nlopt_wrap.cxx",
-        "nlopt.py",
-    ],
-    cmd = """
-        SWIG="$$PWD/$(execpath @swig//:swig)"
-
-        for lib in $(locations @swig//:lib_python); do
-          if [ -f "$$(dirname "$$lib")/swig.swg" ]; then
-            SWIG_LIB="$$PWD/$$(dirname "$$lib")"
-            break
-          fi
-        done
-
-        OUTDIR=$$(cd $(@D) 2>/dev/null || echo $(@D); pwd -P 2>/dev/null || echo $(@D))
-        mkdir -p "$$OUTDIR"
-
-        TMPDIR=$$(mktemp -d)
-        trap "rm -rf $$TMPDIR" EXIT
-
-        cp $(location nlopt.i) $$TMPDIR/
-        cp $(location nlopt-python.i) $$TMPDIR/
-        cp $(location nlopt-exceptions.i) $$TMPDIR/
-        cp $(location numpy.i) $$TMPDIR/
-        cp $(location :generate_enum_renames) $$TMPDIR/
-        cp $(location //:src/api/nlopt.h) $$TMPDIR/
-        cp $(location //:generate_cpp_header) $$TMPDIR/nlopt.hpp
-
-        cd $$TMPDIR
-        SWIG_LIB=$$SWIG_LIB $$SWIG -c++ -python -DSWIGPYTHON \\
-            -I. \\
-            -outdir . \\
-            -o nlopt_wrap.cxx \\
-            nlopt.i
-
-        cp nlopt_wrap.cxx "$$OUTDIR"/nlopt_wrap.cxx
-        cp nlopt.py "$$OUTDIR"/nlopt.py
-    """,
-    tools = [
-        "@swig//:swig",
-        "@swig//:lib_python",
-    ],
+    language = "python",
+    module = "nlopt",
+    defines = ["SWIGPYTHON"],
 )
 
 # Python extension module (_nlopt.so)
 cc_binary(
     name = "_nlopt.so",
-    srcs = [":nlopt_wrap.cxx"],
+    srcs = [":swig_python"],
     copts = [
         "-fPIC",
         "-Wno-unused-parameter",
@@ -128,7 +90,7 @@ cc_binary(
 # Python library
 py_library(
     name = "nlopt_python",
-    srcs = ["nlopt.py"],
+    srcs = [":swig_python"],
     data = [":_nlopt.so"],
     imports = ["."],
 )
@@ -137,7 +99,7 @@ py_library(
 filegroup(
     name = "python_lib",
     srcs = [
-        "nlopt.py",
+        ":swig_python",
         ":_nlopt.so",
     ],
 )
