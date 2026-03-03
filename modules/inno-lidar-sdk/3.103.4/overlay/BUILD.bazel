@@ -1,0 +1,73 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+################################################################################
+# Unified SDK library - all sources in one library to avoid circular deps
+################################################################################
+# there cycle dependencies between utils, sdk_common, and sdk_client, so combine
+# them all into a single library to avoid circular dependency issues
+cc_library(
+    name = "innolidar-all",
+    srcs = glob([
+        "src/utils/*.cpp",
+        "src/sdk_common/*.cpp",
+        "src/sdk_common/converter/*.cpp",
+        "src/sdk_client/*.cpp",
+        "src/sdk_client/ring_id_converter/*.cpp",
+    ]),
+    hdrs = glob([
+        "src/utils/*.h",
+        "src/sdk_common/*.h",
+        "src/sdk_common/converter/*.h",
+        "src/sdk_client/*.h",
+        "src/sdk_client/ring_id_converter/*.h",
+        # .gen_cc files are treated as headers since they're generated code
+        "src/sdk_common/*.gen_cc",
+    ]),
+    copts = select({
+        "@platforms//cpu:x86_64": [
+            "-DHAVE_SSE42",
+            "-msse4.2",
+        ],
+        "@platforms//cpu:x86_32": [
+            "-DHAVE_SSE42",
+            "-msse4.2",
+        ],
+        "@platforms//cpu:aarch64": [
+            "-march=armv8-a+crc",
+        ],
+        "@platforms//cpu:arm": [
+            "-march=armv8-a+crc",
+        ],
+        "//conditions:default": [],
+    }),
+    include_prefix = "seyond",
+    includes = ["src"],
+    strip_include_prefix = "src",
+)
+
+################################################################################
+# Public convenience aliases
+################################################################################
+alias(
+    name = "utils",
+    actual = ":innolidar-all",
+)
+
+alias(
+    name = "sdk_common",
+    actual = ":innolidar-all",
+)
+
+alias(
+    name = "sdk_client",
+    actual = ":innolidar-all",
+)
+
+# Main SDK library - this is the primary interface
+cc_library(
+    name = "inno-lidar-sdk",
+    deps = [":innolidar-all"],
+)

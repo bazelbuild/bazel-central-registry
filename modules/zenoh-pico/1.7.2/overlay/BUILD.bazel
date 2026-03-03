@@ -1,0 +1,126 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cmake_configure_file(
+    name = "config_h",
+    src = "include/zenoh-pico/config.h.in",
+    out = "include/zenoh-pico/config.h",
+    defines = [
+        "BATCH_MULTICAST_SIZE=2048",  # Use this to override the maximum multicast batch size
+        "BATCH_UNICAST_SIZE=2048",  # Use this to override the maximum unicast batch size
+        "FRAG_MAX_SIZE=4096",  # Use this to override the maximum size for fragmented messages
+        "Z_CONFIG_SOCKET_TIMEOUT=100",  # Default socket timeout in milliseconds
+        "Z_FEATURE_ADVANCED_PUBLICATION=1",  # Toggle advanced publication feature
+        "Z_FEATURE_ADVANCED_SUBSCRIPTION=1",  # Toggle advanced subscription feature
+        "Z_FEATURE_AUTO_RECONNECT=1",  # Toggle automatic reconnection
+        "Z_FEATURE_BATCH_PEER_MUTEX=0",  # Toggle peer mutex lock at a batch level
+        "Z_FEATURE_BATCH_TX_MUTEX=0",  # Toggle tx mutex lock at a batch level
+        "Z_FEATURE_BATCHING=1",  # Toggle batching
+        "Z_FEATURE_ENCODING_VALUES=1",  # Toggle encoding values
+        "Z_FEATURE_FRAGMENTATION=1",  # Toggle fragmentation
+        "Z_FEATURE_INTEREST=1",  # Toggle interests
+        "Z_FEATURE_LINK_BLUETOOTH=0",  # Toggle Bluetooth links
+        "Z_FEATURE_LINK_SERIAL_USB=0",  # Toggle Serial USB links
+        "Z_FEATURE_LINK_SERIAL=0",  # Toggle Serial links
+        "Z_FEATURE_LINK_TCP=1",  # Toggle TCP links
+        "Z_FEATURE_LINK_TLS=1",  # Toggle TLS links
+        "Z_FEATURE_LINK_UDP_MULTICAST=1",  # Toggle UDP multicast links
+        "Z_FEATURE_LINK_UDP_UNICAST=1",  # Toggle UDP unicast links
+        "Z_FEATURE_LINK_WS=0",  # Toggle WebSocket links
+        "Z_FEATURE_LIVELINESS=1",  # Toggle liveliness feature
+        "Z_FEATURE_LOCAL_QUERYABLE=0",  # Toggle local queriables
+        "Z_FEATURE_LOCAL_SUBSCRIBER=0",  # Toggle local subscriptions
+        "Z_FEATURE_MATCHING=1",  # Toggle matching feature
+        "Z_FEATURE_MULTI_THREAD=1",  # Toggle multithread
+        "Z_FEATURE_MULTICAST_DECLARATIONS=0",  # Toggle multicast resource declarations
+        "Z_FEATURE_MULTICAST_TRANSPORT=1",  # Toggle multicast transport
+        "Z_FEATURE_PERIODIC_TASKS=1",  # Toggle periodic task support
+        "Z_FEATURE_PUBLICATION=1",  # Toggle publication feature
+        "Z_FEATURE_QUERY=1",  # Toggle query feature
+        "Z_FEATURE_QUERYABLE=1",  # Toggle queryable feature
+        "Z_FEATURE_RAWETH_TRANSPORT=0",  # Toggle raw ethernet transport
+        "Z_FEATURE_RX_CACHE=0",  # Toggle RX_CACHE
+        "Z_FEATURE_SCOUTING=1",  # Toggle UDP scouting
+        "Z_FEATURE_SESSION_CHECK=1",  # Toggle publisher/querier session check
+        "Z_FEATURE_SUBSCRIPTION=1",  # Toggle subscription feature
+        "Z_FEATURE_TCP_NODELAY=1",  # Toggle TCP_NODELAY
+        "Z_FEATURE_UNICAST_PEER=1",  # Toggle Unicast peer mode
+        "Z_FEATURE_UNICAST_TRANSPORT=1",  # Toggle unicast transport
+        "Z_FEATURE_UNSTABLE_API=1",  # Toggle unstable Zenoh-C API
+        "Z_TRANSPORT_LEASE_EXPIRE_FACTOR=3",  # Default session lease expire factor.
+        "Z_TRANSPORT_LEASE=10000",  # Link lease duration in milliseconds to announce to other zenoh nodes
+        "ZP_PERIODIC_SCHEDULER_MAX_TASKS=64",  # Maximum number of tasks in the periodic scheduler
+    ],
+)
+
+cc_library(
+    name = "zenoh-pico",
+    srcs = glob(
+        ["src/**/*.c"],
+        exclude = ["src/system/**/*.c"],
+    ) + select({
+        "@platforms//os:windows": glob([
+            "src/system/common/**/*.c",
+            "src/system/windows/**/*.c",
+        ]),
+        "//conditions:default": glob([
+            "src/system/common/**/*.c",
+            "src/system/unix/**/*.c",
+        ]),
+    }),
+    hdrs = glob(
+        ["include/**/*.h"],
+        exclude = ["include/zenoh-pico/config.h"],
+    ) + [":config_h"],
+    copts = select({
+        "@platforms//os:windows": [
+            "/experimental:c11atomics",
+            "/std:c11",
+        ],
+        "//conditions:default": [
+            "-Wno-unused-but-set-variable",
+            "-Wno-unused-variable",
+        ],
+    }),
+    defines = select({
+        "@platforms//os:linux": ["ZENOH_LINUX"],
+        "@platforms//os:macos": ["ZENOH_MACOS"],
+        "@platforms//os:windows": [
+            "ZENOH_WINDOWS",
+            "_CRT_SECURE_NO_WARNINGS",
+        ],
+    }),
+    features = select({
+        "@platforms//os:windows": ["system_include_paths"],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-defaultlib:advapi32.lib",
+            "-defaultlib:iphlpapi.lib",
+            "-defaultlib:ws2_32.lib",
+        ],
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["@mbedtls"],
+)

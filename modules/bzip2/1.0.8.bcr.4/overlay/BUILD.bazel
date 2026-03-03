@@ -1,0 +1,62 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+bool_flag(
+    name = "no_stdio",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "no_stdio_requested",
+    flag_values = {":no_stdio": "True"},
+)
+
+cc_binary(
+    name = "bzip2",
+    srcs = ["bzip2.c"],
+    # The `bzip2` binary requires `stdio.h`
+    target_compatible_with = select({
+        ":no_stdio_requested": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bz2",
+    ],
+)
+
+cc_library(
+    name = "bz2",
+    srcs = [
+        "blocksort.c",
+        "bzlib.c",
+        "bzlib_private.h",
+        "compress.c",
+        "crctable.c",
+        "decompress.c",
+        "huffman.c",
+        "randtable.c",
+    ],
+    hdrs = [
+        "bzlib.h",
+    ],
+    defines = [
+        "_FILE_OFFSET_BITS=64",
+    ] + select({
+        ":no_stdio_requested": ["BZ_NO_STDIO"],
+        "//conditions:default": [],
+    }),
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+# A smoketest target which shows `bzip2` is executable.
+genrule(
+    name = "version_file",
+    outs = ["version.txt"],
+    cmd = "$(execpath :bzip2) --version > $@",
+    cmd_bat = "$(execpath :bzip2) --version > $@",
+    tools = [":bzip2"],
+)

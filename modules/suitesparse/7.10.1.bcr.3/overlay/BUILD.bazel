@@ -1,0 +1,72 @@
+# Copyright 2016 Robot Locomotion Group @ CSAIL. All rights reserved.
+#
+# All components of Drake are licensed under the BSD 3-Clause License.
+# See LICENSE.TXT or https://drake.mit.edu/ for details.
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+licenses(["notice"])  # BSD-3-Clause
+
+package(default_visibility = ["//visibility:private"])
+
+cc_library(
+    name = "config",
+    srcs = ["SuiteSparse_config/SuiteSparse_config.c"],
+    hdrs = ["SuiteSparse_config/SuiteSparse_config.h"],
+    defines = select({
+        "@platforms//os:windows": ["NTIMER"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "SuiteSparse_config",
+    visibility = ["//visibility:public"],
+)
+
+# The header for libamd.
+cc_library(
+    name = "amd_hdrs",
+    hdrs = [
+        "AMD/Include/amd.h",
+        "AMD/Include/amd_internal.h",
+    ],
+    strip_include_prefix = "AMD/Include",
+    deps = [
+        ":config",
+    ],
+)
+
+# The libamd sources are compiled twice, once as 32-bit and once as 64-bit.
+_AMD_SRCS = glob(
+    ["AMD/Source/amd_*.c"],
+    allow_empty = False,
+    exclude = ["AMD/Source/amd_l*.c"],
+)
+
+cc_library(
+    name = "amd",
+    srcs = _AMD_SRCS,
+    copts = ["-DDLONG"],
+    visibility = ["//visibility:public"],
+    deps = [":amd_hdrs"],
+)
+
+filegroup(
+    name = "source_files",
+    srcs = glob([
+        "CCOLAMD/Include/*.h",
+        "CCOLAMD/Source/*.c",
+    ]) + ["SuiteSparse_config/SuiteSparse_config.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "ccolamd",
+    srcs = ["CCOLAMD/Source/ccolamd.c"],
+    hdrs = ["CCOLAMD/Include/ccolamd.h"],
+    defines = [
+        "NDEBUG",
+        "NPRINT",
+    ],
+    strip_include_prefix = "CCOLAMD/Include",
+    visibility = ["//visibility:public"],
+    deps = [":config"],
+)
