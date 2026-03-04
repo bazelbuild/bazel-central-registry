@@ -505,7 +505,7 @@ module(
         current = source.get("patches", {}).keys()
         patch_files = [patch_dir / p for p in current]
         patch_files.extend(patch_dir / p for p in available if p not in current)
-        patches = {str(patch.relative_to(patch_dir)): integrity(read(patch)) for patch in patch_files}
+        patches = {patch.relative_to(patch_dir).as_posix(): integrity(read(patch)) for patch in patch_files}
         if patches:
             source["patches"] = patches
         else:
@@ -521,7 +521,7 @@ module(
                     if p.is_file() and p.name != "MODULE.bazel.lock"
                 ]
             )
-        overlay_integrities = {str(file): integrity(read(overlay_dir / file)) for file in overlay_files}
+        overlay_integrities = {file.as_posix(): integrity(read(overlay_dir / file)) for file in overlay_files}
         if overlay_files:
             source["overlay"] = overlay_integrities
         else:
