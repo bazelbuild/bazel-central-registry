@@ -1,0 +1,48 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    package_name = "glib",
+    license_kinds = ["@rules_license//licenses/spdx:LGPL-2.1-or-later"],
+    license_text = "COPYING",
+    package_url = "https://docs.gtk.org/glib/",
+)
+
+exports_files(["COPYING"])
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+[
+    V_MAJOR,
+    V_MINOR,
+    V_MICRO,
+] = UPSTREAM_VERSION.split(".", 3)
+
+BINARY_AGE = 100 * int(V_MINOR) + int(V_MICRO)
+
+expand_template(
+    name = "gen_config_h",
+    out = "include/config.h",
+    substitutions = {
+        "{GLIB_BINARY_AGE}": str(BINARY_AGE),
+        "{GLIB_MAJOR_VERSION}": V_MAJOR,
+        "{GLIB_MINOR_VERSION}": V_MINOR,
+        "{GLIB_MICRO_VERSION}": V_MICRO,
+        "{GLIB_VERSION}": UPSTREAM_VERSION,
+    },
+    template = select({
+        "@platforms//os:macos": "config.h-macos",
+        "@platforms//os:linux": "config.h-linux",
+    }),
+)
+
+cc_library(
+    name = "config_h",
+    hdrs = [":gen_config_h"],
+    strip_include_prefix = "/include",
+    visibility = ["//:__subpackages__"],
+)
