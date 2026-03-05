@@ -1,4 +1,4 @@
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
@@ -6,15 +6,13 @@ load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
 load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
 load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
 
-bool_flag(
-    name = "use_openssl",
-    build_setting_default = True,
-    visibility = ["//visibility:public"],
-)
-
-bool_flag(
-    name = "use_mbedtls",
-    build_setting_default = False,
+string_flag(
+    name = "crypto_backend",
+    build_setting_default = "openssl",
+    values = [
+        "openssl",
+        "mbedtls",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -26,12 +24,12 @@ bool_flag(
 
 config_setting(
     name = "use_openssl_enabled",
-    flag_values = {":use_openssl": "True"},
+    flag_values = {":crypto_backend": "openssl"},
 )
 
 config_setting(
     name = "use_mbedtls_enabled",
-    flag_values = {":use_mbedtls": "True"},
+    flag_values = {":crypto_backend": "mbedtls"},
 )
 
 config_setting(
@@ -246,10 +244,8 @@ LIBSSH2_TEXTUAL_SRCS = [
 DEFINES = [
     "HAVE_CONFIG_H",
 ] + select({
-    ":use_openssl_enabled": ["LIBSSH2_OPENSSL"],
-    "//conditions:default": [],
-}) + select({
-    ":use_mbedtls_enabled": ["LIBSSH2_MBEDTLS"],
+    ":crypto_backend_mbedtls": ["LIBSSH2_MBEDTLS"],
+    ":crypto_backend_openssl": ["LIBSSH2_OPENSSL"],
     "//conditions:default": [],
 }) + select({
     ":use_zlib_enabled": ["LIBSSH2_HAVE_ZLIB"],
@@ -283,10 +279,8 @@ DEFINES = [
         textual_hdrs = LIBSSH2_TEXTUAL_SRCS,
         visibility = kwargs.get("visibility", None),
         deps = select({
-            ":use_openssl_enabled": ["@openssl//:crypto"],
-            "//conditions:default": [],
-        }) + select({
-            ":use_mbedtls_enabled": ["@mbedtls"],
+            ":crypto_backend_mbedtls": ["@mbedtls"],
+            ":crypto_backend_openssl": ["@openssl//:crypto"],
             "//conditions:default": [],
         }) + select({
             ":use_zlib_enabled": ["@zlib"],
