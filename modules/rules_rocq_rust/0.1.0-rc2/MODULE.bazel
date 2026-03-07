@@ -1,0 +1,71 @@
+"""Bazel Module for Rocq and coq-of-rust Rules
+
+This module provides Bazel rules for Rocq/Coq theorem proving.
+Uses nixpkgs for hermetic Coq toolchain installation.
+
+NOTE: The root module must configure nixpkgs - see README.md
+"""
+
+module(
+    name = "rules_rocq_rust",
+    version = "0.1.0-rc2",
+    compatibility_level = 1,
+)
+
+# Core dependencies
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# Note: rocq-of-rust is built with cargo directly in the repository rule
+# because it requires rustc_private (nightly internals) and crate_universe
+# can't handle edition2024 crates like archery 1.2.2.
+# No Bazel Rust rules needed - cargo handles the build.
+
+# Nix integration for hermetic Coq/Rocq toolchain
+bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")
+
+# Development dependencies
+bazel_dep(name = "buildifier_prebuilt", version = "6.4.0", dev_dependency = True)
+
+# Configure nixpkgs repository for standalone development/testing
+# NOTE: This is dev_dependency=True so it doesn't conflict with root module
+nix_repo = use_extension(
+    "@rules_nixpkgs_core//extensions:repository.bzl",
+    "nix_repo",
+    dev_dependency = True,
+)
+nix_repo.github(
+    name = "nixpkgs",
+    org = "NixOS",
+    repo = "nixpkgs",
+    # nixos-unstable with Rocq 9.0.1, coq-hammer, coqutil
+    commit = "88d3861acdd3d2f0e361767018218e51810df8a1",
+    sha256 = "",  # Will be computed on first fetch
+)
+use_repo(nix_repo, "nixpkgs")
+
+# Rocq toolchain extension - uses nixpkgs for hermetic Rocq/Coq
+rocq = use_extension("//rocq:extensions.bzl", "rocq")
+rocq.toolchain(
+    version = "9.0",  # Rocq 9.0 (required for real RocqOfRust library)
+    strategy = "nix",   # Hermetic nix-based installation
+    with_rocq_of_rust_deps = True,  # Include coqutil, hammer, smpl
+)
+# smpl is built from source (rocq-9.0 branch) since nixpkgs only has up to Coq 8.15
+# rocq_stdlib is the separate stdlib package for Rocq 9.0
+# hammer_tactics is a separate package from hammer (plugin vs library)
+use_repo(rocq, "rocq_toolchains", "rocq_stdlib", "rocq_coqutil", "rocq_hammer", "rocq_hammer_tactics", "rocq_smpl")
+
+# Register Rocq toolchain
+register_toolchains("@rocq_toolchains//:all")
+
+# rocq-of-rust toolchain extension - translates Rust to Rocq
+rocq_of_rust = use_extension("//coq_of_rust:extensions.bzl", "rocq_of_rust")
+rocq_of_rust.toolchain(
+    # Uses pinned default: 858907dbee116c51d7c6e87511bf5f92d6432ba4
+    use_real_library = True,  # Full library with coqutil + hammer + smpl
+)
+use_repo(rocq_of_rust, "rocq_of_rust_toolchains", "rocq_of_rust_source")
+
+# Register rocq-of-rust toolchain
+register_toolchains("@rocq_of_rust_toolchains//:toolchain")
