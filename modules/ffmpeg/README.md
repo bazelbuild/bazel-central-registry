@@ -135,15 +135,19 @@ Diff the new `configure` for added/removed/changed feature-detection checks and 
 
 #### `BUILD.bazel`
 
-Update unconditional source lists (`_AVUTIL_SRCS`, `_AVCODEC_BASE_SRCS`, etc.) by diffing the new Makefiles' unconditional `OBJS =` / `OBJS +=` lines. Check for new/removed headers in glob patterns and any new library dependencies.
+Update unconditional source lists (`_AVUTIL_SRCS`, `_AVCODEC_BASE_SRCS`, etc.) by diffing the new Makefiles'
+unconditional `OBJS =` / `OBJS +=` lines. Check for new/removed headers in glob patterns and any new library dependencies.
 
 #### Test `BUILD.bazel` files
 
-Add or remove test targets in `libavcodec/tests/`, `libavfilter/tests/`, `libavutil/tests/`, `libswscale/tests/`, and `tests/` if test sources changed.
+Add or remove test targets in `libavcodec/tests/`, `libavfilter/tests/`, `libavutil/tests/`, `libswscale/tests/`, and
+`tests/` if test sources changed.
 
 ### 3. Regenerating `component_srcs.bzl`
 
-`generate_component_srcs.py` (at `modules/ffmpeg/generate_component_srcs.py`) is reusable across versions. It reads `PROFILE_EVERYTHING` from `component_defs.bzl` **in the same directory as the script**, parses `OBJS-$(CONFIG_*)` lines from the FFmpeg Makefiles, and writes `component_srcs.bzl` to stdout.
+`generate_component_srcs.py` (at `modules/ffmpeg/generate_component_srcs.py`) is reusable across versions. It reads
+`PROFILE_EVERYTHING` from `component_defs.bzl` **in the same directory as the script**, parses `OBJS-$(CONFIG_*)` lines
+from the FFmpeg Makefiles, and writes `component_srcs.bzl` to stdout.
 
 Steps:
 
@@ -167,14 +171,17 @@ If the new FFmpeg version introduces changes, these lists inside `generate_compo
 
 ### 4. Regenerating `component_resolved.bzl`
 
-`generate_resolved_profiles.py` reads `component_defs.bzl` and pre-computes the resolved component state for each (OS, CPU) combination:
+`generate_resolved_profiles.py` reads `component_defs.bzl` and pre-computes the resolved component state for each (OS,
+CPU) combination:
 
 - **linux** (aarch64, x86_64): `CONFIGURE_DEFAULT_COMPONENTS + LINUX_COMPONENTS`
 - **macos** (aarch64, x86_64): `CONFIGURE_DEFAULT_COMPONENTS + MACOS_COMPONENTS`
 - **windows** (aarch64, x86_64): `CONFIGURE_DEFAULT_COMPONENTS + WINDOWS_COMPONENTS`
 - **default**: `CONFIGURE_DEFAULT_COMPONENTS`
 
-Currently the aarch64 and x86_64 profiles for each OS are identical (architecture-specific behavior is handled by `select()` on source files, not component flags). When CPU-specific component lists are added to `component_defs.bzl`, the generator will produce distinct dicts per (OS, CPU) pair automatically.
+Currently the aarch64 and x86_64 profiles for each OS are identical (architecture-specific behavior is handled by
+`select()` on source files, not component flags). When CPU-specific component lists are added to `component_defs.bzl`,
+the generator will produce distinct dicts per (OS, CPU) pair automatically.
 
 For each profile, the script:
 
@@ -188,11 +195,13 @@ Run after any change to `component_defs.bzl`:
 python3 generate_resolved_profiles.py
 ```
 
-The script prints a summary of pruned components (with reasons) to stderr, which is useful for verifying that the right components are being disabled.
+The script prints a summary of pruned components (with reasons) to stderr, which is useful for verifying that the
+right components are being disabled.
 
 ### 5. x86 NASM Assembly
 
-FFmpeg uses NASM-syntax `.asm` files for x86 SIMD optimizations (161 files in 7.1.1). These are compiled via `rules_nasm` and linked into each library through `select()` on `@platforms//cpu:x86_64`.
+FFmpeg uses NASM-syntax `.asm` files for x86 SIMD optimizations (161 files in 7.1.1). These are compiled via
+`rules_nasm` and linked into each library through `select()` on `@platforms//cpu:x86_64`.
 
 Key points for new versions:
 
@@ -202,11 +211,14 @@ Key points for new versions:
 - Include-only files (`x86inc.asm`, `x86util.asm`) go in `hdrs`, not `srcs`.
 - All `nasm_library` targets are tagged `manual` to avoid building on non-x86 platforms.
 
-When updating, check each library's `x86/Makefile` for new `.asm` files. The glob patterns in `BUILD.bazel` pick up additions automatically. If a new library gains x86 assembly, add a corresponding `nasm_library` target and wire it into the `cc_variant_library` `srcs`.
+When updating, check each library's `x86/Makefile` for new `.asm` files. The glob patterns in `BUILD.bazel` pick up
+additions automatically. If a new library gains x86 assembly, add a corresponding `nasm_library` target and wire it
+into the `cc_variant_library` `srcs`.
 
 ### 6. External Library Dependencies
 
-Components that wrap external libraries (e.g. `libx264_encoder`, `alsa_indev`) need conditional `select()` entries in the library target's `deps` so the external library is linked only when the component is enabled. The pattern is:
+Components that wrap external libraries (e.g. `libx264_encoder`, `alsa_indev`) need conditional `select()` entries in
+the library target's `deps` so the external library is linked only when the component is enabled. The pattern is:
 
 ```starlark
 deps = [...] + select({
@@ -215,6 +227,25 @@ deps = [...] + select({
 }),
 ```
 
-When adding a new version, check `COMPONENT_REGISTRY` in `component_defs.bzl` for entries with `"deps"` fields. If the dep maps to a `bazel_dep` in `MODULE.bazel`, ensure a matching `select()` exists on the appropriate library target (`avcodec`, `avformat`, `avfilter`, or `avdevice`).
+When adding a new version, check `COMPONENT_REGISTRY` in `component_defs.bzl` for entries with `"deps"` fields. If the
+dep maps to a `bazel_dep` in `MODULE.bazel`, ensure a matching `select()` exists on the appropriate library target
+(`avcodec`, `avformat`, `avfilter`, or `avdevice`).
 
-Dependencies listed as `"suggest"` (e.g. `bzlib`, `lzma`) are optional -- the source code guards their usage behind autoconf `CONFIG_*` flags and compiles without them.
+Dependencies listed as `"suggest"` (e.g. `bzlib`, `lzma`) are optional -- the source code guards their usage behind
+autoconf `CONFIG_*` flags and compiles without them.
+
+## Bug Report Guidance
+
+FFmpeg is a colossal project with enormous configurability. The Bazel Central Registry CI
+does not have sufficient infrastructure to test all supported FFmpeg components and features.
+
+**Consumers are asked to open a pull-request, not just file an issue.** The maintainers
+of this FFmpeg Bazel integration are not users of every component or feature, and cannot be
+expected to diagnose and fix bugs they cannot reproduce. Fixes depend on contributions from
+the consumers who encounter them.
+
+When identifying and reporting issues, please take the following steps:
+
+1. Follow Bazel Central Registry guidance to create the issue.
+2. Open a pull-request with the fix by introducing a new `.bcr.*` variant for the affected version.
+3. Expand the presubmit pipelines where possible to add regression testing for the affected feature.

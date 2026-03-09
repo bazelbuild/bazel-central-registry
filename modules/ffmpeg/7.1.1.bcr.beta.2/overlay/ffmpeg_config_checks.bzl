@@ -404,8 +404,8 @@ FFMPEG_CONFIG_CHECKS = [
     checks.AC_TRY_COMPILE(define = "HAVE_FAST_FLOAT16", code = "#if !(defined(__aarch64__) || defined(__arm__) || (defined(__x86_64__) && defined(__F16C__)))\n#error\n#endif"),
     checks.AC_TRY_COMPILE(define = "HAVE_LOCAL_ALIGNED", code = "int x = 0; (void)x;"),
     checks.AC_TRY_COMPILE(define = "HAVE_SIMD_ALIGN_16", code = "#if !(defined(__x86_64__) || defined(__aarch64__) || defined(__arm__) || defined(__powerpc__) || defined(__mips__))\n#error\n#endif"),
-    checks.AC_TRY_COMPILE(define = "HAVE_SIMD_ALIGN_32", code = "#if !(defined(__x86_64__) && defined(__AVX__))\n#error\n#endif"),
-    checks.AC_TRY_COMPILE(define = "HAVE_SIMD_ALIGN_64", code = "#if !(defined(__x86_64__) && defined(__AVX512F__))\n#error\n#endif"),
+    checks.AC_DEFINE("HAVE_SIMD_ALIGN_32", condition = "ac_cv_avx_inline", if_true = "1", if_false = "0"),
+    checks.AC_DEFINE("HAVE_SIMD_ALIGN_64", condition = "ac_cv_avx512_inline", if_true = "1", if_false = "0"),
 
     # ========== Builtin checks (BUILTIN_LIST) ==========
     checks.AC_TRY_LINK(define = "HAVE_MEMORYBARRIER", code = "MemoryBarrier()", includes = ["#include <windows.h>"]),

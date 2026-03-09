@@ -265,6 +265,7 @@ nasm_library(
             "common/x86/*.asm",
         ],
         exclude = [
+            "common/x86/cpu-a.asm",
             "common/x86/dct-64.asm",
             "common/x86/intrapred8.asm",
             "common/x86/intrapred8_allangs.asm",
@@ -281,7 +282,22 @@ nasm_library(
     tags = ["manual"],
 )
 
-# checkasm assembly (tools/checkasm-a.asm needs -I common/x86 for x86inc.asm)
+# cpu-a.asm defines bit-depth-independent symbols (x264_cpu_cpuid, x264_cpu_sfence,
+# etc.) that the C code references with a plain x264_ prefix. It must be compiled
+# without -Dprivate_prefix so x86inc.asm's default private_prefix=x264 applies.
+nasm_library(
+    name = "cpu_asm",
+    srcs = ["common/x86/cpu-a.asm"],
+    hdrs = [
+        "common/x86/x86inc.asm",
+        "common/x86/x86util.asm",
+    ],
+    copts = COPTS,
+    tags = ["manual"],
+)
+
+# checkasm assembly defines bit-depth-independent symbols (x264_checkasm_call,
+# x264_stack_pagealign, etc.) so it must not use -Dprivate_prefix.
 nasm_library(
     name = "checkasm_asm",
     srcs = ["tools/checkasm-a.asm"],
@@ -289,7 +305,7 @@ nasm_library(
         "common/x86/x86inc.asm",
         "common/x86/x86util.asm",
     ],
-    copts = COPTS + ["-Dprivate_prefix=x264_" + BIT_DEPTH],
+    copts = COPTS,
     includes = ["common/x86"],
     tags = ["manual"],
 )
@@ -300,7 +316,10 @@ cc_library(
         ":config.h",
         ":x264_config.h",
     ] + select({
-        "@platforms//cpu:x86_64": [":x86_asm"],
+        "@platforms//cpu:x86_64": [
+            ":cpu_asm",
+            ":x86_asm",
+        ],
         "//conditions:default": [],
     }) + glob(
         include = [
