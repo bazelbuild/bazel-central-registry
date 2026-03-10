@@ -1,0 +1,659 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "utils")
+
+licenses(["notice"])  # MIT
+
+###############################################################################
+# TLS configuration -- enable with: --@libwebsockets//:with_tls=True
+###############################################################################
+
+bool_flag(
+    name = "with_tls",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "tls_enabled",
+    flag_values = {":with_tls": "True"},
+)
+
+###############################################################################
+# CMake template converter (cmakedefine -> #undef)
+###############################################################################
+
+cc_binary(
+    name = "cmakedefine_converter",
+    srcs = ["cmakedefine_converter.cc"],
+)
+
+###############################################################################
+# Convert CMake .h.in templates to autoconf-compatible #undef templates
+###############################################################################
+
+genrule(
+    name = "gen_lws_config_h_in",
+    srcs = ["cmake/lws_config.h.in"],
+    outs = ["autoconf/lws_config.h.in"],
+    cmd = "$(execpath :cmakedefine_converter) $< $@",
+    tools = [":cmakedefine_converter"],
+)
+
+genrule(
+    name = "gen_lws_config_private_h_in",
+    srcs = ["cmake/lws_config_private.h.in"],
+    outs = ["autoconf/lws_config_private.h.in"],
+    cmd = "$(execpath :cmakedefine_converter) $< $@",
+    tools = [":cmakedefine_converter"],
+)
+
+###############################################################################
+# Autoconf checks -- platform capability detection + feature flags
+###############################################################################
+
+autoconf(
+    name = "lws_config_checks",
+    checks = [
+        # =================================================================
+        # Header checks
+        # =================================================================
+        checks.AC_CHECK_HEADER(
+            "malloc.h",
+            define = "LWS_HAVE_MALLOC_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "pthread.h",
+            define = "LWS_HAVE_PTHREAD_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdint.h",
+            define = "LWS_HAVE_STDINT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/types.h",
+            define = "LWS_HAVE_SYS_TYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/capability.h",
+            define = "LWS_HAVE_SYS_CAPABILITY_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "net/ethernet.h",
+            define = "LWS_HAVE_NET_ETHERNET_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "net/if_ether.h",
+            define = "LWS_HAVE_NET_IF_ETHER_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "linux/ipv6.h",
+            define = "LWS_HAVE_LINUX_IPV6_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "systemd/sd-daemon.h",
+            define = "LWS_HAVE_SYSTEMD_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "in6addr.h",
+            define = "LWS_HAVE_IN6ADDR_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "memory.h",
+            define = "LWS_HAVE_MEMORY_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "netinet/in.h",
+            define = "LWS_HAVE_NETINET_IN_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdlib.h",
+            define = "LWS_HAVE_STDLIB_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "strings.h",
+            define = "LWS_HAVE_STRINGS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "string.h",
+            define = "LWS_HAVE_STRING_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/prctl.h",
+            define = "LWS_HAVE_SYS_PRCTL_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/resource.h",
+            define = "LWS_HAVE_SYS_RESOURCE_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/socket.h",
+            define = "LWS_HAVE_SYS_SOCKET_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/sockio.h",
+            define = "LWS_HAVE_SYS_SOCKIO_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/stat.h",
+            define = "LWS_HAVE_SYS_STAT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "unistd.h",
+            define = "LWS_HAVE_UNISTD_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "vfork.h",
+            define = "LWS_HAVE_VFORK_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "inttypes.h",
+            define = "LWS_HAVE_INTTYPES_H",
+        ),
+
+        # =================================================================
+        # Function checks
+        # =================================================================
+        checks.AC_CHECK_FUNC(
+            "atoll",
+            define = "LWS_HAVE_ATOLL",
+        ),
+        checks.AC_CHECK_FUNC(
+            "clock_gettime",
+            define = "LWS_HAVE_CLOCK_GETTIME",
+        ),
+        checks.AC_CHECK_FUNC(
+            "execvpe",
+            define = "LWS_HAVE_EXECVPE",
+        ),
+        checks.AC_CHECK_FUNC(
+            "localtime_r",
+            define = "LWS_HAVE_LOCALTIME_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "gmtime_r",
+            define = "LWS_HAVE_GMTIME_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "ctime_r",
+            define = "LWS_HAVE_CTIME_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getgrgid_r",
+            define = "LWS_HAVE_GETGRGID_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getgrnam_r",
+            define = "LWS_HAVE_GETGRNAM_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getpwuid_r",
+            define = "LWS_HAVE_GETPWUID_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getpwnam_r",
+            define = "LWS_HAVE_GETPWNAM_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "malloc_trim",
+            define = "LWS_HAVE_MALLOC_TRIM",
+        ),
+        checks.AC_CHECK_FUNC(
+            "malloc_usable_size",
+            define = "LWS_HAVE_MALLOC_USABLE_SIZE",
+        ),
+        checks.AC_CHECK_FUNC(
+            "pipe2",
+            define = "LWS_HAVE_PIPE2",
+        ),
+        checks.AC_CHECK_FUNC(
+            "eventfd",
+            define = "LWS_HAVE_EVENTFD",
+        ),
+        checks.AC_CHECK_FUNC(
+            "timegm",
+            define = "LWS_HAVE_TIMEGM",
+        ),
+        checks.AC_CHECK_FUNC(
+            "vfork",
+            define = "LWS_HAVE_VFORK",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fork",
+            define = "LWS_HAVE_FORK",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getenv",
+            define = "LWS_HAVE_GETENV",
+        ),
+        checks.AC_CHECK_FUNC(
+            "malloc",
+            define = "LWS_HAVE_MALLOC",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strerror",
+            define = "LWS_HAVE_STRERROR",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getopt_long",
+            define = "LWS_HAS_GETOPT_LONG",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getifaddrs",
+            define = "LWS_HAVE_GETIFADDRS",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getloadavg",
+            define = "LWS_HAVE_GETLOADAVG",
+        ),
+
+        # =================================================================
+        # Type checks
+        # =================================================================
+        checks.AC_CHECK_TYPE(
+            "intptr_t",
+            define = "LWS_HAS_INTPTR_T",
+            includes = ["#include <stdint.h>"],
+        ),
+        checks.AC_CHECK_TYPE(
+            "suseconds_t",
+            define = "LWS_HAVE_SUSECONDS_T",
+            includes = ["#include <sys/time.h>"],
+        ),
+
+        # =================================================================
+        # Compile / link checks for platform-specific APIs
+        # =================================================================
+        checks.AC_TRY_COMPILE(
+            code = utils.AC_LANG_PROGRAM(
+                ["#include <linux/rtnetlink.h>"],
+                "int x = RTA_PREF; (void)x;",
+            ),
+            define = "LWS_HAVE_RTA_PREF",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = utils.AC_LANG_PROGRAM(
+                ["#include <linux/tcp.h>"],
+                "int x = TCP_USER_TIMEOUT; (void)x;",
+            ),
+            define = "LWS_HAVE_TCP_USER_TIMEOUT",
+        ),
+        checks.AC_TRY_LINK(
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#define _GNU_SOURCE",
+                    "#include <pthread.h>",
+                ],
+                'pthread_setname_np(pthread_self(), "t");',
+            ),
+            define = "LWS_HAS_PTHREAD_SETNAME_NP",
+        ),
+
+        # =================================================================
+        # Feature flags (unconditionally enabled)
+        # =================================================================
+        checks.AC_DEFINE("LWS_PLAT_UNIX"),
+        checks.AC_DEFINE("LWS_CLIENT_HTTP_PROXYING"),
+        checks.AC_DEFINE("LWS_ROLE_H1"),
+        checks.AC_DEFINE("LWS_ROLE_H2"),
+        checks.AC_DEFINE("LWS_ROLE_RAW"),
+        checks.AC_DEFINE("LWS_ROLE_RAW_FILE"),
+        checks.AC_DEFINE("LWS_ROLE_WS"),
+        checks.AC_DEFINE("LWS_WITH_NETWORK"),
+        checks.AC_DEFINE("LWS_WITH_POLL"),
+        checks.AC_DEFINE("LWS_WITH_UDP"),
+        checks.AC_DEFINE("LWS_WITH_CLIENT"),
+        checks.AC_DEFINE("LWS_WITH_SERVER"),
+        checks.AC_DEFINE("LWS_WITH_HTTP2"),
+        checks.AC_DEFINE("LWS_WITH_HTTP_BASIC_AUTH"),
+        checks.AC_DEFINE("LWS_WITH_HTTP_UNCOMMON_HEADERS"),
+        checks.AC_DEFINE("LWS_WITH_FILE_OPS"),
+        checks.AC_DEFINE("LWS_WITH_DIR"),
+        checks.AC_DEFINE("LWS_WITH_CUSTOM_HEADERS"),
+        checks.AC_DEFINE("LWS_WITH_CONMON"),
+        checks.AC_DEFINE("LWS_WITH_WOL"),
+        checks.AC_DEFINE("LWS_WITH_UNIX_SOCK"),
+        checks.AC_DEFINE("LWS_WITH_CACHE_NSCOOKIEJAR"),
+        checks.AC_DEFINE("LWS_WITH_LEJP"),
+        checks.AC_DEFINE("LWS_WITH_LHP"),
+        checks.AC_DEFINE("LWS_WITH_JSONRPC"),
+        checks.AC_DEFINE("LWS_WITH_SECURE_STREAMS"),
+        checks.AC_DEFINE("LWS_WITH_SYS_STATE"),
+        checks.AC_DEFINE("LWS_WITH_SYS_SMD"),
+        checks.AC_DEFINE("LWS_WITH_UPNG"),
+        checks.AC_DEFINE("LWS_WITH_GZINFLATE"),
+        checks.AC_DEFINE("LWS_WITH_JPEG"),
+        checks.AC_DEFINE("LWS_WITH_DLO"),
+        checks.AC_DEFINE("LWS_WITH_LWSAC"),
+        checks.AC_DEFINE("LWS_WITHOUT_EXTENSIONS"),
+        checks.AC_DEFINE("LWS_NO_DAEMONIZE"),
+        checks.AC_DEFINE("LWS_LOG_TAG_LIFECYCLE"),
+        checks.AC_DEFINE("LWS_LOGS_TIMESTAMP"),
+        checks.AC_DEFINE("LWS_SUPPRESS_DEPRECATED_API_WARNINGS"),
+        checks.AC_DEFINE("LWS_SSL_CLIENT_USE_OS_CA_CERTS"),
+
+        # Value defines
+        checks.AC_DEFINE(
+            "LWS_BUILD_HASH",
+            value = '"bazel"',
+        ),
+        checks.AC_DEFINE(
+            "LWS_LIBRARY_VERSION",
+            value = '"4.5.2"',
+        ),
+
+        # Private header feature flags
+        checks.AC_DEFINE("LWS_HAVE_WORKING_FORK"),
+        checks.AC_DEFINE("LWS_HAVE_WORKING_VFORK"),
+    ],
+)
+
+###############################################################################
+# Generated configuration headers (from CMake templates via autoconf)
+###############################################################################
+
+autoconf_hdr(
+    name = "gen_lws_config_h",
+    out = "include/lws_config.h",
+    substitutions = {
+        "${CMAKE_INSTALL_PREFIX}/${LWS_INSTALL_LIB_DIR}": "/usr/local/lib",
+        "${CMAKE_INSTALL_PREFIX}/share": "/usr/local/share",
+        "${LWS_LIBRARY_VERSION_MAJOR}": "4",
+        "${LWS_LIBRARY_VERSION_MINOR}": "5",
+        "${LWS_LIBRARY_VERSION_PATCH_ELABORATED}": "2",
+        "${LWS_LIBRARY_VERSION_PATCH}": "2",
+        "${LWS_LOGGING_BITFIELD_CLEAR}": "0",
+        "${LWS_LOGGING_BITFIELD_SET}": "0",
+        "${LWS_MAX_SMP}": "1",
+    },
+    template = ":gen_lws_config_h_in",
+    deps = [":lws_config_checks"],
+)
+
+autoconf_hdr(
+    name = "gen_lws_config_private_h",
+    out = "lib/lws_config_private.h",
+    template = ":gen_lws_config_private_h_in",
+    deps = [":lws_config_checks"],
+)
+
+###############################################################################
+# Source file lists
+###############################################################################
+
+CORE_SRCS = [
+    "lib/core/alloc.c",
+    "lib/core/buflist.c",
+    "lib/core/context.c",
+    "lib/core/libwebsockets.c",
+    "lib/core/logs.c",
+    "lib/core/lws_dll2.c",
+    "lib/core/lws_map.c",
+    "lib/core/vfs.c",
+]
+
+CORE_NET_SRCS = [
+    "lib/core-net/adopt.c",
+    "lib/core-net/client/client.c",
+    "lib/core-net/client/conmon.c",
+    "lib/core-net/client/connect.c",
+    "lib/core-net/client/connect2.c",
+    "lib/core-net/client/connect3.c",
+    "lib/core-net/client/connect4.c",
+    "lib/core-net/client/sort-dns.c",
+    "lib/core-net/close.c",
+    "lib/core-net/dummy-callback.c",
+    "lib/core-net/network.c",
+    "lib/core-net/output.c",
+    "lib/core-net/pollfd.c",
+    "lib/core-net/service.c",
+    "lib/core-net/sorted-usec-list.c",
+    "lib/core-net/state.c",
+    "lib/core-net/vhost.c",
+    "lib/core-net/wol.c",
+    "lib/core-net/wsi-timeout.c",
+    "lib/core-net/wsi.c",
+]
+
+MISC_SRCS = [
+    "lib/misc/base64-decode.c",
+    "lib/misc/cache-ttl/file.c",
+    "lib/misc/cache-ttl/heap.c",
+    "lib/misc/cache-ttl/lws-cache-ttl.c",
+    "lib/misc/dir.c",
+    "lib/misc/dlo/dlo-font-mcufont.c",
+    "lib/misc/dlo/dlo-jpeg.c",
+    "lib/misc/dlo/dlo-lhp.c",
+    "lib/misc/dlo/dlo-png.c",
+    "lib/misc/dlo/dlo-rect.c",
+    "lib/misc/dlo/dlo-ss.c",
+    "lib/misc/dlo/dlo-text.c",
+    "lib/misc/dlo/dlo.c",
+    "lib/misc/jpeg.c",
+    "lib/misc/jrpc/jrpc.c",
+    "lib/misc/lejp.c",
+    "lib/misc/lhp-ss.c",
+    "lib/misc/lhp.c",
+    "lib/misc/lwsac/cached-file.c",
+    "lib/misc/lwsac/lwsac.c",
+    "lib/misc/lws-ring.c",
+    "lib/misc/prng.c",
+    "lib/misc/sha-1.c",
+    "lib/misc/upng-gzip.c",
+    "lib/misc/upng.c",
+]
+
+SYSTEM_SRCS = [
+    "lib/system/smd/smd.c",
+    "lib/system/stdin.c",
+    "lib/system/system.c",
+]
+
+PLAT_UNIX_SRCS = [
+    "lib/plat/unix/unix-caps.c",
+    "lib/plat/unix/unix-fds.c",
+    "lib/plat/unix/unix-file.c",
+    "lib/plat/unix/unix-init.c",
+    "lib/plat/unix/unix-misc.c",
+    "lib/plat/unix/unix-pipe.c",
+    "lib/plat/unix/unix-service.c",
+    "lib/plat/unix/unix-sockets.c",
+]
+
+EVENT_LIB_SRCS = [
+    "lib/event-libs/poll/poll.c",
+]
+
+ROLE_SRCS = [
+    "lib/roles/h1/ops-h1.c",
+    "lib/roles/h2/hpack.c",
+    "lib/roles/h2/http2.c",
+    "lib/roles/h2/ops-h2.c",
+    "lib/roles/http/client/client-http.c",
+    "lib/roles/http/cookie.c",
+    "lib/roles/http/date.c",
+    "lib/roles/http/header.c",
+    "lib/roles/http/parsers.c",
+    "lib/roles/http/server/lejp-conf.c",
+    "lib/roles/http/server/lws-spa.c",
+    "lib/roles/http/server/server.c",
+    "lib/roles/listen/ops-listen.c",
+    "lib/roles/pipe/ops-pipe.c",
+    "lib/roles/raw-file/ops-raw-file.c",
+    "lib/roles/raw-skt/ops-raw-skt.c",
+    "lib/roles/ws/client-parser-ws.c",
+    "lib/roles/ws/client-ws.c",
+    "lib/roles/ws/ops-ws.c",
+    "lib/roles/ws/server-ws.c",
+]
+
+SECURE_STREAMS_SRCS = [
+    "lib/secure-streams/policy-common.c",
+    "lib/secure-streams/policy-json.c",
+    "lib/secure-streams/protocols/ss-h1.c",
+    "lib/secure-streams/protocols/ss-h2.c",
+    "lib/secure-streams/protocols/ss-raw.c",
+    "lib/secure-streams/protocols/ss-ws.c",
+    "lib/secure-streams/secure-streams.c",
+    "lib/secure-streams/system/captive-portal-detect/captive-portal-detect.c",
+    "lib/secure-streams/system/fetch-policy/fetch-policy.c",
+]
+
+LINUX_ONLY_SRCS = [
+    "lib/core-net/route.c",
+    "lib/roles/netlink/ops-netlink.c",
+]
+
+TLS_OPENSSL_SRCS = [
+    "lib/tls/lws-genec-common.c",
+    "lib/tls/openssl/lws-genaes.c",
+    "lib/tls/openssl/lws-gencrypto.c",
+    "lib/tls/openssl/lws-genec.c",
+    "lib/tls/openssl/lws-genhash.c",
+    "lib/tls/openssl/lws-genrsa.c",
+    "lib/tls/openssl/openssl-client.c",
+    "lib/tls/openssl/openssl-server.c",
+    "lib/tls/openssl/openssl-session.c",
+    "lib/tls/openssl/openssl-ssl.c",
+    "lib/tls/openssl/openssl-tls.c",
+    "lib/tls/openssl/openssl-x509.c",
+    "lib/tls/tls-client.c",
+    "lib/tls/tls-network.c",
+    "lib/tls/tls-server.c",
+    "lib/tls/tls-sessions.c",
+    "lib/tls/tls.c",
+]
+
+###############################################################################
+# Compiler options
+###############################################################################
+
+COMMON_COPTS = [
+    "-w",
+]
+
+COMMON_DEFINES = [
+    "_GNU_SOURCE",
+    "LWS_BUILDING_STATIC",
+]
+
+COMMON_INCLUDES = [
+    "include",
+    "lib",
+    "lib/core",
+    "lib/core-net",
+    "lib/event-libs",
+    "lib/event-libs/poll",
+    "lib/misc",
+    "lib/misc/jrpc",
+    "lib/plat/unix",
+    "lib/roles",
+    "lib/roles/h1",
+    "lib/roles/h2",
+    "lib/roles/http",
+    "lib/roles/http/compression",
+    "lib/roles/listen",
+    "lib/roles/pipe",
+    "lib/roles/raw-file",
+    "lib/roles/raw-skt",
+    "lib/roles/ws",
+    "lib/secure-streams",
+    "lib/system",
+    "lib/system/async-dns",
+    "lib/system/metrics",
+    "lib/system/smd",
+    "lib/tls",
+]
+
+###############################################################################
+# Main library
+###############################################################################
+
+cc_library(
+    name = "websockets",
+    srcs = CORE_SRCS +
+           CORE_NET_SRCS +
+           MISC_SRCS +
+           SYSTEM_SRCS +
+           PLAT_UNIX_SRCS +
+           EVENT_LIB_SRCS +
+           ROLE_SRCS +
+           SECURE_STREAMS_SRCS + glob([
+               "lib/**/*.h",
+           ]) + [
+               ":gen_lws_config_private_h",
+           ] + select({
+               "@platforms//os:linux": LINUX_ONLY_SRCS,
+               "//conditions:default": [],
+           }) +
+           select({
+               ":tls_enabled": TLS_OPENSSL_SRCS,
+               "//conditions:default": [],
+           }),
+    hdrs = glob([
+        "include/*.h",
+        "include/libwebsockets/*.h",
+    ]) + [":gen_lws_config_h"],
+    copts = COMMON_COPTS + select({
+        "@platforms//os:linux": ["-pthread"],
+        "@platforms//os:macos": [
+            "-pthread",
+            "-Wno-error=unused-command-line-argument",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = COMMON_INCLUDES,
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-ldl",
+            "-lpthread",
+        ],
+        "@platforms//os:macos": [
+            "-lm",
+            "-ldl",
+            "-lpthread",
+        ],
+        "//conditions:default": [
+            "-lm",
+            "-ldl",
+            "-lpthread",
+        ],
+    }),
+    local_defines = COMMON_DEFINES + select({
+        "@platforms//os:linux": [
+            "LWS_WITH_NETLINK",
+            "LWS_WITH_BINDTODEVICE",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":tls_enabled": [
+            "LWS_OPENSSL_SUPPORT",
+            "LWS_WITH_TLS",
+            "LWS_WITH_TLS_SESSIONS",
+            "LWS_WITH_GENCRYPTO",
+            "LWS_WITH_HTTP_DIGEST_AUTH",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":tls_enabled": ["@openssl"],
+        "//conditions:default": [],
+    }),
+)
+
+###############################################################################
+# Test targets
+###############################################################################
+
+cc_test(
+    name = "test_lejp",
+    srcs = ["test_lejp.c"],
+    copts = COMMON_COPTS,
+    local_defines = ["LWS_BUILDING_STATIC"],
+    deps = [":websockets"],
+)

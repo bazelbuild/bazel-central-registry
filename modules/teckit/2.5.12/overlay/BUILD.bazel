@@ -1,0 +1,211 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# ===========================================================================
+# Autoconf: generate config.h from config.h.in
+# ===========================================================================
+
+package_info(
+    name = "teckit_package_info",
+    package_bugreport = "wstech@sil.org",
+)
+
+autoconf(
+    name = "configure_ac",
+    checks = [
+        # AC_HEADER_STDC (line 55) + AC_CHECK_HEADERS (line 56)
+        checks.AC_CHECK_HEADER(
+            "dlfcn.h",
+            define = "HAVE_DLFCN_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "inttypes.h",
+            define = "HAVE_INTTYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdint.h",
+            define = "HAVE_STDINT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdio.h",
+            define = "HAVE_STDIO_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdlib.h",
+            define = "HAVE_STDLIB_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "string.h",
+            define = "HAVE_STRING_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "strings.h",
+            define = "HAVE_STRINGS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/stat.h",
+            define = "HAVE_SYS_STAT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/types.h",
+            define = "HAVE_SYS_TYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "unistd.h",
+            define = "HAVE_UNISTD_H",
+        ),
+
+        # zlib is always available via Bazel dependency
+        checks.AC_DEFINE("HAVE_LIBZ", "1"),
+        checks.AC_DEFINE("HAVE_ZLIB_H", "1"),
+
+        # expat is always available via Bazel dependency
+        checks.AC_DEFINE("HAVE_LIBEXPAT", "1"),
+
+        # AC_HEADER_STDC (line 55)
+        checks.AC_DEFINE("STDC_HEADERS", "1"),
+
+        # LT_OBJDIR - libtool artifact, not used by source but present in config.h.in
+        checks.AC_DEFINE("LT_OBJDIR", '".libs/"'),
+    ],
+    deps = [
+        ":teckit_package_info",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "source/config.h",
+    template = "config.h.in",
+    deps = [":configure_ac"],
+)
+
+# ===========================================================================
+# Libraries
+# ===========================================================================
+
+LOCAL_DEFINES = ["HAVE_CONFIG_H"]
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang": ["-w"],
+    "@rules_cc//cc/compiler:gcc": ["-w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": [],
+})
+
+# Public headers shared by both libraries
+cc_library(
+    name = "TECkit_headers",
+    hdrs = [
+        "source/Public-headers/TECkit_Common.h",
+        "source/Public-headers/TECkit_Compiler.h",
+        "source/Public-headers/TECkit_Engine.h",
+    ],
+    includes = ["source/Public-headers"],
+    visibility = ["//visibility:public"],
+)
+
+# libTECkit - the conversion engine
+cc_library(
+    name = "TECkit",
+    srcs = [
+        "source/Engine.cpp",
+    ],
+    copts = COPTS,
+    includes = ["source"],
+    local_defines = LOCAL_DEFINES,
+    textual_hdrs = [
+        "source/Engine.h",
+        "source/NormalizationData.c",
+        "source/TECkit_Format.h",
+        "source/config.h",
+        "source/ulong_chartraits.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":TECkit_headers",
+        "@zlib",
+    ],
+)
+
+# libTECkit_Compiler - the mapping compiler
+cc_library(
+    name = "TECkit_Compiler",
+    srcs = [
+        "source/Compiler.cpp",
+        "source/UnicodeNames.cpp",
+    ],
+    copts = COPTS,
+    includes = ["source"],
+    local_defines = LOCAL_DEFINES,
+    textual_hdrs = [
+        "source/Compiler.h",
+        "source/TECkit_Format.h",
+        "source/config.h",
+        "source/ulong_chartraits.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":TECkit_headers",
+        "@zlib",
+    ],
+)
+
+# ===========================================================================
+# Executables
+# ===========================================================================
+
+# teckit_compile - compiles .map files to .tec binary mappings
+cc_binary(
+    name = "teckit_compile",
+    srcs = ["source/Sample-tools/TECkit_Compile.cpp"],
+    copts = COPTS,
+    visibility = ["//visibility:public"],
+    deps = [":TECkit_Compiler"],
+)
+
+# txtconv - text conversion tool
+cc_binary(
+    name = "txtconv",
+    srcs = [
+        "source/Sample-tools/TxtConv.cpp",
+    ],
+    copts = COPTS,
+    local_defines = LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":TECkit"],
+)
+
+# sfconv - Standard Format conversion tool
+# SFconv.cpp conditionally includes config.h only when platformUTF16 is not
+# already defined (it is on macOS via TargetConditionals.h), so HAVE_LIBEXPAT
+# must also be set via local_defines to ensure the system expat path is used.
+cc_binary(
+    name = "sfconv",
+    srcs = [
+        "SFconv/Debug_Prefix.h",
+        "SFconv/Final_Prefix.h",
+        "SFconv/SFconv.cpp",
+        "SFconv/UtfCodec.cpp",
+        "SFconv/UtfCodec.h",
+        "SFconv/sfReader.h",
+        "SFconv/ushort_chartraits.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": ["-std=c++11"],
+    }) + COPTS,
+    local_defines = LOCAL_DEFINES + [
+        "HAVE_LIBEXPAT=1",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":TECkit",
+        "@libexpat",
+    ],
+)
