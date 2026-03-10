@@ -1,0 +1,271 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    package_name = "libyuv",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = "LICENSE",
+    package_url = "https://chromium.googlesource.com/libyuv/libyuv",
+)
+
+alias(
+    name = "libyuv",
+    actual = ":yuv",
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "arm",
+    constraint_values = [
+        "@platforms//cpu:arm",
+    ],
+)
+
+config_setting(
+    name = "arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "msvc_compiler",
+    flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+)
+
+bool_flag(
+    name = "enable_jpeg",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "enable_jpeg_enabled",
+    flag_values = {":enable_jpeg": "True"},
+)
+
+bool_flag(
+    name = "enable_fp_contract_fast",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "enable_fp_contract_fast_enabled",
+    flag_values = {":enable_fp_contract_fast": "True"},
+)
+
+config_setting(
+    name = "enable_fp_contract_fast_enabled_msvc",
+    flag_values = {
+        ":enable_fp_contract_fast": "True",
+        "@rules_cc//cc/compiler:compiler": "msvc-cl",
+    },
+)
+
+bool_flag(
+    name = "enable_sve",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "enable_sve_arm64",
+    flag_values = {":enable_sve": "True"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+bool_flag(
+    name = "enable_sme",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "enable_sme_arm64",
+    flag_values = {
+        ":enable_sme": "True",
+    },
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+
+_BASE_DEFINES = [
+    "LIBYUV_DISABLE_RVV",
+    "LIBYUV_DISABLE_LSX",
+    "LIBYUV_DISABLE_LASX",
+]
+
+_SVE_DISABLE_DEFINES = select({
+    ":enable_sve_arm64": [],
+    "//conditions:default": ["LIBYUV_DISABLE_SVE"],
+})
+
+_SME_DISABLE_DEFINES = select({
+    ":enable_sme_arm64": [],
+    "//conditions:default": ["LIBYUV_DISABLE_SME"],
+})
+
+_JPEG_DEFINES = select({
+    ":enable_jpeg_enabled": ["HAVE_JPEG"],
+    "//conditions:default": [],
+})
+
+_JPEG_DEPS = select({
+    ":enable_jpeg_enabled": ["@libjpeg_turbo"],
+    "//conditions:default": [],
+})
+
+_FP_CONTRACT_FAST_COPTS = select({
+    ":enable_fp_contract_fast_enabled_msvc": [],
+    ":enable_fp_contract_fast_enabled": ["-ffp-contract=fast"],
+    "//conditions:default": [],
+})
+
+_CORE_SRCS = [
+    "source/compare.cc",
+    "source/compare_common.cc",
+    "source/compare_gcc.cc",
+    "source/compare_win.cc",
+    "source/convert.cc",
+    "source/convert_argb.cc",
+    "source/convert_from.cc",
+    "source/convert_from_argb.cc",
+    "source/convert_jpeg.cc",
+    "source/convert_to_argb.cc",
+    "source/convert_to_i420.cc",
+    "source/cpu_id.cc",
+    "source/mjpeg_decoder.cc",
+    "source/mjpeg_validate.cc",
+    "source/planar_functions.cc",
+    "source/rotate.cc",
+    "source/rotate_any.cc",
+    "source/rotate_argb.cc",
+    "source/rotate_common.cc",
+    "source/rotate_gcc.cc",
+    "source/rotate_win.cc",
+    "source/row_any.cc",
+    "source/row_common.cc",
+    "source/row_gcc.cc",
+    "source/row_win.cc",
+    "source/scale.cc",
+    "source/scale_any.cc",
+    "source/scale_argb.cc",
+    "source/scale_common.cc",
+    "source/scale_gcc.cc",
+    "source/scale_rgb.cc",
+    "source/scale_uv.cc",
+    "source/scale_win.cc",
+    "source/video_common.cc",
+]
+
+_NEON32_SRCS = [
+    "source/compare_neon.cc",
+    "source/rotate_neon.cc",
+    "source/row_neon.cc",
+    "source/scale_neon.cc",
+]
+
+_NEON64_SRCS = [
+    "source/compare_neon64.cc",
+    "source/rotate_neon64.cc",
+    "source/row_neon64.cc",
+    "source/scale_neon64.cc",
+]
+
+_SVE_SRCS = [
+    "source/row_sve.cc",
+]
+
+_SME_SRCS = [
+    "source/rotate_sme.cc",
+    "source/row_sme.cc",
+    "source/scale_sme.cc",
+]
+
+_NEON32_COPTS = ["-mfpu=neon"]
+
+_NEON64_COPTS = ["-march=armv8-a+dotprod+i8mm"]
+
+_SVE_COPTS = ["-march=armv9-a+i8mm+sve2"]
+
+_SME_COPTS = ["-march=armv9-a+i8mm+sme"]
+
+_NEON_DISABLE_DEFINES = ["LIBYUV_DISABLE_NEON"]
+
+cc_library(
+    name = "_yuv_core",
+    srcs = _CORE_SRCS,
+    hdrs = glob(["include/**/*.h"]),
+    copts = _FP_CONTRACT_FAST_COPTS,
+    includes = ["include"],
+    local_defines = _BASE_DEFINES + _JPEG_DEFINES + _SVE_DISABLE_DEFINES + _SME_DISABLE_DEFINES + select({
+        ":arm": [],
+        ":arm64": [],
+        "//conditions:default": _NEON_DISABLE_DEFINES,
+    }),
+    visibility = ["//visibility:private"],
+    deps = _JPEG_DEPS,
+)
+
+cc_library(
+    name = "_yuv_neon32",
+    srcs = _NEON32_SRCS,
+    copts = _NEON32_COPTS,
+    local_defines = _BASE_DEFINES + _JPEG_DEFINES + _SVE_DISABLE_DEFINES + _SME_DISABLE_DEFINES,
+    visibility = ["//visibility:private"],
+    deps = [":_yuv_core"],
+)
+
+cc_library(
+    name = "_yuv_neon64",
+    srcs = _NEON64_SRCS,
+    copts = _NEON64_COPTS,
+    local_defines = _BASE_DEFINES + _JPEG_DEFINES + _SVE_DISABLE_DEFINES + _SME_DISABLE_DEFINES,
+    visibility = ["//visibility:private"],
+    deps = [":_yuv_core"],
+)
+
+cc_library(
+    name = "_yuv_sve",
+    srcs = _SVE_SRCS,
+    copts = _SVE_COPTS,
+    local_defines = _BASE_DEFINES + _JPEG_DEFINES + _SME_DISABLE_DEFINES,
+    visibility = ["//visibility:private"],
+    deps = [":_yuv_core"],
+)
+
+cc_library(
+    name = "_yuv_sme",
+    srcs = _SME_SRCS,
+    copts = _SME_COPTS,
+    local_defines = _BASE_DEFINES + _JPEG_DEFINES + _SVE_DISABLE_DEFINES,
+    visibility = ["//visibility:private"],
+    deps = [":_yuv_core"],
+)
+
+cc_library(
+    name = "yuv",
+    visibility = ["//visibility:public"],
+    deps = [":_yuv_core"] + select({
+        ":arm": [":_yuv_neon32"],
+        ":arm64": [":_yuv_neon64"],
+        "//conditions:default": [],
+    }) + select({
+        ":enable_sve_arm64": [":_yuv_sve"],
+        "//conditions:default": [],
+    }) + select({
+        ":enable_sme_arm64": [":_yuv_sme"],
+        "//conditions:default": [],
+    }),
+)
