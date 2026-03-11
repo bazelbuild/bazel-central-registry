@@ -1,0 +1,409 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
+
+BIT_DEPTH = "10"
+
+write_file(
+    name = "x264_config_h",
+    out = "x264_config.h",
+    content = ["""\
+#define X264_GPL           1
+#define X264_INTERLACED    1
+#define X264_BIT_DEPTH     0
+#define X264_CHROMA_FORMAT 0
+#define X264_REV 3108
+#define X264_REV_DIFF 0
+#define X264_VERSION " r3108 31e19f9"
+#define X264_POINTVER "0.164.3108 31e19f9"
+"""],
+    newline = "unix",
+)
+
+write_file(
+    name = "config_h_in",
+    out = "config.h.in",
+    content = [
+        "#undef HAVE_AARCH64",
+        "#undef ARCH_AARCH64",
+        "#undef HAVE_NEON",
+        "#undef SYS_MACOSX",
+        "#undef SYS_LINUX",
+        "#undef STACK_ALIGNMENT",
+        "#undef HAVE_POSIXTHREAD",
+        "#undef HAVE_THREAD",
+        "#undef HAVE_LOG2F",
+        "#undef HAVE_STRTOK_R",
+        "#undef HAVE_CLOCK_GETTIME",
+        "#undef HAVE_MMAP",
+        "#undef HAVE_AVS",
+        "#undef HAVE_VECTOREXT",
+        "#undef fseek",
+        "#undef ftell",
+        "#undef HAVE_BITDEPTH8",
+        "#undef HAVE_BITDEPTH10",
+        "#undef HAVE_GPL",
+        "#undef HAVE_INTERLACED",
+        "#undef HAVE_OPENCL",
+        "#undef HAVE_MALLOC_H",
+        "#undef HAVE_ALTIVEC",
+        "#undef HAVE_ALTIVEC_H",
+        "#undef HAVE_MMX",
+        "#undef HAVE_ARMV6",
+        "#undef HAVE_ARMV6T2",
+        "#undef HAVE_BEOSTHREAD",
+        "#undef HAVE_WIN32THREAD",
+        "#undef HAVE_SWSCALE",
+        "#undef HAVE_LAVF",
+        "#undef HAVE_FFMS",
+        "#undef HAVE_GPAC",
+        "#undef HAVE_CPU_COUNT",
+        "#undef HAVE_THP",
+        "#undef HAVE_LSMASH",
+        "#undef HAVE_X86_INLINE_ASM",
+        "#undef HAVE_AS_FUNC",
+        "#undef HAVE_INTEL_DISPATCHER",
+        "#undef HAVE_MSA",
+        "#undef HAVE_WINRT",
+        "#undef HAVE_VSX",
+        "#undef HAVE_ARM_INLINE_ASM",
+        "",
+    ],
+    newline = "unix",
+)
+
+autoconf(
+    name = "config_checks",
+    checks = [
+        # Compile checks mirroring configure cc_check/cpp_check calls
+        checks.AC_CHECK_HEADER("malloc.h"),
+        checks.AC_DEFINE(
+            "HAVE_MALLOC_H",
+            condition = "ac_cv_header_malloc_h",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_log2f",
+            code = "volatile float x = 2; return (int)log2f(x);",
+            includes = ["#include <math.h>"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_LOG2F",
+            condition = "ac_cv_func_log2f",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_strtok_r",
+            code = "strtok_r(0, 0, 0);",
+            includes = ["#include <string.h>"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_STRTOK_R",
+            condition = "ac_cv_func_strtok_r",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_clock_gettime",
+            code = "clock_gettime(CLOCK_MONOTONIC, 0);",
+            includes = ["#include <time.h>"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_CLOCK_GETTIME",
+            condition = "ac_cv_func_clock_gettime",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_have_mmap",
+            code = "int x = MAP_PRIVATE; (void)x;",
+            includes = [
+                "#include <sys/mman.h>",
+                "#include <unistd.h>",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_MMAP",
+            condition = "ac_cv_have_mmap",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_have_vectorext",
+            code = "uint32_t test_vec __attribute__ ((vector_size (16))) = {0,1,2,3}; (void)test_vec;",
+            includes = ["#include <stdint.h>"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_VECTOREXT",
+            condition = "ac_cv_have_vectorext",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_fseeko",
+            code = "fseeko(stdin,0,0);",
+            includes = ["#include <stdio.h>"],
+        ),
+        checks.AC_DEFINE(
+            "fseek",
+            condition = "ac_cv_func_fseeko",
+            if_false = None,
+            if_true = "fseeko",
+        ),
+        checks.AC_DEFINE(
+            "ftell",
+            condition = "ac_cv_func_fseeko",
+            if_false = None,
+            if_true = "ftello",
+        ),
+
+        # Configuration constants
+        checks.AC_DEFINE("HAVE_POSIXTHREAD", "1"),
+        checks.AC_DEFINE("HAVE_THREAD", "1"),
+        checks.AC_DEFINE("HAVE_AVS", "1"),
+        checks.AC_DEFINE("HAVE_BITDEPTH8", "1"),
+        checks.AC_DEFINE("HAVE_BITDEPTH10", "1"),
+        checks.AC_DEFINE("HAVE_GPL", "1"),
+        checks.AC_DEFINE("HAVE_INTERLACED", "1"),
+        checks.AC_DEFINE("HAVE_OPENCL", "(BIT_DEPTH==8)"),
+
+        # Unsupported/disabled features
+        checks.AC_DEFINE("HAVE_ALTIVEC", "0"),
+        checks.AC_DEFINE("HAVE_ALTIVEC_H", "0"),
+        checks.AC_DEFINE("HAVE_MMX", "0"),
+        checks.AC_DEFINE("HAVE_ARMV6", "0"),
+        checks.AC_DEFINE("HAVE_ARMV6T2", "0"),
+        checks.AC_DEFINE("HAVE_BEOSTHREAD", "0"),
+        checks.AC_DEFINE("HAVE_WIN32THREAD", "0"),
+        checks.AC_DEFINE("HAVE_SWSCALE", "0"),
+        checks.AC_DEFINE("HAVE_LAVF", "0"),
+        checks.AC_DEFINE("HAVE_FFMS", "0"),
+        checks.AC_DEFINE("HAVE_GPAC", "0"),
+        checks.AC_DEFINE("HAVE_CPU_COUNT", "0"),
+        checks.AC_DEFINE("HAVE_THP", "0"),
+        checks.AC_DEFINE("HAVE_LSMASH", "0"),
+        checks.AC_DEFINE("HAVE_X86_INLINE_ASM", "0"),
+        checks.AC_DEFINE("HAVE_AS_FUNC", "0"),
+        checks.AC_DEFINE("HAVE_INTEL_DISPATCHER", "0"),
+        checks.AC_DEFINE("HAVE_MSA", "0"),
+        checks.AC_DEFINE("HAVE_WINRT", "0"),
+        checks.AC_DEFINE("HAVE_VSX", "0"),
+        checks.AC_DEFINE("HAVE_ARM_INLINE_ASM", "0"),
+    ] + select({
+        "@platforms//cpu:aarch64": [
+            checks.AC_DEFINE("HAVE_AARCH64", "1"),
+            checks.AC_DEFINE("ARCH_AARCH64", "1"),
+            checks.AC_DEFINE("HAVE_NEON", "1"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("HAVE_AARCH64", "0"),
+            checks.AC_DEFINE("HAVE_NEON", "0"),
+        ],
+    }) + select({
+        "@platforms//os:linux": [
+            checks.AC_DEFINE("SYS_LINUX", "1"),
+            checks.AC_DEFINE("STACK_ALIGNMENT", "64"),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_DEFINE("SYS_MACOSX", "1"),
+            checks.AC_DEFINE("STACK_ALIGNMENT", "16"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("STACK_ALIGNMENT", "16"),
+        ],
+    }),
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = ":config_h_in",
+    deps = [":config_checks"],
+)
+
+COPTS = [
+    "-w",
+    "-DHIGH_BIT_DEPTH=1",
+    "-DBIT_DEPTH=" + BIT_DEPTH,
+    "-DPIC",
+] + select({
+    "@platforms//cpu:aarch64": [
+    ],
+    "@platforms//cpu:x86_64": [
+        "-DARCH_X86_64=1",
+    ],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//os:linux": [
+        "-DSTACK_ALIGNMENT=64",
+    ],
+    "@platforms//os:macos": [
+        "-DPREFIX",
+        "-DSTACK_ALIGNMENT=16",
+    ],
+    "//conditions:default": [],
+})
+
+nasm_library(
+    name = "x86_asm",
+    srcs = glob(
+        include = [
+            "common/x86/*.asm",
+        ],
+        exclude = [
+            "common/x86/dct-64.asm",
+            "common/x86/intrapred8.asm",
+            "common/x86/intrapred8_allangs.asm",
+            "common/x86/ipfilter8.asm",
+            "common/x86/pixel-32.asm",
+            "common/x86/sad-a.asm",
+        ],
+    ),
+    hdrs = [
+        "common/x86/x86inc.asm",
+        "common/x86/x86util.asm",
+    ],
+    copts = COPTS,
+    tags = ["manual"],
+)
+
+# checkasm assembly (tools/checkasm-a.asm needs -I common/x86 for x86inc.asm)
+nasm_library(
+    name = "checkasm_asm",
+    srcs = ["tools/checkasm-a.asm"],
+    hdrs = [
+        "common/x86/x86inc.asm",
+        "common/x86/x86util.asm",
+    ],
+    copts = COPTS,
+    includes = ["common/x86"],
+    tags = ["manual"],
+)
+
+cc_library(
+    name = "x264",
+    srcs = [
+        ":config.h",
+        ":x264_config.h",
+    ] + select({
+        "@platforms//cpu:x86_64": [":x86_asm"],
+        "//conditions:default": [],
+    }) + glob(
+        include = [
+            "common/*.h",
+            "common/*.c",
+            "encoder/*.h",
+            "encoder/*.c",
+        ],
+        exclude = [
+            "common/opencl.c",
+            "common/win32thread.c",
+            "encoder/rdo.c",
+            "encoder/slicetype.c",
+        ],
+    ) + select({
+        "@platforms//cpu:aarch64": glob(
+            include = [
+                "common/aarch64/*.c",
+                "common/aarch64/*.S",
+            ],
+            exclude = ["common/aarch64/asm.S"],
+        ),
+        "@platforms//cpu:x86_64": glob([
+            "common/x86/*.c",
+        ]),
+        "//conditions:default": [],
+    }),
+    hdrs = ["x264.h"],
+    copts = COPTS,
+    includes = [
+        ".",
+        "common",
+        "common/aarch64",
+        "encoder",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    linkstatic = 1,
+    textual_hdrs = [
+        "encoder/cabac.c",
+        "encoder/cavlc.c",
+        "encoder/rdo.c",
+        "encoder/slicetype.c",
+    ] + glob([
+        "common/aarch64/*.h",
+        "common/x86/*.h",
+    ]) + select({
+        "@platforms//cpu:aarch64": ["common/aarch64/asm.S"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "x264_isystem",
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = [":x264"],
+)
+
+# The checkasm assembly must be compiled without BIT_DEPTH so the exported
+# symbols (x264_checkasm_call, x264_checkasm_stack_clobber) match the
+# hardcoded names in checkasm.c rather than getting a bit-depth prefix.
+cc_library(
+    name = "checkasm_aarch64_lib",
+    srcs = [
+        "tools/checkasm-aarch64.S",
+        ":config.h",
+    ],
+    copts = [
+        "-w",
+        "-DPIC",
+    ] + select({
+        "@platforms//os:linux": ["-DSTACK_ALIGNMENT=64"],
+        "@platforms//os:macos": [
+            "-DPREFIX",
+            "-DSTACK_ALIGNMENT=16",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        ".",
+        "common",
+        "common/aarch64",
+    ],
+    tags = ["manual"],
+    textual_hdrs = ["common/aarch64/asm.S"],
+)
+
+# Assembly verification test (checkasm8/checkasm10 in native build)
+# Runs on x86_64 and aarch64; verifies SIMD/asm matches C reference
+cc_test(
+    name = "checkasm",
+    srcs = ["tools/checkasm.c"] + select({
+        "@platforms//cpu:x86_64": [":checkasm_asm"],
+        "//conditions:default": [],
+    }),
+    copts = COPTS,
+    includes = [
+        ".",
+        "common",
+        "encoder",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    deps = [":x264"] + select({
+        "@platforms//cpu:aarch64": [":checkasm_aarch64_lib"],
+        "//conditions:default": [],
+    }),
+)
