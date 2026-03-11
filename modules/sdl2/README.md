@@ -11,20 +11,22 @@ Packaging notes:
 
 - `@sdl2//:sdl2_headers` exports the public SDL headers plus the Bazel-generated `SDL_config.h`.
 - Internal `src/**/*.h` headers are kept private to the `@sdl2` implementation.
+- The Bazel-managed SDL config header is generated from the upstream template with `rules_cc_autoconf`.
 
 Enabled backends:
 
 - Linux: ALSA audio, X11 video, Linux joystick/haptics, pthread timer/loadso/filesystem/power.
-- macOS: dummy audio/video, pthread timer/loadso/filesystem.
+- macOS: Cocoa video, CoreAudio audio, Metal/OpenGL rendering, IOKit joystick/haptics, pthread timer/loadso/filesystem/power.
 - Windows: WinMM audio, Windows video, Windows joystick/sensor, Windows timer/loadso/filesystem/power.
 
 Limitations:
 
-- Linux build is X11-oriented (Wayland/Pulse/PipeWire are not enabled).
-- macOS build does not enable Cocoa/CoreAudio.
-- macOS falls back to plain file opens instead of app-bundle resource lookup.
-- The Bazel-managed SDL config header is generated from a checked-in template plus probe checks; backend selection remains defined by the BUILD overlay.
+- Linux build is X11-oriented and does not enable Wayland, PulseAudio, or PipeWire.
+- macOS currently disables HIDAPI in-package.
+- Windows HIDAPI is wired through Bazel `textual_hdrs` because SDL textually includes `src/hidapi/windows/hid.c`.
 
 Presubmit:
 
-- Builds and tests both `@sdl2//:sdl2_headers_consumer_compile_test` and `@sdl2//:sdl2_consumer_link_test`.
+- Builds and tests `@sdl2//:sdl2_headers_consumer_compile_test` and `@sdl2//:sdl2_consumer_link_test`.
+- Uses the standard module presubmit path for Linux, Windows, and Bazel 8+/9+/rolling on macOS.
+- Uses a Bazel 7 macOS-only `bcr_test_module` to provide explicit Apple CC toolchain setup for `objc_library`.
