@@ -1,25 +1,27 @@
-load("//:objc.bzl", "objc_library")
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
 load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-load(":sdl2_config_checks.bzl",
+load("//:objc.bzl", "objc_library")
+load(
+    ":sdl2_config_checks.bzl",
     "SDL2_CONFIG_CHECKS_COMMON",
-    "SDL2_CONFIG_CHECKS_NON_WINDOWS",
     "SDL2_CONFIG_CHECKS_LINUX",
-    "SDL2_CONFIG_CHECKS_LINUX_OPENGL",
     "SDL2_CONFIG_CHECKS_MACOS",
-    "SDL2_CONFIG_CHECKS_WINDOWS")
+    "SDL2_CONFIG_CHECKS_NON_WINDOWS",
+    "SDL2_CONFIG_CHECKS_UNIX_OPENGL",
+    "SDL2_CONFIG_CHECKS_WINDOWS",
+)
 
 package(default_visibility = ["//visibility:public"])
 
-# 配置项：是否启用 X11 共享内存
+# option: X11 shared memory
 bool_flag(
     name = "shared_memory",
     build_setting_default = False,
 )
 
-# 配置项：是否启用 OpenGL (Linux)
+# option: opengl
 bool_flag(
     name = "opengl",
     build_setting_default = True,
@@ -62,7 +64,7 @@ config_setting(
     constraint_values = ["@platforms//os:windows"],
 )
 
-# 1. Autoconf 配置与生成 (修复重复定义的错误)
+# Autoconf
 autoconf(
     name = "sdl2_config_checks",
     checks = select({
@@ -71,8 +73,8 @@ autoconf(
         ":windows": SDL2_CONFIG_CHECKS_WINDOWS,
         "//conditions:default": SDL2_CONFIG_CHECKS_NON_WINDOWS,
     }) + select({
-        ":linux_opengl": SDL2_CONFIG_CHECKS_LINUX_OPENGL,
-        ":macos_opengl": SDL2_CONFIG_CHECKS_LINUX_OPENGL,
+        ":linux_opengl": SDL2_CONFIG_CHECKS_UNIX_OPENGL,
+        ":macos_opengl": SDL2_CONFIG_CHECKS_UNIX_OPENGL,
         "//conditions:default": [],
     }),
 )
@@ -80,14 +82,14 @@ autoconf(
 autoconf_hdr(
     name = "gen_sdl_config_h",
     out = "generated/SDL_config.h",
-    template = "include/SDL_config.h.in",
-    deps = [":sdl2_config_checks"],
     substitutions = {
         "#error You should run git checkout -f include/SDL_config.h": "/* Bazel-generated SDL_config.h */",
     },
+    template = "include/SDL_config.h.in",
+    deps = [":sdl2_config_checks"],
 )
 
-# 2. 头文件库 (通过 strip_include_prefix 处理包含路径)
+# strip_include_prefix
 cc_library(
     name = "sdl2_config_header",
     hdrs = [":gen_sdl_config_h"],
@@ -104,26 +106,28 @@ cc_library(
 
 cc_library(
     name = "sdl2_headers",
-    hdrs = glob(["include/*.h"], exclude = ["include/SDL_config.h"]),
+    hdrs = glob(
+        ["include/*.h"],
+        exclude = ["include/SDL_config.h"],
+    ),
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
     deps = [
         ":sdl2_config_header",
         ":sdl2_khronos_headers",
     ],
-    strip_include_prefix = "include",
-    visibility = ["//visibility:public"],
 )
 
 cc_library(
     name = "sdl2_private_headers",
     hdrs = glob(["src/**/*.h"]),
+    visibility = ["//visibility:private"],
     deps = [
         ":sdl2_config_header",
         ":sdl2_headers",
     ],
-    visibility = ["//visibility:private"],
 )
 
-# 3. 源码定义
 COMMON_SRCS = glob([
     "src/*.c",
     "src/atomic/*.c",
@@ -144,7 +148,7 @@ COMMON_SRCS = glob([
     "src/power/*.c",
     "src/render/*.c",
     "src/render/software/*.c",
-    "src/render/opengles2/*.c", # 修正路径
+    "src/render/opengles2/*.c",
     "src/sensor/*.c",
     "src/sensor/dummy/*.c",
     "src/stdlib/*.c",
@@ -155,29 +159,32 @@ COMMON_SRCS = glob([
     "src/video/yuv2rgb/*.c",
 ])
 
-LINUX_SRCS = glob([
-    "src/core/linux/*.c",
-    "src/core/unix/*.c",
-    "src/audio/alsa/*.c",
-    "src/audio/dsp/*.c",
-    "src/filesystem/unix/*.c",
-    "src/haptic/linux/*.c",
-    "src/joystick/linux/*.c",
-    "src/loadso/dlopen/*.c",
-    "src/locale/unix/*.c",
-    "src/misc/unix/*.c",
-    "src/power/linux/*.c",
-    "src/thread/pthread/*.c",
-    "src/timer/unix/*.c",
-    "src/video/x11/*.c",
-    "src/render/opengles/*.c",
-], exclude = [
-    "src/core/linux/SDL_dbus.c",
-    "src/core/linux/SDL_fcitx.c",
-    "src/core/linux/SDL_ibus.c",
-    "src/core/linux/SDL_ime.c",
-    "src/core/linux/SDL_udev.c",
-])
+LINUX_SRCS = glob(
+    [
+        "src/core/linux/*.c",
+        "src/core/unix/*.c",
+        "src/audio/alsa/*.c",
+        "src/audio/dsp/*.c",
+        "src/filesystem/unix/*.c",
+        "src/haptic/linux/*.c",
+        "src/joystick/linux/*.c",
+        "src/loadso/dlopen/*.c",
+        "src/locale/unix/*.c",
+        "src/misc/unix/*.c",
+        "src/power/linux/*.c",
+        "src/thread/pthread/*.c",
+        "src/timer/unix/*.c",
+        "src/video/x11/*.c",
+        "src/render/opengles/*.c",
+    ],
+    exclude = [
+        "src/core/linux/SDL_dbus.c",
+        "src/core/linux/SDL_fcitx.c",
+        "src/core/linux/SDL_ibus.c",
+        "src/core/linux/SDL_ime.c",
+        "src/core/linux/SDL_udev.c",
+    ],
+)
 
 MACOS_SRCS = glob([
     "src/core/unix/*.c",
@@ -194,7 +201,7 @@ MACOS_SRCS = glob([
     "src/joystick/virtual/*.c",
 ])
 
-# MacOS 专用的 Objective-C 库
+# MacOS Objective-C
 objc_library(
     name = "SDL2_objc",
     srcs = glob([
@@ -206,13 +213,13 @@ objc_library(
         "src/locale/macosx/*.m",
         "src/misc/macosx/*.m",
         "src/video/cocoa/SDL_cocoaopengl.m",
-        "src/joystick/iphoneos/SDL_mfijoystick.m", # 解决 _SDL_IOS_JoystickDriver 等符号
+        "src/joystick/iphoneos/SDL_mfijoystick.m",  # fix _SDL_IOS_JoystickDriver defined
     ]),
+    visibility = ["//visibility:private"],
     deps = [
         ":sdl2_headers",
         ":sdl2_private_headers",
     ],
-    visibility = ["//visibility:private"],
 )
 
 WINDOWS_SRCS = glob([
@@ -237,7 +244,6 @@ WINDOWS_SRCS = glob([
     "src/thread/generic/SDL_syscond.c",
 ])
 
-# 4. 核心库 (移除所有 iquote 和 includes)
 cc_library(
     name = "SDL2Library",
     srcs = COMMON_SRCS + select({
@@ -250,34 +256,27 @@ cc_library(
         ":macos_opengl": glob(["src/render/opengl/*.c"]),
         "//conditions:default": [],
     }),
-    local_defines = select({
-        ":windows": ["SDL_THREAD_GENERIC_COND_SUFFIX"],
-        "//conditions:default": [],
-    }) + select({
-        ":shared_memory_disabled": ["NO_SHARED_MEMORY=1"],
-        "//conditions:default": [],
-    }),
-    textual_hdrs = ["src/thread/generic/SDL_syssem.c"] + glob(["src/hidapi/**/*.c"]),
-    deps = [
-        ":sdl2_headers",
-    ],
     implementation_deps = [
         ":sdl2_private_headers",
     ] + select({
         ":macos": [":SDL2_objc"],
         ":linux": [
-            "@libx11//:libx11",
-            "@libxext//:libxext",
-            "@libxcursor//:libxcursor",
-            "@libxrandr//:libxrandr",
-            "@libxi//:libxi",
-            "@libxfixes//:libxfixes",
-            "@libxrender//:libxrender",
+            "@libx11",
+            "@libxcursor",
+            "@libxext",
+            "@libxfixes",
+            "@libxi",
+            "@libxrandr",
+            "@libxrender",
         ],
         "//conditions:default": [],
     }),
     linkopts = select({
-        ":linux": ["-lpthread", "-ldl", "-lm"],
+        ":linux": [
+            "-lpthread",
+            "-ldl",
+            "-lm",
+        ],
         ":macos": [
             "-liconv",
             "-framework CoreFoundation",
@@ -295,16 +294,39 @@ cc_library(
             "-framework Carbon",
             "-framework CoreHaptics",
         ],
-        ":windows": ["-DEFAULTLIB:user32", "-DEFAULTLIB:gdi32", "-DEFAULTLIB:winmm", "-DEFAULTLIB:imm32", "-DEFAULTLIB:ole32", "-DEFAULTLIB:oleaut32", "-DEFAULTLIB:version", "-DEFAULTLIB:uuid", "-DEFAULTLIB:advapi32", "-DEFAULTLIB:setupapi", "-DEFAULTLIB:shell32"],
+        ":windows": [
+            "-DEFAULTLIB:user32",
+            "-DEFAULTLIB:gdi32",
+            "-DEFAULTLIB:winmm",
+            "-DEFAULTLIB:imm32",
+            "-DEFAULTLIB:ole32",
+            "-DEFAULTLIB:oleaut32",
+            "-DEFAULTLIB:version",
+            "-DEFAULTLIB:uuid",
+            "-DEFAULTLIB:advapi32",
+            "-DEFAULTLIB:setupapi",
+            "-DEFAULTLIB:shell32",
+        ],
         "//conditions:default": [],
     }) + select({
         ":linux_opengl": ["-lGL"],
         ":macos_opengl": ["-framework OpenGL"],
         "//conditions:default": [],
     }),
+    local_defines = select({
+        ":windows": ["SDL_THREAD_GENERIC_COND_SUFFIX"],
+        "//conditions:default": [],
+    }) + select({
+        ":shared_memory_disabled": ["NO_SHARED_MEMORY=1"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = ["src/thread/generic/SDL_syssem.c"] + glob(["src/hidapi/**/*.c"]),
+    deps = [
+        ":sdl2_headers",
+    ],
 )
 
-# 5. SDL2 Main Stub 和 Alias
+# SDL2 Main Stub and Alias
 cc_library(
     name = "sdl2",
     srcs = select({
@@ -320,13 +342,4 @@ cc_library(
 alias(
     name = "SDL2",
     actual = ":sdl2",
-)
-
-cc_binary(
-    name = "test_chessboard",
-    srcs = ["test/testdrawchessboard.c"],
-    deps = [
-        ":SDL2Library",
-        ":sdl2",
-    ],
 )
