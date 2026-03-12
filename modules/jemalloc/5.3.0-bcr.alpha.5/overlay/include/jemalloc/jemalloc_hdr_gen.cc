@@ -2,7 +2,6 @@
 #include <iostream>
 #include <regex>
 #include <string>
-#include <vector>
 
 static bool should_exclude(const std::string& line) {
     static const std::regex pattern("Generated from .* by configure");
