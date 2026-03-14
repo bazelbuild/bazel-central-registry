@@ -1,0 +1,70 @@
+# Description:
+#   AWS C Cal
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # Apache 2.0
+
+cc_library(
+    name = "aws-c-cal",
+    srcs = glob([
+        "source/*.c",
+        "source/shared/ed25519.c",
+        "source/shared/lccrypto_common.c",
+        "source/shared/ref_hkdf.c",
+    ]) + select({
+        "@platforms//os:windows": glob([
+            "source/windows/*.c",
+        ]),
+        "@platforms//os:linux": glob([
+            "source/unix/*.c",
+        ]),
+        "@platforms//os:osx": glob([
+            "source/darwin/*.c",
+            "source/darwin/*.h",
+        ]),
+    }),
+    hdrs = glob([
+        "include/aws/cal/*.h",
+        "include/aws/cal/private/*.h",
+    ]),
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:bcrypt.lib",
+        ],
+        "@platforms//os:macos": [
+            "-framework CoreFoundation",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "@rules_cc//cc/compiler:mingw-gcc": [
+            "-lbcrypt",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":darwin_headers",
+        "@aws-c-common",
+        "@boringssl//:crypto",
+    ],
+)
+
+cc_library(
+    name = "darwin_headers",
+    hdrs = glob([
+        "source/darwin/**/*.h",
+    ]),
+    strip_include_prefix = "source/darwin",
+    visibility = ["//visibility:private"],
+)
+
+build_test(
+    name = "build_test",
+    targets = [
+        ":aws-c-cal",
+    ],
+)
