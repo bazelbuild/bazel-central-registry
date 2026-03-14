@@ -15,18 +15,18 @@ Packaging notes:
 
 Enabled backends:
 
-- Linux: ALSA audio, X11 video, Linux joystick/haptics, pthread timer/loadso/filesystem/power.
+- Linux: ALSA audio, X11 and Wayland video, OpenGL ES 2 rendering via EGL, Linux joystick/haptics, pthread timer/loadso/filesystem/power.
 - macOS: Cocoa video, CoreAudio audio, Metal/OpenGL rendering, IOKit joystick/haptics, pthread timer/loadso/filesystem/power.
 - Windows: WinMM audio, Windows video, Windows joystick/sensor, Windows timer/loadso/filesystem/power.
 
 Limitations:
 
-- Linux build is X11-oriented and does not enable Wayland, PulseAudio, or PipeWire.
+- Linux build does not currently enable Wayland `libdecor`, PulseAudio, or PipeWire.
+- Linux desktop OpenGL/GLX and Vulkan are not currently enabled in-package.
 - macOS currently disables HIDAPI in-package.
 - Windows HIDAPI is wired through Bazel `textual_hdrs` because SDL textually includes `src/hidapi/windows/hid.c`.
 
 Presubmit:
 
 - Builds and tests `@sdl2//:sdl2_headers_consumer_compile_test` and `@sdl2//:sdl2_consumer_link_test`.
-- Uses the standard module presubmit path for Linux, Windows, and Bazel 8+/9+/rolling on macOS.
-- Uses a Bazel 7 macOS-only `bcr_test_module` to provide explicit Apple CC toolchain setup for `objc_library`.
+- Uses the standard module presubmit path across all supported platforms on Bazel 8, Bazel 9, and rolling.
