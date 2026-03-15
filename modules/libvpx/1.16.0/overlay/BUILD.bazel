@@ -1,5 +1,6 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_license//rules:license.bzl", "license")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
 load(
     ":libvpx_srcs.bzl",
     "LIBVPX_ARM64_NEON_DOTPROD_SRCS_LOWBD",
@@ -31,7 +32,7 @@ load(
     "LIBVPX_X86_SSE4_1_SRCS_LOWBD",
     "LIBVPX_X86_SSSE3_SRCS_LOWBD",
 )
-load(":nasm.bzl", "libvpx_arm_asm_library", "libvpx_x86_asm_library")
+load(":nasm.bzl", "libvpx_arm_asm_library")
 
 package(
     default_applicable_licenses = [":license"],
@@ -201,6 +202,16 @@ _COMMON_DEFINES = [
     "VPX_MAX_ALLOCABLE_MEMORY=((1ULL<<31)-(1<<21))",
 ]
 
+_NASM_HDRS = glob([
+    "third_party/x86inc/*.asm",
+    "vp8/common/x86/*.asm",
+    "vp8/encoder/x86/*.asm",
+    "vp9/common/x86/*.asm",
+    "vp9/encoder/x86/*.asm",
+    "vpx_dsp/x86/*.asm",
+    "vpx_ports/*.asm",
+])
+
 cc_library(
     name = "libvpx_headers",
     hdrs = glob(["**/*.h"], allow_empty = True),
@@ -293,16 +304,19 @@ cc_library(
     deps = [":libvpx_headers", "//config:x86_config"],
 )
 
-libvpx_x86_asm_library(
+nasm_library(
     name = "x86_asm",
     srcs = LIBVPX_X86_ASM_SRCS_LOWBD,
-    config_target = "//config:x86_vpx_config_asm",
-    target_compatible_with = select({
-        # TODO: Enable Windows x86 once nasm.bzl supports the required NASM format/flags.
-        ":windows_x86": ["@platforms//:incompatible"],
-        ":x86": [],
-        "//conditions:default": ["@platforms//:incompatible"],
+    hdrs = _NASM_HDRS,
+    copts = select({
+        ":android_x86": ["-D__ANDROID__"],
+        "//conditions:default": [],
     }),
+    includes = [
+        ".",
+        "config/generated/x86",
+    ],
+    preincs = ["//config:x86_vpx_config_asm"],
 )
 
 cc_library(
@@ -389,16 +403,19 @@ cc_library(
     deps = [":libvpx_headers", "//config:x86_64_config"],
 )
 
-libvpx_x86_asm_library(
+nasm_library(
     name = "x86_64_asm",
     srcs = LIBVPX_X86_64_ASM_SRCS_LOWBD,
-    config_target = "//config:x86_64_vpx_config_asm",
-    target_compatible_with = select({
-        # TODO: Enable Windows x86_64 once nasm.bzl supports the required NASM format/flags.
-        ":windows_x86_64": ["@platforms//:incompatible"],
-        ":x86_64": [],
-        "//conditions:default": ["@platforms//:incompatible"],
+    hdrs = _NASM_HDRS,
+    copts = select({
+        ":android_x86_64": ["-D__ANDROID__"],
+        "//conditions:default": [],
     }),
+    includes = [
+        ".",
+        "config/generated/x86_64",
+    ],
+    preincs = ["//config:x86_64_vpx_config_asm"],
 )
 
 cc_library(
@@ -483,7 +500,11 @@ cc_library(
 
 cc_library(
     name = "vpx",
-    srcs = _PLATFORM_BASE_SRCS,
+    srcs = _PLATFORM_BASE_SRCS + select({
+        ":x86": [":x86_asm"],
+        ":x86_64": [":x86_64_asm"],
+        "//conditions:default": [],
+    }),
     hdrs = _PLATFORM_PUBLIC_HDRS,
     copts = _COMMON_COPTS,
     defines = _COMMON_DEFINES,
@@ -505,7 +526,6 @@ cc_library(
         ],
         ":x86": [
             ":libvpx_headers",
-            ":x86_asm",
             ":x86_avx",
             ":x86_avx2",
             ":x86_mmx",
@@ -515,7 +535,6 @@ cc_library(
         ],
         ":x86_64": [
             ":libvpx_headers",
-            ":x86_64_asm",
             ":x86_64_avx",
             ":x86_64_avx2",
             ":x86_64_mmx",
