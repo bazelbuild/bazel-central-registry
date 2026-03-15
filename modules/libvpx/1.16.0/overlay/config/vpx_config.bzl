@@ -5,6 +5,17 @@ drift apart, this module generates them from a unified set of parameters.
 The output matches what upstream's ./configure produces for each target.
 """
 
+def _emit_file_impl(ctx):
+    ctx.actions.write(output = ctx.outputs.out, content = ctx.attr.content)
+
+_emit_file = rule(
+    implementation = _emit_file_impl,
+    attrs = {
+        "content": attr.string(mandatory = True),
+        "out": attr.output(mandatory = True),
+    },
+)
+
 _ARCH_X86_64 = {
     "ARCH_ARM": 0,
     "ARCH_AARCH64": 0,
@@ -274,6 +285,26 @@ def _define_order(arch):
             ordered.append(k)
     return ordered
 
+def _ordered_lines(order, defines, prefix, features):
+    lines = []
+    for k in order:
+        if k in defines:
+            lines.append("%s %s %s" % (prefix, k, defines[k]))
+    for k in features:
+        if k not in order and k in defines:
+            lines.append("%s %s %s" % (prefix, k, defines[k]))
+    return lines
+
+def _ordered_define_items(order, defines, features):
+    items = []
+    for k in order:
+        if k in defines:
+            items.append((k, defines[k]))
+    for k in features:
+        if k not in order and k in defines:
+            items.append((k, defines[k]))
+    return items
+
 def vpx_config_header(name, arch, out, features = {}):
     """Generates a vpx_config.h file.
 
@@ -286,22 +317,15 @@ def vpx_config_header(name, arch, out, features = {}):
     defines = _build_defines(arch, features)
     order = _define_order(arch)
     lines = [_LICENSE_COMMENT, "#ifndef VPX_CONFIG_H", "#define VPX_CONFIG_H", "#define RESTRICT    ", "#define INLINE      inline"]
-    for k in order:
-        if k in defines:
-            lines.append("#define %s %s" % (k, defines[k]))
-    for k in features:
-        if k not in order and k in defines:
-            lines.append("#define %s %s" % (k, defines[k]))
+    lines.extend(_ordered_lines(order, defines, "#define", features))
     lines.append("#endif /* VPX_CONFIG_H */")
     lines.append("")
 
     content = "\n".join(lines)
-    native.genrule(
+    _emit_file(
         name = name,
-        outs = [out],
-        cmd = """cat > $@ <<'EOF'
-%s
-EOF""" % content,
+        out = out,
+        content = content,
     )
 
 def vpx_config_asm(name, arch, out, features = {}):
@@ -316,28 +340,38 @@ def vpx_config_asm(name, arch, out, features = {}):
     defines = _build_defines(arch, features)
     order = _define_order(arch)
     if arch in ["x86", "x86_64"]:
-        lines = []
-        for k in order:
-            if k in defines:
-                lines.append("%%define %s %s" % (k, defines[k]))
-        for k in features:
-            if k not in order and k in defines:
-                lines.append("%%define %s %s" % (k, defines[k]))
+        lines = _ordered_lines(order, defines, "%define", features)
     else:
         lines = ["@ This file was created from a .asm file", "@  using the ads2gas.pl script.", ".syntax unified"]
-        for k in order:
-            if k in defines:
-                lines.append(".equ %s ,  %s" % (k, defines[k]))
-        for k in features:
-            if k not in order and k in defines:
-                lines.append(".equ %s ,  %s" % (k, defines[k]))
+        for key, value in _ordered_define_items(order, defines, features):
+            lines.append(".equ %s ,  %s" % (key, value))
     lines.append("")
 
     content = "\n".join(lines)
-    native.genrule(
+    _emit_file(
         name = name,
-        outs = [out],
-        cmd = """cat > $@ <<'EOF'
-%s
-EOF""" % content,
+        out = out,
+        content = content,
+    )
+
+def vpx_config_rtcd(name, arch, out, features = {}):
+    """Generates the rtcd.pl config input from platform parameters."""
+    defines = _build_defines(arch, features)
+    order = _define_order(arch)
+    lines = []
+    for key, value in _ordered_define_items(order, defines, features):
+        if not (key.startswith("CONFIG_") or key.startswith("HAVE_")):
+            continue
+        value = str(value)
+        if value == "1":
+            value = "yes"
+        elif value == "0":
+            value = "no"
+        lines.append("%s=%s" % (key, value))
+    lines.append("")
+
+    _emit_file(
+        name = name,
+        out = out,
+        content = "\n".join(lines),
     )

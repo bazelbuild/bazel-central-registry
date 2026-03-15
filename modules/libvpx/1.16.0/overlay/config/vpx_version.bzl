@@ -1,5 +1,16 @@
 """Generates vpx_version.h from a version string."""
 
+def _emit_file_impl(ctx):
+    ctx.actions.write(output = ctx.outputs.out, content = ctx.attr.content)
+
+_emit_file = rule(
+    implementation = _emit_file_impl,
+    attrs = {
+        "content": attr.string(mandatory = True),
+        "out": attr.output(mandatory = True),
+    },
+)
+
 def vpx_version_header(name, version, out):
     """Generates vpx_version.h from a semantic version string.
 
@@ -15,7 +26,7 @@ def vpx_version_header(name, version, out):
     minor = parts[1]
     patch = parts[2]
 
-    content = "\\n".join([
+    content = "\n".join([
         "// This file is generated. Do not edit.",
         "#ifndef VPX_VERSION_H_",
         "#define VPX_VERSION_H_",
@@ -30,8 +41,8 @@ def vpx_version_header(name, version, out):
         "",
     ])
 
-    native.genrule(
+    _emit_file(
         name = name,
-        outs = [out],
-        cmd = "printf '%s' > $@" % content,
+        out = out,
+        content = content,
     )
