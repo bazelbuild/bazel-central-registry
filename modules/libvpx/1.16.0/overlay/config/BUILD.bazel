@@ -14,6 +14,13 @@ _ARM64_FEATURES = {
     "CONFIG_PIC": 0,
 }
 
+_ARM64_WINDOWS_CONFIG_OVERRIDES = {
+    "CONFIG_PIC": 0,
+    "HAVE_NEON_DOTPROD": 0,
+    "HAVE_NEON_I8MM": 0,
+    "HAVE_SVE": 0,
+}
+
 vpx_config_header(
     name = "gen_x86_64_h",
     arch = "x86_64",
@@ -80,6 +87,14 @@ vpx_config_header(
     features = _ARM64_FEATURES,
 )
 
+vpx_config_header(
+    name = "gen_arm64_windows_h",
+    arch = "arm64",
+    out = "generated/arm64_windows/vpx_config.h",
+    features = _ARM64_WINDOWS_CONFIG_OVERRIDES,
+    windows = True,
+)
+
 vpx_config_asm(
     name = "gen_arm64_asm",
     arch = "arm64",
@@ -126,7 +141,7 @@ libvpx_rtcd_headers(
 libvpx_rtcd_headers(
     name = "arm64_rtcd",
     arch = "arm64",
-    config_file = "generated/arm64/vpx_config.rtcd",
+    config_file = ":arm64_vpx_config_rtcd",
     disable_sve2 = True,
     out_dir = "rtcd/arm64",
 )
@@ -165,6 +180,14 @@ vpx_config_rtcd(
     arch = "arm64",
     out = "generated/arm64/vpx_config.rtcd",
     features = _ARM64_FEATURES,
+)
+
+vpx_config_rtcd(
+    name = "gen_arm64_windows_rtcd",
+    arch = "arm64",
+    out = "generated/arm64_windows/vpx_config.rtcd",
+    features = _ARM64_WINDOWS_CONFIG_OVERRIDES,
+    windows = True,
 )
 
 vpx_config_rtcd(
@@ -227,6 +250,22 @@ filegroup(
     srcs = ["generated/arm/vpx_config.asm"],
 )
 
+filegroup(
+    name = "arm64_vpx_config_h",
+    srcs = select({
+        "@platforms//os:windows": ["generated/arm64_windows/vpx_config.h"],
+        "//conditions:default": ["generated/arm64/vpx_config.h"],
+    }),
+)
+
+filegroup(
+    name = "arm64_vpx_config_rtcd",
+    srcs = select({
+        "@platforms//os:windows": ["generated/arm64_windows/vpx_config.rtcd"],
+        "//conditions:default": ["generated/arm64/vpx_config.rtcd"],
+    }),
+)
+
 cc_library(
     name = "x86_64_config",
     hdrs = [
@@ -269,14 +308,19 @@ cc_library(
     name = "arm64_config",
     hdrs = [
         "generated/common/vpx_version.h",
-        "generated/arm64/vpx_config.h",
+        ":arm64_vpx_config_h",
         ":arm64_rtcd",
     ],
-    includes = [
-        "generated/common",
-        "generated/arm64",
-        "rtcd/arm64",
-    ],
+    includes = ["generated/common"] + select({
+        "@platforms//os:windows": [
+            "generated/arm64_windows",
+            "rtcd/arm64",
+        ],
+        "//conditions:default": [
+            "generated/arm64",
+            "rtcd/arm64",
+        ],
+    }),
 )
 
 cc_library(

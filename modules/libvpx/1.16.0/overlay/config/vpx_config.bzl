@@ -280,8 +280,6 @@ def _build_defines(arch, features, windows = False):
     defines.update(_ARCHES[arch])
     defines.update(_COMMON_CONFIG)
     if windows:
-        if arch not in ["x86", "x86_64"]:
-            fail("Windows config is only supported for x86/x86_64, got: %s" % arch)
         defines.update(_WINDOWS_CONFIG)
     defines.update(features)
     return defines
