@@ -43,7 +43,7 @@ def libvpx_rtcd_headers(name, arch, config_file, out_dir, disable_avx512 = False
                 extra_arg = extra_arg,
                 sym = sym,
             ),
-            toolchains = ["@rules_perl//perl:current_toolchain"],
+            toolchains = ["@rules_perl//perl:current_exec_toolchain"],
         )
         generated.append(target_name)
 
