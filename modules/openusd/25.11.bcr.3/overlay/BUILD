@@ -1,4 +1,5 @@
 load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 load("@rules_license//rules:license.bzl", "license")
@@ -1078,20 +1079,115 @@ cc_library(
     alwayslink = True,
 )
 
-filegroup(
-    name = "plugin_resource_files",
-    srcs = glob(
-        ["plugin_resources/**"],
-        allow_empty = False,
-    ),
+# Maps plugin name to source directory for plugins with plugInfo.json
+PLUGIN_DIRS = {
+    "ar": "pxr/usd/ar",
+    "esf": "pxr/exec/esf",
+    "esfUsd": "pxr/exec/esfUsd",
+    "exec": "pxr/exec/exec",
+    "execGeom": "pxr/exec/execGeom",
+    "execUsd": "pxr/exec/execUsd",
+    "sdf": "pxr/usd/sdf",
+    "sdr": "pxr/usd/sdr",
+    "usd": "pxr/usd/usd",
+    "usdGeom": "pxr/usd/usdGeom",
+    "usdHydra": "pxr/usd/usdHydra",
+    "usdLux": "pxr/usd/usdLux",
+    "usdMedia": "pxr/usd/usdMedia",
+    "usdPhysics": "pxr/usd/usdPhysics",
+    "usdProc": "pxr/usd/usdProc",
+    "usdRender": "pxr/usd/usdRender",
+    "usdRi": "pxr/usd/usdRi",
+    "usdSemantics": "pxr/usd/usdSemantics",
+    "usdShade": "pxr/usd/usdShade",
+    "usdSkel": "pxr/usd/usdSkel",
+    "usdUI": "pxr/usd/usdUI",
+    "usdVol": "pxr/usd/usdVol",
+}
+
+# Plugins that have generatedSchema.usda and schema.usda
+SCHEMA_PLUGINS = [
+    "usd",
+    "usdGeom",
+    "usdHydra",
+    "usdLux",
+    "usdMedia",
+    "usdPhysics",
+    "usdProc",
+    "usdRender",
+    "usdRi",
+    "usdSemantics",
+    "usdShade",
+    "usdSkel",
+    "usdUI",
+    "usdVol",
+]
+
+PLUG_INFO_DEFINES = [
+    "PLUG_INFO_LIBRARY_PATH=",
+    "PLUG_INFO_RESOURCE_PATH=resources",
+    "PLUG_INFO_ROOT=..",
+]
+
+# Generate plugInfo.json from upstream templates by substituting @PLUG_INFO_*@ variables
+[cmake_configure_file(
+    name = plugin + "_pluginfo",
+    src = PLUGIN_DIRS[plugin] + "/plugInfo.json",
+    out = "pluginfo/" + plugin + "/resources/plugInfo.json",
+    defines = PLUG_INFO_DEFINES,
+) for plugin in PLUGIN_DIRS]
+
+# Root plugInfo.json that includes all plugin resources
+genrule(
+    name = "root_pluginfo",
+    outs = ["pluginfo/plugInfo.json"],
+    cmd = """echo '{"Includes":["*/resources/"]}' > $@""",
 )
 
+# Copy generatedSchema.usda from source tree
+[copy_file(
+    name = plugin + "_generated_schema",
+    src = PLUGIN_DIRS[plugin] + "/generatedSchema.usda",
+    out = "pluginfo/" + plugin + "/resources/generatedSchema.usda",
+) for plugin in SCHEMA_PLUGINS]
+
+# Copy schema.usda from source tree
+[copy_file(
+    name = plugin + "_schema",
+    src = PLUGIN_DIRS[plugin] + "/schema.usda",
+    out = "pluginfo/" + plugin + "/resources/" + plugin + "/schema.usda",
+) for plugin in SCHEMA_PLUGINS]
+
+# Copy usdHydra shader resources
+copy_file(
+    name = "usdHydra_shader_defs",
+    src = "pxr/usd/usdHydra/shaders/shaderDefs.usda",
+    out = "pluginfo/usdHydra/resources/shaders/shaderDefs.usda",
+)
+
+copy_file(
+    name = "usdHydra_empty_glslfx",
+    src = "pxr/usd/usdHydra/shaders/empty.glslfx",
+    out = "pluginfo/usdHydra/resources/shaders/empty.glslfx",
+)
+
+# Assemble all plugin resources into the final directory structure
 copy_to_directory(
     name = "plugin_files",
-    srcs = [":plugin_resource_files"],
+    srcs = [
+        ":root_pluginfo",
+        ":usdHydra_shader_defs",
+        ":usdHydra_empty_glslfx",
+    ] + [
+        ":" + plugin + "_pluginfo" for plugin in PLUGIN_DIRS
+    ] + [
+        ":" + plugin + "_generated_schema" for plugin in SCHEMA_PLUGINS
+    ] + [
+        ":" + plugin + "_schema" for plugin in SCHEMA_PLUGINS
+    ],
     out = "usd",
     replace_prefixes = {
-        "plugin_resources": "",
+        "pluginfo/": "",
     },
 )
 
