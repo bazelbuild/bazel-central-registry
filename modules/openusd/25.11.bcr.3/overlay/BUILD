@@ -51,6 +51,7 @@ PLATFORM_COPTS = select({
 })
 
 COMMON_CONLYOPTS = PLATFORM_COPTS
+
 COMMON_CXXOPTS = ["-std=c++17"] + PLATFORM_COPTS
 
 COMMON_LINKOPTS = select({
@@ -353,14 +354,17 @@ copy_to_directory(
     name = "plugin_files",
     srcs = [
         ":root_pluginfo",
-        ":usdHydra_shader_defs",
         ":usdHydra_empty_glslfx",
+        ":usdHydra_shader_defs",
     ] + [
-        ":" + plugin + "_pluginfo" for plugin in PLUGIN_DIRS
+        ":" + plugin + "_pluginfo"
+        for plugin in PLUGIN_DIRS
     ] + [
-        ":" + plugin + "_generated_schema" for plugin in SCHEMA_PLUGINS
+        ":" + plugin + "_generated_schema"
+        for plugin in SCHEMA_PLUGINS
     ] + [
-        ":" + plugin + "_schema" for plugin in SCHEMA_PLUGINS
+        ":" + plugin + "_schema"
+        for plugin in SCHEMA_PLUGINS
     ],
     out = "usd",
     replace_prefixes = {
