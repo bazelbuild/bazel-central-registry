@@ -50,14 +50,13 @@ PLATFORM_COPTS = select({
     ],
 })
 
-COMMON_COPTS = ["-std=c++17"] + PLATFORM_COPTS
+COMMON_CONLYOPTS = PLATFORM_COPTS
+COMMON_CXXOPTS = ["-std=c++17"] + PLATFORM_COPTS
 
 COMMON_LINKOPTS = select({
     "@platforms//os:windows": [],
     "//conditions:default": ["-lm"],
 })
-
-GF_NANOCOLOR_SRC = "pxr/base/gf/nc/nanocolor.c"
 
 OPENUSD_PACKAGES = [
     "arch",
@@ -1045,28 +1044,18 @@ cc_library(
     strip_include_prefix = "pxr",
 )
 
-cc_library(
-    name = "gf_nanocolor",
-    srcs = [GF_NANOCOLOR_SRC],
-    copts = PLATFORM_COPTS,
-    local_defines = package_local_defines("gf", COMMON_LOCAL_DEFINES),
-    deps = [
-        ":headers",
-        ":pxr_headers",
-    ],
-)
-
 [
     cc_library(
         name = package + "_pkg",
-        srcs = [src for src in OPENUSD_PACKAGE_SRCS[package] if src != GF_NANOCOLOR_SRC],
-        copts = COMMON_COPTS,
+        srcs = OPENUSD_PACKAGE_SRCS[package],
+        conlyopts = COMMON_CONLYOPTS,
+        cxxopts = COMMON_CXXOPTS,
         local_defines = package_local_defines(package, COMMON_LOCAL_DEFINES),
         deps = [
             ":headers",
             ":pxr_headers",
             "@onetbb//:tbb",
-        ] + ([":gf_nanocolor"] if package == "gf" else []),
+        ],
         alwayslink = True,
     )
     for package in OPENUSD_PACKAGES
