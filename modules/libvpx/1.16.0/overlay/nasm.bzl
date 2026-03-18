@@ -43,13 +43,14 @@ cp $(location {config_target}) $@
             cmd = """
 set -eu
 mkdir -p "$$(dirname $@)"
-/usr/bin/perl $(location build/make/ads2gas.pl) < $(location {src}) > $@
-/usr/bin/perl -0pi -e 's#\\.include "\\./vpx_config\\.asm"#.include "{config_include}vpx_config.asm"#g' $@
+"$(PERL)" $(location build/make/ads2gas.pl) < $(location {src}) > $@
+"$(PERL)" -0pi -e 's#\\.include "\\./vpx_config\\.asm"#.include "{config_include}vpx_config.asm"#g' $@
 """.format(
                 src = src,
                 config_include = _parent_prefix(src),
             ),
             target_compatible_with = target_compatible_with,
+            toolchains = ["@rules_perl//perl:current_exec_toolchain"],
         )
 
     cc_library(
