@@ -9,7 +9,8 @@ Public targets:
 
 Packaging notes:
 
-- `@sdl2_mixer//:sdl2_mixer_headers` exports the public SDL2_mixer header only.
+- `@sdl2_mixer` exports the SDL2_mixer library and re-exports the public SDL2_mixer header in both `SDL2/...` and flat `SDL_mixer.h` include layouts.
+- `@sdl2_mixer//:sdl2_mixer_headers` exports the public SDL2_mixer header in the canonical `SDL2/...` layout.
 - Internal `src/**/*.h` headers and include paths are kept private to the `@sdl2_mixer` implementation.
 - The packaged built-in codec sources carry a mix of upstream licenses: SDL_mixer (`LICENSE.txt`), dr_libs (`src/codecs/dr_libs/LICENSE`), minimp3 (`src/codecs/minimp3/LICENSE`), stb_vorbis (`src/codecs/stb_vorbis/stb_vorbis.h`), and TiMidity (`src/codecs/timidity/COPYING`).
 
@@ -29,4 +30,4 @@ Limitations:
 
 Presubmit:
 
-- Builds and tests both `@sdl2_mixer//:sdl2_mixer_headers_consumer_compile_test` and `@sdl2_mixer//:sdl2_mixer_consumer_link_test`.
+- Builds and tests `@sdl2_mixer//:sdl2_mixer_headers_consumer_compile_test` for `SDL2/...` includes and `@sdl2_mixer//:sdl2_mixer_consumer_link_test` for flat `SDL_mixer.h` includes.
