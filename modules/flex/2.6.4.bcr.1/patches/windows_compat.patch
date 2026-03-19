@@ -1,0 +1,407 @@
+diff -ruN flex-2.6.4-orig/src/filter.c flex-2.6.4-mod/src/filter.c
+--- flex-2.6.4-orig/src/filter.c	2026-03-20 14:51:42
++++ flex-2.6.4-mod/src/filter.c	2026-03-20 14:52:03
+@@ -22,6 +22,22 @@
+ /*  PURPOSE. */
+ 
+ #include "flexdef.h"
++
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++
++static intptr_t filter_child_pid = -1;
++
++void filter_wait_for_children (void)
++{
++	if (filter_child_pid != -1) {
++		_cwait (NULL, filter_child_pid, 0);
++		filter_child_pid = -1;
++	}
++}
++#endif
++
+ static const char * check_4_gnu_m4 =
+     "m4_dnl ifdef(`__gnu__', ,"
+     "`errprint(Flex requires GNU M4. Set the PATH or set the M4 environment variable to its path name.)"
+@@ -127,6 +143,61 @@
+  */
+ bool filter_apply_chain (struct filter * chain)
+ {
++#ifdef _WIN32
++	/*
++	 * Windows implementation: no fork(), so internal filters
++	 * (filter_tee_header, filter_fix_linedirs) cannot run as child
++	 * processes.  We skip them here; the caller writes the m4
++	 * preamble that tee_header would have provided.
++	 * External filters (m4) are spawned with _spawnvp and piped.
++	 */
++	int     pipes[2];
++
++	if (chain)
++		filter_apply_chain (chain->next);
++	else
++		return true;
++
++	if (chain->filter_func) {
++		/* Internal filter — cannot fork on Windows, skip. */
++		return true;
++	}
++
++	fflush (stdout);
++	fflush (stderr);
++
++	if (_pipe (pipes, 65536, _O_BINARY) == -1)
++		flexerror (_("pipe failed"));
++
++	/* Prevent m4 from inheriting the pipe write end; otherwise
++	 * m4 holds the handle open and never sees EOF on stdin. */
++	SetHandleInformation ((HANDLE) _get_osfhandle (pipes[1]),
++			      HANDLE_FLAG_INHERIT, 0);
++
++	{
++		intptr_t spawn_pid;
++		int saved_stdin_fd = dup (fileno (stdin));
++
++		if (dup2 (pipes[0], fileno (stdin)) == -1)
++			flexfatal (_("dup2(pipes[0],0)"));
++		close (pipes[0]);
++
++		spawn_pid = _spawnvp (_P_NOWAIT, chain->argv[0],
++				      (const char *const *) chain->argv);
++		if (spawn_pid == -1)
++			lerr_fatal (_("exec of %s failed"), chain->argv[0]);
++		filter_child_pid = spawn_pid;
++
++		dup2 (saved_stdin_fd, fileno (stdin));
++		close (saved_stdin_fd);
++
++		dup2 (pipes[1], fileno (stdout));
++		close (pipes[1]);
++	}
++
++	fseek (stdout, 0, SEEK_CUR);
++	return true;
++#else
+ 	int     pid, pipes[2];
+ 
+ 
+@@ -196,6 +267,7 @@
+     fseek (stdout, 0, SEEK_CUR);
+ 
+ 	return true;
++#endif
+ }
+ 
+ /** Truncate the chain to max_len number of filters.
+@@ -322,12 +394,21 @@
+ 		lerr (_("error closing output file %s"),
+ 			outfilename ? outfilename : "<stdout>");
+ 
++#ifdef HAVE_SYS_WAIT_H
+ 	while (wait (0) > 0) ;
++#endif
+ 
+ 	FLEX_EXIT (0);
+ 	return 0;
+ }
+ 
++static bool is_blank_line (const char *str)
++{
++	while (isspace((unsigned char)*str))
++		str++;
++	return (*str == '\0');
++}
++
+ /** Adjust the line numbers in the #line directives of the generated scanner.
+  * After the m4 expansion, the line numbers are incorrect since the m4 macros
+  * can add or remove lines.  This only adjusts line numbers for generated code,
+@@ -403,9 +484,7 @@
+ 		}
+ 
+ 		/* squeeze blank lines from generated code */
+-		else if (in_gen
+-			 && regexec (&regex_blank_line, buf, 0, NULL,
+-				     0) == 0) {
++		else if (in_gen && is_blank_line(buf)) {
+ 			if (last_was_blank)
+ 				continue;
+ 			else
+diff -ruN flex-2.6.4-orig/src/flexdef.h flex-2.6.4-mod/src/flexdef.h
+--- flex-2.6.4-orig/src/flexdef.h	2026-03-20 14:51:42
++++ flex-2.6.4-mod/src/flexdef.h	2026-03-20 14:51:47
+@@ -44,7 +44,6 @@
+ #include <stdarg.h>
+ #include <setjmp.h>
+ #include <ctype.h>
+-#include <libgen.h> /* for XPG version of basename(3) */
+ #include <string.h>
+ #include <math.h>
+ 
+@@ -57,26 +56,74 @@
+ #ifdef HAVE_LIMITS_H
+ #include <limits.h>
+ #endif
+-/* Required: dup() and dup2() in <unistd.h> */
++#ifdef HAVE_UNISTD_H
+ #include <unistd.h>
++#endif
+ #ifdef HAVE_NETINET_IN_H
+ #include <netinet/in.h>
+ #endif
+ #ifdef HAVE_SYS_PARAMS_H
+ #include <sys/params.h>
+ #endif
+-/* Required: stat() in <sys/stat.h> */
+ #include <sys/stat.h>
+-/* Required: wait() in <sys/wait.h> */
++#ifdef HAVE_SYS_WAIT_H
+ #include <sys/wait.h>
++#endif
+ #include <stdbool.h>
+ #include <stdarg.h>
+-/* Required: regcomp(), regexec() and regerror() in <regex.h> */
++#ifdef HAVE_REGEX_H
+ #include <regex.h>
+-/* Required: strcasecmp() in <strings.h> */
++#endif
++#ifdef HAVE_STRINGS_H
+ #include <strings.h>
++#endif
+ #include "flexint.h"
+ 
++#ifdef _WIN32
++#include <io.h>
++#include <fcntl.h>
++#include <process.h>
++#include <direct.h>
++#define YY_NO_UNISTD_H 1
++#ifndef S_ISREG
++#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
++#endif
++#ifndef S_IXUSR
++#define S_IXUSR _S_IEXEC
++#endif
++#ifdef _MSC_VER
++#define dup _dup
++#define dup2 _dup2
++#define fileno _fileno
++#define isatty _isatty
++#define popen _popen
++#define pclose _pclose
++#define fdopen _fdopen
++#define strcasecmp _stricmp
++#define close _close
++#define read _read
++#define htonl(x) _byteswap_ulong(x)
++#define htons(x) _byteswap_ushort(x)
++#endif
++void filter_wait_for_children(void);
++#endif /* _WIN32 */
++
++#ifndef HAVE_REGEX_H
++typedef struct { int unused; } regex_t;
++typedef struct { int rm_so; int rm_eo; } regmatch_t;
++#define REG_EXTENDED 1
++int flex_regcomp_stub(regex_t *preg, const char *pattern, int cflags);
++int flex_regexec_stub(const regex_t *preg, const char *string,
++                      size_t nmatch, regmatch_t pmatch[], int eflags);
++size_t flex_regerror_stub(int errcode, const regex_t *preg,
++                          char *errbuf, size_t errbuf_size);
++void flex_regfree_stub(regex_t *preg);
++#define regcomp flex_regcomp_stub
++#define regexec flex_regexec_stub
++#define regerror flex_regerror_stub
++#define regfree flex_regfree_stub
++#endif
++
+ /* We use gettext. So, when we write strings which should be translated, we mark them with _() */
+ #ifdef ENABLE_NLS
+ #ifdef HAVE_LOCALE_H
+@@ -1131,7 +1178,7 @@
+  * From "regex.c"
+  */
+ 
+-extern regex_t regex_linedir, regex_blank_line;
++extern regex_t regex_linedir;
+ bool flex_init_regex(void);
+ void flex_regcomp(regex_t *preg, const char *regex, int cflags);
+ char   *regmatch_dup (regmatch_t * m, const char *src);
+diff -ruN flex-2.6.4-orig/src/main.c flex-2.6.4-mod/src/main.c
+--- flex-2.6.4-orig/src/main.c	2026-03-20 14:51:42
++++ flex-2.6.4-mod/src/main.c	2026-03-20 14:51:47
+@@ -152,16 +152,18 @@
+             fflush(stdout);
+             fclose(stdout);
+         }
++#ifdef HAVE_SYS_WAIT_H
+         while (wait(&child_status) > 0){
+             if (!WIFEXITED (child_status)
+                 || WEXITSTATUS (child_status) != 0){
+-                /* report an error of a child
+-                 */
+                 if( exit_status <= 1 )
+                     exit_status = 2;
+ 
+             }
+         }
++#elif defined(_WIN32)
++        filter_wait_for_children();
++#endif
+         return exit_status - 1;
+     }
+ 
+@@ -356,7 +358,11 @@
+ 					size_t length = strlen(path);
+ 					struct stat sbuf;
+ 
++#ifdef _WIN32
++					const char *endOfDir = strchr(path, ';');
++#else
+ 					const char *endOfDir = strchr(path, ':');
++#endif
+ 					if (!endOfDir)
+ 						endOfDir = path+length;
+ 
+@@ -390,6 +396,22 @@
+     }
+     yyout = stdout;
+ 
++#ifdef _WIN32
++    /* On Windows, filter_tee_header cannot run as a child process
++     * (no fork).  Write the m4 preamble that it would have emitted
++     * so that m4 knows how to process the skeleton macros.
++     */
++    fputs ("m4_dnl ifdef(`__gnu__', ,"
++           "`errprint(Flex requires GNU M4."
++           " Set the PATH or set the M4 environment variable to its path name.)"
++           " m4exit(2)')\n", stdout);
++    fputs ("m4_changecom`'m4_dnl\n", stdout);
++    fputs ("m4_changequote`'m4_dnl\n", stdout);
++    fputs ("m4_changequote([[,]])[[]]m4_dnl\n", stdout);
++    fputs ("m4_define([[M4_YY_NOOP]])[[]]m4_dnl\n", stdout);
++    fprintf (stdout, "m4_define( [[M4_YY_OUTFILE_NAME]],[[%s]])m4_dnl\n",
++             outfilename ? outfilename : "<stdout>");
++#endif
+ 
+ 	/* always generate the tablesverify flag. */
+ 	buf_m4_define (&m4defs_buf, "M4_YY_TABLES_VERIFY", tablesverify ? "1" : "0");
+@@ -994,7 +1016,7 @@
+     flex_init_regex();
+ 
+ 	/* Enable C++ if program name ends with '+'. */
+-	program_name = basename (argv[0]);
++	program_name = argv[0];
+ 
+ 	if (program_name != NULL &&
+ 	    program_name[strlen (program_name) - 1] == '+')
+@@ -1201,7 +1223,7 @@
+ 			break;
+ 
+ 		case OPT_VERSION:
+-			printf (_("%s %s\n"), program_name, flex_version);
++			printf (_("%s %s\n"), (C_plus_plus ? "flex++" : "flex"), flex_version);
+ 			FLEX_EXIT (0);
+ 
+ 		case OPT_WARN:
+diff -ruN flex-2.6.4-orig/src/regex.c flex-2.6.4-mod/src/regex.c
+--- flex-2.6.4-orig/src/regex.c	2026-03-20 14:51:42
++++ flex-2.6.4-mod/src/regex.c	2026-03-20 14:51:47
+@@ -23,12 +23,62 @@
+ 
+ #include "flexdef.h"
+ 
++#ifndef HAVE_REGEX_H
++int flex_regcomp_stub(regex_t *preg, const char *pattern, int cflags)
++{
++	(void)preg; (void)pattern; (void)cflags;
++	return 0;
++}
+ 
++static int match_linedir(const char *s, size_t nmatch, regmatch_t pmatch[])
++{
++	const char *p = s;
++	if (*p++ != '#') return -1;
++	if (strncmp(p, "line ", 5) != 0) return -1;
++	p += 5;
++	while (*p == ' ') p++;
++	if (!(*p >= '0' && *p <= '9')) return -1;
++	const char *num_start = p;
++	while (*p >= '0' && *p <= '9') p++;
++	const char *num_end = p;
++	if (*p++ != ' ') return -1;
++	if (*p++ != '"') return -1;
++	const char *fname_start = p;
++	while (*p && *p != '"' && *p != '\n') p++;
++	const char *fname_end = p;
++	if (*p != '"') return -1;
++
++	if (nmatch > 0) { pmatch[0].rm_so = 0; pmatch[0].rm_eo = (int)(p + 1 - s); }
++	if (nmatch > 1) { pmatch[1].rm_so = (int)(num_start - s); pmatch[1].rm_eo = (int)(num_end - s); }
++	if (nmatch > 2) { pmatch[2].rm_so = (int)(fname_start - s); pmatch[2].rm_eo = (int)(fname_end - s); }
++	return 0;
++}
++
++int flex_regexec_stub(const regex_t *preg, const char *string,
++                      size_t nmatch, regmatch_t pmatch[], int eflags)
++{
++	(void)preg; (void)eflags;
++	return match_linedir(string, nmatch, pmatch);
++}
++
++size_t flex_regerror_stub(int errcode, const regex_t *preg,
++                          char *errbuf, size_t errbuf_size)
++{
++	(void)errcode; (void)preg;
++	if (errbuf && errbuf_size > 0)
++		snprintf(errbuf, errbuf_size, "regex error");
++	return 12;
++}
++
++void flex_regfree_stub(regex_t *preg)
++{
++	(void)preg;
++}
++#endif /* !HAVE_REGEX_H */
++
+ static const char* REGEXP_LINEDIR = "^#line ([[:digit:]]+) \"(.*)\"";
+-static const char* REGEXP_BLANK_LINE = "^[[:space:]]*$";
+ 
+ regex_t regex_linedir; /**< matches line directives */
+-regex_t regex_blank_line; /**< matches blank lines */
+ 
+ 
+ /** Initialize the regular expressions.
+@@ -36,9 +86,9 @@
+  */
+ bool flex_init_regex(void)
+ {
++#ifdef HAVE_REGEX_H
+     flex_regcomp(&regex_linedir, REGEXP_LINEDIR, REG_EXTENDED);
+-    flex_regcomp(&regex_blank_line, REGEXP_BLANK_LINE, REG_EXTENDED);
+-
++#endif
+     return true;
+ }
+ 
+diff -ruN flex-2.6.4-orig/src/scanopt.c flex-2.6.4-mod/src/scanopt.c
+--- flex-2.6.4-orig/src/scanopt.c	2026-03-20 14:51:42
++++ flex-2.6.4-mod/src/scanopt.c	2026-03-20 14:51:47
+@@ -247,16 +247,7 @@
+ 		fprintf (fp, "%s\n", usage);
+ 	}
+ 	else {
+-		/* Find the basename of argv[0] */
+-		const char *p;
+-
+-		p = s->argv[0] + strlen (s->argv[0]);
+-		while (p != s->argv[0] && *p != '/')
+-			--p;
+-		if (*p == '/')
+-			p++;
+-
+-		fprintf (fp, _("Usage: %s [OPTIONS]...\n"), p);
++		fprintf (fp, _("Usage: %s [OPTIONS]...\n"), s->argv[0]);
+ 	}
+ 	fprintf (fp, "\n");
+ 
