@@ -1,9 +1,27 @@
 # Derived from the local Bazelization in ../PROJ and pinned to the released
 # PROJ 9.8.0 archive for use as a BCR overlay.
 load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
 PROJ_VERSION = "9.8.0"
+
+exports_files(
+    [
+        "data/proj.ini",
+        "data/tests/egm96_15_uncompressed_truncated.tif",
+        "data/tests/nkgrf03vel_realigned_extract.tif",
+        "data/tests/nkgrf03vel_realigned_extract_tiled_256x256.tif",
+        "data/tests/simple_model_degree_3d.json",
+        "data/tests/test_3d_grid_projected.tif",
+        "data/tests/test_hgrid.tif",
+        "data/tests/test_hgrid_with_subgrid.tif",
+        "data/tests/test_hgrid_with_two_level_of_subgrids_no_grid_name.tif",
+        "data/tests/test_nodata.gtx",
+        "data/tests/test_vgrid_int16.tif",
+    ],
+    visibility = ["//visibility:public"],
+)
 
 PROJ_DICTIONARY = [
     "data/world",
@@ -172,18 +190,27 @@ cat \
 sed 's/$${PROJ_VERSION}/%s/g' "$$tmp_sql" | $(execpath @sqlite3//:shell) "$@"
 """ % PROJ_VERSION,
     tools = ["@sqlite3//:shell"],
+    visibility = ["//visibility:public"],
+)
+
+copy_file(
+    name = "data_proj_db",
+    src = ":proj_db",
+    out = "data/proj.db",
+    visibility = ["//visibility:public"],
 )
 
 filegroup(
     name = "proj_runtime_data",
     srcs = [
         "data/proj.ini",
-        ":proj_db",
+        ":data_proj_db",
     ] + PROJ_DICTIONARY + glob(
         [
             "data/*.json",
         ],
     ),
+    visibility = ["//visibility:public"],
 )
 
 cc_library(
@@ -207,6 +234,7 @@ cc_library(
             "-lm",
         ],
     }),
+    linkstatic = True,
     local_defines = [
         "PROJ_HAS_PTHREADS",
         "CURL_ENABLED",
