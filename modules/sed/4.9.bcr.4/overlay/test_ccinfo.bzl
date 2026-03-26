@@ -27,6 +27,10 @@ def _cc_header_validation_impl(ctx):
     # Get includes (-I) directories from compilation context
     includes = compilation_context.includes.to_list()
 
+    # Get system includes from compilation context
+    system_includes = compilation_context.system_includes.to_list()
+    # fail(system_includes)
+
     # Get all header files from the compilation context
     headers = compilation_context.headers.to_list()
 
@@ -34,10 +38,9 @@ def _cc_header_validation_impl(ctx):
     stdlib_paths = []
     for header in headers:
         if header.path.endswith("/stdlib.h"):
-            for inc in includes:
-                if inc in header.path:
-                    stdlib_paths.append(header.path)
-                    break
+            header_dir = header.path.rsplit("/stdlib.h", 1)[0]
+            if header_dir in includes + system_includes:
+                stdlib_paths.append(header.path)
 
     # Create output file with validation result
     output = ctx.actions.declare_file(ctx.label.name + ".result")
