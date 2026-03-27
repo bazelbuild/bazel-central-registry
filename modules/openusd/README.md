@@ -8,7 +8,8 @@ those are disabled here. Please refer to the README and BUILDING.md files of the
 As explained in the OpenUSD BUILDING.md, there are several different ways to build OpenUSD (static vs shared and monolithic vs split-up). This Bazel module builds it
 as a monolithic static library, for ease of use. 
 
-Note: We currently only support building for linux.
+Note: We support Linux and macOS Apple Silicon builds. Windows has not been
+validated yet.
 
 ## Working with this BCR module
 
