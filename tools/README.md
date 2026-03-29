@@ -147,3 +147,28 @@ options:
 ## mcp_server.py
 
 Check how to setup the [BCR MCP server](../docs/mcp.md) for coding agents.
+
+## cross_module_authz_poc.js
+
+Local harness for reproducing the cross-module authorization gap in the BCR PR reviewer logic without opening a live PR.
+
+It simulates the file classification used by the reviewer action:
+
+- `modules/<name>/<version>/...` contributes to the approval/merge decision.
+- `modules/<name>/metadata.json` is tracked separately, so a metadata-only change in another module can be present in the PR while staying out of the approval set.
+
+Example:
+
+```bash
+node tools/cross_module_authz_poc.js \
+  --file modules/rules_go/0.60.0/MODULE.bazel \
+  --file modules/rules_go/0.60.0/source.json \
+  --file modules/abseil-cpp/metadata.json \
+  --approve fmeum
+```
+
+The output is JSON. The key fields are:
+
+- `modifiedModules`: modules counted for approval.
+- `modulesWithOnlyMetadataChanges`: modules whose `metadata.json` changed but were excluded from the approval set.
+- `reviewerLogicSummary.mergePathReachableUnderCurrentLogic`: `true` means the current reviewer logic would still consider the merge path reachable with the supplied approvals.
