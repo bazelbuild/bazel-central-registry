@@ -31,28 +31,6 @@ def _libvpx_arm_asm_source_impl(ctx):
     perl_toolchain = ctx.attr._current_perl_toolchain[platform_common.ToolchainInfo]
     perl = perl_toolchain.perl_runtime.interpreter
     args = ctx.actions.args()
-    args.add("-e")
-    args.add("""use strict; use warnings;
-my ($out, $script, $src, $config_include, @script_args) = @ARGV;
-open my $in, '<', $src or die "open($src): $!";
-open STDOUT, '>', $out or die "open($out): $!";
-local *STDIN = $in;
-local @ARGV = @script_args;
-my $script_to_run = $script;
-$script_to_run = "./" . $script_to_run unless $script_to_run =~ m{^(?:/|[A-Za-z]:[\\/])};
-my $rv = do $script_to_run;
-die $@ if $@;
-die "do($script_to_run) failed: $!" unless defined $rv;
-close STDOUT or die "close($out): $!";
-open my $read, '<', $out or die "open($out): $!";
-local $/;
-my $content = <$read>;
-close $read or die "close($out): $!";
-$content =~ s#\\.include "\\./vpx_config\\.asm"#.include "$config_include"."vpx_config.asm"#g;
-open my $write, '>', $out or die "open($out): $!";
-print {$write} $content or die "write($out): $!";
-close $write or die "close($out): $!";
-""")
     args.add(ctx.outputs.out.path)
     args.add(ctx.file.script.path)
     args.add(ctx.file.src.path)
@@ -64,6 +42,7 @@ close $write or die "close($out): $!";
         inputs = [
             ctx.file.authors,
             ctx.file.config_target,
+            ctx.file._perl_wrapper,
             ctx.file.script,
             ctx.file.src,
             ctx.file.thumb_pm,
@@ -73,7 +52,7 @@ close $write or die "close($out): $!";
             direct = [perl],
             transitive = [perl_toolchain.perl_runtime.runtime],
         ),
-        arguments = [args],
+        arguments = [ctx.file._perl_wrapper.path, args],
         mnemonic = "LibvpxArmAsmSource",
     )
 
@@ -108,6 +87,10 @@ _libvpx_arm_asm_source = rule(
         "_current_perl_toolchain": attr.label(
             cfg = "exec",
             default = Label("@rules_perl//:current_toolchain"),
+        ),
+        "_perl_wrapper": attr.label(
+            allow_single_file = True,
+            default = Label("@libvpx//:ads2gas_do_wrapper.pl"),
         ),
     },
 )

@@ -2,18 +2,6 @@ def _libvpx_rtcd_header_impl(ctx):
     perl_toolchain = ctx.attr._current_perl_toolchain[platform_common.ToolchainInfo]
     perl = perl_toolchain.perl_runtime.interpreter
     args = ctx.actions.args()
-    args.add("-e")
-    args.add("""use strict; use warnings;
-my ($out, $script, @script_args) = @ARGV;
-open STDOUT, '>', $out or die "open($out): $!";
-local @ARGV = @script_args;
-my $script_to_run = $script;
-$script_to_run = "./" . $script_to_run unless $script_to_run =~ m{^(?:/|[A-Za-z]:[\\/])};
-my $rv = do $script_to_run;
-die $@ if $@;
-die "do($script_to_run) failed: $!" unless defined $rv;
-close STDOUT or die "close($out): $!";
-""")
     args.add(ctx.outputs.out.path)
     args.add(ctx.file.rtcd_script.path)
     args.add("--arch=" + ctx.attr.arch)
@@ -27,6 +15,7 @@ close STDOUT or die "close($out): $!";
         inputs = [
             ctx.file.config_file,
             ctx.file.defs_file,
+            ctx.file._perl_wrapper,
             ctx.file.rtcd_script,
         ],
         outputs = [ctx.outputs.out],
@@ -34,7 +23,7 @@ close STDOUT or die "close($out): $!";
             direct = [perl],
             transitive = [perl_toolchain.perl_runtime.runtime],
         ),
-        arguments = [args],
+        arguments = [ctx.file._perl_wrapper.path, args],
         mnemonic = "LibvpxRtcdHeader",
     )
 
@@ -62,6 +51,10 @@ _libvpx_rtcd_header = rule(
         "_current_perl_toolchain": attr.label(
             cfg = "exec",
             default = Label("@rules_perl//:current_toolchain"),
+        ),
+        "_perl_wrapper": attr.label(
+            allow_single_file = True,
+            default = Label("@libvpx//:rtcd_do_wrapper.pl"),
         ),
     },
 )
