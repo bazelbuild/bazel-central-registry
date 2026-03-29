@@ -1,15 +1,5 @@
 """Generates vpx_version.h from a version string."""
-
-def _emit_file_impl(ctx):
-    ctx.actions.write(output = ctx.outputs.out, content = ctx.attr.content)
-
-_emit_file = rule(
-    implementation = _emit_file_impl,
-    attrs = {
-        "content": attr.string(mandatory = True),
-        "out": attr.output(mandatory = True),
-    },
-)
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 
 def vpx_version_header(name, version, out):
     """Generates vpx_version.h from a semantic version string.
@@ -26,7 +16,7 @@ def vpx_version_header(name, version, out):
     minor = parts[1]
     patch = parts[2]
 
-    content = "\n".join([
+    content = [
         "// This file is generated. Do not edit.",
         "#ifndef VPX_VERSION_H_",
         "#define VPX_VERSION_H_",
@@ -38,10 +28,9 @@ def vpx_version_header(name, version, out):
         '#define VERSION_STRING_NOSP "v%s"' % version,
         '#define VERSION_STRING      " v%s"' % version,
         "#endif  // VPX_VERSION_H_",
-        "",
-    ])
+    ]
 
-    _emit_file(
+    write_file(
         name = name,
         out = out,
         content = content,
