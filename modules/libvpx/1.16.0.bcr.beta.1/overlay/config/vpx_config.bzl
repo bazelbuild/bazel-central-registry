@@ -4,17 +4,7 @@ Instead of maintaining separate static config headers per platform that
 drift apart, this module generates them from a unified set of parameters.
 The output matches what upstream's ./configure produces for each target.
 """
-
-def _emit_file_impl(ctx):
-    ctx.actions.write(output = ctx.outputs.out, content = ctx.attr.content)
-
-_emit_file = rule(
-    implementation = _emit_file_impl,
-    attrs = {
-        "content": attr.string(mandatory = True),
-        "out": attr.output(mandatory = True),
-    },
-)
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 
 _ARCH_X86_64 = {
     "ARCH_ARM": 0,
@@ -330,13 +320,11 @@ def vpx_config_header(name, arch, out, features = {}, windows = False):
     lines = [_LICENSE_COMMENT, "#ifndef VPX_CONFIG_H", "#define VPX_CONFIG_H", "#define RESTRICT    ", "#define INLINE      inline"]
     lines.extend(_ordered_lines(order, defines, "#define", features))
     lines.append("#endif /* VPX_CONFIG_H */")
-    lines.append("")
 
-    content = "\n".join(lines)
-    _emit_file(
+    write_file(
         name = name,
         out = out,
-        content = content,
+        content = lines,
     )
 
 def vpx_config_asm(name, arch, out, features = {}, windows = False):
@@ -357,13 +345,10 @@ def vpx_config_asm(name, arch, out, features = {}, windows = False):
         lines = ["@ This file was created from a .asm file", "@  using the ads2gas.pl script.", ".syntax unified"]
         for key, value in _ordered_define_items(order, defines, features):
             lines.append(".equ %s ,  %s" % (key, value))
-    lines.append("")
-
-    content = "\n".join(lines)
-    _emit_file(
+    write_file(
         name = name,
         out = out,
-        content = content,
+        content = lines,
     )
 
 def vpx_config_rtcd(name, arch, out, features = {}, windows = False):
@@ -380,10 +365,8 @@ def vpx_config_rtcd(name, arch, out, features = {}, windows = False):
         elif value == "0":
             value = "no"
         lines.append("%s=%s" % (key, value))
-    lines.append("")
-
-    _emit_file(
+    write_file(
         name = name,
         out = out,
-        content = "\n".join(lines),
+        content = lines,
     )
