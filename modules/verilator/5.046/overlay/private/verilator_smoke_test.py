@@ -11,6 +11,17 @@ import sys
 from python.runfiles import runfiles
 
 
+def _resolve_arg(r, arg):
+    """Try to resolve an arg as an rlocation path; return the original if it fails."""
+    try:
+        resolved = r.Rlocation(arg)
+        if resolved and os.path.exists(resolved):
+            return resolved
+    except (ValueError, TypeError):
+        pass
+    return arg
+
+
 def main() -> None:
     r = runfiles.Create()
     verilator_rlocation = os.environ["VERILATOR_RLOCATIONPATH"]
@@ -21,10 +32,11 @@ def main() -> None:
 
     env = dict(os.environ)
     env.update(r.EnvVars())
-    env["VERILATOR_ROOT"] = os.path.dirname(os.path.dirname(verilator))
+    env["VERILATOR_ROOT"] = os.path.dirname(verilator)
 
+    args = [_resolve_arg(r, a) for a in sys.argv[1:]]
     result = subprocess.run(
-        [verilator] + sys.argv[1:],
+        [verilator] + args,
         env=env,
     )
     sys.exit(result.returncode)
