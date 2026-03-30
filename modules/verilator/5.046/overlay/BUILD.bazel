@@ -3,7 +3,6 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_flex//flex:flex.bzl", "flex")
-load("@rules_python//python:defs.bzl", "py_binary")
 load(
     "//private:verilator_utils.bzl",
     "verilator_astgen",
@@ -346,7 +345,10 @@ cc_library(
         "include/verilated_threads.cpp",
         "include/verilated_vcd_c.cpp",
         "include/verilated_vpi.cpp",
-    ],
+    ] + select({
+        ":with_timing": ["include/verilated_timing.cpp"],
+        "//conditions:default": [],
+    }),
     hdrs = [
         "include/verilated_config.h",
         "include/verilated_cov.h",
@@ -368,7 +370,10 @@ cc_library(
         "include/verilated_vcd_c.h",
         "include/verilated_vpi.h",
         "include/verilated.h",
-    ],
+    ] + select({
+        ":with_timing": ["include/verilated_timing.h"],
+        "//conditions:default": [],
+    }),
     copts = select({
         "@rules_cc//cc/compiler:msvc-cl": [
             "/std:c++17",
@@ -404,31 +409,7 @@ cc_library(
         ":verilatedos",
         ":vltstd",
         "@zlib",
-    ] + select({
-        ":with_timing": [":verilated_timing"],
-        "//conditions:default": [],
-    }),
-)
-
-cc_library(
-    name = "verilated_timing",
-    srcs = ["include/verilated_timing.cpp"],
-    hdrs = ["include/verilated_timing.h"],
-    copts = select({
-        "@rules_cc//cc/compiler:msvc-cl": [
-            "/std:c++20",
-            "/w",
-        ],
-        "//conditions:default": [
-            "-w",
-            "-std=c++20",
-            "-ffp-contract=off",
-        ],
-    }),
-    strip_include_prefix = "include/",
-    tags = ["manual"],
-    visibility = ["//visibility:public"],
-    deps = [":verilated"],
+    ],
 )
 
 cc_library(
@@ -561,20 +542,6 @@ cc_binary(
     deps = [":verilator_coverage_bin_dbg_lib"],
 )
 
-py_binary(
-    name = "verilator_coverage",
-    srcs = ["//private:verilator_coverage_launcher.py"],
-    data = [
-        "bin/verilator_coverage",
-        ":verilator_coverage_bin_dbg",
-    ],
-    main = "//private:verilator_coverage_launcher.py",
-    visibility = ["//visibility:public"],
-    deps = [
-        "//private:verilator_coverage_launcher",
-    ],
-)
-
 # Legacy Aliases
 alias(
     name = "libverilator",
@@ -596,12 +563,12 @@ alias(
 
 alias(
     name = "verilator_coverage_bin",
-    actual = ":verilator_coverage",
+    actual = ":verilator_coverage_bin_dbg",
     visibility = ["//visibility:public"],
 )
 
 alias(
     name = "verilator_coverage_executable",
-    actual = ":verilator_coverage",
+    actual = ":verilator_coverage_bin_dbg",
     visibility = ["//visibility:public"],
 )

@@ -1,5 +1,7 @@
 """Utility rules used to compile Verilator"""
 
+load("@rules_python//python:defs.bzl", "py_test")
+
 def _verilator_astgen_impl(ctx):
     args = ctx.actions.args()
     args.add("--astgen", ctx.file.astgen)
@@ -312,120 +314,28 @@ verilator_build_template = rule(
     },
 )
 
-def _rf(ctx, f):
-    """Compute the runfiles-relative path for a file."""
-    repo = f.owner.workspace_name or ctx.workspace_name
-    return "{}/{}".format(repo, f.short_path)
+def verilator_test(*, name, verilator_args, srcs = [], data = [], **kwargs):
+    """Smoke test macro that invokes verilator with the given args.
 
-def _rf_dir(ctx, f):
-    """Compute the runfiles-relative directory for a file."""
-    repo = f.owner.workspace_name or ctx.workspace_name
-    return repo if not f.dirname else "%s/%s" % (repo, f.dirname)
-
-def _verilator_internal_test_impl(ctx):
-    config = ctx.actions.declare_file(ctx.label.name + ".config.json")
-
-    seen = {}
-    inc_dirs = []
-    for f in ctx.files.srcs:
-        d = _rf_dir(ctx, f)
-        if d not in seen:
-            seen[d] = True
-            inc_dirs.append(d)
-
-    ctx.actions.write(config, json.encode({
-        "inc_dirs": inc_dirs,
-        "srcs": [_rf(ctx, f) for f in ctx.files.srcs],
-        "top_module": ctx.attr.top_module,
-        "verilator": _rf(ctx, ctx.executable.verilator),
-        "verilator_args": ctx.attr.verilator_args,
-    }))
-
-    executable = ctx.actions.declare_file(ctx.label.name)
-    ctx.actions.symlink(output = executable, target_file = ctx.executable._process_wrapper, is_executable = True)
-
-    runfiles = ctx.runfiles(files = ctx.files.srcs + [ctx.executable.verilator, config])
-    runfiles = runfiles.merge(ctx.attr.verilator[DefaultInfo].default_runfiles)
-    runfiles = runfiles.merge(ctx.attr._process_wrapper[DefaultInfo].default_runfiles)
-
-    return [
-        DefaultInfo(
-            executable = executable,
-            runfiles = runfiles,
-        ),
-        RunEnvironmentInfo(
-            environment = {"VERILATOR_INTERNAL_TEST_CONFIG": _rf(ctx, config)},
-        ),
-    ]
-
-verilator_internal_test = rule(
-    doc = "Internal test rule for Verilator BCR release. Do not reuse.",
-    implementation = _verilator_internal_test_impl,
-    test = True,
-    attrs = {
-        "srcs": attr.label_list(allow_files = [".sv", ".svh", ".v"]),
-        "top_module": attr.string(doc = "The top module name"),
-        "verilator": attr.label(executable = True, cfg = "target", default = "//:verilator_bin"),
-        "verilator_args": attr.string_list(),
-        "_process_wrapper": attr.label(
-            executable = True,
-            cfg = "target",
-            default = Label("//private:verilator_internal_test_runner"),
-        ),
-    },
-)
-
-def _verilator_coverage_internal_test_impl(ctx):
-    config = ctx.actions.declare_file(ctx.label.name + ".config.json")
-    ctx.actions.write(config, json.encode({
-        "coverage": _rf(ctx, ctx.executable.verilator_coverage),
-        "expected": _rf(ctx, ctx.file.expected),
-        "srcs": [_rf(ctx, f) for f in ctx.files.srcs],
-    }))
-
-    executable = ctx.actions.declare_file(ctx.label.name)
-    ctx.actions.symlink(output = executable, target_file = ctx.executable._process_wrapper, is_executable = True)
-
-    runfiles = ctx.runfiles(
-        files = ctx.files.srcs + [ctx.file.expected, ctx.executable.verilator_coverage, config],
+    Args:
+        name: Test target name.
+        verilator_args: List of args to pass to the verilator binary.
+        srcs: Verilog source files to pass to verilator.
+        data: Additional data dependencies.
+        **kwargs: Passed through to py_test.
+    """
+    py_test(
+        name = name,
+        main = "//private:verilator_smoke_test.py",
+        srcs = ["//private:verilator_smoke_test.py"],
+        data = [
+            "//:verilator",
+            "//:verilator_runtime_support",
+        ] + srcs + data,
+        args = verilator_args + ["$(rlocationpath " + s + ")" for s in srcs],
+        env = {
+            "VERILATOR_RLOCATIONPATH": "$(rlocationpath //:verilator)",
+        },
+        deps = ["@rules_python//python/runfiles"] + kwargs.pop("deps", []),
+        **kwargs
     )
-    runfiles = runfiles.merge(ctx.attr.verilator_coverage[DefaultInfo].default_runfiles)
-    runfiles = runfiles.merge(ctx.attr._process_wrapper[DefaultInfo].default_runfiles)
-
-    return [
-        DefaultInfo(
-            executable = executable,
-            runfiles = runfiles,
-        ),
-        RunEnvironmentInfo(
-            environment = {"VERILATOR_COVERAGE_TEST_CONFIG": _rf(ctx, config)},
-        ),
-    ]
-
-verilator_coverage_internal_test = rule(
-    doc = "Internal coverage smoke test rule for Verilator BCR release.",
-    implementation = _verilator_coverage_internal_test_impl,
-    test = True,
-    attrs = {
-        "expected": attr.label(
-            doc = "TODO",
-            allow_single_file = True,
-            mandatory = True,
-        ),
-        "srcs": attr.label_list(
-            doc = "TODO",
-            allow_files = [".dat"],
-        ),
-        "verilator_coverage": attr.label(
-            doc = "TODO",
-            executable = True,
-            cfg = "target",
-            default = Label("//:verilator_coverage"),
-        ),
-        "_process_wrapper": attr.label(
-            executable = True,
-            cfg = "target",
-            default = Label("//private:verilator_coverage_test_runner"),
-        ),
-    },
-)
