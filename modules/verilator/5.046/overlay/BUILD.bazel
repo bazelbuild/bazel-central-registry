@@ -1,3 +1,5 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_flex//flex:flex.bzl", "flex")
@@ -20,6 +22,23 @@ exports_files([
     "COPYING",
     "COPYING.LESSER",
 ])
+
+bool_flag(
+    name = "timing",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "with_timing",
+    flag_values = {":timing": "True"},
+)
+
+selects.config_setting_group(
+    name = "use_cxx20",
+    match_any = [
+        ":with_timing",
+    ],
+)
 
 verilator_version(
     name = "version",
@@ -325,7 +344,6 @@ cc_library(
         "include/verilated_save.cpp",
         "include/verilated_syms.h",
         "include/verilated_threads.cpp",
-        "include/verilated_timing.cpp",
         "include/verilated_vcd_c.cpp",
         "include/verilated_vpi.cpp",
     ],
@@ -343,7 +361,6 @@ cc_library(
         "include/verilated_sc.h",
         "include/verilated_sym_props.h",
         "include/verilated_threads.h",
-        "include/verilated_timing.h",
         # Needed for verilated_vcd_c.cpp and verilated_fst_c.cpp
         "include/verilated_trace_imp.h",
         "include/verilated_trace.h",
@@ -354,14 +371,20 @@ cc_library(
     ],
     copts = select({
         "@rules_cc//cc/compiler:msvc-cl": [
-            "/std:c++20",
+            "/std:c++17",
             "/w",
         ],
         "//conditions:default": [
             "-w",
-            "-std=c++2a",
+            "-std=c++17",
             "-ffp-contract=off",
         ],
+    }) + select({
+        # TODO: Without negative selects there is no way to describe
+        # a condtiion for `use_cxx20 + msvc-cl` and another for
+        # `use_cxx20 + (!msvc-cl)`
+        ":use_cxx20": ["-std=c++20"],
+        "//conditions:default": [],
     }),
     includes = ["include"],
     linkopts = select({
@@ -381,7 +404,31 @@ cc_library(
         ":verilatedos",
         ":vltstd",
         "@zlib",
-    ],
+    ] + select({
+        ":with_timing": [":verilated_timing"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "verilated_timing",
+    srcs = ["include/verilated_timing.cpp"],
+    hdrs = ["include/verilated_timing.h"],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/std:c++20",
+            "/w",
+        ],
+        "//conditions:default": [
+            "-w",
+            "-std=c++20",
+            "-ffp-contract=off",
+        ],
+    }),
+    strip_include_prefix = "include/",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [":verilated"],
 )
 
 cc_library(
@@ -518,7 +565,7 @@ py_binary(
     name = "verilator_coverage",
     srcs = ["//private:verilator_coverage_launcher.py"],
     data = [
-        "bin/verilator_coverate",
+        "bin/verilator_coverage",
         ":verilator_coverage_bin_dbg",
     ],
     main = "//private:verilator_coverage_launcher.py",
