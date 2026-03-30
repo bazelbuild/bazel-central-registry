@@ -1,9 +1,98 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load(":defs.bzl", "libvpx_rtcd_headers")
 load(":vpx_config.bzl", "vpx_config_asm", "vpx_config_header", "vpx_config_rtcd")
 load(":vpx_version.bzl", "vpx_version_header")
 
 package(default_visibility = ["//visibility:public"])
+
+# Linux Arm64 GCC in BCR CI lacks arm_neon_sve_bridge.h, so "auto" defaults to
+# SVE off there and on for other non-Windows Arm64 platforms.
+string_flag(
+    name = "with_sve",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        "false",
+        "true",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "sve_auto",
+    flag_values = {":with_sve": "auto"},
+)
+
+config_setting(
+    name = "sve_disabled",
+    flag_values = {":with_sve": "false"},
+)
+
+config_setting(
+    name = "sve_enabled",
+    flag_values = {":with_sve": "true"},
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "macos_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:macos",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64_sve_auto",
+    flag_values = {":with_sve": "auto"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64_sve_auto",
+    flag_values = {":with_sve": "auto"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64_sve_disabled",
+    flag_values = {":with_sve": "false"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64_sve_enabled",
+    flag_values = {":with_sve": "true"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
 
 _ARM_FEATURES = {
     "CONFIG_PIC": 0,
@@ -12,6 +101,11 @@ _ARM_FEATURES = {
 
 _ARM64_FEATURES = {
     "CONFIG_PIC": 0,
+}
+
+_ARM64_NO_SVE_FEATURES = {
+    "CONFIG_PIC": 0,
+    "HAVE_SVE": 0,
 }
 
 _ARM64_WINDOWS_CONFIG_OVERRIDES = {
@@ -88,6 +182,13 @@ vpx_config_header(
 )
 
 vpx_config_header(
+    name = "gen_arm64_h_no_sve",
+    arch = "arm64",
+    out = "generated/arm64_no_sve/vpx_config.h",
+    features = _ARM64_NO_SVE_FEATURES,
+)
+
+vpx_config_header(
     name = "gen_arm64_windows_h",
     arch = "arm64",
     out = "generated/arm64_windows/vpx_config.h",
@@ -147,6 +248,15 @@ libvpx_rtcd_headers(
 )
 
 libvpx_rtcd_headers(
+    name = "arm64_rtcd_no_sve",
+    arch = "arm64",
+    config_file = "generated/arm64_no_sve/vpx_config.rtcd",
+    disable_sve = True,
+    disable_sve2 = True,
+    out_dir = "rtcd/arm64_no_sve",
+)
+
+libvpx_rtcd_headers(
     name = "arm_rtcd",
     arch = "armv7",
     config_file = "generated/arm/vpx_config.rtcd",
@@ -180,6 +290,13 @@ vpx_config_rtcd(
     arch = "arm64",
     out = "generated/arm64/vpx_config.rtcd",
     features = _ARM64_FEATURES,
+)
+
+vpx_config_rtcd(
+    name = "gen_arm64_rtcd_no_sve",
+    arch = "arm64",
+    out = "generated/arm64_no_sve/vpx_config.rtcd",
+    features = _ARM64_NO_SVE_FEATURES,
 )
 
 vpx_config_rtcd(
@@ -253,7 +370,11 @@ filegroup(
 filegroup(
     name = "arm64_vpx_config_h",
     srcs = select({
-        "@platforms//os:windows": ["generated/arm64_windows/vpx_config.h"],
+        ":windows_arm64_sve_auto": ["generated/arm64_windows/vpx_config.h"],
+        ":windows_arm64_sve_disabled": ["generated/arm64_windows/vpx_config.h"],
+        ":windows_arm64_sve_enabled": ["generated/arm64_windows/vpx_config.h"],
+        ":sve_disabled": ["generated/arm64_no_sve/vpx_config.h"],
+        ":linux_arm64_sve_auto": ["generated/arm64_no_sve/vpx_config.h"],
         "//conditions:default": ["generated/arm64/vpx_config.h"],
     }),
 )
@@ -261,7 +382,11 @@ filegroup(
 filegroup(
     name = "arm64_vpx_config_rtcd",
     srcs = select({
-        "@platforms//os:windows": ["generated/arm64_windows/vpx_config.rtcd"],
+        ":windows_arm64_sve_auto": ["generated/arm64_windows/vpx_config.rtcd"],
+        ":windows_arm64_sve_disabled": ["generated/arm64_windows/vpx_config.rtcd"],
+        ":windows_arm64_sve_enabled": ["generated/arm64_windows/vpx_config.rtcd"],
+        ":sve_disabled": ["generated/arm64_no_sve/vpx_config.rtcd"],
+        ":linux_arm64_sve_auto": ["generated/arm64_no_sve/vpx_config.rtcd"],
         "//conditions:default": ["generated/arm64/vpx_config.rtcd"],
     }),
 )
@@ -309,12 +434,34 @@ cc_library(
     hdrs = [
         "generated/common/vpx_version.h",
         ":arm64_vpx_config_h",
-        ":arm64_rtcd",
-    ],
+    ] + select({
+        ":windows_arm64_sve_auto": [":arm64_rtcd"],
+        ":windows_arm64_sve_disabled": [":arm64_rtcd"],
+        ":windows_arm64_sve_enabled": [":arm64_rtcd"],
+        ":sve_disabled": [":arm64_rtcd_no_sve"],
+        ":linux_arm64_sve_auto": [":arm64_rtcd_no_sve"],
+        "//conditions:default": [":arm64_rtcd"],
+    }),
     includes = ["generated/common"] + select({
-        "@platforms//os:windows": [
+        ":windows_arm64_sve_auto": [
             "generated/arm64_windows",
             "rtcd/arm64",
+        ],
+        ":windows_arm64_sve_disabled": [
+            "generated/arm64_windows",
+            "rtcd/arm64",
+        ],
+        ":windows_arm64_sve_enabled": [
+            "generated/arm64_windows",
+            "rtcd/arm64",
+        ],
+        ":sve_disabled": [
+            "generated/arm64_no_sve",
+            "rtcd/arm64_no_sve",
+        ],
+        ":linux_arm64_sve_auto": [
+            "generated/arm64_no_sve",
+            "rtcd/arm64_no_sve",
         ],
         "//conditions:default": [
             "generated/arm64",
