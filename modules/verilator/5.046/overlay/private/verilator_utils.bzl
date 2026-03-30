@@ -330,7 +330,6 @@ def verilator_test(*, name, verilator_args, srcs = [], data = [], **kwargs):
         srcs = ["//private:verilator_smoke_test.py"],
         data = [
             "//:verilator",
-            "//:verilator_runtime_support",
         ] + srcs + data,
         args = verilator_args + ["$(rlocationpath " + s + ")" for s in srcs],
         env = {
