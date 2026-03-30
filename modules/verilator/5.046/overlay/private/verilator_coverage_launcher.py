@@ -46,8 +46,8 @@ _VERILATOR_COVERAGE_BIN_PATHS = [
 ]
 
 _SCRIPT_PATHS = [
-    "verilator/verilator_coverage",
-    "_main/verilator_coverage",
+    "verilator/bin/verilator_coverage",
+    "_main/bin/verilator_coverage",
 ]
 
 
