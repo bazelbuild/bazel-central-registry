@@ -4,7 +4,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("//:flex.bzl", "flex")
 
-def flex_test(name, src, input):
+def flex_test(*, name, src, input):
     """Build a scanner from a .l file and test it with stdin input.
 
     Mirrors the native test suite pattern:
@@ -36,7 +36,7 @@ def flex_test(name, src, input):
             "@platforms//os:windows": ["-DYY_NO_UNISTD_H"],
             "//conditions:default": [],
         }),
-        deps = [":config"],
+        deps = [Label("//:config")],
         testonly = True,
     )
 

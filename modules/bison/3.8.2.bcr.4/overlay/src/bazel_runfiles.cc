@@ -44,15 +44,9 @@ void bazel_runfiles_init(const char* argv0_cstr) {
 /**
  * @brief Resolve bison's PKGDATADIR via runfiles.
  *
- * If the BISON_PKGDATADIR_RLOCATIONPATH env var is set, two lookups are
- * attempted in order:
- *   1. Rlocation(value) -- the value may resolve directly (e.g. to a
- *      directory or a TreeArtifact path).
- *   2. Rlocation(value + "/m4sugar/m4sugar.m4") -- if the value is an
- *      rlocationpath prefix, resolve a known file inside it and strip
- *      the "/m4sugar/m4sugar.m4" suffix to obtain the data directory.
- *
- * The first lookup that returns a non-empty result is used.
+ * If the BISON_PKGDATADIR_RLOCATIONPATH env var is set, tries
+ * Rlocation(value) directly, then Rlocation(value +
+ * "/m4sugar/m4sugar.m4") with suffix stripping.
  *
  * When this function returns NULL, the caller (files.c) falls back to the
  * BISON_PKGDATADIR env var and then to the compiled-in PKGDATADIR default.

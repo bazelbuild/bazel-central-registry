@@ -15,7 +15,7 @@
 
 using rules_cc::cc::runfiles::Runfiles;
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     if (argc != 3) {
         fprintf(stderr, "Usage: %s SCANNER INPUT\n", argv[0]);
         return 1;
@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
     }
     return static_cast<int>(rc);
 #else
-    execl(scanner.c_str(), scanner.c_str(), static_cast<char *>(NULL));
+    execl(scanner.c_str(), scanner.c_str(), static_cast<char*>(NULL));
     perror(scanner.c_str());
     return 1;
 #endif
