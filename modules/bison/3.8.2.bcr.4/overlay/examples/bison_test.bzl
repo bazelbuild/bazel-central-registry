@@ -15,6 +15,7 @@ def _bison_gen_impl(ctx):
     m4 = _find_m4(runfiles, ctx.attr.bison.label)
 
     env = {
+        "BISON_BAZEL_RUNFILES_M4": m4.short_path,
         "BISON_PKGDATADIR": "{}.runfiles/{}/data".format(
             bison.path,
             bison.owner.workspace_name,

@@ -6,10 +6,10 @@ load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
 load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
 load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
 load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("@rules_cc_autoconf//gnulib:conditional_hdr.bzl", "gnulib_conditional_hdr")
 
 LOCAL_DEFINES = [
     "HAVE_CONFIG_H",
-    "_GL_STATIC_ASSERT_H",
 ] + select({
     "@platforms//os:macos": [
         "_DARWIN_C_SOURCE",
@@ -527,7 +527,7 @@ int main(void) { char buf[1]; return getrandom(buf, 1, 0); }
             checks.AC_DEFINE("SYSCMD_SHELL", '"/bin/sh"'),
             checks.AC_DEFINE("RENAME_OPEN_FILE_WORKS", 1),
             checks.AC_SUBST("COMPILE_GETPROGNAME", "1"),
-            checks.AC_SUBST("COMPILE_OPEN", "0"),
+            checks.AC_SUBST("REPLACE_OPEN", "0"),
             checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "0"),
             checks.AC_SUBST("COMPILE_MBRTOWC", "1"),
             checks.AC_SUBST("COMPILE_SPAWN_FACTION_ADDCHDIR", "1"),
@@ -536,7 +536,7 @@ int main(void) { char buf[1]; return getrandom(buf, 1, 0); }
             checks.AC_DEFINE("SYSCMD_SHELL", '"/bin/sh"'),
             checks.AC_DEFINE("RENAME_OPEN_FILE_WORKS", 1),
             checks.AC_SUBST("COMPILE_GETPROGNAME", "0"),
-            checks.AC_SUBST("COMPILE_OPEN", "1"),
+            checks.AC_SUBST("REPLACE_OPEN", "1"),
             checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "1"),
             checks.AC_SUBST("COMPILE_MBRTOWC", "0"),
             checks.AC_SUBST("COMPILE_SPAWN_FACTION_ADDCHDIR", "1"),
@@ -545,7 +545,7 @@ int main(void) { char buf[1]; return getrandom(buf, 1, 0); }
             checks.AC_DEFINE("SYSCMD_SHELL", '"cmd"'),
             checks.AC_DEFINE("RENAME_OPEN_FILE_WORKS", 0),
             checks.AC_SUBST("COMPILE_GETPROGNAME", "1"),
-            checks.AC_SUBST("COMPILE_OPEN", "0"),
+            checks.AC_SUBST("REPLACE_OPEN", "0"),
             checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "0"),
             checks.AC_SUBST("COMPILE_MBRTOWC", "0"),
             checks.AC_SUBST("COMPILE_SPAWN_FACTION_ADDCHDIR", "1"),
@@ -554,7 +554,7 @@ int main(void) { char buf[1]; return getrandom(buf, 1, 0); }
             checks.AC_DEFINE("SYSCMD_SHELL", '"/bin/sh"'),
             checks.AC_DEFINE("RENAME_OPEN_FILE_WORKS", 1),
             checks.AC_SUBST("COMPILE_GETPROGNAME", "1"),
-            checks.AC_SUBST("COMPILE_OPEN", "0"),
+            checks.AC_SUBST("REPLACE_OPEN", "0"),
             checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "0"),
             checks.AC_SUBST("COMPILE_MBRTOWC", "0"),
             checks.AC_SUBST("COMPILE_SPAWN_FACTION_ADDCHDIR", "1"),
@@ -608,6 +608,34 @@ write_file(
     ],
     newline = "unix",
     tags = ["manual"],
+)
+
+autoconf_hdr(
+    name = "assert_h_processed",
+    out = "lib/assert.processed.h",
+    inlines = {
+        "/* The definition of static_assert is copied here.  */": "lib/verify.h",
+    },
+    mode = "subst",
+    substitutions = {
+        "/* The definition of static_assert is copied here.  */": "#define _GL_STATIC_ASSERT_H\n/* The definition of static_assert is copied here.  */",
+    },
+    tags = ["manual"],
+    template = "lib/assert.in.h",
+    deps = ["@rules_cc_autoconf//gnulib/m4/assert_h"],
+)
+
+gnulib_conditional_hdr(
+    name = "assert_h",
+    src = ":assert_h_processed",
+    out = "lib/assert.h",
+    condition = "GL_GENERATE_ASSERT_H",
+    next_header = "NEXT_ASSERT_H",
+    tags = ["manual"],
+    deps = [
+        "@rules_cc_autoconf//gnulib/m4/assert_h",
+        "@rules_cc_autoconf//gnulib/m4/include_next",
+    ],
 )
 
 UNICODE_DLL_VARIABLES = [
@@ -784,14 +812,10 @@ M4_COPTS = select({
     "@rules_cc//cc/compiler:clang": [
         "-w",
         "-std=c11",
-        "-include",
-        "verify.h",
     ],
     "@rules_cc//cc/compiler:gcc": [
         "-w",
         "-std=c11",
-        "-include",
-        "verify.h",
     ],
     "@rules_cc//cc/compiler:msvc-cl": [
         "/wd4116",
@@ -850,7 +874,7 @@ autoconf_srcs(
         "lib/mkdir.c": "REPLACE_MKDIR",
         "lib/mkstemp.c": "REPLACE_MKSTEMP",
         "lib/obstack.c": "COMPILE_OBSTACK",
-        "lib/open.c": "COMPILE_OPEN",
+        "lib/open.c": "REPLACE_OPEN",
         "lib/openat.c": "REPLACE_OPENAT",
         "lib/opendir.c": "REPLACE_OPENDIR",
         "lib/raise.c": "REPLACE_RAISE",
@@ -1096,7 +1120,10 @@ cc_library(
         "lib/unicase.h",
         "lib/unictype.h",
         "lib/uninorm.h",
-    ] + glob(
+    ] + select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [":assert_h"],
+    }) + glob(
         include = ["lib/**/*.h"],
         exclude = GENERATED_SRCS.keys() + [
             "lib/assert.h",

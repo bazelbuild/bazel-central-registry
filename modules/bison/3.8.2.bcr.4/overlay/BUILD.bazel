@@ -256,10 +256,11 @@ autoconf(
         checks.AC_SUBST("GNULIB_VSPRINTF_POSIX", 1),
 
         # --- gl_UNISTD_MODULE_INDICATOR (AC_SUBST for unistd.in.h) ---
-        # Note: GNULIB_ACCESS omitted because bison 3.8.2's lib/access.c is
-        # Windows-only, but upstream rules_cc_autoconf sets REPLACE_ACCESS=1
-        # on macOS (for newer gnulib). Leaving GNULIB_ACCESS=0 prevents the
-        # rpl_access redirect while keeping system access() available.
+        # Note: GNULIB_ACCESS is set only for Windows (see select below)
+        # because MSVC's _access() doesn't support X_OK (mode=1), returning
+        # EINVAL. The gnulib access replacement (lib/access.c) converts
+        # X_OK to R_OK. On macOS/Linux the system access() works fine, and
+        # leaving GNULIB_ACCESS=0 avoids an rpl_access redirect conflict.
         checks.AC_SUBST("GNULIB_CHDIR", 1),
         checks.AC_SUBST("GNULIB_CLOSE", 1),
         checks.AC_SUBST("GNULIB_DUP2", 1),
@@ -599,6 +600,10 @@ int main(void) { __fseterr(stdin); return 0; }
             # declarations, causing implicit-int errors on MSVC.
             checks.AC_SUBST("HAVE_STPCPY", 0),
             checks.AC_SUBST("HAVE_STPNCPY", 0),
+            # MSVC's _access() doesn't support X_OK (mode=1) and returns
+            # EINVAL. Enable gnulib access replacement (lib/access.c) which
+            # converts X_OK to R_OK before calling _access().
+            checks.AC_SUBST("GNULIB_ACCESS", 1),
         ],
         "//conditions:default": [
             checks.AC_SUBST("COMPILE_GETOPT", "1"),
@@ -892,6 +897,8 @@ cc_library(
         ":gnulib_conditional_srcs",
     ] + select({
         "@platforms//os:windows": [
+            # gnulib access() replacement: converts X_OK to R_OK for MSVC
+            "lib/access.c",
             # POSIX function replacements (missing on Windows)
             "lib/ffsl.c",
             "lib/fsync.c",
@@ -922,7 +929,12 @@ cc_library(
     copts = BISON_COPTS,
     local_defines = LOCAL_DEFINES + [
         "DEFAULT_TEXT_DOMAIN=\\\"bison-gnulib\\\"",
-    ],
+    ] + select({
+        "@platforms//os:windows": [
+            "SPAWN_PIPE_IMPL_AVOID_POSIX_SPAWN=1",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [":headers"],
 )
 
