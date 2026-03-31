@@ -338,6 +338,7 @@ def verilator_test(*, name, verilator_args, srcs = [], data = [], **kwargs):
         data = [
             "//:verilator",
             "//:verilator_includes",
+            "//:include/verilated_std.sv",
         ] + srcs + data,
         args = verilator_args + ["$(rlocationpath " + s + ")" for s in srcs],
         env = {
