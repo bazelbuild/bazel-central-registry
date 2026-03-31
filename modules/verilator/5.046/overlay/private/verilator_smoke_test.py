@@ -27,12 +27,25 @@ def main() -> None:
     verilator_rlocation = os.environ["VERILATOR_RLOCATIONPATH"]
     verilator = r.Rlocation(verilator_rlocation)
     if not verilator or not os.path.exists(verilator):
-        print(f"ERROR: could not resolve verilator at {verilator_rlocation!r}", file=sys.stderr)
+        print(
+            f"ERROR: could not resolve verilator at {verilator_rlocation!r}",
+            file=sys.stderr,
+        )
         sys.exit(1)
+
+    std_sv_rlocation = os.environ.get("VERILATOR_STD_SV_RLOCATIONPATH")
+    if std_sv_rlocation:
+        std_sv = r.Rlocation(std_sv_rlocation)
+        if std_sv and os.path.exists(std_sv):
+            verilator_root = os.path.dirname(os.path.dirname(std_sv))
+        else:
+            verilator_root = os.path.dirname(verilator)
+    else:
+        verilator_root = os.path.dirname(verilator)
 
     env = dict(os.environ)
     env.update(r.EnvVars())
-    env["VERILATOR_ROOT"] = os.path.dirname(verilator)
+    env["VERILATOR_ROOT"] = verilator_root
 
     args = [_resolve_arg(r, a) for a in sys.argv[1:]]
     result = subprocess.run(
