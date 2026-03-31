@@ -13,6 +13,16 @@ extern "C" {
 
 static struct BazelRunfiles* bazel_runfiles = NULL;
 
+/**
+ * @brief Initialize the Bazel runfiles library for this process.
+ *
+ * Must be called once (typically from main()) before any other
+ * bazel_runfiles_* function.  Uses BAZEL_CURRENT_REPOSITORY (compiled-in)
+ * as the source repository for Runfiles::Create().  Subsequent calls are
+ * no-ops.
+ *
+ * @param argv0_cstr  The value of argv[0] from main().
+ */
 void bazel_runfiles_init(const char* argv0_cstr) {
     if (bazel_runfiles != nullptr) {
         return;
@@ -31,62 +41,80 @@ void bazel_runfiles_init(const char* argv0_cstr) {
     bazel_runfiles->ptr.reset(runfiles);
 }
 
+/**
+ * @brief Resolve bison's PKGDATADIR via runfiles.
+ *
+ * If the BISON_PKGDATADIR_RLOCATIONPATH env var is set, two lookups are
+ * attempted in order:
+ *   1. Rlocation(value) -- the value may resolve directly (e.g. to a
+ *      directory or a TreeArtifact path).
+ *   2. Rlocation(value + "/m4sugar/m4sugar.m4") -- if the value is an
+ *      rlocationpath prefix, resolve a known file inside it and strip
+ *      the "/m4sugar/m4sugar.m4" suffix to obtain the data directory.
+ *
+ * The first lookup that returns a non-empty result is used.
+ *
+ * When this function returns NULL, the caller (files.c) falls back to the
+ * BISON_PKGDATADIR env var and then to the compiled-in PKGDATADIR default.
+ *
+ * @return A malloc'd path to the data directory, or NULL on failure.
+ *         The caller is responsible for freeing the returned pointer.
+ */
 char* bazel_runfiles_bison_pkgdatadir() {
     if (bazel_runfiles == nullptr) {
         return nullptr;
     }
 
-    std::string path =
-        std::string(BAZEL_CURRENT_REPOSITORY "/data/m4sugar/m4sugar.m4");
-    std::string result = bazel_runfiles->ptr->Rlocation(path);
-    if (result.empty()) {
+    const char* rlocationpath = getenv("BISON_PKGDATADIR_RLOCATIONPATH");
+    if (rlocationpath == nullptr) {
         return nullptr;
     }
 
-    char* datadir = strdup(result.c_str());
-    /* "data/m4sugar/m4sugar.m4" => "data" */
-    datadir[result.size() - 19] = '\x00';
-    return datadir;
-}
+    std::string base(rlocationpath);
 
-static char* resolve_m4_via_rlocation(const std::string& key) {
-    std::string result = bazel_runfiles->ptr->Rlocation(key);
-    if (result.empty()) {
-        return nullptr;
+    std::string direct = bazel_runfiles->ptr->Rlocation(base);
+    if (!direct.empty()) {
+        return strdup(direct.c_str());
     }
-    return strdup(result.c_str());
+
+    std::string with_file =
+        bazel_runfiles->ptr->Rlocation(base + "/m4sugar/m4sugar.m4");
+    if (!with_file.empty()) {
+        char* datadir = strdup(with_file.c_str());
+        datadir[with_file.size() - 19] = '\x00';
+        return datadir;
+    }
+
+    return nullptr;
 }
 
+/**
+ * @brief Resolve the m4 binary path via runfiles.
+ *
+ * If the M4_RLOCATIONPATH env var is set, its value is treated as an
+ * rlocationpath to the m4 binary and resolved via Rlocation().
+ *
+ * When this function returns NULL, the caller (files.c) falls back to the
+ * M4 env var and then to the default m4 path.
+ *
+ * @return A malloc'd absolute path to the m4 binary, or NULL on failure.
+ *         The caller is responsible for freeing the returned pointer.
+ */
 char* bazel_runfiles_m4() {
     if (bazel_runfiles == nullptr) {
         return nullptr;
     }
 
-    const char* runfiles_m4_cstr = getenv("BISON_BAZEL_RUNFILES_M4");
-    if (runfiles_m4_cstr != nullptr) {
-        std::string runfiles_m4(runfiles_m4_cstr);
-        std::string path;
-        if (runfiles_m4.find("../") == 0) {
-            path = runfiles_m4.substr(3);
-        } else {
-            path = std::string(BAZEL_CURRENT_REPOSITORY) + "/" + runfiles_m4;
-        }
-        char* result = resolve_m4_via_rlocation(path);
-        if (result != nullptr) return result;
+    const char* m4_rlocationpath = getenv("M4_RLOCATIONPATH");
+    if (m4_rlocationpath == nullptr) {
+        return nullptr;
     }
 
-    const char* m4_env = getenv("M4");
-    if (m4_env != nullptr) {
-        std::string m4_path(m4_env);
-        std::string marker(".runfiles/");
-        size_t pos = m4_path.find(marker);
-        if (pos != std::string::npos) {
-            std::string key = m4_path.substr(pos + marker.size());
-            char* result = resolve_m4_via_rlocation(key);
-            if (result != nullptr) return result;
-        }
+    std::string result =
+        bazel_runfiles->ptr->Rlocation(std::string(m4_rlocationpath));
+    if (result.empty()) {
+        return nullptr;
     }
-
-    return nullptr;
+    return strdup(result.c_str());
 }
 }
