@@ -52,46 +52,38 @@ verilator_astgen = rule(
     },
 )
 
-def _correct_bison_env_for_action(env, bison):
-    """Modify the Bison environment variables to work in an action that doesn't a have built bison runfiles directory.
+def _collect_tool_files(target):
+    """Collect files and default runfiles from a target into a depset for tools."""
+    info = target[DefaultInfo]
+    transitive = [info.files]
+    if info.default_runfiles:
+        transitive.append(info.default_runfiles.files)
+    return depset(transitive = transitive)
 
-    The `bison_toolchain.bison_env` parameter assumes that Bison will provided via an executable attribute
-    and thus have built runfiles available to it. This is not the case for this action and any other actions
-    trying to use bison as a tool via the toolchain. This function transforms existing environment variables
-    to support running Bison as desired.
-
-    Args:
-        env (dict): The existing bison environment variables
-        bison (File): The Bison executable
-
-    Returns:
-        Dict: Environment variables required for running Bison.
-    """
-    bison_env = dict(env)
-
-    # Convert the environment variables to non-runfiles forms
-    bison_runfiles_dir = "{}.runfiles/{}".format(
-        bison.path,
-        bison.owner.workspace_name,
-    )
-
-    bison_env["BISON_PKGDATADIR"] = bison_env["BISON_PKGDATADIR"].replace(
-        bison_runfiles_dir,
-        "external/{}".format(bison.owner.workspace_name),
-    )
-    bison_env["M4"] = bison_env["M4"].replace(
-        bison_runfiles_dir,
-        "{}/external/{}".format(bison.root.path, bison.owner.workspace_name),
-    )
-
-    return bison_env
+def _resolve_pkgdatadir(files):
+    """Derive the bison PKGDATADIR path from the provided files."""
+    if len(files) == 1 and files[0].is_directory:
+        return files[0].path
+    for f in files:
+        idx = f.path.find("/data/")
+        if idx >= 0:
+            return f.path[:idx + 5]
+        if f.path.startswith("data/"):
+            return "data"
+    fail("Could not determine BISON_PKGDATADIR: no 'data' directory found in provided files")
 
 def _verilator_bisonpre_impl(ctx):
-    bison_toolchain = ctx.toolchains["@rules_bison//bison:toolchain_type"].bison_toolchain
+    m4 = ctx.file.m4
+    pkgdatadir = _resolve_pkgdatadir(ctx.files.bison_pkgdatadir)
+
+    env = {
+        "BISON_PKGDATADIR": pkgdatadir,
+        "M4": m4.path,
+    }
 
     args = ctx.actions.args()
     args.add(ctx.file.bisonpre)
-    args.add("--yacc", bison_toolchain.bison_tool.executable)
+    args.add("--yacc", ctx.executable.bison)
     args.add("-d")
     args.add("-v")
     args.add("-o", ctx.outputs.out_src)
@@ -102,11 +94,13 @@ def _verilator_bisonpre_impl(ctx):
         ctx.outputs.out_hdr,
     ]
 
-    tools = depset([ctx.file.bisonpre], transitive = [bison_toolchain.all_files])
-
-    bison_env = _correct_bison_env_for_action(
-        env = bison_toolchain.bison_env,
-        bison = bison_toolchain.bison_tool.executable,
+    tools = depset(
+        [ctx.file.bisonpre],
+        transitive = [
+            _collect_tool_files(ctx.attr.bison),
+            _collect_tool_files(ctx.attr.m4),
+            _collect_tool_files(ctx.attr.bison_pkgdatadir),
+        ],
     )
 
     ctx.actions.run(
@@ -117,7 +111,7 @@ def _verilator_bisonpre_impl(ctx):
         arguments = [args],
         mnemonic = "VerilatorBisonPre",
         use_default_shell_env = False,
-        env = bison_env,
+        env = env,
     )
 
     return DefaultInfo(
@@ -129,11 +123,28 @@ verilator_bisonpre = rule(
     doc = "Run Verilator's `bisonpre` tool and collect the requested outputs.",
     implementation = _verilator_bisonpre_impl,
     attrs = {
+        "bison": attr.label(
+            doc = "The bison binary to use.",
+            default = Label("@bison"),
+            cfg = "exec",
+            executable = True,
+        ),
+        "bison_pkgdatadir": attr.label(
+            doc = "Bison's data directory (containing m4sugar, skeletons, etc.).",
+            default = Label("@bison//:bison_pkgdatadir"),
+            allow_files = True,
+        ),
         "bisonpre": attr.label(
             doc = "The path to the `bisonpre` tool.",
             allow_single_file = True,
             mandatory = True,
             cfg = "exec",
+        ),
+        "m4": attr.label(
+            doc = "The m4 binary to use.",
+            default = Label("@bison//:m4"),
+            cfg = "exec",
+            allow_single_file = True,
         ),
         "out_hdr": attr.output(
             mandatory = True,
@@ -154,21 +165,17 @@ verilator_bisonpre = rule(
             default = Label("//private:verilator_bisonpre"),
         ),
     },
-    toolchains = [
-        "@rules_bison//bison:toolchain_type",
-        "@rules_m4//m4:toolchain_type",
-    ],
 )
 
 def _find_flex_src(ctx):
-    cc_srcs = ctx.attr.src[OutputGroupInfo].cc_srcs.to_list()
-    if len(cc_srcs) != 1:
-        fail("Unexpected number of cc sources generated in `{}`: {}".format(
+    srcs = ctx.files.src
+    if len(srcs) != 1:
+        fail("Expected exactly one source file from `{}`, got: {}".format(
             ctx.attr.src.label,
-            cc_srcs,
+            srcs,
         ))
 
-    return cc_srcs[0]
+    return srcs[0]
 
 def _verilator_flexfix_impl(ctx):
     src = _find_flex_src(ctx)
