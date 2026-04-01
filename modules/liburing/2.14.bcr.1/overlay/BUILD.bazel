@@ -22,15 +22,19 @@ genrule(
     cmd = """
             export CC=$(CC) CXX=$(CC)++
 
-            # switch to the package dir to execute "configure" right there
-            pushd $$(dirname $(location configure))
-              mkdir -p src/include/liburing
-              ./configure --use-libc
-            popd
+            # We do an out-of-source build here so that CWD does not
+            # change and relative paths (e.g., sysroot) work correctly.
+            # liburing doesn't support out-of-source builds natively,
+            # so we fake it with symlinks.
+            pkg_dir=$$(dirname $(location configure))
+            ln -sf $$pkg_dir/Makefile.common Makefile.common
+            ln -sf $$pkg_dir/liburing.spec liburing.spec
+            mkdir -p src/include/liburing
+            $$pkg_dir/configure --use-libc
 
             # collect the outputs
             for out in $(OUTS); do
-              cp $$(realpath --relative-to=$(BINDIR) $$out) $$out
+              cp $${out#$(RULEDIR)/} $$out
             done
           """,
     toolchains = ["@bazel_tools//tools/cpp:current_cc_toolchain"],
