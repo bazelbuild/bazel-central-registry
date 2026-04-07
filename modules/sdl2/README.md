@@ -9,7 +9,8 @@ Public targets:
 
 Packaging notes:
 
-- `@sdl2//:sdl2_headers` exports the public SDL headers plus the Bazel-generated `SDL_config.h`.
+- `@sdl2` exports the SDL library and re-exports public headers in both `SDL2/...` and flat `SDL.h` include layouts for consumer compatibility.
+- `@sdl2//:sdl2_headers` exports the public SDL headers plus the Bazel-generated `SDL_config.h` in the canonical `SDL2/...` layout.
 - Internal `src/**/*.h` headers are kept private to the `@sdl2` implementation.
 - The Bazel-managed SDL config header is generated from the upstream template with `rules_cc_autoconf`.
 
@@ -28,5 +29,5 @@ Limitations:
 
 Presubmit:
 
-- Builds and tests `@sdl2//:sdl2_headers_consumer_compile_test` and `@sdl2//:sdl2_consumer_link_test`.
+- Builds and tests `@sdl2//:sdl2_headers_consumer_compile_test` for `SDL2/...` includes and `@sdl2//:sdl2_consumer_link_test` for flat `SDL.h` includes.
 - Uses the standard module presubmit path across all supported platforms on Bazel 8, Bazel 9, and rolling.
