@@ -1,0 +1,295 @@
+From c00810a98b377746131472d7a14949cc7b300fb9 Mon Sep 17 00:00:00 2001
+From: clintmorris <clintmorris@google.com>
+Date: Thu, 9 Apr 2026 03:38:05 +0000
+Subject: [PATCH] Add Bazel build and fix C++20/OpenVDB 11 compatibility
+
+---
+ BUILD.bazel     | 72 +++++++++++++++++++++++++++++++++++++++++++++++++
+ MODULE.bazel    | 14 ++++++++++
+ main.cpp        |  8 +++---
+ src/io.cpp      |  8 +++---
+ src/io.h        |  8 +++---
+ src/logger.h    | 10 +++----
+ src/process.cpp |  4 +--
+ src/process.h   |  2 +-
+ 8 files changed, 106 insertions(+), 20 deletions(-)
+ create mode 100644 BUILD.bazel
+ create mode 100644 MODULE.bazel
+
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..202a92a
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,72 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
++
++SHARED_COPTS = select({
++    "@platforms//os:windows": [
++        "/std:c++20",
++        "/bigobj",
++        "/W0",
++        "/openmp",
++    ],
++    "//conditions:default": [
++        "-std=c++20",
++        "-Wall",
++        "-fpermissive",
++        "-Wno-error=stringop-overflow",
++        "-Wno-int-in-bool-context",
++        "-Wsign-compare",
++        "-fopenmp",
++    ],
++})
++
++SHARED_LINKOPTS = select({
++    "@platforms//os:windows": [],
++    "//conditions:default": [
++        "-fopenmp",
++        "-pthread",
++    ],
++})
++
++cc_library(
++    name = "coacd_lib",
++    srcs = glob([
++        "src/**/*.cc",
++        "src/**/*.cpp",
++        "public/coacd.cpp",
++    ], allow_empty = True),
++    hdrs = glob([
++        "public/**/*.h",
++        "src/**/*.h",
++        "src/**/*.hpp",
++        "3rd/cdt/CDT/**/*.h",
++        "3rd/cdt/CDT/**/*.hpp",
++    ], allow_empty = True),
++    includes = [
++        "public",
++        "3rd/cdt/CDT",
++    ],
++    defines = [
++        "WITH_3RD_PARTY_LIBS=1",
++        "_USE_MATH_DEFINES",
++    ],
++    copts = SHARED_COPTS,
++    linkopts = SHARED_LINKOPTS,
++    deps = [
++        "@openvdb//:openvdb",
++        "@spdlog//:spdlog",
++        "@fmt//:fmt",
++    ],
++    visibility = ["//visibility:public"],
++)
++
++cc_binary(
++    name = "main",
++    srcs = ["main.cpp"],
++    copts = SHARED_COPTS,
++    linkopts = SHARED_LINKOPTS,
++    deps = [
++        ":coacd_lib",
++        "@openvdb//:openvdb",
++        "@spdlog//:spdlog",
++        "@fmt//:fmt",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..9e4c3a1
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,14 @@
++module(
++    name = "coacd",
++    version = "1.0.9",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "rules_cc", version = "0.2.17")
++bazel_dep(name = "platforms", version = "1.0.0")
++
++bazel_dep(name = "openvdb", version = "11.0.0")
++bazel_dep(name = "spdlog", version = "1.14.1")
++bazel_dep(name = "fmt", version = "11.0.2")
++bazel_dep(name = "onetbb", version = "2022.0.0")
++bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
+diff --git a/main.cpp b/main.cpp
+index 091aae7..6d9f65b 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
+   Params params;
+ 
+   // Model files
+-  string input_model;
++  std::string input_model;
+   params.seed = (unsigned)time(NULL);
+ 
+   // args
+@@ -117,7 +117,7 @@ int main(int argc, char *argv[])
+     }
+   }
+ 
+-  string ext;
++  std::string ext;
+   if (params.input_model.length() > 4)
+   {
+     ext = params.input_model.substr(params.input_model.length() - 4);
+@@ -207,8 +207,8 @@ int main(int argc, char *argv[])
+ 
+   RecoverParts(parts, bbox, rot, params);
+ 
+-  string objName = regex_replace(params.output_name, regex("wrl"), "obj");
+-  string wrlName = regex_replace(params.output_name, regex("obj"), "wrl");
++  std::string objName = regex_replace(params.output_name, regex("wrl"), "obj");
++  std::string wrlName = regex_replace(params.output_name, regex("obj"), "wrl");
+ 
+   SaveVRML(wrlName, parts, params);
+   SaveOBJ(objName, parts, params);
+diff --git a/src/io.cpp b/src/io.cpp
+index 7267714..b64e121 100644
+--- a/src/io.cpp
++++ b/src/io.cpp
+@@ -29,7 +29,7 @@ namespace coacd
+         logger::info("\tRandom Seed:                               {}", params.seed);
+     }
+ 
+-    void SaveMesh(const string &filename, Model &mesh)
++    void SaveMesh(const std::string &filename, Model &mesh)
+     {
+         std::ofstream os(filename);
+         for (int i = 0; i < (int)mesh.points.size(); ++i)
+@@ -45,7 +45,7 @@ namespace coacd
+         os.close();
+     }
+ 
+-    void SaveOBJ(const string &filename, vector<Model> parts, Params &params)
++    void SaveOBJ(const std::string &filename, vector<Model> parts, Params &params)
+     {
+         vector<int> v_numbers;
+         v_numbers.push_back(0);
+@@ -68,7 +68,7 @@ namespace coacd
+         os.close();
+     }
+ 
+-    void SaveOBJs(const string &foldername, const string &filename, vector<Model> parts, Params &params)
++    void SaveOBJs(const std::string &foldername, const std::string &filename, vector<Model> parts, Params &params)
+     {
+         int n_zero = 3;
+         for (int n = 0; n < (int)parts.size(); n++)
+@@ -168,7 +168,7 @@ namespace coacd
+         }
+     }
+ 
+-    void SaveVRML(const string &fileName, vector<Model>& meshes, Params &params)
++    void SaveVRML(const std::string &fileName, vector<Model>& meshes, Params &params)
+     {
+         ofstream foutCH(fileName);
+         if (foutCH.is_open())
+diff --git a/src/io.h b/src/io.h
+index f3f0302..8a10206 100644
+--- a/src/io.h
++++ b/src/io.h
+@@ -29,10 +29,10 @@ namespace coacd
+ {
+ 
+     //////////////// IO ////////////////
+-    void SaveMesh(const string &filename, Model &mesh);
++    void SaveMesh(const std::string &filename, Model &mesh);
+     void SaveConfig(Params params);
+-    void SaveOBJ(const string &filename, vector<Model> parts, Params &params);
+-    void SaveOBJs(const string &foldername, const string &filename, vector<Model> parts, Params &params);
++    void SaveOBJ(const std::string &filename, vector<Model> parts, Params &params);
++    void SaveOBJs(const std::string &foldername, const std::string &filename, vector<Model> parts, Params &params);
+     bool WriteVRML(ofstream &fout, Model mesh);
+-    void SaveVRML(const string &fileName, vector<Model>& meshes, Params &params);
++    void SaveVRML(const std::string &fileName, vector<Model>& meshes, Params &params);
+ }
+diff --git a/src/logger.h b/src/logger.h
+index 62947c4..6163389 100644
+--- a/src/logger.h
++++ b/src/logger.h
+@@ -26,7 +26,7 @@ namespace coacd
+         inline void debug(std::string_view fmt, const Args &...args)
+         {
+             #ifndef DISABLE_SPDLOG
+-            get()->debug(fmt, args...);
++            get()->debug(fmt::runtime(fmt), args...);
+             #else
+             doPrint(std::cout, fmt, args...);
+             #endif
+@@ -36,7 +36,7 @@ namespace coacd
+         inline void info(std::string_view fmt, const Args &...args)
+         {
+             #ifndef DISABLE_SPDLOG
+-            get()->info(fmt, args...);
++            get()->info(fmt::runtime(fmt), args...);
+             #else
+             doPrint(std::cout, fmt, args...);
+             #endif
+@@ -46,7 +46,7 @@ namespace coacd
+         inline void warn(std::string_view fmt, const Args &...args)
+         {
+             #ifndef DISABLE_SPDLOG
+-            get()->warn(fmt, args...);
++            get()->warn(fmt::runtime(fmt), args...);
+             #else
+             doPrint(std::cout, fmt, args...);
+             #endif
+@@ -56,7 +56,7 @@ namespace coacd
+         inline void error(std::string_view fmt, const Args &...args)
+         {
+             #ifndef DISABLE_SPDLOG
+-            get()->error(fmt, args...);
++            get()->error(fmt::runtime(fmt), args...);
+             #else
+             doPrint(std::cout, fmt, args...);
+             #endif
+@@ -66,7 +66,7 @@ namespace coacd
+         inline void critical(std::string_view fmt, const Args &...args)
+         {
+             #ifndef DISABLE_SPDLOG
+-            get()->critical(fmt, args...);
++            get()->critical(fmt::runtime(fmt), args...);
+             #else
+             doPrint(std::cout, fmt, args...);
+             #endif
+diff --git a/src/process.cpp b/src/process.cpp
+index 4d18a48..824f3c0 100644
+--- a/src/process.cpp
++++ b/src/process.cpp
+@@ -105,7 +105,7 @@ namespace coacd
+         return sqrt(pow(pt[0] - p[0], 2) + pow(pt[1] - p[1], 2) + pow(pt[2] - p[2], 2));
+     }
+ 
+-    double compute_edge_cost(Model &ch, string apx_mode, int tri_i, int tri_j, vector<int> &rm_pt_idxs)
++    double compute_edge_cost(Model &ch, std::string apx_mode, int tri_i, int tri_j, vector<int> &rm_pt_idxs)
+     {
+         // Compute the edge length
+         double cost = pts_norm(ch.points[tri_i], ch.points[tri_j]);
+@@ -138,7 +138,7 @@ namespace coacd
+         return cost;
+     }
+ 
+-    void DecimateCH(Model &ch, int tgt_pts, string apx_mode)
++    void DecimateCH(Model &ch, int tgt_pts, std::string apx_mode)
+     {
+         if (tgt_pts >= (int)ch.points.size())
+             return;
+diff --git a/src/process.h b/src/process.h
+index 63e2905..a041da9 100644
+--- a/src/process.h
++++ b/src/process.h
+@@ -25,7 +25,7 @@ namespace coacd
+ {
+   extern thread_local std::mt19937 random_engine;
+ 
+-  void DecimateCH(Model &ch, int tgt_pts, string apx_mode);
++  void DecimateCH(Model &ch, int tgt_pts, std::string apx_mode);
+   void DecimateConvexHulls(vector<Model> &cvxs, Params &params);
+   void MergeCH(Model &ch1, Model &ch2, Model &ch, Params &params);
+   double MergeConvexHulls(Model &m, vector<Model> &meshs, vector<Model> &cvxs, Params &params, double epsilon = 0.02, double threshold = 0.01);
+-- 
+2.53.0.1213.gd9a14994de-goog
+
