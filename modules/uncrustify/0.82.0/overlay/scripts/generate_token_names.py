@@ -26,7 +26,7 @@ for line in lines:
     line = line.strip()
     if line.startswith("CT_") and "," in line:
         name = line.split(",")[0].strip()[3:]
-        print(f"   \"{name}\",")
+        print(f'   "{name}",')
 
 print("};")
 print("#endif")
