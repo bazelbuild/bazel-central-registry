@@ -1,0 +1,518 @@
+"""https://libgd.org/"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# ===== Optional feature flags (mirrors configure.ac --with-* / --enable-*) ===
+
+# Dependencies available in BCR
+bool_flag(
+    name = "enable_zlib",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_png",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_jpeg",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_freetype",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_tiff",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_webp",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_heif",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_avif",
+    build_setting_default = False,
+)
+
+# Dependencies NOT available in BCR (stubs will error if enabled)
+bool_flag(
+    name = "enable_fontconfig",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_xpm",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_raqm",
+    build_setting_default = False,
+)
+
+bool_flag(
+    name = "enable_liq",
+    build_setting_default = False,
+)
+
+# Non-library feature flag
+bool_flag(
+    name = "enable_gd_formats",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "enable_zlib_on",
+    flag_values = {":enable_zlib": "True"},
+)
+
+config_setting(
+    name = "enable_png_on",
+    flag_values = {":enable_png": "True"},
+)
+
+config_setting(
+    name = "enable_jpeg_on",
+    flag_values = {":enable_jpeg": "True"},
+)
+
+config_setting(
+    name = "enable_freetype_on",
+    flag_values = {":enable_freetype": "True"},
+)
+
+config_setting(
+    name = "enable_tiff_on",
+    flag_values = {":enable_tiff": "True"},
+)
+
+config_setting(
+    name = "enable_webp_on",
+    flag_values = {":enable_webp": "True"},
+)
+
+config_setting(
+    name = "enable_fontconfig_on",
+    flag_values = {":enable_fontconfig": "True"},
+)
+
+config_setting(
+    name = "enable_heif_on",
+    flag_values = {":enable_heif": "True"},
+)
+
+config_setting(
+    name = "enable_avif_on",
+    flag_values = {":enable_avif": "True"},
+)
+
+config_setting(
+    name = "enable_xpm_on",
+    flag_values = {":enable_xpm": "True"},
+)
+
+config_setting(
+    name = "enable_raqm_on",
+    flag_values = {":enable_raqm": "True"},
+)
+
+config_setting(
+    name = "enable_liq_on",
+    flag_values = {":enable_liq": "True"},
+)
+
+config_setting(
+    name = "enable_gd_formats_on",
+    flag_values = {":enable_gd_formats": "True"},
+)
+
+# ===== Stubs for dependencies not available in BCR ===========================
+
+_NOT_AVAILABLE_DEPS = {
+    "fontconfig": "fontconfig",
+    "liq": "libimagequant",
+    "raqm": "raqm",
+    "xpm": "libxpm",
+}
+
+[
+    write_file(
+        name = "_" + name + "_stub_src",
+        out = "_" + name + "_stub.c",
+        content = [
+            '#error "' + pkg + " is not available in the Bazel Central Registry. " +
+            "Please contribute a " + pkg + ' module to enable this feature."',
+        ],
+    )
+    for name, pkg in _NOT_AVAILABLE_DEPS.items()
+]
+
+[
+    cc_library(
+        name = "_" + name + "_stub",
+        srcs = [":_" + name + "_stub_src"],
+        tags = ["manual"],
+    )
+    for name in _NOT_AVAILABLE_DEPS
+]
+
+# ===== Autoconf configuration ================================================
+
+# AC_INIT([GD], [2.3.3], [https://github.com/libgd/libgd/issues], [libgd], [https://lib.gd])
+package_info(
+    name = "package",
+    package_name = "GD",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://github.com/libgd/libgd/issues",
+    package_tarname = "libgd",
+    package_url = "https://lib.gd",
+    strip_bcr_version = True,
+)
+
+autoconf(
+    name = "autoconf",
+    checks =
+        # AC_CHECK_HEADERS_ONCE (configure.ac:64-72)
+        macros.AC_CHECK_HEADERS([
+            "dirent.h",
+            "dlfcn.h",
+            "inttypes.h",
+            "memory.h",
+            "stdint.h",
+            "stdlib.h",
+            "string.h",
+            "strings.h",
+            "sys/stat.h",
+            "sys/types.h",
+            "unistd.h",
+        ]) + [
+            # AC_HEADER_STDC
+            checks.AC_DEFINE("STDC_HEADERS", 1),
+
+            # AC_CHECK_HEADERS(iconv.h) (configure.ac:81)
+            checks.AC_CHECK_HEADER(
+                "iconv.h",
+                define = "HAVE_ICONV_H",
+            ),
+
+            # AM_ICONV: check for iconv availability (configure.ac:76)
+            checks.AC_TRY_LINK(
+                code = """\
+#include <iconv.h>
+int main(void) {
+    iconv_t cd = iconv_open("UTF-8", "ASCII");
+    iconv_close(cd);
+    return 0;
+}
+""",
+                define = "HAVE_ICONV",
+            ),
+
+            # Check for iconv_t in iconv.h (configure.ac:82-87)
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <iconv.h>
+int main(void) {
+    iconv_t x;
+    (void)x;
+    return 0;
+}
+""",
+                define = "HAVE_ICONV_T_DEF",
+            ),
+
+            # ICONV_CONST: modern systems use non-const (configure.ac:76)
+            checks.AC_DEFINE("ICONV_CONST", ""),
+
+            # AC_CHECK_FUNC(sin) / AC_CHECK_LIB(m, sin) (configure.ac:99)
+            checks.AC_CHECK_LIB(
+                "m",
+                "sin",
+                define = "HAVE_LIBM",
+            ),
+
+            # AX_PTHREAD() (configure.ac:101)
+            checks.AC_CHECK_LIB(
+                "pthread",
+                "pthread_create",
+                define = "HAVE_PTHREAD",
+            ),
+
+            # gl_VISIBILITY() (configure.ac:304)
+            checks.AC_TRY_COMPILE(
+                code = """\
+extern __attribute__((__visibility__("hidden"))) int hiddenvar;
+extern __attribute__((__visibility__("default"))) int exportedvar;
+int main(void) { return 0; }
+""",
+                define = "HAVE_VISIBILITY",
+            ),
+        ] +
+        # ENABLE_GD_FORMATS (configure.ac:109)
+        select({
+            ":enable_gd_formats_on": [checks.AC_DEFINE("ENABLE_GD_FORMATS", 1)],
+            "//conditions:default": [checks.AC_DEFINE("ENABLE_GD_FORMATS", 0)],
+        }) +
+        # Optional library defines (configure.ac:197-302)
+        select({
+            ":enable_zlib_on": [checks.AC_DEFINE("HAVE_LIBZ", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_png_on": [checks.AC_DEFINE("HAVE_LIBPNG", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_jpeg_on": [checks.AC_DEFINE("HAVE_LIBJPEG", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_freetype_on": [
+                checks.AC_DEFINE("HAVE_LIBFREETYPE", 1),
+                checks.AC_DEFINE("HAVE_FT2BUILD_H", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_fontconfig_on": [checks.AC_DEFINE("HAVE_LIBFONTCONFIG", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_tiff_on": [checks.AC_DEFINE("HAVE_LIBTIFF", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_webp_on": [checks.AC_DEFINE("HAVE_LIBWEBP", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_heif_on": [checks.AC_DEFINE("HAVE_LIBHEIF", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_avif_on": [checks.AC_DEFINE("HAVE_LIBAVIF", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_xpm_on": [checks.AC_DEFINE("HAVE_LIBXPM", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_raqm_on": [checks.AC_DEFINE("HAVE_LIBRAQM", 1)],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_liq_on": [checks.AC_DEFINE("HAVE_LIBIMAGEQUANT", 1)],
+            "//conditions:default": [],
+        }),
+    deps = [":package"],
+)
+
+# AC_CONFIG_HEADERS([src/config.h:src/config.hin])
+autoconf_hdr(
+    name = "config_h",
+    out = "src/config.h",
+    template = "src/config.hin",
+    deps = [":autoconf"],
+)
+
+# ===== Library ===============================================================
+
+alias(
+    name = "libgd",
+    actual = ":gd",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "gd",
+    srcs = [
+        # Source files (Makefile.am:libgd_la_SOURCES)
+        "src/gd.c",
+        "src/gd_avif.c",
+        "src/gd_bmp.c",
+        "src/gd_color.c",
+        "src/gd_color_map.c",
+        "src/gd_color_match.c",
+        "src/gd_crop.c",
+        "src/gd_filename.c",
+        "src/gd_filter.c",
+        "src/gd_gd.c",
+        "src/gd_gd2.c",
+        "src/gd_gif_in.c",
+        "src/gd_gif_out.c",
+        "src/gd_heif.c",
+        "src/gd_interpolation.c",
+        "src/gd_io.c",
+        "src/gd_io_dp.c",
+        "src/gd_io_file.c",
+        "src/gd_io_ss.c",
+        "src/gd_jpeg.c",
+        "src/gd_matrix.c",
+        "src/gd_nnquant.c",
+        "src/gd_png.c",
+        "src/gd_rotate.c",
+        "src/gd_security.c",
+        "src/gd_ss.c",
+        "src/gd_tga.c",
+        "src/gd_tiff.c",
+        "src/gd_topal.c",
+        "src/gd_transform.c",
+        "src/gd_version.c",
+        "src/gd_wbmp.c",
+        "src/gd_webp.c",
+        "src/gd_xbm.c",
+        "src/gdcache.c",
+        "src/gdfontg.c",
+        "src/gdfontl.c",
+        "src/gdfontmb.c",
+        "src/gdfonts.c",
+        "src/gdfontt.c",
+        "src/gdft.c",
+        "src/gdfx.c",
+        "src/gdhelpers.c",
+        "src/gdkanji.c",
+        "src/gdtables.c",
+        "src/gdxpm.c",
+        "src/wbmp.c",
+        # Private headers
+        "src/bmp.h",
+        "src/entities.h",
+        "src/gd_color.h",
+        "src/gd_intern.h",
+        "src/gd_io_stream.h",
+        "src/gd_nnquant.h",
+        "src/gd_tga.h",
+        "src/gdhelpers.h",
+        "src/jisx0208.h",
+        "src/wbmp.h",
+        # Generated config header
+        ":config_h",
+    ] + select({
+        "@platforms//os:windows": [
+            "src/msinttypes/inttypes.h",
+            "src/msinttypes/stdint.h",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        # Public headers (Makefile.am:include_HEADERS)
+        "src/gd.h",
+        "src/gd_color_map.h",
+        "src/gd_errors.h",
+        "src/gd_io.h",
+        "src/gdcache.h",
+        "src/gdfontg.h",
+        "src/gdfontl.h",
+        "src/gdfontmb.h",
+        "src/gdfonts.h",
+        "src/gdfontt.h",
+        "src/gdfx.h",
+        "src/gdpp.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": ["-w"],
+    }),
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-lpthread",
+        ],
+        "//conditions:default": ["-lm"],
+    }),
+    defines = select({
+        "@platforms//os:windows": [
+            "BGDWIN32",
+            "NONDLL",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["HAVE_STDINT_H"],
+    }),
+    visibility = ["//visibility:public"],
+    deps =
+        # BCR dependencies (conditional)
+        select({
+            ":enable_zlib_on": ["@zlib"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_png_on": ["@libpng"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_jpeg_on": ["@libjpeg_turbo"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_freetype_on": ["@freetype"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_tiff_on": ["@libtiff//:tiff"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_webp_on": ["@libwebp"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_heif_on": ["@libheif"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_avif_on": ["@libavif"],
+            "//conditions:default": [],
+        }) +
+        # Stub dependencies (will error at compile time if enabled)
+        select({
+            ":enable_fontconfig_on": [":_fontconfig_stub"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_xpm_on": [":_xpm_stub"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_raqm_on": [":_raqm_stub"],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":enable_liq_on": [":_liq_stub"],
+            "//conditions:default": [],
+        }),
+)
+
+cc_library(
+    name = "gd_internal",
+    testonly = True,
+    hdrs = ["src/gd_intern.h"],
+    includes = ["src"],
+    visibility = ["//:__subpackages__"],
+    deps = [":gd"],
+)
