@@ -1,0 +1,44 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Monolithic libicuio.
+# Public unicode/*.h are propagated to consumers. The rest of the top-level
+# header files are private.
+cc_library(
+    name = "icuio",
+    srcs = glob(["*.cpp"]),
+    hdrs = glob(["unicode/*.h"]),
+    defines = select({
+        "//icu4c/source:windows-static-build": ["U_STATIC_IMPLEMENTATION"],
+        "//conditions:default": [],
+    }),
+    # Private headers from common and i18n are used throughout io's
+    # implementation. The 'implementation_deps' attribute materializes
+    # them in the input tree without leaking them to external consumers.
+    implementation_deps = [
+        ":private_headers",
+        "//icu4c/source/common:private_headers",
+        "//icu4c/source/i18n:private_headers",
+    ],
+    includes = ["."],
+    local_defines = ["U_IO_IMPLEMENTATION"],
+    visibility = [
+        "//:__pkg__",
+        "//icu4c/source:__subpackages__",
+    ],
+    deps = [
+        "//icu4c/source/common:icuuc",
+        "//icu4c/source/i18n:icui18n",
+    ],
+)
+
+# Private headers.
+# Exposed to sibling ICU packages and never propagated to external consumers.
+cc_library(
+    name = "private_headers",
+    hdrs = glob(
+        include = ["*.h"],
+        exclude = ["unicode/*.h"],  # Public headers.
+    ),
+    includes = ["."],
+    visibility = ["//icu4c/source:__subpackages__"],
+)

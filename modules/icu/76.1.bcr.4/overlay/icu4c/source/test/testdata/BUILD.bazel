@@ -1,0 +1,98 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_bazel_lib//lib:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+# Wrapper script that drives the testdata generation pipeline.
+py_binary(
+    name = "generator",
+    srcs = ["generator.py"],
+    imports = ["../../python"],
+    deps = ["//icu4c/source/python/icutools/databuilder"],
+)
+
+# Generate the compiled testdata bundle:
+#   1. databuilder   (.txt → .res via genrb / makeconv / genbrk / ...)
+#   2. pkgdata       (.res → testdata.dat)
+#   3. genccode      (testdata.dat → testdata_dat.S for static linking)
+run_binary(
+    name = "testdata-gen",
+    srcs = glob([
+        "**/*.txt",
+        "**/*.ucm",
+        "**/*.utf16be",
+        "**/*.res",
+        "**/*.toml",
+        "**/*.bin",
+    ]) + [
+        "BUILDRULES.py",
+        "//icu4c/source/data:icudata-dir",
+        "//icu4c/source/data:unidata-src",
+        "//icu4c/source/tools:tooldir",
+    ],
+    outs = [
+        "out/testdata.dat",
+        "out/testdata/nam.typ",
+        "out/testdata/zoneinfo64.res",
+        "testdata_dat.S",
+    ],
+    args = [
+        "--src_dir",
+        "$(execpath BUILDRULES.py)/..",
+        "--tool_dir",
+        "$(execpath //icu4c/source/tools:tooldir)",
+        "--out_dir",
+        "$(execpath testdata_dat.S)/..",
+        "--pkg_name",
+        "testdata",
+        "--entry_name",
+        "testdata",
+        "--icu_data_dir",
+        "$(execpath //icu4c/source/data:icudata-dir)",
+    ],
+    mnemonic = "IcuGenerateTestdata",
+    progress_message = "Generating ICU test data bundle %{output}",
+    tool = ":generator",
+)
+
+# Compiled test data linked statically into test binaries. Provides the
+# "testdata" ICU package so that ures_open("testdata", …) resolves without
+# needing to find a .dat file on the filesystem.
+cc_library(
+    name = "testdata",
+    srcs = ["testdata_dat.S"],
+    visibility = [
+        "//icu4c/source/test/cintltst:__pkg__",
+        "//icu4c/source/test/intltest:__pkg__",
+        "//icu4c/source/test/iotest:__pkg__",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Combined testdata directory for tests.
+# Merges source testdata (golden files, break-iterator rules, ...) and the
+# compiled output (out/testdata.dat, out/testdata/*.res) into one directory
+# so that tests can locate both via a single rlocationpath macro without
+# knowing the canonical repo name at compile time.
+#
+# Layout inside the directory:
+#   regextst.txt, cldr/*, ...  ← source testdata   (getSourceTestData)
+#   out/testdata.dat           ← compiled bundle   (loadTestData → out/)
+#   out/testdata/*.res         ← standalone files  (loadTestData → out/)
+# ---------------------------------------------------------------------------
+copy_to_directory(
+    name = "testdata-dir",
+    srcs = glob(
+        include = ["**"],
+        exclude = ["generate_testdata.py"],
+    ) + [
+        "out/testdata.dat",
+        "out/testdata/nam.typ",
+        "out/testdata/zoneinfo64.res",
+    ],
+    visibility = [
+        "//icu4c/source/test/cintltst:__pkg__",
+        "//icu4c/source/test/intltest:__pkg__",
+        "//icu4c/source/test/iotest:__pkg__",
+    ],
+)
