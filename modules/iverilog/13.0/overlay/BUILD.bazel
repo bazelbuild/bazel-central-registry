@@ -1,0 +1,726 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+load(
+    "@rules_cc_autoconf//autoconf:defs.bzl",
+    "autoconf",
+    "autoconf_hdr",
+    "checks",
+    "macros",
+    "package_info",
+)
+load(
+    "//bazel:iverilog.bzl",
+    "CXX_STD",
+    "PLUGIN_HOST_LINKOPTS",
+    "WARNING_COPTS",
+    "iverilog_smoke_test",
+    "ivl_base",
+)
+
+# =============================================================================
+# Configurable Feature Flags
+# =============================================================================
+
+bool_flag(
+    name = "enable_libveriuser",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_libvvp",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "libveriuser_enabled",
+    flag_values = {":enable_libveriuser": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "libvvp_enabled",
+    flag_values = {":enable_libvvp": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+bool_flag(
+    name = "have_libz",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "have_libbz2",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "zlib_enabled",
+    flag_values = {":have_libz": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "bz2_enabled",
+    flag_values = {":have_libbz2": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "zlib_and_bz2_enabled",
+    flag_values = {
+        ":have_libbz2": "True",
+        ":have_libz": "True",
+    },
+    visibility = ["//:__subpackages__"],
+)
+
+# =============================================================================
+# Generated Config Headers
+# =============================================================================
+
+# Single consolidated autoconf target with ALL checks from configure.ac.
+# Each autoconf_hdr below references this target and only substitutes
+# the #undef lines present in its own .h.in template.
+autoconf(
+    name = "autoconf",
+    checks = macros.AC_CHECK_HEADERS([
+        "alloca.h",
+        "dlfcn.h",
+        "dl.h",
+        "getopt.h",
+        "inttypes.h",
+        "iosfwd",
+        "libiberty.h",
+        "stdint.h",
+        "stdlib.h",
+        "string.h",
+        "strings.h",
+        "sys/resource.h",
+        "sys/stat.h",
+        "sys/types.h",
+        "sys/wait.h",
+        "unistd.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        "fchmod",
+        "fmax",
+        "fmin",
+        "fopen64",
+        "fseeko",
+        "llround",
+        "lround",
+        "nan",
+        "realpath",
+        "times",
+    ]) + [
+        checks.AC_CHECK_SIZEOF(
+            "unsigned long long",
+            define = "SIZEOF_UNSIGNED_LONG_LONG",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "unsigned long",
+            define = "SIZEOF_UNSIGNED_LONG",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "unsigned",
+            define = "SIZEOF_UNSIGNED",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "void *",
+            define = "SIZEOF_VOID_P",
+        ),
+        checks.AC_CHECK_LIB("z", "compress"),
+        checks.AC_CHECK_LIB("bz2", "BZ2_bzdopen"),
+        checks.AC_CHECK_LIB("pthread", "pthread_create"),
+        checks.AC_DEFINE("_LARGEFILE_SOURCE", 1),
+        checks.AC_DEFINE("_LARGEFILE64_SOURCE", 1),
+        checks.AC_DEFINE("STDC_HEADERS", 1),
+        # Check whether uint64_t and unsigned long are the same type.
+        # On macOS (Darwin), uint64_t is unsigned long long, so they
+        # differ even though both are 64-bit.  On Linux, uint64_t is
+        # unsigned long.  The vvp runtime uses this to avoid duplicate
+        # template instantiations.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <inttypes.h>
+template<class T,class U>struct same{enum{v=0};};
+template<class T>struct same<T,T>{enum{v=1};};
+int arr[same<uint64_t,unsigned long>::v ? 1 : -1];
+""",
+            define = "UINT64_T_AND_ULONG_SAME",
+            language = "cpp",
+        ),
+        checks.AC_DEFINE(
+            "LINUX",
+            condition = "ac_cv_header_sys_resource_h",
+            if_false = None,
+            if_true = 1,
+        ),
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+    ],
+)
+
+# --- Root config.h ---
+
+autoconf_hdr(
+    name = "gen_config_h",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":gen_config_h"],
+    includes = ["."],
+    visibility = ["//:__subpackages__"],
+)
+
+cc_library(
+    name = "ivl_alloc",
+    hdrs = ["ivl_alloc.h"],
+    visibility = ["//:__subpackages__"],
+)
+
+cc_library(
+    name = "compat_getopt",
+    hdrs = ["compat/getopt.h"],
+    includes = ["."],
+    visibility = ["//:__subpackages__"],
+)
+
+# --- _pli_types.h ---
+
+autoconf_hdr(
+    name = "gen_pli_types_h",
+    out = "_pli_types.h",
+    # Refactor legacy autoconf style to modern `#undef`
+    substitutions = {
+        "# define SIZEOF_UNSIGNED 4": "# undef SIZEOF_UNSIGNED",
+        "# define SIZEOF_UNSIGNED_LONG 8": "# undef SIZEOF_UNSIGNED_LONG",
+        "# define SIZEOF_UNSIGNED_LONG_LONG 8": "# undef SIZEOF_UNSIGNED_LONG_LONG",
+    },
+    template = "_pli_types.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "pli_types",
+    hdrs = [":gen_pli_types_h"],
+)
+
+# --- version_tag.h ---
+
+package_info(
+    name = "package_info",
+    module_bazel = "MODULE.bazel",
+    strip_bcr_version = True,
+)
+
+write_file(
+    name = "gen_version_tag_h_in",
+    out = "version_tag.h.in",
+    content = [
+        "#define VERSION_TAG \"v@PACKAGE_VERSION@\"",
+        "",
+    ],
+)
+
+autoconf_hdr(
+    name = "gen_version_tag_h_ac",
+    out = "version_tag.h.ac",
+    template = ":gen_version_tag_h_in",
+    deps = [":package_info"],
+)
+
+expand_template(
+    name = "gen_version_tag_h",
+    out = "version_tag.h",
+    substitutions = {".": "_"},
+    template = ":gen_version_tag_h_ac",
+)
+
+cc_library(
+    name = "version_tag",
+    hdrs = [
+        "version_base.h",
+        ":gen_version_tag_h",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+# =============================================================================
+# Libraries
+# =============================================================================
+
+bison(
+    name = "gen_parse",
+    srcs = ["parse.y"],
+    outs = [
+        "parse.cc",
+        "parse.h",
+    ],
+    args = [
+        "--verbose",
+        "-t",
+        "-p",
+        "VL",
+        "--defines=$(execpath parse.h)",
+        "-o",
+        "$(execpath parse.cc)",
+        "$(execpath parse.y)",
+    ],
+)
+
+bison(
+    name = "gen_syn_rules",
+    srcs = ["syn-rules.y"],
+    outs = ["syn-rules.cc"],
+    args = [
+        "--verbose",
+        "-t",
+        "-p",
+        "syn_",
+        "-o",
+        "$(execpath syn-rules.cc)",
+        "$(execpath syn-rules.y)",
+    ],
+)
+
+flex(
+    name = "gen_lexor",
+    srcs = ["lexor.lex"],
+    outs = ["lexor.cc"],
+    args = [
+        "-s",
+        "-o",
+        "$(execpath lexor.cc)",
+        "$(execpath lexor.lex)",
+    ],
+)
+
+cc_library(
+    name = "public_headers",
+    hdrs = [
+        "acc_user.h",
+        "ivl_target.h",
+        "sv_vpi_user.h",
+        "veriuser.h",
+        "vpi_user.h",
+    ] + [":gen_pli_types_h"],
+    includes = ["."],
+    visibility = ["//:__subpackages__"],
+)
+
+cc_library(
+    name = "ivl_headers",
+    hdrs = [
+        "AStatement.h",
+        "Attrib.h",
+        "HName.h",
+        "Module.h",
+        "PClass.h",
+        "PDelays.h",
+        "PEvent.h",
+        "PExpr.h",
+        "PGate.h",
+        "PGenerate.h",
+        "PModport.h",
+        "PNamedItem.h",
+        "PPackage.h",
+        "PScope.h",
+        "PSpec.h",
+        "PTask.h",
+        "PTimingCheck.h",
+        "PUdp.h",
+        "PWire.h",
+        "Statement.h",
+        "compiler.h",
+        "discipline.h",
+        "functor.h",
+        "ivl_assert.h",
+        "ivl_target.h",
+        "ivl_target_priv.h",
+        "lexor_keyword.h",
+        "map_named_args.h",
+        "named.h",
+        "netclass.h",
+        "netdarray.h",
+        "netenum.h",
+        "netlist.h",
+        "netmisc.h",
+        "netparray.h",
+        "netqueue.h",
+        "netscalar.h",
+        "netstruct.h",
+        "nettypes.h",
+        "netvector.h",
+        "parse_api.h",
+        "parse_misc.h",
+        "pform.h",
+        "pform_types.h",
+        "property_qual.h",
+        "release_tag.h",
+        "sv_vpi_user.h",
+        "t-dll.h",
+        "target.h",
+        "util.h",
+        "verinum.h",
+        "verireal.h",
+        "version_base.h",
+        "vpi_user.h",
+    ],
+    includes = ["."],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":config",
+        ":pli_types",
+        ":version_tag",
+        "//libmisc",
+    ],
+)
+
+# =============================================================================
+# ivl - Core Compiler
+# =============================================================================
+# The ivl sources are in a cc_library so that tgt plugins can link against it
+# on Windows.  On Windows, DLLs cannot have unresolved symbols; the upstream
+# Makefile handles this by building ivl.exe with --out-implib and having tgt
+# plugins link against the resulting import library.  In Bazel, win_def_file
+# on the cc_library achieves the same effect: it produces an interface library
+# that the tgt plugins link against, while ivl statically links the full code.
+
+cc_library(
+    name = "lib/ivl",
+    srcs = [
+        "AStatement.cc",
+        "Attrib.cc",
+        "HName.cc",
+        "Module.cc",
+        "PClass.cc",
+        "PDelays.cc",
+        "PEvent.cc",
+        "PExpr.cc",
+        "PFunction.cc",
+        "PGate.cc",
+        "PGenerate.cc",
+        "PModport.cc",
+        "PNamedItem.cc",
+        "PPackage.cc",
+        "PScope.cc",
+        "PSpec.cc",
+        "PTask.cc",
+        "PTimingCheck.cc",
+        "PUdp.cc",
+        "PWire.cc",
+        "Statement.cc",
+        "async.cc",
+        "cprop.cc",
+        "design_dump.cc",
+        "discipline.cc",
+        "dup_expr.cc",
+        "elab_expr.cc",
+        "elab_lval.cc",
+        "elab_net.cc",
+        "elab_scope.cc",
+        "elab_sig.cc",
+        "elab_sig_analog.cc",
+        "elab_type.cc",
+        "elaborate.cc",
+        "elaborate_analog.cc",
+        "emit.cc",
+        "eval_attrib.cc",
+        "eval_tree.cc",
+        "exposenodes.cc",
+        "expr_synth.cc",
+        "functor.cc",
+        "lexor_keyword.cc",
+        "link_const.cc",
+        "load_module.cc",
+        "main.cc",
+        "map_named_args.cc",
+        "net_analog.cc",
+        "net_assign.cc",
+        "net_design.cc",
+        "net_event.cc",
+        "net_expr.cc",
+        "net_func.cc",
+        "net_func_eval.cc",
+        "net_link.cc",
+        "net_modulo.cc",
+        "net_nex_input.cc",
+        "net_nex_output.cc",
+        "net_proc.cc",
+        "net_scope.cc",
+        "net_tran.cc",
+        "net_udp.cc",
+        "netclass.cc",
+        "netdarray.cc",
+        "netenum.cc",
+        "netlist.cc",
+        "netmisc.cc",
+        "netparray.cc",
+        "netqueue.cc",
+        "netscalar.cc",
+        "netstruct.cc",
+        "nettypes.cc",
+        "netvector.cc",
+        "nodangle.cc",
+        "pad_to_width.cc",
+        "parse_misc.cc",
+        "pform.cc",
+        "pform_analog.cc",
+        "pform_disciplines.cc",
+        "pform_dump.cc",
+        "pform_package.cc",
+        "pform_pclass.cc",
+        "pform_types.cc",
+        "symbol_search.cc",
+        "sync.cc",
+        "synth.cc",
+        "synth2.cc",
+        "sys_funcs.cc",
+        "t-dll.cc",
+        "t-dll-analog.cc",
+        "t-dll-api.cc",
+        "t-dll-expr.cc",
+        "t-dll-proc.cc",
+        "target.cc",
+        "verinum.cc",
+        "verireal.cc",
+        "vpi_modules.cc",
+        ":gen_lexor",
+        ":gen_parse",
+        ":gen_syn_rules",
+        "//vvp:headers",
+    ],
+    copts = CXX_STD + WARNING_COPTS,
+    deps = [
+        ":compat_getopt",
+        ":config",
+        ":ivl_headers",
+        ":pli_types",
+        ":version_tag",
+        "//libmisc",
+    ],
+)
+
+# On Windows, DLLs must resolve all symbols at link time.  The upstream
+# Makefile handles this by building ivl.exe with --out-implib, generating
+# an import library that tgt plugins link against.  cc_shared_library is
+# the Bazel equivalent: it produces a shared library + interface library
+# (import lib on Windows).  tgt plugins use dynamic_deps to link against
+# the interface library only, avoiding code duplication.
+cc_shared_library(
+    name = "libivl",
+    exports_filter = ["//:__subpackages__"],
+    visibility = ["//:__subpackages__"],
+    win_def_file = "ivl.def",
+    deps = [":lib/ivl"],
+)
+
+cc_binary(
+    name = "ivl",
+    linkopts = PLUGIN_HOST_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [":lib/ivl"],
+)
+
+# =============================================================================
+# ivlpp - Verilog Preprocessor
+# =============================================================================
+
+alias(
+    name = "ivlpp",
+    actual = "//ivlpp",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# vhdlpp - VHDL Frontend
+# =============================================================================
+
+alias(
+    name = "vhdlpp",
+    actual = "//vhdlpp",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# vvp - Simulator / Runtime
+# =============================================================================
+
+alias(
+    name = "vvp",
+    actual = "//vvp",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# iverilog - Driver
+# =============================================================================
+
+alias(
+    name = "iverilog",
+    actual = "//driver:iverilog",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# VPI Libraries and Modules
+# =============================================================================
+
+alias(
+    name = "libvpi",
+    actual = "//vpi",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Target Code Generator Plugins
+# =============================================================================
+
+alias(
+    name = "null_tgt",
+    actual = "//tgt-null:null_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "stub_tgt",
+    actual = "//tgt-stub:stub_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "vvp_tgt",
+    actual = "//tgt-vvp:vvp_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "vhdl_tgt",
+    actual = "//tgt-vhdl:vhdl_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "vlog95_tgt",
+    actual = "//tgt-vlog95:vlog95_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pcb_tgt",
+    actual = "//tgt-pcb:pcb_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "blif_tgt",
+    actual = "//tgt-blif:blif_tgt",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "sizer_tgt",
+    actual = "//tgt-sizer:sizer_tgt",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Optional Targets
+# =============================================================================
+
+alias(
+    name = "libveriuser",
+    actual = "//libveriuser",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "cadpli_vpl",
+    actual = "//cadpli:cadpli_vpl",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "driver_vpi",
+    actual = "//driver-vpi:driver_vpi",
+    visibility = ["//visibility:public"],
+)
+
+iverilog_smoke_test(
+    name = "smoke_test",
+    binaries = [
+        ":ivlpp",
+        ":iverilog",
+    ],
+    ivl_base = ":ivl_base",
+)
+
+# =============================================================================
+# IVL Base Directory
+# =============================================================================
+# Assembles the flat directory that the iverilog driver expects at IVL_BASE.
+# Contains the compiler backend, preprocessor, target code generators,
+# VPI modules, config files, and include headers.
+
+ivl_base(
+    name = "ivl_base",
+    files = {
+        # Include files
+        "//:constants.vams": "include/constants.vams",
+        "//:disciplines.vams": "include/disciplines.vams",
+        # Binaries
+        "//:ivl": "ivl",
+        "//ivlpp:ivlpp": "ivlpp",
+        "//tgt-blif:blif-s.conf": "blif-s.conf",
+        "//tgt-blif:blif.conf": "blif.conf",
+        "//tgt-blif:blif_tgt": "blif.tgt",
+        "//tgt-null:null-s.conf": "null-s.conf",
+        "//tgt-null:null.conf": "null.conf",
+        "//tgt-null:null_tgt": "null.tgt",
+        "//tgt-pcb:pcb-s.conf": "pcb-s.conf",
+        "//tgt-pcb:pcb.conf": "pcb.conf",
+        "//tgt-pcb:pcb_tgt": "pcb.tgt",
+        "//tgt-sizer:sizer-s.conf": "sizer-s.conf",
+        "//tgt-sizer:sizer.conf": "sizer.conf",
+        "//tgt-sizer:sizer_tgt": "sizer.tgt",
+        "//tgt-stub:stub-s.conf": "stub-s.conf",
+        "//tgt-stub:stub.conf": "stub.conf",
+        "//tgt-stub:stub_tgt": "stub.tgt",
+        "//tgt-vhdl:vhdl-s.conf": "vhdl-s.conf",
+        "//tgt-vhdl:vhdl.conf": "vhdl.conf",
+        "//tgt-vhdl:vhdl_tgt": "vhdl.tgt",
+        "//tgt-vlog95:vlog95-s.conf": "vlog95-s.conf",
+        "//tgt-vlog95:vlog95.conf": "vlog95.conf",
+        "//tgt-vlog95:vlog95_tgt": "vlog95.tgt",
+        "//tgt-vvp:vvp-s.conf.in": "vvp-s.conf",
+        # Target config files
+        "//tgt-vvp:vvp.conf.in": "vvp.conf",
+        # Target code generators
+        "//tgt-vvp:vvp_tgt": "vvp.tgt",
+        "//vhdlpp:vhdlpp": "vhdlpp",
+        # VPI modules
+        "//vpi:system_vpi": "system.vpi",
+        "//vpi:v2005_math_vpi": "v2005_math.vpi",
+        "//vpi:v2009_vpi": "v2009.vpi",
+        "//vpi:va_math_vpi": "va_math.vpi",
+        "//vpi:vhdl_sys_vpi": "vhdl_sys.vpi",
+        "//vpi:vhdl_textio_vpi": "vhdl_textio.vpi",
+    },
+    visibility = ["//visibility:public"],
+)
