@@ -94,17 +94,22 @@ cc_library(
 
 # ===== Architecture-specific acceleration ======================================
 
-# AArch64 NEON (upstream CMakeLists.txt compiles these as a separate OBJECT
-# library with -march=armv8.2-a+dotprod+i8mm).  Restricted to arm64 (macOS
-# Clang) because GCC 9 on Linux aarch64 generates invalid assembly for .8h
-# MOV instructions — a codegen bug fixed in GCC 11+.  On aarch64 Linux the
-# library falls back to scalar C code via LIBYUV_DISABLE_NEON.
+# NEON (matches upstream libyuv_neon OBJECT library from BUILD.gn).
+# Tagged "manual" so @libyuv//... does not attempt to build on non-ARM
+# platforms; pulled in only via the ARM selects in :yuv deps.
+# On aarch64 Linux the library falls back to scalar C code via
+# LIBYUV_DISABLE_NEON because GCC 9 generates invalid assembly for
+# .8h MOV instructions (fixed in GCC 11+).
 cc_library(
-    name = "_neon64",
+    name = "_neon",
     srcs = [
+        "source/compare_neon.cc",
         "source/compare_neon64.cc",
+        "source/rotate_neon.cc",
         "source/rotate_neon64.cc",
+        "source/row_neon.cc",
         "source/row_neon64.cc",
+        "source/scale_neon.cc",
         "source/scale_neon64.cc",
     ],
     copts = select({
@@ -112,14 +117,66 @@ cc_library(
         "//conditions:default": [
             "-w",
             "-ffp-contract=fast",
-            "-march=armv8.2-a+dotprod",
         ],
+    }) + select({
+        # 32-bit ARM needs -mfpu=neon (upstream BUILD.gn sets this).
+        # 64-bit ARM has NEON unconditionally; no extra flags needed.
+        "@platforms//cpu:armv7": ["-mfpu=neon"],
+        "//conditions:default": [],
     }),
     local_defines = select({
         ":_disable_neon": ["LIBYUV_DISABLE_NEON"],
         "//conditions:default": [],
     }),
-    target_compatible_with = ["@platforms//cpu:arm64"],
+    tags = ["manual"],
+    deps = [":_hdrs"],
+)
+
+# MSA (matches upstream libyuv_msa OBJECT library from BUILD.gn).
+cc_library(
+    name = "_msa",
+    srcs = [
+        "source/compare_msa.cc",
+        "source/rotate_msa.cc",
+        "source/row_msa.cc",
+        "source/scale_msa.cc",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-w",
+            "-ffp-contract=fast",
+        ],
+    }),
+    local_defines = select({
+        ":_disable_msa": ["LIBYUV_DISABLE_MSA"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    deps = [":_hdrs"],
+)
+
+# MMI (matches upstream libyuv_mmi OBJECT library from BUILD.gn).
+cc_library(
+    name = "_mmi",
+    srcs = [
+        "source/compare_mmi.cc",
+        "source/rotate_mmi.cc",
+        "source/row_mmi.cc",
+        "source/scale_mmi.cc",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-w",
+            "-ffp-contract=fast",
+        ],
+    }),
+    local_defines = select({
+        ":_disable_mmi": ["LIBYUV_DISABLE_MMI"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
     deps = [":_hdrs"],
 )
 
@@ -137,9 +194,6 @@ cc_library(
         "source/compare.cc",
         "source/compare_common.cc",
         "source/compare_gcc.cc",
-        "source/compare_mmi.cc",
-        "source/compare_msa.cc",
-        "source/compare_neon.cc",
         "source/compare_win.cc",
         "source/convert.cc",
         "source/convert_argb.cc",
@@ -157,25 +211,16 @@ cc_library(
         "source/rotate_argb.cc",
         "source/rotate_common.cc",
         "source/rotate_gcc.cc",
-        "source/rotate_mmi.cc",
-        "source/rotate_msa.cc",
-        "source/rotate_neon.cc",
         "source/rotate_win.cc",
         "source/row_any.cc",
         "source/row_common.cc",
         "source/row_gcc.cc",
-        "source/row_mmi.cc",
-        "source/row_msa.cc",
-        "source/row_neon.cc",
         "source/row_win.cc",
         "source/scale.cc",
         "source/scale_any.cc",
         "source/scale_argb.cc",
         "source/scale_common.cc",
         "source/scale_gcc.cc",
-        "source/scale_mmi.cc",
-        "source/scale_msa.cc",
-        "source/scale_neon.cc",
         "source/scale_uv.cc",
         "source/scale_win.cc",
         "source/video_common.cc",
@@ -211,7 +256,8 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [":_hdrs"] +
            select({
-               "@platforms//cpu:arm64": [":_neon64"],
+               "@platforms//cpu:arm64": [":_neon"],
+               "@platforms//cpu:armv7": [":_neon"],
                "//conditions:default": [],
            }) +
            select({
