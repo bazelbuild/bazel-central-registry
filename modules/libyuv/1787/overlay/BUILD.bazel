@@ -1,3 +1,4 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
@@ -59,6 +60,17 @@ bool_flag(
 config_setting(
     name = "_disable_mmi",
     flag_values = {":disable_mmi": "True"},
+)
+
+# GCC 9 NEON workaround: GCC 9 on aarch64 generates invalid assembly
+# for .8h MOV instructions (fixed in GCC 11+).  Clang handles NEON fine.
+
+selects.config_setting_group(
+    name = "_aarch64_gcc",
+    match_all = [
+        "@platforms//cpu:aarch64",
+        "@rules_cc//cc/compiler:gcc",
+    ],
 )
 
 # ===== Internal headers ========================================================
@@ -180,6 +192,18 @@ cc_library(
     deps = [":_hdrs"],
 )
 
+# Indirection for the GCC 9 workaround: on aarch64 + GCC the NEON sources
+# cannot be compiled, so this target resolves to an empty dep.  Every other
+# aarch64 toolchain (Clang, MSVC) gets the real _neon library.
+cc_library(
+    name = "_arm64_neon",
+    tags = ["manual"],
+    deps = select({
+        ":_aarch64_gcc": [],
+        "//conditions:default": [":_neon"],
+    }),
+)
+
 # ===== Library =================================================================
 
 alias(
@@ -244,7 +268,7 @@ cc_library(
     }) + select({
         # GCC 9 on aarch64 generates invalid NEON assembly (mov v0.8h);
         # disable NEON dispatch so the scalar C fallback is used instead.
-        "@platforms//cpu:aarch64": ["LIBYUV_DISABLE_NEON"],
+        ":_aarch64_gcc": ["LIBYUV_DISABLE_NEON"],
         "//conditions:default": [],
     }) + select({
         ":_disable_msa": ["LIBYUV_DISABLE_MSA"],
@@ -256,6 +280,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [":_hdrs"] +
            select({
+               "@platforms//cpu:aarch64": [":_arm64_neon"],
                "@platforms//cpu:armv7": [":_neon"],
                "//conditions:default": [],
            }) +
