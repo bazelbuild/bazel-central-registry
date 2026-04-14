@@ -1,41 +1,64 @@
 load(":vpx_config.bzl", "vpx_config_asm", "vpx_config_header", "vpx_config_rtcd")
 
-def emit_x86_config_generators(arch):
-    vpx_config_header(
-        name = "gen_{}_h".format(arch),
-        arch = arch,
-        out = "generated/{}/vpx_config.h".format(arch),
-    )
+_KIND_TO_FILENAME = {
+    "asm": "vpx_config.asm",
+    "h": "vpx_config.h",
+    "rtcd": "vpx_config.rtcd",
+}
+
+def config_output_dir(family, variant = "default"):
+    return "generated/{}/{}".format(family, variant)
+
+def config_output_file(family, variant, kind):
+    return "{}/{}".format(config_output_dir(family, variant), _KIND_TO_FILENAME[kind])
+
+def select_config_outputs(family, kind, variants_by_condition):
+    return select({
+        condition: [config_output_file(family, variant, kind)]
+        for condition, variant in variants_by_condition.items()
+    })
+
+def select_config_dirs(family, variants_by_condition):
+    return select({
+        condition: [config_output_dir(family, variant)]
+        for condition, variant in variants_by_condition.items()
+    })
+
+def _emit_variant_config_targets(family, arch, variant, features = {}, windows = False, emit_asm = True):
+    name_prefix = "gen_{}_{}".format(family, variant)
 
     vpx_config_header(
-        name = "gen_{}_windows_h".format(arch),
+        name = "{}_h".format(name_prefix),
         arch = arch,
-        out = "generated/{}_windows/vpx_config.h".format(arch),
-        windows = True,
+        out = config_output_file(family, variant, "h"),
+        features = features,
+        windows = windows,
     )
 
-    vpx_config_asm(
-        name = "gen_{}_asm".format(arch),
-        arch = arch,
-        out = "generated/{}/vpx_config.asm".format(arch),
-    )
-
-    vpx_config_asm(
-        name = "gen_{}_windows_asm".format(arch),
-        arch = arch,
-        out = "generated/{}_windows/vpx_config.asm".format(arch),
-        windows = True,
-    )
+    if emit_asm:
+        vpx_config_asm(
+            name = "{}_asm".format(name_prefix),
+            arch = arch,
+            out = config_output_file(family, variant, "asm"),
+            features = features,
+            windows = windows,
+        )
 
     vpx_config_rtcd(
-        name = "gen_{}_rtcd".format(arch),
+        name = "{}_rtcd".format(name_prefix),
         arch = arch,
-        out = "generated/{}/vpx_config.rtcd".format(arch),
+        out = config_output_file(family, variant, "rtcd"),
+        features = features,
+        windows = windows,
     )
 
-    vpx_config_rtcd(
-        name = "gen_{}_windows_rtcd".format(arch),
-        arch = arch,
-        out = "generated/{}_windows/vpx_config.rtcd".format(arch),
-        windows = True,
-    )
+def emit_config_family_targets(family, arch, variants):
+    for variant in variants:
+        _emit_variant_config_targets(
+            family = family,
+            arch = arch,
+            variant = variant["name"],
+            features = variant.get("features", {}),
+            windows = variant.get("windows", False),
+            emit_asm = variant.get("emit_asm", True),
+        )
