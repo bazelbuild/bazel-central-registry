@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 def _sanitize(src):
@@ -6,26 +7,6 @@ def _sanitize(src):
 def _parent_prefix(src):
     depth = len(src.split("/")) - 1
     return "../" * depth
-
-def _copy_text_file_impl(ctx):
-    ctx.actions.expand_template(
-        template = ctx.file.src,
-        output = ctx.outputs.out,
-        substitutions = {},
-    )
-
-    return [DefaultInfo(files = depset([ctx.outputs.out]))]
-
-_copy_text_file = rule(
-    implementation = _copy_text_file_impl,
-    attrs = {
-        "out": attr.output(mandatory = True),
-        "src": attr.label(
-            allow_single_file = True,
-            mandatory = True,
-        ),
-    },
-)
 
 def _libvpx_arm_asm_source_impl(ctx):
     perl_toolchain = ctx.attr._current_perl_toolchain[platform_common.ToolchainInfo]
@@ -101,10 +82,11 @@ def libvpx_arm_asm_library(name, srcs, config_target, target_compatible_with = N
 
     config_name = "{}_config".format(name)
     config_out = "arm_asm/{}/vpx_config.asm".format(name)
-    _copy_text_file(
+    expand_template(
         name = config_name,
-        src = config_target,
+        substitutions = {},
         out = config_out,
+        template = config_target,
         target_compatible_with = target_compatible_with,
     )
 
