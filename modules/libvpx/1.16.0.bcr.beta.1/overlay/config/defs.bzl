@@ -2,13 +2,13 @@ def _libvpx_rtcd_header_impl(ctx):
     perl_toolchain = ctx.attr._current_perl_toolchain[platform_common.ToolchainInfo]
     perl = perl_toolchain.perl_runtime.interpreter
     args = ctx.actions.args()
-    args.add(ctx.outputs.out.path)
-    args.add(ctx.file.rtcd_script.path)
-    args.add("--arch=" + ctx.attr.arch)
-    args.add("--sym=" + ctx.attr.sym)
+    args.add(ctx.outputs.out)
+    args.add(ctx.file.rtcd_script)
+    args.add(ctx.attr.arch, format = "--arch=%s")
+    args.add(ctx.attr.sym, format = "--sym=%s")
     args.add_all(ctx.attr.extra_args)
-    args.add("--config=" + ctx.file.config_file.path)
-    args.add(ctx.file.defs_file.path)
+    args.add(ctx.file.config_file, format = "--config=%s")
+    args.add(ctx.file.defs_file)
 
     ctx.actions.run(
         executable = perl,
@@ -69,7 +69,6 @@ def libvpx_rtcd_headers(name, arch, config_file, out_dir, disable_avx512 = False
         extra_args.append("--disable-sve")
     if disable_sve2:
         extra_args.append("--disable-sve2")
-    extra_arg = " ".join(extra_args)
 
     defs = [
         ("vp8_rtcd", "@libvpx//:vp8/common/rtcd_defs.pl"),

@@ -31,9 +31,9 @@ def _libvpx_arm_asm_source_impl(ctx):
     perl_toolchain = ctx.attr._current_perl_toolchain[platform_common.ToolchainInfo]
     perl = perl_toolchain.perl_runtime.interpreter
     args = ctx.actions.args()
-    args.add(ctx.outputs.out.path)
-    args.add(ctx.file.script.path)
-    args.add(ctx.file.src.path)
+    args.add(ctx.outputs.out)
+    args.add(ctx.file.script)
+    args.add(ctx.file.src)
     args.add(ctx.attr.config_include)
     args.add_all(ctx.attr.script_args)
 
