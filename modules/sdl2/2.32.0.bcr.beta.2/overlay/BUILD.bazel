@@ -1,0 +1,322 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_license//rules:license.bzl", "license")
+load(
+    ":sdl2_config_checks.bzl",
+    "SDL2_CONFIG_CHECKS_COMMON",
+    "SDL2_CONFIG_CHECKS_LINUX",
+    "SDL2_CONFIG_CHECKS_MACOS",
+    "SDL2_CONFIG_CHECKS_NON_WINDOWS",
+    "SDL2_CONFIG_CHECKS_WINDOWS",
+)
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:Zlib"],
+    license_text = "LICENSE.txt",
+)
+
+exports_files([
+    "LICENSE.txt",
+])
+
+COMMON_SRCS = glob(
+    [
+        "src/*.c",
+        "src/atomic/*.c",
+        "src/audio/*.c",
+        "src/audio/disk/*.c",
+        "src/audio/dummy/*.c",
+        "src/cpuinfo/*.c",
+        "src/dynapi/*.c",
+        "src/events/*.c",
+        "src/file/*.c",
+        "src/haptic/*.c",
+        "src/hidapi/*.c",
+        "src/joystick/*.c",
+        "src/joystick/hidapi/*.c",
+        "src/joystick/steam/*.c",
+        "src/libm/*.c",
+        "src/locale/*.c",
+        "src/misc/*.c",
+        "src/power/*.c",
+        "src/render/*.c",
+        "src/render/opengl/*.c",
+        "src/render/software/*.c",
+        "src/sensor/*.c",
+        "src/sensor/dummy/*.c",
+        "src/stdlib/*.c",
+        "src/thread/*.c",
+        "src/timer/*.c",
+        "src/video/*.c",
+        "src/video/dummy/*.c",
+        "src/video/yuv2rgb/*.c",
+    ],
+    exclude = [
+        "src/video/yuv2rgb/yuv_rgb_sse.c",
+    ],
+)
+
+X86_ONLY_SRCS = [
+    "src/video/yuv2rgb/yuv_rgb_sse.c",
+]
+
+LINUX_SRCS = glob(
+    [
+        "src/audio/alsa/*.c",
+        "src/audio/dsp/*.c",
+        "src/core/linux/*.c",
+        "src/core/unix/*.c",
+        "src/filesystem/unix/*.c",
+        "src/haptic/linux/*.c",
+        "src/joystick/linux/*.c",
+        "src/loadso/dlopen/*.c",
+        "src/locale/unix/*.c",
+        "src/misc/unix/*.c",
+        "src/power/linux/*.c",
+        "src/thread/pthread/*.c",
+        "src/timer/unix/*.c",
+        "src/video/x11/*.c",
+    ],
+    exclude = [
+        "src/core/linux/SDL_dbus.c",
+        "src/core/linux/SDL_fcitx.c",
+        "src/core/linux/SDL_ibus.c",
+        "src/core/linux/SDL_ime.c",
+        "src/core/linux/SDL_udev.c",
+    ],
+)
+
+WINDOWS_SRCS = glob([
+    "src/audio/directsound/*.c",
+    "src/audio/wasapi/*.c",
+    "src/audio/winmm/*.c",
+    "src/core/windows/*.c",
+    "src/filesystem/windows/*.c",
+    "src/haptic/windows/*.c",
+    "src/joystick/windows/*.c",
+    "src/loadso/windows/*.c",
+    "src/locale/windows/*.c",
+    "src/misc/windows/*.c",
+    "src/power/windows/*.c",
+    "src/render/direct3d/*.c",
+    "src/render/direct3d11/*.c",
+    "src/render/direct3d12/*.c",
+    "src/sensor/windows/*.c",
+    "src/thread/windows/*.c",
+    "src/thread/generic/SDL_syscond.c",
+    "src/timer/windows/*.c",
+    "src/video/windows/*.c",
+])
+
+MACOS_SRCS = glob([
+    "src/core/unix/*.c",
+    "src/haptic/darwin/*.c",
+    "src/joystick/darwin/*.c",
+    "src/loadso/dlopen/*.c",
+    "src/power/macosx/*.c",
+    "src/thread/pthread/*.c",
+    "src/timer/unix/*.c",
+])
+
+objc_library(
+    name = "sdl2_macos_objc",
+    srcs = glob([
+        "src/audio/coreaudio/*.m",
+        "src/file/cocoa/*.m",
+        "src/filesystem/cocoa/*.m",
+        "src/joystick/iphoneos/*.m",
+        "src/locale/macosx/*.m",
+        "src/misc/macosx/*.m",
+        "src/render/metal/*.m",
+        "src/video/cocoa/*.m",
+    ]),
+    sdk_frameworks = [
+        "AudioToolbox",
+        "AVFoundation",
+        "Carbon",
+        "Cocoa",
+        "CoreAudio",
+        "CoreVideo",
+        "Foundation",
+    ],
+    weak_sdk_frameworks = [
+        "CoreHaptics",
+        "GameController",
+        "Metal",
+        "QuartzCore",
+    ],
+    deps = [
+        ":sdl2_config_header",
+        ":sdl2_headers",
+        ":sdl2_private_headers",
+    ],
+)
+
+WINDOWS_LINKOPTS = [
+    "advapi32.lib",
+    "dinput8.lib",
+    "gdi32.lib",
+    "imm32.lib",
+    "kernel32.lib",
+    "ole32.lib",
+    "oleaut32.lib",
+    "setupapi.lib",
+    "shell32.lib",
+    "user32.lib",
+    "uuid.lib",
+    "version.lib",
+    "winmm.lib",
+]
+
+LINUX_LINKOPTS = [
+    "-ldl",
+    "-lpthread",
+    "-lrt",
+]
+
+cc_library(
+    name = "sdl2_headers",
+    hdrs = glob(
+        ["include/*.h"],
+        exclude = ["include/SDL_config.h"],
+    ),
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+    deps = [":sdl2_config_header"],
+)
+
+autoconf(
+    name = "sdl2_config_checks",
+    checks = SDL2_CONFIG_CHECKS_COMMON + select({
+        "@platforms//os:windows": SDL2_CONFIG_CHECKS_WINDOWS,
+        "//conditions:default": SDL2_CONFIG_CHECKS_NON_WINDOWS,
+    }) + select({
+        "@platforms//os:linux": SDL2_CONFIG_CHECKS_LINUX,
+        "@platforms//os:macos": SDL2_CONFIG_CHECKS_MACOS,
+        "//conditions:default": [],
+    }),
+)
+
+autoconf_hdr(
+    name = "gen_sdl_config_h",
+    out = "generated/SDL_config.h",
+    substitutions = {
+        "#error You should run git checkout -f include/SDL_config.h": "/* Bazel-generated SDL_config.h */",
+    },
+    template = "include/SDL_config.h.in",
+    deps = [":sdl2_config_checks"],
+)
+
+cc_library(
+    name = "sdl2_config_header",
+    hdrs = [":gen_sdl_config_h"],
+    strip_include_prefix = "generated",
+)
+
+cc_library(
+    name = "sdl2_private_headers",
+    hdrs = glob(["src/**/*.h"]),
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":sdl2_config_header",
+        ":sdl2_headers",
+    ],
+)
+
+cc_library(
+    name = "sdl2",
+    srcs = COMMON_SRCS + select({
+        "@platforms//os:linux": LINUX_SRCS,
+        "@platforms//os:macos": MACOS_SRCS,
+        "@platforms//os:windows": WINDOWS_SRCS,
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//cpu:x86_64": X86_ONLY_SRCS,
+        "//conditions:default": [],
+    }),
+    implementation_deps = select({
+        "@platforms//os:linux": [
+            "@alsa_lib",
+            "@libx11",
+            "@libxcursor",
+            "@libxext",
+            "@libxfixes",
+            "@libxi",
+            "@libxrandr",
+            "@xkbcommon",
+        ],
+        "@platforms//os:macos": [":sdl2_macos_objc"],
+        "//conditions:default": [],
+    }) + [":sdl2_private_headers"],
+    linkopts = select({
+        "@platforms//os:linux": LINUX_LINKOPTS,
+        "@platforms//os:macos": [
+            "-liconv",
+            "-framework",
+            "AudioToolbox",
+            "-framework",
+            "AVFoundation",
+            "-framework",
+            "Carbon",
+            "-framework",
+            "Cocoa",
+            "-framework",
+            "CoreAudio",
+            "-framework",
+            "CoreVideo",
+            "-framework",
+            "ForceFeedback",
+            "-framework",
+            "Foundation",
+            "-framework",
+            "IOKit",
+            "-weak_framework",
+            "Metal",
+            "-weak_framework",
+            "QuartzCore",
+        ],
+        "@platforms//os:windows": WINDOWS_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        "@platforms//os:macos": ["SDL_HIDAPI_DISABLED"],
+        "@platforms//os:windows": ["SDL_THREAD_GENERIC_COND_SUFFIX"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "src/thread/generic/SDL_syssem.c",
+    ] + select({
+        "@platforms//os:windows": ["src/hidapi/windows/hid.c"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":sdl2_config_header",
+        ":sdl2_headers",
+    ],
+)
+
+cc_test(
+    name = "sdl2_consumer_link_test",
+    srcs = ["sdl2_consumer_link_test.cc"],
+    deps = [":sdl2"],
+)
+
+cc_test(
+    name = "sdl2_headers_consumer_compile_test",
+    srcs = ["sdl2_headers_consumer_compile_test.cc"],
+    deps = [":sdl2_headers"],
+)
+
+alias(
+    name = "SDL2",
+    actual = ":sdl2",
+    visibility = ["//visibility:public"],
+)
