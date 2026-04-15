@@ -87,15 +87,20 @@ The Bazel transition constructs the key from `attr.os` and `attr.cpu`, then does
 
 ### Quick reference
 
+All generator scripts accept `--version <VERSION>` to target a specific overlay directory (e.g. `7.1.1.bcr.beta.5`). When omitted, the latest version from `metadata.json` is used automatically.
+
 ```bash
 # Step 1: regenerate config header templates
-python3 generate_config_defs.py /path/to/ffmpeg/source --output-dir .
+python3 generate_config_defs.py /path/to/ffmpeg/source
 
-# Step 3: regenerate per-component source lists
-python3 generate_component_srcs.py /path/to/ffmpeg/source > component_srcs.bzl
+# Step 2: regenerate per-component source lists
+python3 generate_component_srcs.py /path/to/ffmpeg/source
 
-# Step 4: regenerate resolved profiles
+# Step 3: regenerate resolved profiles
 python3 generate_resolved_profiles.py
+
+# Target a specific version:
+python3 generate_component_srcs.py --version 7.1.1.bcr.beta.5 /path/to/ffmpeg/source
 ```
 
 ## Adding a New FFmpeg Version to the BCR
@@ -146,18 +151,17 @@ Add or remove test targets in `libavcodec/tests/`, `libavfilter/tests/`, `libavu
 ### 3. Regenerating `component_srcs.bzl`
 
 `generate_component_srcs.py` (at `modules/ffmpeg/generate_component_srcs.py`) is reusable across versions. It reads
-`PROFILE_EVERYTHING` from `component_defs.bzl` **in the same directory as the script**, parses `OBJS-$(CONFIG_*)` lines
-from the FFmpeg Makefiles, and writes `component_srcs.bzl` to stdout.
+`PROFILE_EVERYTHING` from `component_defs.bzl` in the target overlay directory, parses `OBJS-$(CONFIG_*)` lines from the
+FFmpeg Makefiles, and writes `component_srcs.bzl` directly to the overlay.
 
 Steps:
 
 1. Update `component_defs.bzl` in the overlay first (the script depends on it).
-2. Copy or symlink `generate_component_srcs.py` into the overlay directory.
-3. Run:
+2. Run:
    ```bash
-   python3 generate_component_srcs.py /path/to/ffmpeg/source > $VERSION/overlay/component_srcs.bzl
+   python3 generate_component_srcs.py [--version <VERSION>] /path/to/ffmpeg/source
    ```
-4. New components are handled automatically as long as `PROFILE_EVERYTHING` is current.
+3. New components are handled automatically as long as `PROFILE_EVERYTHING` is current.
 
 #### Script tunables
 
@@ -192,7 +196,7 @@ For each profile, the script:
 Run after any change to `component_defs.bzl`:
 
 ```bash
-python3 generate_resolved_profiles.py
+python3 generate_resolved_profiles.py [--version <VERSION>]
 ```
 
 The script prints a summary of pruned components (with reasons) to stderr, which is useful for verifying that the
