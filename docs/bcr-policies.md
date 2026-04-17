@@ -51,6 +51,13 @@ Here are steps that a BCR maintainer should keep in mind when reviewing PRs:
   - If possible, encourage PR authors to add the latest LTS track to the `bazel` field in `presubmit.yml`.
 - When a module maintainer is not responsive, a BCR maintainer can step in and merge the pull request. However, you must leave a comment notifying the module maintainer when doing so.
 
+### Removal or retirement of a BCR maintainer
+
+A BCR maintainer may be removed or retired from their duties under the following situations:
+- **Inactivity:** Prolonged inactivity (greater than 6 months) without a declared leave of absence.
+- **Voluntary Resignation:** Maintainers can step down at any time by sending a notification to the Rules Authors SIG or the Bazel team.
+- **Violation of Policies:** Continuous failure to conform to standard review policies or violations of the Code of Conduct.
+
 ## Become a module maintainer
 
 Every module must have a list of maintainers provided in its metadata.json file. The first contributor to a Bazel module is likely be appointed as the module maintainer. Anyone can apply to be a maintainer of some specific modules. Library authors / rule authors / Bazel users who have special interest on some projects can be module maintainers.

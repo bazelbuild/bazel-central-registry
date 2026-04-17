@@ -1,6 +1,6 @@
 # BCR Maintainer Onboarding Guide
 
-Welcome to the Bazel Central Registry (BCR) maintainer team! This document outlines the onboarding process for new maintainers to familiarize themselves with registry guidelines, workflows, and tools.
+Welcome to the Bazel Central Registry (BCR) maintainer team! This document outlines the onboarding process for new maintainers.
 
 ## Prerequisites
 
