@@ -530,7 +530,7 @@ class BcrValidator:
             "aar": "zip",
         }.get(source.get("archive_type"))
         # Use PEP 706 safe extraction if available (Python 3.12+)
-        if sys.version_info >= (3, 12):
+        if sys.version_info >= (3, 12) and format != "zip":
             shutil.unpack_archive(str(archive_file), output_dir, format=format, filter="data")
         else:
             # Fallback for older Python versions. Since CI is 3.12+, this handles local dev compatibility.
