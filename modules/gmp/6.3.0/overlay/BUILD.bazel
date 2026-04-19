@@ -1,14 +1,26 @@
 """GMP - GNU Multiple Precision Arithmetic Library."""
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
 load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
 load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
 load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
-load("//bazel:gmp.bzl", "gmp_copy", "gmp_gen", "gmp_mpn_multi")
+load(
+    "//bazel:gmp.bzl",
+    "gmp_config_m4",
+    "gmp_copy",
+    "gmp_gen",
+    "gmp_mpn_m4",
+    "gmp_native_defs",
+)
+load(
+    "//bazel:mpn.bzl",
+    "GMP_MPN_FUNCTIONS",
+    "GMP_MPN_FUNCTIONS_OPTIONAL",
+)
 
 # =============================================================================
 # Feature flags
@@ -22,6 +34,48 @@ bool_flag(
 bool_flag(
     name = "enable_assert",
     build_setting_default = False,
+)
+
+# CPU micro-architecture variant for selecting optimized assembly.
+# Defaults to "auto" which picks the generic baseline for each architecture
+# (k8 for x86_64, arm64 for aarch64).
+# Override with --@gmp//:cpu=zen3 (or skylake, cora57, applem1, etc.)
+string_flag(
+    name = "cpu",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        # x86_64 variants (from configure.ac)
+        "alderlake",
+        "atom",
+        "bd1",
+        "bd2",
+        "bd3",
+        "bd4",
+        "bt1",
+        "bt2",
+        "core2",
+        "coreibwl",
+        "coreihwl",
+        "coreinhm",
+        "coreisbr",
+        "goldmont",
+        "k8",
+        "k10",
+        "nano",
+        "pentium4",
+        "silvermont",
+        "skylake",
+        "tremont",
+        "zen",
+        "zen2",
+        "zen3",
+        # aarch64 variants
+        "applem1",
+        "cora53",
+        "cora57",
+        "xgene1",
+    ],
 )
 
 # =============================================================================
@@ -89,13 +143,75 @@ selects.config_setting_group(
 )
 
 # =============================================================================
+# MPN shared attributes
+# =============================================================================
+
+_ALL_MPN_FUNCTIONS = GMP_MPN_FUNCTIONS + GMP_MPN_FUNCTIONS_OPTIONAL
+
+_MPN_ARCH = select({
+    "@platforms//cpu:aarch64": "aarch64",
+    "@platforms//cpu:arm": "arm",
+    "@platforms//cpu:arm64": "aarch64",
+    "@platforms//cpu:arm64_32": "aarch64",
+    "@platforms//cpu:arm64e": "aarch64",
+    "@platforms//cpu:armv7": "arm",
+    "@platforms//cpu:armv7-m": "arm",
+    "@platforms//cpu:armv7e-m": "arm",
+    "@platforms//cpu:armv7e-mf": "arm",
+    "@platforms//cpu:armv7k": "arm",
+    "@platforms//cpu:i386": "x86",
+    "@platforms//cpu:mips64": "mips64",
+    "@platforms//cpu:ppc": "powerpc32",
+    "@platforms//cpu:ppc32": "powerpc32",
+    "@platforms//cpu:ppc64le": "powerpc64",
+    "@platforms//cpu:riscv32": "riscv",
+    "@platforms//cpu:riscv64": "riscv",
+    "@platforms//cpu:s390x": "s390_64",
+    "@platforms//cpu:x86_32": "x86",
+    "@platforms//cpu:x86_64": "x86_64",
+    "//conditions:default": "generic",
+})
+
+_MPN_OS = select({
+    "@platforms//os:linux": "linux",
+    "@platforms//os:macos": "macos",
+    "@platforms//os:windows": "windows",
+    "//conditions:default": "linux",
+})
+
+_MPN_ASM_SRCS = select({
+    "@platforms//cpu:aarch64": glob(["mpn/arm64/**/*.asm"]),
+    "@platforms//cpu:arm": glob(["mpn/arm/**/*.asm"]),
+    "@platforms//cpu:arm64": glob(["mpn/arm64/**/*.asm"]),
+    "@platforms//cpu:arm64e": glob(["mpn/arm64/**/*.asm"]),
+    "@platforms//cpu:armv7": glob(["mpn/arm/**/*.asm"]),
+    "@platforms//cpu:i386": glob(["mpn/x86/**/*.asm"]),
+    "@platforms//cpu:mips64": glob(["mpn/mips64/**/*.asm"]),
+    "@platforms//cpu:ppc": glob(["mpn/powerpc32/**/*.asm"]),
+    "@platforms//cpu:ppc32": glob(["mpn/powerpc32/**/*.asm"]),
+    "@platforms//cpu:ppc64le": glob(["mpn/powerpc64/**/*.asm"]),
+    "@platforms//cpu:riscv64": glob(["mpn/riscv/**/*.asm"]),
+    "@platforms//cpu:s390x": glob(["mpn/s390_64/**/*.asm"]),
+    "@platforms//cpu:x86_32": glob(["mpn/x86/**/*.asm"]),
+    "@platforms//cpu:x86_64": glob(["mpn/x86_64/**/*.asm"]),
+    "//conditions:default": [],
+})
+
+_MPN_GENERIC_SRCS = glob(["mpn/generic/*.c"])
+
+_MPN_M4_DEPS = glob(["mpn/**/*.m4"]) + [":config_m4"]
+
+# =============================================================================
 # Package info (AC_INIT equivalent)
 # =============================================================================
 
 package_info(
     name = "package",
-    package_name = "gmp",
-    package_version = "6.3.0",
+    aliases = {
+        "PACKAGE": "PACKAGE_NAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
     strip_bcr_version = True,
 )
 
@@ -145,16 +261,19 @@ autoconf(
             "mmap",
             "mprotect",
             "nl_langinfo",
+            "obstack_vprintf",
             "popen",
             "raise",
             "sigaction",
             "sigaltstack",
+            "sigstack",
             "strchr",
             "strerror",
             "strnlen",
             "strtol",
             "strtoul",
             "sysconf",
+            "sysctl",
             "times",
             "vsnprintf",
         ]) +
@@ -166,6 +285,7 @@ autoconf(
             "long long",
             "ptrdiff_t",
             "quad_t",
+            "stack_t",
             "uint_least32_t",
         ]) + [
             # -- Sizes -> SIZEOF_* --
@@ -198,6 +318,12 @@ autoconf(
         ) + macros.AC_CHECK_DECLS(
             ["optarg"],
             includes = ["#include <unistd.h>"],
+        ) + macros.AC_CHECK_DECLS(
+            [
+                "sys_errlist",
+                "sys_nerr",
+            ],
+            includes = ["#include <errno.h>"],
         ) + [
             # -- Compiler features --
             checks.AC_TRY_COMPILE(
@@ -230,14 +356,26 @@ int main() { return bar(); }
                 define = "HAVE_SSTREAM",
                 language = "cpp",
             ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <locale>
+int main() { std::locale loc(""); return 0; }
+""",
+                define = "HAVE_STD__LOCALE",
+                language = "cpp",
+            ),
+            checks.AC_C_RESTRICT(),
             # -- GMP-specific fixed defines --
             checks.AC_DEFINE(
                 "__GMP_WITHIN_CONFIGURE",
                 value = "0",
             ),
-            checks.AC_DEFINE(
-                "NO_ASM",
-                value = "1",
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <alloca.h>
+int main() { void *p = alloca(1); return p != 0; }
+""",
+                define = "HAVE_ALLOCA",
             ),
             checks.AC_DEFINE(
                 "WANT_TMP_ALLOCA",
@@ -256,18 +394,16 @@ int main() { return bar(); }
                 requires = ["HAVE_SYS_TIME_H"],
                 value = "1",
             ),
-            checks.AC_DEFINE(
-                "PACKAGE",
-                value = '"gmp"',
-            ),
-            checks.AC_DEFINE(
-                "VERSION",
-                value = '"6.3.0"',
-            ),
-            checks.AC_DEFINE(
+        ] + select({
+            "@platforms//os:macos": [checks.AC_DEFINE(
                 "LSYM_PREFIX",
                 value = '"L"',
-            ),
+            )],
+            "//conditions:default": [checks.AC_DEFINE(
+                "LSYM_PREFIX",
+                value = '".L"',
+            )],
+        }) + [
             checks.AC_DEFINE(
                 "LT_OBJDIR",
                 value = '".libs/"',
@@ -282,6 +418,14 @@ int main() { return bar(); }
                 checks.AC_DEFINE(
                     "HAVE_HOST_CPU_FAMILY_x86_64",
                     value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "HAVE_CALLING_CONVENTIONS",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "HAVE_SPEED_CYCLECOUNTER",
+                    value = "2",
                 ),
             ],
             "//conditions:default": [],
@@ -368,8 +512,18 @@ gmp_copy(
     name = "gmp_mparam_h",
     src = select({
         "@platforms//cpu:aarch64": "mpn/arm64/gmp-mparam.h",
+        "@platforms//cpu:arm": "mpn/arm/gmp-mparam.h",
+        "@platforms//cpu:arm64": "mpn/arm64/gmp-mparam.h",
+        "@platforms//cpu:arm64e": "mpn/arm64/gmp-mparam.h",
+        "@platforms//cpu:armv7": "mpn/arm/gmp-mparam.h",
+        "@platforms//cpu:i386": "mpn/x86/gmp-mparam.h",
+        "@platforms//cpu:mips64": "mpn/mips64/gmp-mparam.h",
+        "@platforms//cpu:ppc": "mpn/powerpc32/gmp-mparam.h",
+        "@platforms//cpu:ppc32": "mpn/powerpc32/gmp-mparam.h",
+        "@platforms//cpu:s390x": "mpn/s390_64/gmp-mparam.h",
+        "@platforms//cpu:x86_32": "mpn/x86/gmp-mparam.h",
         "@platforms//cpu:x86_64": "mpn/x86_64/gmp-mparam.h",
-        "//conditions:default": "mpn/x86_64/gmp-mparam.h",
+        "//conditions:default": "mpn/generic/gmp-mparam.h",
     }),
     out = "gmp-mparam.h",
 )
@@ -572,6 +726,59 @@ gmp_gen(
 )
 
 # =============================================================================
+# config.m4 (architecture-specific M4 definitions for .asm processing)
+# =============================================================================
+
+gmp_config_m4(
+    name = "config_m4",
+    arch = select({
+        "@platforms//cpu:aarch64": "aarch64",
+        "@platforms//cpu:arm": "arm",
+        "@platforms//cpu:ppc64le": "powerpc64",
+        "@platforms//cpu:s390x": "s390_64",
+        "@platforms//cpu:x86_64": "x86_64",
+        "//conditions:default": "generic",
+    }),
+    mparam_h = ":gmp_mparam_h",
+    os = select({
+        "@platforms//os:linux": "linux",
+        "@platforms//os:macos": "macos",
+        "@platforms//os:windows": "windows",
+        "//conditions:default": "linux",
+    }),
+)
+
+# =============================================================================
+# MPN function targets (per-function, architecture-aware)
+# =============================================================================
+
+[
+    gmp_mpn_m4(
+        name = fn,
+        arch = _MPN_ARCH,
+        asm_srcs = _MPN_ASM_SRCS,
+        cpu = ":cpu",
+        generic_srcs = _MPN_GENERIC_SRCS,
+        m4_deps = _MPN_M4_DEPS,
+        operation = fn,
+        os = _MPN_OS,
+    )
+    for fn in _ALL_MPN_FUNCTIONS
+]
+
+# =============================================================================
+# HAVE_NATIVE_mpn_* extraction from assembly PROLOGUE declarations
+# =============================================================================
+
+gmp_native_defs(
+    name = "native_defs",
+    arch = _MPN_ARCH,
+    asm_srcs = _MPN_ASM_SRCS,
+    cpu = ":cpu",
+    os = _MPN_OS,
+)
+
+# =============================================================================
 # Internal headers (private, used by all GMP sources)
 # =============================================================================
 
@@ -588,6 +795,7 @@ cc_library(
         ":gen_sieve_table_h",
         ":gmp_h",
         ":gmp_mparam_h",
+        ":native_defs",
     ],
     includes = ["."],
     textual_hdrs = [
@@ -599,57 +807,13 @@ cc_library(
 )
 
 # =============================================================================
-# Multi-function MPN wrappers (compiled as part of gmp, see srcs below)
+# Compiler options
 # =============================================================================
 
 _GMP_COPTS = [
     "-D__GMP_WITHIN_GMP",
     "-w",
 ]
-
-_MPN_MULTI_SRCS = \
-    gmp_mpn_multi(
-        name = "logops",
-        src = "mpn/generic/logops_n.c",
-        operations = [
-            "and_n",
-            "andn_n",
-            "nand_n",
-            "ior_n",
-            "iorn_n",
-            "nior_n",
-            "xor_n",
-            "xnor_n",
-        ],
-    ) + gmp_mpn_multi(
-        name = "popham",
-        src = "mpn/generic/popham.c",
-        operations = [
-            "popcount",
-            "hamdist",
-        ],
-    ) + gmp_mpn_multi(
-        name = "sec_aors_1",
-        src = "mpn/generic/sec_aors_1.c",
-        operations = [
-            "sec_add_1",
-            "sec_sub_1",
-        ],
-    ) + gmp_mpn_multi(
-        name = "sec_div",
-        src = "mpn/generic/sec_div.c",
-        operations = [
-            "sec_div_qr",
-            "sec_div_r",
-        ],
-    ) + gmp_mpn_multi(
-        name = "sec_pi1_div",
-        src = "mpn/generic/sec_pi1_div.c",
-        operations = [
-            "sec_pi1_div_qr",
-            "sec_pi1_div_r",
-        ],
-    )
 
 # =============================================================================
 # libgmp
@@ -684,9 +848,8 @@ cc_library(
         # Generated sources
         ":gen_fib_table_c",
         ":gen_mp_bases_c",
-    ] + _MPN_MULTI_SRCS + glob(
+    ] + glob(
         [
-            "mpn/generic/*.c",
             "mpz/*.c",
             "mpq/*.c",
             "mpf/*.c",
@@ -694,32 +857,19 @@ cc_library(
             "scanf/*.c",
             "rand/*.c",
         ],
-        exclude = [
-            # Multi-function files handled above
-            "mpn/generic/logops_n.c",
-            "mpn/generic/popham.c",
-            "mpn/generic/sec_aors_1.c",
-            "mpn/generic/sec_div.c",
-            "mpn/generic/sec_pi1_div.c",
-            # Optional/arch-specific files not in core generic build
-            "mpn/generic/udiv_w_sdiv.c",
-            "mpn/generic/add_n_sub_n.c",
-            "mpn/generic/div_qr_1n_pi2.c",
-            "mpn/generic/div_qr_1u_pi2.c",
-        ],
     ),
     hdrs = [":gmp_h"],
-    copts = _GMP_COPTS,
+    copts = _GMP_COPTS + select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/FInative_defs.h"],
+        "//conditions:default": [
+            "-include",
+            "native_defs.h",
+        ],
+    }),
     includes = ["."],
-    textual_hdrs = [
+    textual_hdrs = glob(["mpn/generic/*.c"]) + [
         "mpn/generic/gmp-mparam.h",
         "mpn/generic/hgcd2-div.h",
-        # Multi-function sources included by generated wrappers
-        "mpn/generic/logops_n.c",
-        "mpn/generic/popham.c",
-        "mpn/generic/sec_aors_1.c",
-        "mpn/generic/sec_div.c",
-        "mpn/generic/sec_pi1_div.c",
         "mpz/aors.h",
         "mpz/aors_ui.h",
         "mpz/fits_s.h",
@@ -729,6 +879,22 @@ cc_library(
         "rand/randmt.h",
     ],
     visibility = ["//visibility:public"],
+    deps = [
+        ":_gmp_hdrs",
+        ":_mpn",
+    ],
+)
+
+# MPN function implementations (assembly + generic C).
+# Separate library to avoid -include native_defs.h on .s files.
+cc_library(
+    name = "_mpn",
+    srcs = [":" + fn for fn in _ALL_MPN_FUNCTIONS],
+    copts = _GMP_COPTS,
+    textual_hdrs = glob(["mpn/generic/*.c"]) + [
+        "mpn/generic/gmp-mparam.h",
+        "mpn/generic/hgcd2-div.h",
+    ],
     deps = [":_gmp_hdrs"],
 )
 
@@ -753,7 +919,13 @@ cc_library(
         "-D__GMP_WITHIN_GMP",
         "-D__GMP_WITHIN_GMPXX",
         "-w",
-    ],
+    ] + select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/FInative_defs.h"],
+        "//conditions:default": [
+            "-include",
+            "native_defs.h",
+        ],
+    }),
     includes = ["."],
     visibility = ["//visibility:public"],
     deps = [

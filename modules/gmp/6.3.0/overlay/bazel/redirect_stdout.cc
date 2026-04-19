@@ -1,9 +1,16 @@
-// Runs a tool binary and redirects its stdout to a file.
-// Usage: redirect_stdout <output_file> <tool> [args...]
-//
-// This wrapper exists because GMP's gen-* programs write generated
-// headers/sources to stdout. Bazel's ctx.actions.run does not support
-// stdout capture, so this wrapper bridges the gap.
+/**
+ * @file redirect_stdout.cc
+ * @brief Runs a tool binary and redirects its stdout to a file.
+ *
+ * GMP's gen-* programs write generated headers/sources to stdout.
+ * Bazel's @c ctx.actions.run does not support stdout capture, so this
+ * wrapper bridges the gap.
+ *
+ * @par Usage
+ * @code
+ * redirect_stdout <output_file> <tool> [args...]
+ * @endcode
+ */
 
 #include <cstdio>
 #include <cstdlib>
