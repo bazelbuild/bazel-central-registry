@@ -518,6 +518,12 @@ class BcrValidator:
         # Use archive_type from source.json if specified, otherwise let shutil guess from filename
         # https://bazel.build/rules/lib/repo/http#http_archive-type
         # https://docs.python.org/3/library/shutil.html#shutil.unpack_archive
+        archive_type = source.get("archive_type")
+        if not archive_type:
+            for ext in ["tar.gz", "tgz", "tar.bz2", "tar.xz", "tar", "zip", "jar", "war", "aar"]:
+                if str(archive_file).endswith("." + ext):
+                    archive_type = ext
+                    break
         format = {
             "tar.gz": "gztar",
             "tgz": "gztar",
@@ -528,7 +534,7 @@ class BcrValidator:
             "jar": "zip",
             "war": "zip",
             "aar": "zip",
-        }.get(source.get("archive_type"))
+        }.get(archive_type)
         # Use PEP 706 safe extraction if available (Python 3.12+)
         if sys.version_info >= (3, 12) and format != "zip":
             shutil.unpack_archive(str(archive_file), output_dir, format=format, filter="data")
