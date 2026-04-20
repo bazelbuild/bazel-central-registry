@@ -24,7 +24,7 @@ mkdir -p modules/{module_name}/{version}
 ```
 
 ### 2. Initialize Files
-Copy `MODULE.bazel`, `source.json`, and `presubmit.yml` from a previous version to the newly created directory.
+Copy `MODULE.bazel`, `source.json`, and `presubmit.yml` from a previous version to the newly created directory. Update version info as needed.
 
 ### 3. Update Metadata
 Add the new version to `modules/{module_name}/metadata.json`.
