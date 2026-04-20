@@ -22,7 +22,7 @@ Registry maintainers and module maintainers maintain the BCR. BCR maintainers ar
 - Review and accept contributions made by the community that align with the BCR contribution policy. Maintainers can merge any PR they have carefully reviewed and is passing CI. BCR maintainer attention is required when:
   - A PR changes a module that has no existing maintainers: this requires the BCR maintainer to approve the PR using GitHub's PR review workflow.
     - This includes when the PR adds an entirely new module, or if the module's sole existing maintainer is also the PR author (since a PR author cannot approve their own PR).
-  - A PR changes the presubmit.yml file for a module: this requires the BCR maintainer to apply the `presubmit-auto-run` label to unblock CI.
+  - A PR changes the presubmit.yml file for a module, beyond just platform names or bazel versions: this requires the BCR maintainer to apply the `presubmit-auto-run` label to unblock CI.
   - A PR author is a first-time contributor to the BCR: this requires the BCR maintainer to click the "Approve and run" button to unblock certain GitHub actions.
 - Assess the health of the BCR by monitoring the BCR testing and serving infrastructure.
 - Identify and appoint module maintainers.

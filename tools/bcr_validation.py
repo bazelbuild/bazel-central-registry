@@ -464,7 +464,7 @@ class BcrValidator:
             self.report(BcrValidationResult.GOOD, "The git_repository appears stable.")
 
     def verify_presubmit_yml_change(self, module_name, version):
-        """Verify if the presubmit.yml is the same as the previous version."""
+        """Verify if the presubmit.yml is similar enough to the previous version."""
         latest_snapshot = self.upstream.get_latest_module_version(module_name)
         if not latest_snapshot:
             self.report(
@@ -472,30 +472,59 @@ class BcrValidator:
                 f"Module version {module_name}@{version} is new, the presubmit.yml file "
                 "should be reviewed by a BCR maintainer.",
             )
-        else:
-            previous_presubmit_content = latest_snapshot.presubmit_yml_lines()
-            current_presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
-            current_presubmit_content = open(current_presubmit_yml, "r").readlines()
-            diff = list(
-                unified_diff(
-                    previous_presubmit_content,
-                    current_presubmit_content,
-                    fromfile="HEAD",
-                    tofile=str(current_presubmit_yml),
-                )
+            return
+
+        # Load the current yaml from the local fork but the previous yml from upstream.
+        # (The local fork might not have merged the latest upstream changes.)
+        previous_presubmit_lines = latest_snapshot.presubmit_yml_lines()
+        current_presubmit_yml = self.registry.get_presubmit_yml_path(module_name, version)
+        current_presubmit_lines = open(current_presubmit_yml, "r").readlines()
+
+        # When nothing at all is changed, we don't even need to parse the documents.
+        if current_presubmit_lines == previous_presubmit_lines:
+            self.report(
+                BcrValidationResult.GOOD,
+                "The presubmit.yml file exactly matches the previous version.",
             )
-            if diff:
-                self.report(
-                    BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
-                    f"The presubmit.yml file of {module_name}@{version} doesn't match its previous version "
-                    f"{module_name}@{latest_snapshot.version}, the following presubmit.yml file change "
-                    "should be reviewed by a BCR maintainer.\n    " + "    ".join(diff),
-                )
-            else:
-                self.report(
-                    BcrValidationResult.GOOD,
-                    "The presubmit.yml file matches the previous version.",
-                )
+            return
+
+        # We'll compare the parsed representation of the two presubmit.yml files.
+        # Differences in only comments / whitespace don't need BCR maintainer review.
+        previous_presubmit_doc = yaml.safe_load("".join(previous_presubmit_lines))
+        current_presubmit_doc = yaml.safe_load("".join(current_presubmit_lines))
+        if current_presubmit_doc == previous_presubmit_doc:
+            self.report(
+                BcrValidationResult.GOOD,
+                "The presubmit.yml file matches the previous version, modulo comments and whitespace.",
+            )
+            return
+
+        # Differences in only platform names or bazel versions don't need BCR maintainer review.
+        for doc in (previous_presubmit_doc, current_presubmit_doc):
+            for scrub in ("bazel", "platform"):
+                doc.setdefault("matrix", {})[scrub] = None
+        if current_presubmit_doc == previous_presubmit_doc:
+            self.report(
+                BcrValidationResult.GOOD,
+                "The presubmit.yml file matches the previous version, modulo supported platforms and versions.",
+            )
+            return
+
+        # The files were not similar enough. Flag for BCR maintainer review.
+        diff = list(
+            unified_diff(
+                previous_presubmit_lines,
+                current_presubmit_lines,
+                fromfile="HEAD",
+                tofile=str(current_presubmit_yml),
+            )
+        )
+        self.report(
+            BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
+            f"The presubmit.yml file of {module_name}@{version} differs from its previous version "
+            f"{module_name}@{latest_snapshot.version}, the following presubmit.yml file change "
+            "should be reviewed by a BCR maintainer.\n    " + "    ".join(diff),
+        )
 
     def add_module_dot_bazel_patch(self, diff, module_name, version):
         """Adding a patch file for MODULE.bazel according to the diff result."""
