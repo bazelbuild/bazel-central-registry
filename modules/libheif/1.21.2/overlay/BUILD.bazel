@@ -1,0 +1,434 @@
+"""https://github.com/strukturag/libheif/"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:brotli_deps.bzl", "brotli_dep")
+
+# Version (must match MODULE.bazel)
+_VERSION_MAJOR = 1
+
+_VERSION_MINOR = 21
+
+_VERSION_PATCH = 2
+
+_VERSION = "{}.{}.{}".format(_VERSION_MAJOR, _VERSION_MINOR, _VERSION_PATCH)
+
+package_info(
+    name = "package",
+    package_name = "libheif",
+    module_bazel = "MODULE.bazel",
+    strip_bcr_version = True,
+    visibility = ["//:__subpackages__"],
+)
+
+# ===== Flags =================================================================
+
+# Enable built-in libde265 HEVC decoder (CMakeLists.txt:126)
+bool_flag(
+    name = "with_libde265",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_libde265",
+    flag_values = {":with_libde265": "True"},
+)
+
+# Enable zlib compression support (CMakeLists.txt:489)
+bool_flag(
+    name = "with_zlib",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_zlib",
+    flag_values = {":with_zlib": "True"},
+)
+
+# Enable Brotli compression support (CMakeLists.txt:497)
+bool_flag(
+    name = "with_brotli",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_brotli",
+    flag_values = {":with_brotli": "True"},
+)
+
+# Brotli's upstream BUILD.bazel uses -Werror which fails on some
+# compilers.  Build brotli behind a transition that suppresses the
+# warnings (mirrors brotli's own presubmit.yml workaround flags).
+
+_BROTLI_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": [
+        "-w",
+    ],
+})
+
+_BROTLI_CONLYOPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": [
+        "-w",
+    ],
+})
+
+_BROTLI_CXXOPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+brotli_dep(
+    name = "_brotlidec",
+    conlyopts = _BROTLI_CONLYOPTS,
+    copts = _BROTLI_COPTS,
+    cxxopts = _BROTLI_CXXOPTS,
+    dep = "@brotli//:brotlidec",
+)
+
+brotli_dep(
+    name = "_brotlienc",
+    conlyopts = _BROTLI_CONLYOPTS,
+    copts = _BROTLI_COPTS,
+    cxxopts = _BROTLI_CXXOPTS,
+    dep = "@brotli//:brotlienc",
+)
+
+# Enable multithreading support (CMakeLists.txt:532)
+bool_flag(
+    name = "multithreading",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_multithreading",
+    flag_values = {":multithreading": "True"},
+)
+
+# heif_version.h (replaces cmake configure_file of heif_version.h.in)
+write_file(
+    name = "_heif_version_h",
+    out = "libheif/heif_version.h",
+    content = [
+        "#ifndef LIBHEIF_HEIF_VERSION_H",
+        "#define LIBHEIF_HEIF_VERSION_H",
+        "#define LIBHEIF_NUMERIC_VERSION (({major}<<24) | ({minor}<<16) | ({patch}<<8) | 0)".format(
+            major = _VERSION_MAJOR,
+            minor = _VERSION_MINOR,
+            patch = _VERSION_PATCH,
+        ),
+        '#define LIBHEIF_VERSION "{}"'.format(_VERSION),
+        '#define LIBHEIF_PLUGIN_DIRECTORY ""',
+        "#endif",
+    ],
+)
+
+alias(
+    name = "libheif",
+    actual = ":heif",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "heif",
+    srcs = [
+        # libheif_sources (libheif/CMakeLists.txt:32-183)
+        "libheif/bitstream.cc",
+        "libheif/bitstream.h",
+        "libheif/box.cc",
+        "libheif/box.h",
+        "libheif/error.cc",
+        "libheif/error.h",
+        "libheif/context.cc",
+        "libheif/context.h",
+        "libheif/file.cc",
+        "libheif/file.h",
+        "libheif/file_layout.h",
+        "libheif/file_layout.cc",
+        "libheif/pixelimage.cc",
+        "libheif/pixelimage.h",
+        "libheif/plugin_registry.cc",
+        "libheif/nclx.cc",
+        "libheif/nclx.h",
+        "libheif/plugin_registry.h",
+        "libheif/security_limits.cc",
+        "libheif/security_limits.h",
+        "libheif/init.cc",
+        "libheif/init.h",
+        "libheif/logging.h",
+        "libheif/logging.cc",
+        "libheif/compression.h",
+        "libheif/compression_brotli.cc",
+        "libheif/compression_zlib.cc",
+        "libheif/common_utils.cc",
+        "libheif/common_utils.h",
+        "libheif/region.cc",
+        "libheif/region.h",
+        "libheif/brands.cc",
+        "libheif/brands.h",
+        "libheif/text.cc",
+        "libheif/text.h",
+        "libheif/api_structs.h",
+        "libheif/mdat_data.h",
+        "libheif/mini.cc",
+        "libheif/mini.h",
+        "libheif/plugins_unix.h",
+        "libheif/plugins_windows.h",
+        # api sources
+        "libheif/api/libheif/heif.cc",
+        "libheif/api/libheif/heif_library.cc",
+        "libheif/api/libheif/heif_image.cc",
+        "libheif/api/libheif/heif_color.cc",
+        "libheif/api/libheif/heif_regions.cc",
+        "libheif/api/libheif/heif_plugin.cc",
+        "libheif/api/libheif/heif_properties.cc",
+        "libheif/api/libheif/heif_items.cc",
+        "libheif/api/libheif/heif_sequences.cc",
+        "libheif/api/libheif/heif_tai_timestamps.cc",
+        "libheif/api/libheif/heif_brands.cc",
+        "libheif/api/libheif/heif_metadata.cc",
+        "libheif/api/libheif/heif_aux_images.cc",
+        "libheif/api/libheif/heif_entity_groups.cc",
+        "libheif/api/libheif/heif_security.cc",
+        "libheif/api/libheif/heif_encoding.cc",
+        "libheif/api/libheif/heif_decoding.cc",
+        "libheif/api/libheif/heif_image_handle.cc",
+        "libheif/api/libheif/heif_context.cc",
+        "libheif/api/libheif/heif_tiling.cc",
+        "libheif/api/libheif/heif_uncompressed.cc",
+        "libheif/api/libheif/heif_text.cc",
+        "libheif/api/libheif/heif_experimental.cc",
+        # codecs
+        "libheif/codecs/decoder.h",
+        "libheif/codecs/decoder.cc",
+        "libheif/codecs/encoder.h",
+        "libheif/codecs/encoder.cc",
+        "libheif/codecs/hevc_boxes.cc",
+        "libheif/codecs/hevc_boxes.h",
+        "libheif/codecs/hevc_dec.cc",
+        "libheif/codecs/hevc_dec.h",
+        "libheif/codecs/hevc_enc.cc",
+        "libheif/codecs/hevc_enc.h",
+        "libheif/codecs/avif_enc.cc",
+        "libheif/codecs/avif_enc.h",
+        "libheif/codecs/avif_dec.cc",
+        "libheif/codecs/avif_dec.h",
+        "libheif/codecs/avif_boxes.cc",
+        "libheif/codecs/avif_boxes.h",
+        "libheif/codecs/jpeg_boxes.h",
+        "libheif/codecs/jpeg_boxes.cc",
+        "libheif/codecs/jpeg_dec.h",
+        "libheif/codecs/jpeg_dec.cc",
+        "libheif/codecs/jpeg_enc.h",
+        "libheif/codecs/jpeg_enc.cc",
+        "libheif/codecs/jpeg2000_dec.h",
+        "libheif/codecs/jpeg2000_dec.cc",
+        "libheif/codecs/jpeg2000_enc.h",
+        "libheif/codecs/jpeg2000_enc.cc",
+        "libheif/codecs/jpeg2000_boxes.h",
+        "libheif/codecs/jpeg2000_boxes.cc",
+        "libheif/codecs/vvc_dec.h",
+        "libheif/codecs/vvc_dec.cc",
+        "libheif/codecs/vvc_enc.h",
+        "libheif/codecs/vvc_enc.cc",
+        "libheif/codecs/vvc_boxes.h",
+        "libheif/codecs/vvc_boxes.cc",
+        "libheif/codecs/avc_boxes.h",
+        "libheif/codecs/avc_boxes.cc",
+        "libheif/codecs/avc_dec.h",
+        "libheif/codecs/avc_dec.cc",
+        "libheif/codecs/avc_enc.h",
+        "libheif/codecs/avc_enc.cc",
+        # codecs/uncompressed (needed by heif_experimental.cc and track_visual.cc)
+        "libheif/codecs/uncompressed/decoder_abstract.cc",
+        "libheif/codecs/uncompressed/decoder_abstract.h",
+        "libheif/codecs/uncompressed/decoder_component_interleave.cc",
+        "libheif/codecs/uncompressed/decoder_component_interleave.h",
+        "libheif/codecs/uncompressed/decoder_mixed_interleave.cc",
+        "libheif/codecs/uncompressed/decoder_mixed_interleave.h",
+        "libheif/codecs/uncompressed/decoder_pixel_interleave.cc",
+        "libheif/codecs/uncompressed/decoder_pixel_interleave.h",
+        "libheif/codecs/uncompressed/decoder_row_interleave.cc",
+        "libheif/codecs/uncompressed/decoder_row_interleave.h",
+        "libheif/codecs/uncompressed/decoder_tile_component_interleave.cc",
+        "libheif/codecs/uncompressed/decoder_tile_component_interleave.h",
+        "libheif/codecs/uncompressed/unc_boxes.cc",
+        "libheif/codecs/uncompressed/unc_boxes.h",
+        "libheif/codecs/uncompressed/unc_codec.cc",
+        "libheif/codecs/uncompressed/unc_codec.h",
+        "libheif/codecs/uncompressed/unc_dec.cc",
+        "libheif/codecs/uncompressed/unc_dec.h",
+        "libheif/codecs/uncompressed/unc_enc.cc",
+        "libheif/codecs/uncompressed/unc_enc.h",
+        "libheif/codecs/uncompressed/unc_types.h",
+        "libheif/plugins/encoder_uncompressed.cc",
+        "libheif/plugins/encoder_uncompressed.h",
+        "libheif/plugins/decoder_uncompressed.cc",
+        "libheif/plugins/decoder_uncompressed.h",
+        # image-items
+        "libheif/image-items/unc_image.cc",
+        "libheif/image-items/unc_image.h",
+        "libheif/image-items/hevc.cc",
+        "libheif/image-items/hevc.h",
+        "libheif/image-items/avif.cc",
+        "libheif/image-items/avif.h",
+        "libheif/image-items/jpeg.h",
+        "libheif/image-items/jpeg.cc",
+        "libheif/image-items/jpeg2000.h",
+        "libheif/image-items/jpeg2000.cc",
+        "libheif/image-items/vvc.h",
+        "libheif/image-items/vvc.cc",
+        "libheif/image-items/avc.h",
+        "libheif/image-items/avc.cc",
+        "libheif/image-items/mask_image.h",
+        "libheif/image-items/mask_image.cc",
+        "libheif/image-items/image_item.h",
+        "libheif/image-items/image_item.cc",
+        "libheif/image-items/grid.h",
+        "libheif/image-items/grid.cc",
+        "libheif/image-items/overlay.h",
+        "libheif/image-items/overlay.cc",
+        "libheif/image-items/iden.h",
+        "libheif/image-items/iden.cc",
+        "libheif/image-items/tiled.h",
+        "libheif/image-items/tiled.cc",
+        # color-conversion
+        "libheif/color-conversion/colorconversion.cc",
+        "libheif/color-conversion/colorconversion.h",
+        "libheif/color-conversion/rgb2yuv.cc",
+        "libheif/color-conversion/rgb2yuv.h",
+        "libheif/color-conversion/rgb2yuv_sharp.cc",
+        "libheif/color-conversion/rgb2yuv_sharp.h",
+        "libheif/color-conversion/yuv2rgb.cc",
+        "libheif/color-conversion/yuv2rgb.h",
+        "libheif/color-conversion/rgb2rgb.cc",
+        "libheif/color-conversion/rgb2rgb.h",
+        "libheif/color-conversion/monochrome.cc",
+        "libheif/color-conversion/monochrome.h",
+        "libheif/color-conversion/hdr_sdr.cc",
+        "libheif/color-conversion/hdr_sdr.h",
+        "libheif/color-conversion/alpha.cc",
+        "libheif/color-conversion/alpha.h",
+        "libheif/color-conversion/chroma_sampling.cc",
+        "libheif/color-conversion/chroma_sampling.h",
+        # sequences
+        "libheif/sequences/seq_boxes.h",
+        "libheif/sequences/seq_boxes.cc",
+        "libheif/sequences/chunk.h",
+        "libheif/sequences/chunk.cc",
+        "libheif/sequences/track.h",
+        "libheif/sequences/track.cc",
+        "libheif/sequences/track_visual.h",
+        "libheif/sequences/track_visual.cc",
+        "libheif/sequences/track_metadata.h",
+        "libheif/sequences/track_metadata.cc",
+        # always-included plugin sources (plugins/CMakeLists.txt:124-128)
+        "libheif/plugins/encoder_mask.h",
+        "libheif/plugins/encoder_mask.cc",
+        "libheif/plugins/nalu_utils.h",
+        "libheif/plugins/nalu_utils.cc",
+    ] + select({
+        # libde265 built-in backend (plugins/CMakeLists.txt:52-54)
+        ":_with_libde265": [
+            "libheif/plugins/decoder_libde265.cc",
+            "libheif/plugins/decoder_libde265.h",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        # public API headers (libheif/CMakeLists.txt:5-30)
+        "libheif/api/libheif/heif.h",
+        "libheif/api/libheif/heif_library.h",
+        "libheif/api/libheif/heif_image.h",
+        "libheif/api/libheif/heif_color.h",
+        "libheif/api/libheif/heif_error.h",
+        "libheif/api/libheif/heif_plugin.h",
+        "libheif/api/libheif/heif_properties.h",
+        "libheif/api/libheif/heif_regions.h",
+        "libheif/api/libheif/heif_items.h",
+        "libheif/api/libheif/heif_sequences.h",
+        "libheif/api/libheif/heif_tai_timestamps.h",
+        "libheif/api/libheif/heif_brands.h",
+        "libheif/api/libheif/heif_metadata.h",
+        "libheif/api/libheif/heif_aux_images.h",
+        "libheif/api/libheif/heif_entity_groups.h",
+        "libheif/api/libheif/heif_security.h",
+        "libheif/api/libheif/heif_encoding.h",
+        "libheif/api/libheif/heif_decoding.h",
+        "libheif/api/libheif/heif_image_handle.h",
+        "libheif/api/libheif/heif_context.h",
+        "libheif/api/libheif/heif_tiling.h",
+        "libheif/api/libheif/heif_uncompressed.h",
+        "libheif/api/libheif/heif_text.h",
+        "libheif/api/libheif/heif_experimental.h",
+        "libheif/api/libheif/heif_cxx.h",
+        ":_heif_version_h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/std:c++20",
+            "/w",
+        ],
+        "//conditions:default": [
+            "-std=c++20",
+            "-w",
+        ],
+    }),
+    defines = [
+        "LIBHEIF_STATIC_BUILD",
+        "WITH_UNCOMPRESSED_CODEC=1",
+    ],
+    includes = [
+        ".",
+        "libheif",
+        "libheif/api",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "LIBHEIF_EXPORTS",
+        "HAVE_BIT",
+        "IS_BIG_ENDIAN=0",
+    ] + select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": ["HAVE_VISIBILITY"],
+    }) + select({
+        ":_with_libde265": ["HAVE_LIBDE265=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_zlib": ["HAVE_ZLIB=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_brotli": ["HAVE_BROTLI=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_multithreading": [
+            "ENABLE_MULTITHREADING_SUPPORT=1",
+            "ENABLE_PARALLEL_TILE_DECODING=1",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":_with_libde265": ["@libde265"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_zlib": ["@zlib"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_brotli": [
+            ":_brotlidec",
+            ":_brotlienc",
+        ],
+        "//conditions:default": [],
+    }),
+)
