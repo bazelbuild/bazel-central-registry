@@ -7,8 +7,7 @@ components with unsatisfiable deps, then writes component_resolved.bzl with
 one dict per (OS, CPU) combination.
 
 Usage:
-    python3 generate_resolved_profiles.py [--defs component_defs.bzl] \
-                                          [--output component_resolved.bzl]
+    python3 generate_resolved_profiles.py [--version 7.1.1.bcr.beta.5]
 
 Must be re-run whenever component_defs.bzl changes (new components, changed
 dependency edges, or updated profiles).
@@ -19,7 +18,8 @@ import ast
 import os
 import re
 import sys
-from collections import OrderedDict
+
+from _overlay_utils import add_version_arg, resolve_overlay_dir
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +271,6 @@ def generate_output(
         for cpu in CPU_NAMES:
             combo_key = f"{os_name}-{cpu}"
             public_name = f"RESOLVED_{os_name.upper()}_{cpu.upper()}"
-            os_key = os_name
             if combo_key in os_cpu_profiles:
                 # CPU-specific override exists -- emit full dict
                 sections.append(format_dict(public_name, os_cpu_profiles[combo_key]))
@@ -306,19 +305,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Pre-compute resolved FFmpeg component profiles.",
     )
-    parser.add_argument(
-        "--defs",
-        default=os.path.join(os.path.dirname(__file__), "component_defs.bzl"),
-        help="Path to component_defs.bzl (default: same directory as this script)",
-    )
-    parser.add_argument(
-        "--output",
-        default=os.path.join(os.path.dirname(__file__), "component_resolved.bzl"),
-        help="Path to write component_resolved.bzl",
-    )
+    add_version_arg(parser)
     args = parser.parse_args()
 
-    with open(args.defs) as f:
+    overlay = resolve_overlay_dir(args.version)
+    defs_path = os.path.join(overlay, "component_defs.bzl")
+    output_path = os.path.join(overlay, "component_resolved.bzl")
+
+    with open(defs_path) as f:
         text = f.read()
 
     # Extract data from component_defs.bzl
@@ -389,9 +383,9 @@ def main():
 
     output = generate_output(os_profiles, os_cpu_profiles, default_state)
 
-    with open(args.output, "w") as f:
+    with open(output_path, "w") as f:
         f.write(output)
-    print(f"  wrote {args.output}", file=sys.stderr)
+    print(f"  wrote {output_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
