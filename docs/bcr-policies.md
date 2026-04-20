@@ -15,6 +15,7 @@ Registry maintainers and module maintainers maintain the BCR. BCR maintainers ar
 
 - We recommend contributing and maintaining a Bazel module before becoming a BCR Maintainer.
 - All maintainer requests will be reviewed by the [Rules Authors SIG](https://github.com/bazel-contrib/SIG-rules-authors) and the Bazel team before approval.
+- Once approved, new maintainers undergo a shadow onboarding process. See the [Maintainer Onboarding Guide](maintainer-onboarding.md) for details.
 
 ### Responsibilities of a BCR maintainer
 
@@ -48,6 +49,14 @@ Here are steps that a BCR maintainer should keep in mind when reviewing PRs:
 - When a PR's CI checks are blocked because its presubmit.yml has changed, review those changes before applying the `presubmit-auto-run` label to unblock CI.
   - Look for the "Generate module diff" check, which produces a diff of the module version under review versus the latest checked-in version.
   - If possible, encourage PR authors to add the latest LTS track to the `bazel` field in `presubmit.yml`.
+- When a module maintainer is not responsive, a BCR maintainer can step in and merge the pull request. However, you must leave a comment notifying the module maintainer when doing so.
+
+### Removal or retirement of a BCR maintainer
+
+A BCR maintainer may be removed or retired from their duties under the following situations:
+- **Inactivity:** Prolonged inactivity (greater than 6 months) without a declared leave of absence.
+- **Voluntary Resignation:** Maintainers can step down at any time by sending a notification to the Rules Authors SIG or the Bazel team.
+- **Violation of Policies:** Continuous failure to conform to standard review policies or violations of the Code of Conduct.
 
 ## Become a module maintainer
 
