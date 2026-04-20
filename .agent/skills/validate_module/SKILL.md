@@ -30,6 +30,8 @@ bazel run //tools:update_integrity -- {module_name} --version={version}
 ### 3. Overlay vs Patches
 - **overlay/**: Add or overwrite files. Requires `bazel_compatibility >= 7.2.1` in `MODULE.bazel`.
 - **patches/**: Modify existing upstream source files using `.patch` files.
+- **README.md**: Add a README.md if the purpose of overlay or patch files are
+  not obvious.
 
 ### 4. Consistency Check
 - If the source archive doesn't contain a MODULE.bazel, `modules/{module_name}/{version}/MODULE.bazel` should not exist.
