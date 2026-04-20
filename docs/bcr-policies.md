@@ -34,6 +34,10 @@ Here are steps that a BCR maintainer should keep in mind when reviewing PRs:
 - When a PR adds an entirely new module to the BCR, perform a sanity check on its name.
   - Ideally, the name is succinct and unambiguous. Overly generic names should be avoided unless it's well-known in the developer community. (If the project is hosted on GitHub, the number of stars would provide a good basic signal.) If necessary, ask the PR author to prepend their user or org to the module name.
   - For example, a module named `package-utils` would be too generic. `mycompany-package-utils` would work instead.
+  - Ultimately, try to minimize any potential confusion for users. Confusion could result from a module not doing what the name suggests, or from the module duplicating well-established, existing options.
+    - For example, `rules_objc` would likely be a bad name for a module that offers a simple wrapper around `rules_cc`, since `rules_cc` is the well-maintained, official ruleset that already covers Objective-C support. Official-sounding prefixes such as `rules_` or `toolchains_` in particular could lead new users away from the more well-maintained options.
+    - Prepending the user or org name to the module name can also reduce confusion; it's much easier to tell that `mycompany_rules_objc` might not be the community standard ruleset.
+  - If you're unsure, start a thread in the `#bcr-maintainers` channel on the Bazel Slack server.
 - When a PR adds to a module with no existing maintainers (including if the module is new), encourage the PR author to take on module maintainership.
   - Modules with no maintainers always require BCR maintainer review, which adds to response times and toil.
 - When a module version uses overlays, remind PR authors to include `bazel_compatibility` of at least `7.2.1`.
