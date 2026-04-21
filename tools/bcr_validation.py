@@ -613,7 +613,9 @@ class BcrValidator:
             self.report(BcrValidationResult.FAILED, f"{module_file} must not be a symlink.")
 
         # Apply patch files if there are any, also verify their integrity values
-        source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
+        source_root = output_dir.joinpath(source.get("strip_prefix", "")).resolve()
+        if not source_root.is_relative_to(output_dir.resolve()):
+            raise BcrValidationException(f"strip_prefix escapes the source directory")
         if "patches" in source:
             for patch_name, expected_integrity in source["patches"].items():
                 patch_file = self.registry.get_patch_file_path(module_name, version, patch_name)
