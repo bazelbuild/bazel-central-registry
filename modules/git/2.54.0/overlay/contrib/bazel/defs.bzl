@@ -35,16 +35,9 @@ _GIT_CPU_DEFINES = select({
 _GIT_MACOS_ICONV_COPTS = [
     # v2.53.0: Work around broken system iconv on newer macOS versions.
     "-DICONV_RESTART_RESET",
-    # Homebrew libiconv exports libiconv_* symbols instead of iconv_*.
-    "-Diconv=libiconv",
-    "-Diconv_open=libiconv_open",
-    "-Diconv_close=libiconv_close",
 ]
 
 _GIT_MACOS_ICONV_LINKOPTS = [
-    # v2.53.0: Prefer Homebrew libiconv when installed.
-    "-L/opt/homebrew/opt/libiconv/lib",
-    "-L/usr/local/opt/libiconv/lib",
     "-liconv",
 ]
 
