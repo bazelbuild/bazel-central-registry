@@ -1,0 +1,39 @@
+module(
+    name = "librealsense",
+    version = "2.57.7",
+    bazel_compatibility = [">=7.2.1"],
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
+bazel_dep(name = "rules_libusb", version = "0.1.0-rc2.bcr.1")
+bazel_dep(name = "rules_license", version = "1.0.0")
+bazel_dep(name = "systemd", version = "260.1")
+
+libusb = use_extension("@rules_libusb//:extensions.bzl", "libusb")
+use_repo(libusb, "libusb")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# librealsense fetches nlohmann/json while running cmake. We patch that behavior out and replace it
+# with a copy we download ourselves. It might be possible to use @nlohmann_json from BCR but the
+# usecase is pretty different: here we download and copy files out into specific places in the
+# librealsense source tree (mirroring what it does in CMake via git clone). The @nlohmann_json rules
+# don't provide the source tree, it just provides the cc_library.
+http_archive(
+    name = "nlohmann_json_src",
+    build_file_content = """
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+)
+
+exports_files(["CMakeLists.txt"])
+    """,
+    sha256 = "42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa",
+    strip_prefix = "json",
+    urls = ["https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz"],
+)
