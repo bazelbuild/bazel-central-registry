@@ -1,0 +1,108 @@
+module(
+    name = "gazelle_ts",
+    version = "0.2.1",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_rs", version = "0.0.61")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "protobuf", version = "34.0.bcr.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "gazelle", version = "0.50.0")
+
+# rules_rs's Linux toolchains tag target_compatible_with with libc version
+# constraints from @llvm//constraints/libc (e.g. gnu.2.28). Bring in the llvm
+# module just for those constraint definitions; we do NOT register any LLVM
+# toolchain — we only use the constraint labels on a custom host platform
+# (see //:local_gnu_platform).
+bazel_dep(name = "llvm", version = "0.7.3")
+
+# rules_rust facade — exposes @rules_rust at the top level so BUILD files and
+# rules_rs's internal loads resolve to the same canonical repo (a prerequisite
+# for toolchain_type matching).
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
+
+# Rust toolchain. dev_dependency so a consumer that already pins a different
+# rust version doesn't see a tag-conflict here — rules_rs's toolchains
+# extension fails on mismatched tags across modules, and we only need this
+# when we're root building our own crates.
+toolchains = use_extension(
+    "@rules_rs//rs/toolchains:module_extension.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+toolchains.toolchain(
+    edition = "2024",
+    version = "1.95.0",
+)
+use_repo(toolchains, "default_rust_toolchains")
+
+# Rust toolchain only — we deliberately do NOT register @llvm//toolchain:all
+# (rules_rs's paved path) because rules_go's go_test fails to link against
+# lld with "relocation R_X86_64_64 cannot be used against symbol ...;
+# recompile with -fPIC". Bazel uses a single cc toolchain per platform, so
+# registering LLVM forces go links through lld too. Falling back to the
+# host's autodetected cc keeps both rust and go happy.
+#
+# Per dzbarsky (rules_rs maintainer) on PR #32: this is a Go compiler bug
+# fixed upstream and shipping in Go 1.27. Until then, a workaround exists at
+# https://github.com/hermeticbuild/hermetic-llvm/blob/main/e2e/wasm/MODULE.bazel#L15-L39
+# — archive_override rules_go to a branch with experimental_build_compiler_from_source
+# and patch the Go toolchain with the upstream cherry-pick, plus a gazelle
+# pure-mode patch. Too invasive for the size of our repo; revisit when Go
+# 1.27 lands.
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+# Crate resolution: rules_rs reads Cargo.toml/Cargo.lock directly (no repinning).
+# dev_dependency so a consumer's own crate.from_cargo() (a different Cargo
+# workspace) doesn't have to satisfy this one's path-deps. Only needed when
+# we're root building //crates/import_extractor:bin.
+crate = use_extension(
+    "@rules_rs//rs:extensions.bzl",
+    "crate",
+    dev_dependency = True,
+)
+crate.from_cargo(
+    name = "crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+use_repo(crate, "crates")
+
+# Prost/tonic codegen toolchains for rust_prost_library.
+rules_rust_prost = use_extension("@rules_rs//rs:rules_rust_prost.bzl", "rules_rust_prost")
+use_repo(rules_rust_prost, "rules_rust_prost")
+
+register_toolchains("@rules_rust_prost//:default_prost_toolchain")
+
+# Pre-built import-extractor binary, downloaded per-platform from the GH
+# release matching the version below. Consumers (BCR or otherwise) can point
+# this at a custom CDN via `import_extractor.toolchain(repositories = {...})`.
+# The extension dedupes by name: our default call here is overridden by a
+# consumer's `import_extractor.toolchain(...)` in their own root MODULE.bazel
+# (root-overrides-deps).
+import_extractor = use_extension("//import_extractor:extensions.bzl", "import_extractor")
+import_extractor.toolchain()
+use_repo(import_extractor, "import_extractor")
+
+# Go toolchain + module deps for the gazelle plugin.
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.24.12")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_bazelbuild_buildtools",
+    "org_golang_google_protobuf",
+)
