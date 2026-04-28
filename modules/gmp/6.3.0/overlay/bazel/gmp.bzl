@@ -110,16 +110,16 @@ gmp_config_m4 = rule(
     implementation = _gmp_config_m4_impl,
     attrs = {
         "arch": attr.string(
-            doc = "TODO",
+            doc = "Target CPU architecture (e.g. x86_64, aarch64, arm, generic).",
             mandatory = True,
         ),
         "mparam_h": attr.label(
-            doc = "TODO",
+            doc = "The selected gmp-mparam.h file for the target architecture.",
             mandatory = True,
             allow_single_file = True,
         ),
         "os": attr.string(
-            doc = "TODO",
+            doc = "Target operating system (linux, macos, windows).",
             mandatory = True,
         ),
         "_tool": attr.label(

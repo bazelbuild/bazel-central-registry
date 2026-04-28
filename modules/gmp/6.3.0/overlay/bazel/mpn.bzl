@@ -3,53 +3,165 @@
 # Multi-function file alternatives (from configure.ac GMP_MULFUNC_CHOICES).
 # Maps a function name to alternative filenames that may provide it.
 ALTERNATIVES = {
-    "add_err1_n": ["aors_err1_n"],
-    "add_err2_n": ["aors_err2_n"],
-    "add_err3_n": ["aors_err3_n"],
-    "add_n": ["aors_n"],
-    "addlsh1_n": ["aorslsh1_n", "aorrlsh1_n", "aorsorrlsh1_n"],
-    "addlsh2_n": ["aorslsh2_n", "aorrlsh2_n", "aorsorrlsh2_n"],
-    "addlsh_n": ["aorslsh_n", "aorrlsh_n", "aorsorrlsh_n"],
-    "addmul_1": ["aorsmul_1"],
-    "addmul_2": ["aormul_2"],
-    "addmul_3": ["aormul_3"],
-    "addmul_4": ["aormul_4"],
-    "and_n": ["logops_n"],
-    "andn_n": ["logops_n"],
-    "cnd_add_n": ["cnd_aors_n"],
-    "cnd_sub_n": ["cnd_aors_n"],
-    "hamdist": ["popham"],
-    "ior_n": ["logops_n"],
-    "iorn_n": ["logops_n"],
-    "lshift": ["lorrshift"],
-    "mul_2": ["aormul_2"],
-    "mul_3": ["aormul_3"],
-    "mul_4": ["aormul_4"],
-    "nand_n": ["logops_n"],
-    "nior_n": ["logops_n"],
-    "popcount": ["popham"],
-    "rsblsh1_n": ["aorrlsh1_n", "sorrlsh1_n", "aorsorrlsh1_n"],
-    "rsblsh2_n": ["aorrlsh2_n", "sorrlsh2_n", "aorsorrlsh2_n"],
-    "rsblsh_n": ["aorrlsh_n", "sorrlsh_n", "aorsorrlsh_n"],
-    "rsh1add_n": ["rsh1aors_n"],
-    "rsh1sub_n": ["rsh1aors_n"],
-    "rshift": ["lorrshift"],
-    "sec_add_1": ["sec_aors_1"],
-    "sec_div_qr": ["sec_div"],
-    "sec_div_r": ["sec_div"],
-    "sec_pi1_div_qr": ["sec_pi1_div"],
-    "sec_pi1_div_r": ["sec_pi1_div"],
-    "sec_sub_1": ["sec_aors_1"],
-    "sub_err1_n": ["aors_err1_n"],
-    "sub_err2_n": ["aors_err2_n"],
-    "sub_err3_n": ["aors_err3_n"],
-    "sub_n": ["aors_n"],
-    "sublsh1_n": ["aorslsh1_n", "sorrlsh1_n", "aorsorrlsh1_n"],
-    "sublsh2_n": ["aorslsh2_n", "sorrlsh2_n", "aorsorrlsh2_n"],
-    "sublsh_n": ["aorslsh_n", "sorrlsh_n", "aorsorrlsh_n"],
-    "submul_1": ["aorsmul_1"],
-    "xnor_n": ["logops_n"],
-    "xor_n": ["logops_n"],
+    "add_err1_n": [
+        "aors_err1_n",
+    ],
+    "add_err2_n": [
+        "aors_err2_n",
+    ],
+    "add_err3_n": [
+        "aors_err3_n",
+    ],
+    "add_n": [
+        "aors_n",
+    ],
+    "addlsh1_n": [
+        "aorslsh1_n",
+        "aorrlsh1_n",
+        "aorsorrlsh1_n",
+    ],
+    "addlsh2_n": [
+        "aorslsh2_n",
+        "aorrlsh2_n",
+        "aorsorrlsh2_n",
+    ],
+    "addlsh_n": [
+        "aorslsh_n",
+        "aorrlsh_n",
+        "aorsorrlsh_n",
+    ],
+    "addmul_1": [
+        "aorsmul_1",
+    ],
+    "addmul_2": [
+        "aormul_2",
+    ],
+    "addmul_3": [
+        "aormul_3",
+    ],
+    "addmul_4": [
+        "aormul_4",
+    ],
+    "and_n": [
+        "logops_n",
+    ],
+    "andn_n": [
+        "logops_n",
+    ],
+    "cnd_add_n": [
+        "cnd_aors_n",
+    ],
+    "cnd_sub_n": [
+        "cnd_aors_n",
+    ],
+    "hamdist": [
+        "popham",
+    ],
+    "ior_n": [
+        "logops_n",
+    ],
+    "iorn_n": [
+        "logops_n",
+    ],
+    "lshift": [
+        "lorrshift",
+    ],
+    "mul_2": [
+        "aormul_2",
+    ],
+    "mul_3": [
+        "aormul_3",
+    ],
+    "mul_4": [
+        "aormul_4",
+    ],
+    "nand_n": [
+        "logops_n",
+    ],
+    "nior_n": [
+        "logops_n",
+    ],
+    "popcount": [
+        "popham",
+    ],
+    "rsblsh1_n": [
+        "aorrlsh1_n",
+        "sorrlsh1_n",
+        "aorsorrlsh1_n",
+    ],
+    "rsblsh2_n": [
+        "aorrlsh2_n",
+        "sorrlsh2_n",
+        "aorsorrlsh2_n",
+    ],
+    "rsblsh_n": [
+        "aorrlsh_n",
+        "sorrlsh_n",
+        "aorsorrlsh_n",
+    ],
+    "rsh1add_n": [
+        "rsh1aors_n",
+    ],
+    "rsh1sub_n": [
+        "rsh1aors_n",
+    ],
+    "rshift": [
+        "lorrshift",
+    ],
+    "sec_add_1": [
+        "sec_aors_1",
+    ],
+    "sec_div_qr": [
+        "sec_div",
+    ],
+    "sec_div_r": [
+        "sec_div",
+    ],
+    "sec_pi1_div_qr": [
+        "sec_pi1_div",
+    ],
+    "sec_pi1_div_r": [
+        "sec_pi1_div",
+    ],
+    "sec_sub_1": [
+        "sec_aors_1",
+    ],
+    "sub_err1_n": [
+        "aors_err1_n",
+    ],
+    "sub_err2_n": [
+        "aors_err2_n",
+    ],
+    "sub_err3_n": [
+        "aors_err3_n",
+    ],
+    "sub_n": [
+        "aors_n",
+    ],
+    "sublsh1_n": [
+        "aorslsh1_n",
+        "sorrlsh1_n",
+        "aorsorrlsh1_n",
+    ],
+    "sublsh2_n": [
+        "aorslsh2_n",
+        "sorrlsh2_n",
+        "aorsorrlsh2_n",
+    ],
+    "sublsh_n": [
+        "aorslsh_n",
+        "sorrlsh_n",
+        "aorsorrlsh_n",
+    ],
+    "submul_1": [
+        "aorsmul_1",
+    ],
+    "xnor_n": [
+        "logops_n",
+    ],
+    "xor_n": [
+        "logops_n",
+    ],
 }
 
 # Mandatory MPN functions (from configure.ac gmp_mpn_functions).
@@ -288,37 +400,244 @@ GMP_MPN_FUNCTIONS_OPTIONAL = [
 ]
 
 # CPU variant -> mpn subdirectory search paths (from configure.ac path_64).
-# Each entry lists directories to search in priority order before "generic".
+# Each entry lists directories to search in priority order.
 # The first directory with a matching .asm/.c file wins.
 CPU_PATHS = {
-    "alderlake": ["x86_64/alderlake", "x86_64/skylake", "x86_64/coreibwl", "x86_64/coreihwl", "x86_64/coreisbr", "x86_64/coreinhm", "x86_64/core2", "x86_64"],
-    "applem1": ["arm64/applem1", "arm64"],
-    "atom": ["x86_64/atom", "x86_64"],
-    "bd1": ["x86_64/bd1", "x86_64/k10", "x86_64/k8", "x86_64"],
-    "bd2": ["x86_64/bd2", "x86_64/bd1", "x86_64/k10", "x86_64/k8", "x86_64"],
-    "bd3": ["x86_64/bd3", "x86_64/bd2", "x86_64/bd1", "x86_64/k10", "x86_64/k8", "x86_64"],
-    "bd4": ["x86_64/bd4", "x86_64/bd3", "x86_64/bd2", "x86_64/bd1", "x86_64/k10", "x86_64/k8", "x86_64"],
-    "bt1": ["x86_64/bt1", "x86_64/k10", "x86_64/k8", "x86_64"],
-    "bt2": ["x86_64/bt2", "x86_64/bt1", "x86_64/k10", "x86_64/k8", "x86_64"],
-    # aarch64 variants
-    "cora53": ["arm64/cora53", "arm64"],
-    "cora57": ["arm64/cora57", "arm64"],
-    "core2": ["x86_64/core2", "x86_64"],
-    "coreibwl": ["x86_64/coreibwl", "x86_64/coreihwl", "x86_64/coreisbr", "x86_64/coreinhm", "x86_64/core2", "x86_64"],
-    "coreihwl": ["x86_64/coreihwl", "x86_64/coreisbr", "x86_64/coreinhm", "x86_64/core2", "x86_64"],
-    "coreinhm": ["x86_64/coreinhm", "x86_64/core2", "x86_64"],
-    "coreisbr": ["x86_64/coreisbr", "x86_64/coreinhm", "x86_64/core2", "x86_64"],
-    "goldmont": ["x86_64/goldmont", "x86_64/silvermont", "x86_64/atom", "x86_64"],
-    "k10": ["x86_64/k10", "x86_64/k8", "x86_64"],
-    # x86_64 variants
-    "k8": ["x86_64/k8", "x86_64"],
-    "nano": ["x86_64/nano", "x86_64"],
-    "pentium4": ["x86_64/pentium4", "x86_64"],
-    "silvermont": ["x86_64/silvermont", "x86_64/atom", "x86_64"],
-    "skylake": ["x86_64/skylake", "x86_64/coreibwl", "x86_64/coreihwl", "x86_64/coreisbr", "x86_64/coreinhm", "x86_64/core2", "x86_64"],
-    "tremont": ["x86_64/tremont", "x86_64/goldmont", "x86_64/silvermont", "x86_64/atom", "x86_64"],
-    "xgene1": ["arm64/xgene1", "arm64"],
-    "zen": ["x86_64/zen", "x86_64"],
-    "zen2": ["x86_64/zen2", "x86_64/zen", "x86_64"],
-    "zen3": ["x86_64/zen3", "x86_64/zen2", "x86_64/zen", "x86_64"],
+    "alderlake": [
+        "x86_64/alderlake",
+        "x86_64/icelake",
+        "x86_64/skylake",
+        "x86_64/coreibwl",
+        "x86_64/coreihwl",
+        "x86_64/coreisbr",
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "applem1": [
+        "arm64/applem1",
+        "arm64",
+    ],
+    "arm64": [
+        "arm64",
+    ],
+    "atom": [
+        "x86_64/atom",
+        "x86_64",
+    ],
+    "bd1": [
+        "x86_64/bd1",
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "bd2": [
+        "x86_64/bd2",
+        "x86_64/bd1",
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "bd3": [
+        "x86_64/bd3",
+        "x86_64/bd2",
+        "x86_64/bd1",
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "bd4": [
+        "x86_64/bd4",
+        "x86_64/bd3",
+        "x86_64/bd2",
+        "x86_64/bd1",
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "bt1": [
+        "x86_64/bt1",
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "bt2": [
+        "x86_64/bt2",
+        "x86_64/bt1",
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "cora53": [
+        "arm64/cora53",
+        "arm64",
+    ],
+    "cora57": [
+        "arm64/cora57",
+        "arm64",
+    ],
+    "core2": [
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "coreibwl": [
+        "x86_64/coreibwl",
+        "x86_64/coreihwl",
+        "x86_64/coreisbr",
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "coreihwl": [
+        "x86_64/coreihwl",
+        "x86_64/coreisbr",
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "coreinhm": [
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "coreisbr": [
+        "x86_64/coreisbr",
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "goldmont": [
+        "x86_64/goldmont",
+        "x86_64/silvermont",
+        "x86_64/atom",
+        "x86_64",
+    ],
+    "hilo": [
+        "mips64/hilo",
+        "mips64",
+    ],
+    "icelake": [
+        "x86_64/icelake",
+        "x86_64/skylake",
+        "x86_64/coreibwl",
+        "x86_64/coreihwl",
+        "x86_64/coreisbr",
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "k10": [
+        "x86_64/k10",
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "k8": [
+        "x86_64/k8",
+        "x86_64",
+    ],
+    "nano": [
+        "x86_64/nano",
+        "x86_64",
+    ],
+    "pentium4": [
+        "x86_64/pentium4",
+        "x86_64",
+    ],
+    "r6": [
+        "mips64/r6",
+        "mips64",
+    ],
+    "s390_64": [
+        "s390_64",
+    ],
+    "silvermont": [
+        "x86_64/silvermont",
+        "x86_64/atom",
+        "x86_64",
+    ],
+    "skylake": [
+        "x86_64/skylake",
+        "x86_64/coreibwl",
+        "x86_64/coreihwl",
+        "x86_64/coreisbr",
+        "x86_64/coreinhm",
+        "x86_64/core2",
+        "x86_64",
+    ],
+    "sparc64": [
+        "sparc64",
+    ],
+    "tremont": [
+        "x86_64/tremont",
+        "x86_64/goldmont",
+        "x86_64/silvermont",
+        "x86_64/atom",
+        "x86_64",
+    ],
+    "ultrasparc1234": [
+        "sparc64/ultrasparc1234",
+        "sparc64",
+    ],
+    "ultrasparc34": [
+        "sparc64/ultrasparc34",
+        "sparc64/ultrasparc1234",
+        "sparc64",
+    ],
+    "ultrasparct1": [
+        "sparc64/ultrasparct1",
+        "sparc64",
+    ],
+    "ultrasparct3": [
+        "sparc64/ultrasparct3",
+        "sparc64",
+    ],
+    "ultrasparct45": [
+        "sparc64/ultrasparct45",
+        "sparc64/ultrasparct3",
+        "sparc64",
+    ],
+    "x86_64": [
+        "x86_64",
+    ],
+    "xgene1": [
+        "arm64/xgene1",
+        "arm64",
+    ],
+    "z13": [
+        "s390_64/z13",
+        "$path_64",
+    ],
+    "z14": [
+        "s390_64/z14",
+        "s390_64/z13",
+        "$path_64",
+    ],
+    "z15": [
+        "s390_64/z15",
+        "s390_64/z14",
+        "s390_64/z13",
+        "$path_64",
+    ],
+    "z16": [
+        "s390_64/z16",
+        "s390_64/z15",
+        "s390_64/z14",
+        "s390_64/z13",
+        "$path_64",
+    ],
+    "zen": [
+        "x86_64/zen",
+        "x86_64",
+    ],
+    "zen2": [
+        "x86_64/zen2",
+        "x86_64/zen",
+        "x86_64",
+    ],
+    "zen3": [
+        "x86_64/zen3",
+        "x86_64/zen2",
+        "x86_64/zen",
+        "x86_64",
+    ],
 }

@@ -14,8 +14,25 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("source_dir", type=Path, help="Path to GMP source tree")
+    parser.add_argument("--version", help="GMP version (derived from source if omitted)")
+    parser.add_argument(
+        "--bcr-root",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent.parent,
+        help="Path to bazel-central-registry root",
+    )
+    return parser.parse_args()
 
 
 def _re_extract(pattern: str, text: str) -> str:
@@ -27,7 +44,10 @@ def _re_extract(pattern: str, text: str) -> str:
 
 def parse_version(source_dir: Path) -> str:
     """Extract version from gmp-h.in."""
-    text = (source_dir / "gmp-h.in").read_text()
+    gmp_h_in = source_dir / "gmp-h.in"
+    if not gmp_h_in.exists():
+        raise FileNotFoundError(f"{gmp_h_in} not found")
+    text = gmp_h_in.read_text()
     major = _re_extract(r"__GNU_MP_VERSION\s+(\d+)", text)
     minor = _re_extract(r"__GNU_MP_VERSION_MINOR\s+(\d+)", text)
     patch = _re_extract(r"__GNU_MP_VERSION_PATCHLEVEL\s+(\d+)", text)
@@ -42,16 +62,24 @@ def parse_shell_wordlist(text: str) -> list[str]:
 
 
 def parse_functions(configure_ac: str) -> tuple[list[str], list[str]]:
-    """Extract gmp_mpn_functions and gmp_mpn_functions_optional."""
+    """Extract gmp_mpn_functions and gmp_mpn_functions_optional.
+
+    Args:
+        configure_ac: The content of the `configure.ac` file.
+    """
     optional_match = re.search(r'gmp_mpn_functions_optional="([^"]+)"', configure_ac, re.DOTALL)
-    optional = parse_shell_wordlist(optional_match.group(1)) if optional_match else []
+    if not optional_match:
+        raise ValueError("Could not find gmp_mpn_functions_optional in configure.ac")
+    optional = parse_shell_wordlist(optional_match.group(1))
 
     main_match = re.search(
         r'gmp_mpn_functions="\$extra_functions\s+(.*?)\$gmp_mpn_functions_optional"',
         configure_ac,
         re.DOTALL,
     )
-    main = parse_shell_wordlist(main_match.group(1)) if main_match else []
+    if not main_match:
+        raise ValueError("Could not find gmp_mpn_functions in configure.ac")
+    main = parse_shell_wordlist(main_match.group(1))
 
     return main, optional
 
@@ -84,6 +112,41 @@ def parse_mulfunc_choices(configure_ac: str) -> dict[str, list[str]]:
 
 _EXTRA_FUNCTIONS_EXCLUDE = {"fat", "fat_entry"}
 
+# CPU variants to exclude from CPU_PATHS (fat binary variants).
+_CPU_VARIANT_EXCLUDE = {"fat"}
+
+
+def parse_cpu_paths(configure_ac: str) -> dict[str, list[str]]:
+    """Extract CPU variant -> mpn search paths from configure.ac path_64 assignments.
+
+    Returns a dict mapping variant names to lists of mpn subdirectories.
+    """
+    paths: dict[str, list[str]] = {}
+    for match in re.finditer(r'path_64="([^"]+)"', configure_ac):
+        dirs = match.group(1).split()
+        if not dirs:
+            continue
+        variant = dirs[0].split("/")[-1]
+        if variant in _CPU_VARIANT_EXCLUDE:
+            continue
+        if variant not in paths:
+            paths[variant] = dirs
+
+    # Also extract arm64 variants from path_64 for aarch64
+    for match in re.finditer(r'path_64="(arm64\S*(?:\s+arm64\S*)*)"', configure_ac):
+        dirs = match.group(1).split()
+        if not dirs:
+            continue
+        first_dir = dirs[0]
+        if "/" in first_dir:
+            variant = first_dir.split("/")[-1]
+        else:
+            continue
+        if variant not in paths:
+            paths[variant] = dirs
+
+    return paths
+
 
 def parse_extra_functions(configure_ac: str) -> list[str]:
     """Extract extra_functions relevant to x86_64/arm64.
@@ -103,30 +166,16 @@ def parse_extra_functions(configure_ac: str) -> list[str]:
     return extras
 
 
-def format_dict(d: dict[str, list[str]], indent: int = 4) -> str:
-    """Format a dict as a Starlark literal."""
-    pad = " " * indent
-    lines = ["{"]
-    for k, v in sorted(d.items()):
-        lines.append(f'{pad}"{k}": {v!r},')
-    lines.append("}")
-    return "\n".join(lines)
-
-
-def format_list(items: list[str], indent: int = 4) -> str:
-    """Format a list as a Starlark literal."""
-    pad = " " * indent
-    lines = ["["]
-    for item in items:
-        lines.append(f'{pad}"{item}",')
-    lines.append("]")
-    return "\n".join(lines)
+def _starlark_literal(obj: object) -> str:
+    """Format a Python object as a Starlark literal using JSON serialization."""
+    return json.dumps(obj, indent=4, sort_keys=True)
 
 
 def generate_bzl(
     alternatives: dict[str, list[str]],
     functions: list[str],
     optional: list[str],
+    cpu_paths: dict[str, list[str]],
 ) -> str:
     """Generate the mpn.bzl content."""
     return (
@@ -134,32 +183,29 @@ def generate_bzl(
         "\n"
         "# Multi-function file alternatives (from configure.ac GMP_MULFUNC_CHOICES).\n"
         "# Maps a function name to alternative filenames that may provide it.\n"
-        f"ALTERNATIVES = {format_dict(alternatives)}\n"
+        f"ALTERNATIVES = {_starlark_literal(alternatives)}\n"
         "\n"
         "# Mandatory MPN functions (from configure.ac gmp_mpn_functions).\n"
-        f"GMP_MPN_FUNCTIONS = {format_list(functions)}\n"
+        f"GMP_MPN_FUNCTIONS = {_starlark_literal(functions)}\n"
         "\n"
         "# Optional MPN functions (from configure.ac gmp_mpn_functions_optional).\n"
         "# Only compiled when an architecture-specific implementation exists.\n"
-        f"GMP_MPN_FUNCTIONS_OPTIONAL = {format_list(optional)}\n"
+        f"GMP_MPN_FUNCTIONS_OPTIONAL = {_starlark_literal(optional)}\n"
+        "\n"
+        "# CPU variant -> mpn subdirectory search paths (from configure.ac path_64).\n"
+        "# Each entry lists directories to search in priority order.\n"
+        "# The first directory with a matching .asm/.c file wins.\n"
+        f"CPU_PATHS = {_starlark_literal(cpu_paths)}\n"
     )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source_dir", type=Path, help="Path to GMP source tree")
-    parser.add_argument("--version", help="GMP version (derived from source if omitted)")
-    parser.add_argument(
-        "--bcr-root",
-        type=Path,
-        default=Path(__file__).resolve().parent.parent.parent,
-        help="Path to bazel-central-registry root",
-    )
-    args = parser.parse_args()
+    """The main entrypoint."""
+    args = parse_args()
 
     source_dir = args.source_dir.resolve()
     if not (source_dir / "configure.ac").exists():
-        parser.error(f"No configure.ac found in {source_dir}")
+        raise FileNotFoundError(f"No configure.ac found in {source_dir}")
 
     version = args.version or parse_version(source_dir)
     configure_ac = (source_dir / "configure.ac").read_text()
@@ -167,19 +213,25 @@ def main() -> None:
     functions, optional = parse_functions(configure_ac)
     alternatives = parse_mulfunc_choices(configure_ac)
     extras = parse_extra_functions(configure_ac)
+    cpu_paths = parse_cpu_paths(configure_ac)
 
     for fn in extras:
         if fn not in optional:
             optional.append(fn)
 
-    bzl_content = generate_bzl(alternatives, functions, optional)
+    bzl_content = generate_bzl(alternatives, functions, optional, cpu_paths)
 
     out_dir = args.bcr_root / "modules" / "gmp" / version / "overlay" / "bazel"
     if not out_dir.exists():
-        parser.error(f"Module directory not found: {out_dir}")
+        raise FileNotFoundError(f"Module directory not found: {out_dir}")
 
     out_path = out_dir / "mpn.bzl"
     out_path.write_text(bzl_content)
+
+    buildifier = shutil.which("buildifier")
+    if buildifier:
+        subprocess.run([buildifier, "-lint=fix", "-mode=fix", "-warnings=all", str(out_path)], check=True)
+
     print(f"Wrote {out_path}")
 
 
