@@ -1,0 +1,180 @@
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:defs.bzl", "autoconf_hdr")
+load(
+    "//bazel:iverilog.bzl",
+    "CXX_STD",
+    "WARNING_COPTS",
+    "draw_tt",
+)
+
+filegroup(
+    name = "headers",
+    srcs = ["ivl_dlfcn.h"],
+    visibility = ["//:__pkg__"],
+)
+
+autoconf_hdr(
+    name = "gen_vvp_config_h",
+    out = "vvp_config.h",
+    template = "config.h.in",
+    deps = ["//:autoconf"],
+)
+
+cc_library(
+    name = "vvp_config",
+    hdrs = [":gen_vvp_config_h"],
+    includes = ["."],
+)
+
+cc_binary(
+    name = "draw_tt",
+    srcs = ["draw_tt.c"],
+    visibility = ["//:__subpackages__"],
+)
+
+draw_tt(
+    name = "gen_tables",
+    out = "tables.cc",
+)
+
+bison(
+    name = "gen_parse",
+    srcs = ["parse.y"],
+    outs = [
+        "parse.cc",
+        "parse.h",
+    ],
+    args = [
+        "--verbose",
+        "-t",
+        "--defines=$(execpath parse.h)",
+        "-o",
+        "$(execpath parse.cc)",
+        "$(execpath parse.y)",
+    ],
+)
+
+flex(
+    name = "gen_lexor",
+    srcs = ["lexor.lex"],
+    outs = ["lexor.cc"],
+    args = [
+        "-s",
+        "-o",
+        "$(execpath lexor.cc)",
+        "$(execpath lexor.lex)",
+    ],
+)
+
+cc_binary(
+    name = "vvp",
+    srcs = [
+        "arith.cc",
+        "array.cc",
+        "array_common.cc",
+        "bufif.cc",
+        "class_type.cc",
+        "codes.cc",
+        "compile.cc",
+        "concat.cc",
+        "delay.cc",
+        "dff.cc",
+        "enum_type.cc",
+        "event.cc",
+        "extend.cc",
+        "file_line.cc",
+        "island_tran.cc",
+        "latch.cc",
+        "lib_main.cc",
+        "logic.cc",
+        "main.cc",
+        "npmos.cc",
+        "parse_misc.cc",
+        "part.cc",
+        "permaheap.cc",
+        "reduce.cc",
+        "resolv.cc",
+        "schedule.cc",
+        "sfunc.cc",
+        "statistics.cc",
+        "stop.cc",
+        "substitute.cc",
+        "symbols.cc",
+        "udp.cc",
+        "ufunc.cc",
+        "vpi_bit.cc",
+        "vpi_callback.cc",
+        "vpi_cobject.cc",
+        "vpi_const.cc",
+        "vpi_darray.cc",
+        "vpi_event.cc",
+        "vpi_iter.cc",
+        "vpi_mcd.cc",
+        "vpi_modules.cc",
+        "vpi_priv.cc",
+        "vpi_real.cc",
+        "vpi_scope.cc",
+        "vpi_signal.cc",
+        "vpi_string.cc",
+        "vpi_tasks.cc",
+        "vpi_time.cc",
+        "vpi_vthr_vector.cc",
+        "vpip_bin.cc",
+        "vpip_format.cc",
+        "vpip_hex.cc",
+        "vpip_oct.cc",
+        "vpip_to_dec.cc",
+        "vthread.cc",
+        "vvp_cobject.cc",
+        "vvp_darray.cc",
+        "vvp_island.cc",
+        "vvp_net.cc",
+        "vvp_net_sig.cc",
+        "vvp_object.cc",
+        "vvp_vpi.cc",
+        "words.cc",
+    ] + glob(["*.h"]) + [
+        ":gen_lexor",
+        ":gen_parse",
+        ":gen_tables",
+    ],
+    copts = CXX_STD + WARNING_COPTS + ["-DICARUS_VPI_CONST=const"] + select({
+        # Force-include vvp's config and parse_misc headers. The config.h
+        # name collides with the root config.h, so we generate vvp_config.h
+        # and force-include it. parse_misc.h shares its include guard with
+        # the root-level version.
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/FIvvp_config.h",
+            "/FIvvp/parse_misc.h",
+        ],
+        "//conditions:default": [
+            "-include",
+            "vvp_config.h",
+            "-include",
+            "vvp/parse_misc.h",
+        ],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-rdynamic",
+            "-ldl",
+            "-lpthread",
+        ],
+        "@platforms//os:macos": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-ldl"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vvp_config",
+        "//:compat_getopt",
+        "//:config",
+        "//:ivl_alloc",
+        "//:ivl_headers",
+        "//:public_headers",
+        "//:version_tag",
+    ],
+)
