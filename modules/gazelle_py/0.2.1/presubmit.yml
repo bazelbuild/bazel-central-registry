@@ -1,0 +1,33 @@
+# Run the presubmit inside bcr_test/ rather than against the published
+# module's own root. The published module's top-level build needs a
+# host_platform with the libc:gnu.2.28 constraint (rules_rs's Rust
+# toolchains require it on Linux); we ship that pin in our top-level
+# .bazelrc, but BCR's sandbox doesn't read it. bcr_test/ is a minimal
+# consumer-side workspace whose own .bazelrc applies the pin and pulls
+# the just-published gazelle_py via local_path_override(path = "..").
+bcr_test_module:
+  module_path: "bcr_test"
+  matrix:
+    platform:
+      - debian11
+      - macos
+      - ubuntu2204
+    bazel:
+      - 9.x
+      - 8.5.x
+  tasks:
+    run_tests:
+      name: bcr_test on ${{ platform }} / bazel ${{ bazel }}
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        # Go gazelle plugin (transitively cgo-links the Rust staticlib).
+        - "@gazelle_py//py/..."
+        # Rust crate — also exercised via py/, but listed explicitly so the
+        # rlib variant + the proto codegen are covered on every platform.
+        - "@gazelle_py//crates/import_extractor/..."
+      test_targets:
+        # Go-side directive / config / generate / resolve unit tests.
+        - "@gazelle_py//py:py_test"
+        # Rust-side ffi / wire / py extractor tests.
+        - "@gazelle_py//crates/import_extractor:test"
