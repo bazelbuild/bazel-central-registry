@@ -1,0 +1,39 @@
+# Run the presubmit inside bcr_test/ rather than against the published
+# module's own root. The published module's top-level build needs a
+# host_platform with the libc:gnu.2.28 constraint (rules_rs's Rust
+# toolchains require it on Linux); we ship that pin in our top-level
+# .bazelrc, but BCR's sandbox doesn't read it. bcr_test/ is a minimal
+# consumer-side workspace whose own .bazelrc applies the pin and pulls
+# the just-published gazelle_py via local_path_override(path = "..").
+bcr_test_module:
+  module_path: "bcr_test"
+  matrix:
+    platform:
+      # macOS + Ubuntu only — Debian's coverage overlaps Ubuntu's (both glibc
+      # Linux), and our own CI doesn't test on it either, so the BCR cell
+      # only adds runner cost without catching anything new.
+      - macos
+      - ubuntu2204
+    bazel:
+      # bazelisk wildcard syntax accepts `<major>.x` / `<major>.*`, not
+      # `<major>.<minor>.x` — `8.5.x` errors out with "invalid version".
+      # The supported floor (rules_rs's) is 8.5.0; bazelisk's `8.x`
+      # resolves to the latest 8.y, which currently is comfortably above.
+      - 9.x
+      - 8.x
+  tasks:
+    run_tests:
+      name: bcr_test on ${{ platform }} / bazel ${{ bazel }}
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        # Go gazelle plugin (transitively cgo-links the Rust staticlib).
+        - "@gazelle_py//py/..."
+        # Rust crate — also exercised via py/, but listed explicitly so the
+        # rlib variant + the proto codegen are covered on every platform.
+        - "@gazelle_py//crates/import_extractor/..."
+      test_targets:
+        # Go-side directive / config / generate / resolve unit tests.
+        - "@gazelle_py//py:py_test"
+        # Rust-side ffi / wire / py extractor tests.
+        - "@gazelle_py//crates/import_extractor:test"
