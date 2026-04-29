@@ -50,6 +50,15 @@ py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
     deps = [
+        ":bcr_validation_lib",
+    ],
+)
+
+py_library(
+    name = "bcr_validation_lib",
+    srcs = ["bcr_validation.py"],
+    imports = ["."],
+    deps = [
         ":attestations",
         ":registry",
         ":slsa",
@@ -179,6 +188,16 @@ py_test(
     ],
     deps = [
         "registry",
+    ],
+)
+
+py_test(
+    name = "bcr_validation_test",
+    srcs = [
+        "bcr_validation_test.py",
+    ],
+    deps = [
+        ":bcr_validation_lib",
     ],
 )
 

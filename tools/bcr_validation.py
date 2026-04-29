@@ -135,6 +135,17 @@ def apply_patch(work_dir, patch_strip, patch_file):
     )
 
 
+def resolve_source_root(output_dir, strip_prefix):
+    source_root = output_dir.joinpath(strip_prefix).resolve()
+    try:
+        source_root.relative_to(output_dir.resolve())
+    except ValueError as e:
+        raise BcrValidationException(
+            f"The strip_prefix `{strip_prefix}` must point inside the extracted source archive."
+        ) from e
+    return source_root
+
+
 def run_git(*args):
     # Requires git to be installed
     subprocess.run(
@@ -613,7 +624,11 @@ class BcrValidator:
             self.report(BcrValidationResult.FAILED, f"{module_file} must not be a symlink.")
 
         # Apply patch files if there are any, also verify their integrity values
-        source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
+        try:
+            source_root = resolve_source_root(output_dir, source.get("strip_prefix", ""))
+        except BcrValidationException as e:
+            self.report(BcrValidationResult.FAILED, str(e))
+            return
         if "patches" in source:
             for patch_name, expected_integrity in source["patches"].items():
                 patch_file = self.registry.get_patch_file_path(module_name, version, patch_name)
