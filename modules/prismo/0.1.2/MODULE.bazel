@@ -1,0 +1,88 @@
+module(
+    name = "prismo",
+    version = "0.1.2",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+bazel_dep(name = "rules_python", version = "1.8.4")
+bazel_dep(name = "rules_rs", version = "0.0.68")
+
+bazel_dep(name = "aspect_rules_lint", version = "2.3.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1", dev_dependency = True)
+
+bazel_dep(name = "aspect_rules_js", version = "2.6.0")
+bazel_dep(name = "rules_nodejs", version = "6.5.2")
+bazel_dep(name = "toolchains_llvm", version = "1.6.0")
+
+# ==============================================================================
+# Rust Setup
+# ==============================================================================
+
+rust = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains", dev_dependency = True)
+rust.toolchain(
+    name = "default_rust_toolchains",
+    edition = "2024",
+    version = "1.85.0",
+)
+use_repo(rust, "default_rust_toolchains")
+
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+# ==============================================================================
+# Python Setup
+# ==============================================================================
+
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.defaults(python_version = "3.12")
+python.toolchain(python_version = "3.12")
+
+# ==============================================================================
+# C++ Setup
+# ==============================================================================
+
+toolchain = use_extension("@llvm//extensions:toolchain.bzl", "toolchain")
+use_repo(toolchain, "llvm_toolchains")
+
+register_toolchains("@llvm_toolchains//:all", dev_dependency = True)
+
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "prismo_crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+use_repo(crate, "prismo_crates")
+
+# ==============================================================================
+# Typescript / Javascript Setup
+# ==============================================================================
+
+node = use_extension(
+    "@rules_nodejs//nodejs:extensions.bzl",
+    "node",
+)
+node.toolchain(node_version = "20.13.1")
+
+prismo_npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+prismo_npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//website:pnpm-lock.yaml",
+)
+use_repo(prismo_npm, "npm")
+
+prismo_pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm")
+use_repo(prismo_pnpm, "pnpm")
