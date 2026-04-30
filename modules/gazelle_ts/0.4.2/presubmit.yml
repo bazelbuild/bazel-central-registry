@@ -1,0 +1,47 @@
+# BCR's auto-generated consumer workspace only `bazel_dep`s the module under
+# test, so `@llvm` (a transitive dep here) isn't visible from the root and
+# `--@llvm//config:experimental_stub_libgcc_s=True` fails to parse. Use a
+# `bcr_test_module` instead: examples/basic already declares
+# `bazel_dep(name = "llvm", ...)`, which gives the flag the visibility it
+# needs. (BCR vendoring overrides the `local_path_override` in
+# examples/basic/MODULE.bazel — the registry-resolved gazelle_ts wins.)
+bcr_test_module:
+  module_path: "examples/basic"
+  # debian11 dropped — its glibc 2.31 keeps libdl as a separate object,
+  # and the cgo'd Rust staticlib link needs -ldl which rules_rs's
+  # stdlib_linkflags doesn't add for plain @platforms//os:linux. We add
+  # -ldl in //ts:BUILD.bazel as a clinkopt, which works on Ubuntu 22.04
+  # (glibc 2.35, libdl is a stub). Not validating debian11 in BCR until
+  # we ship a distribution that doesn't push the link surface to the
+  # consumer (prebuilt-staticlib follow-up).
+  matrix:
+    platform:
+      - macos
+      - ubuntu2204
+    bazel:
+      - 9.x
+      - 8.x
+  tasks:
+    verify_targets:
+      name: Build the Go gazelle plugin
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      # Every flag below mirrors one from examples/basic/.bazelrc that the
+      # hermetic @llvm toolchain stack relies on; see that file for
+      # per-flag rationale. BCR doesn't read .bazelrc, so we list them
+      # here. Consumers have to mirror the same set — see README.
+      #
+      # `--host_platform` in particular cannot live in a `common` rc line
+      # because BCR shells out to `bazel info` before the build, and `info`
+      # doesn't trigger bzlmod resolution — so referencing
+      # @gazelle_ts//... at that point fails with "Repository '@@gazelle_ts'
+      # is not defined". Passing it here scopes it to `bazel build`, by
+      # which point the repo exists.
+      build_flags:
+        - "--host_platform=@gazelle_ts//platforms:local_gnu"
+        - "--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
+        - "--repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1"
+        - "--@llvm//config:experimental_stub_libgcc_s=True"
+        - "--linkopt=-no-pie"
+      build_targets:
+        - "@gazelle_ts//ts/..."
