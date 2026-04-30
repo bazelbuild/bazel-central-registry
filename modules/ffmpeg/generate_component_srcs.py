@@ -6,11 +6,11 @@ sub-Makefiles) to produce a Starlark file with per-library source-file
 dictionaries consumed by the Bazel build.
 
 Usage:
-    python3 generate_component_srcs.py <ffmpeg_source_root> > component_srcs.bzl
+    python3 generate_component_srcs.py [--version 7.1.1.bcr.beta.5] /path/to/ffmpeg
 
-The script reads PROFILE_EVERYTHING from component_defs.bzl (in the same
-directory as this script) to determine which CONFIG_ entries correspond to
-actual FFmpeg components vs. internal subsystems or platform flags.
+The script reads PROFILE_EVERYTHING from component_defs.bzl in the
+version overlay directory and writes component_srcs.bzl back to the
+same overlay.
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import NamedTuple
+
+from _overlay_utils import add_version_arg, resolve_overlay_dir
 
 CONFIG_EXTRA: list[str] = [
     "aandcttables",
@@ -48,6 +50,7 @@ CONFIG_EXTRA: list[str] = [
     "dovi_rpudec",
     "dovi_rpuenc",
     "dvprofile",
+    "dwt",
     "evcparse",
     "exif",
     "faandct",
@@ -88,6 +91,7 @@ CONFIG_EXTRA: list[str] = [
     "llviddsp",
     "llvidencdsp",
     "lpc",
+    "lsp",
     "lzf",
     "me_cmp",
     "mpeg_er",
@@ -101,7 +105,9 @@ CONFIG_EXTRA: list[str] = [
     "msmpeg4dec",
     "msmpeg4enc",
     "mss34dsp",
+    "network",
     "pixblockdsp",
+    "pixelutils",
     "qpeldsp",
     "qsv",
     "qsvdec",
@@ -172,9 +178,15 @@ EXTERNAL_FILES_TO_SKIP: set[str] = {
 }
 
 
-def load_profile_everything() -> set[str]:
-    """Parse PROFILE_EVERYTHING from component_defs.bzl in the same directory."""
-    defs_path = Path(__file__).parent / "component_defs.bzl"
+def load_profile_everything(defs_path: Path | None = None) -> set[str]:
+    """Parse PROFILE_EVERYTHING from component_defs.bzl.
+
+    Args:
+        defs_path: Explicit path to component_defs.bzl.  Falls back to
+            the copy next to this script when *None*.
+    """
+    if defs_path is None:
+        defs_path = Path(__file__).parent / "component_defs.bzl"
     content = defs_path.read_text(encoding="utf-8")
     match = re.search(
         r"PROFILE_EVERYTHING\s*=\s*\[(.*?)\]",
@@ -183,14 +195,14 @@ def load_profile_everything() -> set[str]:
     )
     if not match:
         print(
-            "ERROR: Could not find PROFILE_EVERYTHING in component_defs.bzl",
+            f"ERROR: Could not find PROFILE_EVERYTHING in {defs_path}",
             file=sys.stderr,
         )
         sys.exit(1)
     return set(re.findall(r'"([^"]+)"', match.group(1)))
 
 
-PROFILE_EVERYTHING_SET: set[str] = load_profile_everything()
+PROFILE_EVERYTHING_SET: set[str] = set()
 
 
 # -- Makefile parsing ---------------------------------------------------------
@@ -348,7 +360,13 @@ def _classify_objects(
     lib_dir: str,
     generic_mapping: dict[str, list[str]],
 ) -> tuple[set[str], dict[str, set[str]]]:
-    """Classify object files into extra infrastructure and component sources."""
+    """Classify object files into extra infrastructure and component sources.
+
+    A source file may appear under both a CONFIG_EXTRA config and a
+    PROFILE_EVERYTHING config (e.g. h2645_parse.c is used by both
+    h264parse and extract_extradata_bsf).  Both associations are recorded
+    so that downstream grouping keeps the PROFILE_EVERYTHING relationship.
+    """
     extra_srcs: set[str] = set()
     component_file_map: dict[str, set[str]] = defaultdict(set)
 
@@ -362,7 +380,7 @@ def _classify_objects(
                 continue
             if config in CONFIG_EXTRA_SET:
                 extra_srcs.add(src)
-            elif config in PROFILE_EVERYTHING_SET:
+            if config in PROFILE_EVERYTHING_SET:
                 component_file_map[config].add(src)
 
     return extra_srcs, component_file_map
@@ -389,8 +407,6 @@ def _categorize_sources(
     shared_groups: dict[frozenset[str], list[str]] = defaultdict(list)
 
     for src, comps in file_to_components.items():
-        if src in extra_srcs:
-            continue
         key = frozenset(comps)
         if len(key) == 1:
             exclusive[next(iter(key))].append(src)
@@ -462,24 +478,25 @@ def fmt_string_list(items: list[str], indent: int = 8) -> str:
     return "\n".join(lines)
 
 
-def _emit_library(
+def _emit_library_to(
     lib_info: LibInfo,
     ffmpeg_root: Path,
     all_shared_groups: dict[tuple[str, ...], str],
     group_counter: list[int],
+    emit,
 ) -> None:
-    """Process and print Starlark output for a single FFmpeg library."""
+    """Process and emit Starlark output for a single FFmpeg library."""
     name = lib_info.name.upper()
     data = process_library(ffmpeg_root, lib_info)
 
-    print(f"{name}_EXTRA_SRCS = {fmt_list(data.extra)}")
-    print()
+    emit(f"{name}_EXTRA_SRCS = {fmt_list(data.extra)}")
+    emit()
 
-    print(f"{name}_EXCLUSIVE_SRCS = {{")
+    emit(f"{name}_EXCLUSIVE_SRCS = {{")
     for comp, srcs in sorted(data.exclusive.items()):
-        print(f'    "{comp}": {fmt_string_list(srcs)},')
-    print("}")
-    print()
+        emit(f'    "{comp}": {fmt_string_list(srcs)},')
+    emit("}")
+    emit()
 
     shared_var_entries: list[tuple[str, list[str], list[str]]] = []
     for comps, files in data.shared:
@@ -491,30 +508,30 @@ def _emit_library(
             (all_shared_groups[group_key], comps, files),
         )
 
-    print(f"{name}_SHARED_SRCS = [")
+    emit(f"{name}_SHARED_SRCS = [")
     for _gid, comps, files in shared_var_entries:
         comps_str = ", ".join(f'"{c}"' for c in comps)
         files_str = ", ".join(f'"{f}"' for f in files)
-        print(f"    (({comps_str}), [{files_str}]),")
-    print("]")
-    print()
+        emit(f"    (({comps_str}), [{files_str}]),")
+    emit("]")
+    emit()
 
     if data.aarch64:
-        print(
-            f"{name}_AARCH64_COMPONENT_SRCS = {fmt_list(data.aarch64)}",
-        )
-        print()
+        emit(f"{name}_AARCH64_COMPONENT_SRCS = {fmt_list(data.aarch64)}")
+        emit()
 
     if data.x86:
-        print(f"{name}_X86_COMPONENT_SRCS = {fmt_list(data.x86)}")
-        print()
+        emit(f"{name}_X86_COMPONENT_SRCS = {fmt_list(data.x86)}")
+        emit()
 
 
 # -- Entry point --------------------------------------------------------------
 
 
 def main() -> None:
-    """Parse FFmpeg Makefiles and emit component_srcs.bzl to stdout."""
+    """Parse FFmpeg Makefiles and write component_srcs.bzl to the overlay."""
+    global PROFILE_EVERYTHING_SET
+
     parser = argparse.ArgumentParser(
         description="Generate component_srcs.bzl from FFmpeg Makefiles.",
     )
@@ -523,31 +540,43 @@ def main() -> None:
         type=Path,
         help="Path to the FFmpeg source tree",
     )
+    add_version_arg(parser)
     args = parser.parse_args()
 
+    overlay = resolve_overlay_dir(args.version)
+    PROFILE_EVERYTHING_SET = load_profile_everything(overlay / "component_defs.bzl")
     ffmpeg_root: Path = args.ffmpeg_source_root
 
-    print('"""Auto-generated FFmpeg per-component source file mappings.')
-    print("")
-    print("Generated by generate_component_srcs.py from FFmpeg Makefiles.")
-    print("Do not edit manually.")
-    print('"""')
-    print()
+    output_path = overlay / "component_srcs.bzl"
+    buf: list[str] = []
+
+    def emit(line: str = "") -> None:
+        buf.append(line)
+
+    emit('"""Auto-generated FFmpeg per-component source file mappings.')
+    emit("")
+    emit("Generated by generate_component_srcs.py from FFmpeg Makefiles.")
+    emit("Do not edit manually.")
+    emit('"""')
+    emit()
 
     all_shared_groups: dict[tuple[str, ...], str] = {}
     group_counter = [0]
 
     for lib_info in LIBS:
-        _emit_library(lib_info, ffmpeg_root, all_shared_groups, group_counter)
+        _emit_library_to(lib_info, ffmpeg_root, all_shared_groups, group_counter, emit)
 
-    print("SHARED_GROUP_DEFINITIONS = [")
+    emit("SHARED_GROUP_DEFINITIONS = [")
     for group_key, gid in sorted(
         all_shared_groups.items(),
         key=lambda x: x[1],
     ):
         comps_str = ", ".join(f'"{c}"' for c in group_key)
-        print(f'    ("{gid}", [{comps_str}]),')
-    print("]")
+        emit(f'    ("{gid}", [{comps_str}]),')
+    emit("]")
+
+    output_path.write_text("\n".join(buf) + "\n", encoding="utf-8")
+    print(f"  wrote {output_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

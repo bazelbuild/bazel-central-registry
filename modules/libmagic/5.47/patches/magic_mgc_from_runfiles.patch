@@ -1,0 +1,62 @@
+diff --git a/src/magic.c b/src/magic.c
+--- a/src/magic.c
++++ b/src/magic.c
+@@ -60,6 +60,10 @@
+ #include <unistd.h>	/* for read() */
+ #endif
+ 
++#ifdef __APPLE__
++#include <mach-o/dyld.h>
++#endif
++
+ #ifndef PIPE_BUF
+ /* Get the PIPE_BUF from pathconf */
+ #ifdef _PC_PIPE_BUF
+@@ -184,7 +188,47 @@
+ 	if (default_magic) {
+ 		free(default_magic);
+ 		default_magic = NULL;
++	}
++
++	// Limited runfiles lookup bootstrap.
++	char exe_path[PATH_MAX];
++#ifdef __linux__
++	ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
++	if (len < 0) {
++		return MAGIC;
++	}
++	exe_path[len] = '\0';
++#elif defined(__APPLE__)
++	uint32_t size = sizeof(exe_path);
++	if (_NSGetExecutablePath(exe_path, &size) != 0) {
++		return MAGIC;
++	}
++#endif
++
++	// Build runfiles path and make sure it exists.
++	if (asprintf(&default_magic, "%s.runfiles/%s", exe_path, MAGIC) >= 0 && access(default_magic, R_OK) == 0) {
++		return default_magic;
+ 	}
++
++	default_magic = NULL;
++
++	// Fallback: check for magic.mgc in same directory as exe (sibling in runfiles)
++	char *exe_copy = strdup(exe_path);
++	if (exe_copy) {
++		char *last_slash = strrchr(exe_copy, '/');
++		if (last_slash) {
++			*last_slash = '\0';
++			if (asprintf(&default_magic, "%s/magic.mgc", exe_copy) >= 0 &&
++			    access(default_magic, R_OK) == 0) {
++				free(exe_copy);
++				return default_magic;
++			}
++			free(default_magic);
++			default_magic = NULL;
++		}
++		free(exe_copy);
++	}
++
+ 	if ((home = getenv("HOME")) == NULL)
+ 		return MAGIC;
+ 

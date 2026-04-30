@@ -1,0 +1,128 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+DEFINES = select({
+    "@platforms//os:windows": [
+        "SC_BUILD",
+        "SC_INCLUDE_FX",
+        "_CRT_SECURE_NO_WARNINGS",
+    ],
+    "//conditions:default": [
+        "SC_BUILD",
+        "SC_INCLUDE_FX",
+    ],
+})
+
+PLATFORM_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/vmg",
+        "/MP",
+    ],
+    "//conditions:default": ["-w"],
+})
+
+PLATFORM_CXXOPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+cc_library(
+    name = "systemc_qt_asm",
+    srcs = select({
+        "@platforms//cpu:aarch64": ["src/sysc/packages/qt/md/aarch64.s"],
+        "@platforms//cpu:riscv64": ["src/sysc/packages/qt/md/riscv64.s"],
+        "@platforms//cpu:x86_32": ["src/sysc/packages/qt/md/i386.s"],
+        "@platforms//cpu:x86_64": ["src/sysc/packages/qt/md/iX86_64.s"],
+        "//conditions:default": [],
+    }),
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-x",
+            "assembler-with-cpp",
+        ],
+    }),
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "systemc_qt",
+    srcs = [
+        "src/sysc/packages/qt/qt.c",
+    ],
+    hdrs = glob([
+        "src/sysc/packages/qt/**/*.h",
+    ]),
+    copts = PLATFORM_COPTS,
+    includes = [
+        "src",
+        "src/sysc/packages/qt/md",
+    ],
+    local_defines = DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":systemc_qt_asm"],
+)
+
+cc_library(
+    name = "systemc",
+    srcs = glob(
+        include = ["src/**/*.cpp"],
+        exclude = ["src/sysc/packages/qt/**"],
+    ),
+    hdrs = glob(
+        include = ["src/**/*.h"],
+        exclude = ["src/sysc/packages/qt/**"],
+    ) + [
+        "src/systemc",
+        "src/tlm",
+    ],
+    copts = PLATFORM_COPTS,
+    cxxopts = PLATFORM_CXXOPTS,
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": [
+            "-Wl,-U,_sc_main",
+            "-Wl,-U,___sanitizer_start_switch_fiber",
+            "-Wl,-U,___sanitizer_finish_switch_fiber",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = DEFINES,
+    visibility = ["//visibility:public"],
+    deps = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [":systemc_qt"],
+    }),
+)
+
+cc_test(
+    name = "simple_fifo",
+    srcs = ["examples/sysc/simple_fifo/simple_fifo.cpp"],
+    copts = PLATFORM_COPTS,
+    cxxopts = PLATFORM_CXXOPTS,
+    deps = [":systemc"],
+)
+
+cc_test(
+    name = "forkjoin",
+    srcs = ["examples/sysc/2.1/forkjoin/forkjoin.cpp"],
+    copts = PLATFORM_COPTS,
+    cxxopts = PLATFORM_CXXOPTS,
+    deps = [":systemc"],
+)
+
+cc_test(
+    name = "reset_signal_is",
+    srcs = ["examples/sysc/2.1/reset_signal_is/reset_signal_is.cpp"],
+    copts = PLATFORM_COPTS,
+    cxxopts = PLATFORM_CXXOPTS,
+    deps = [":systemc"],
+)

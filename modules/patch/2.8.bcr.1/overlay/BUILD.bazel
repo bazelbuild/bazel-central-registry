@@ -1,0 +1,1061 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("@rules_cc_autoconf//gnulib:macros.bzl", gl_checks = "checks")
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+] + select({
+    "@platforms//os:macos": [
+        "_DARWIN_C_SOURCE",
+    ],
+    "//conditions:default": [],
+}) + select({
+    # MSVC 2015+ provides timespec_get (C11). The gnulib AC_CHECK_FUNC for
+    # timespec_get may fail on MSVC, but the function is always available.
+    # Without this, gettime.c falls through to gettimeofday (unavailable).
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "HAVE_TIMESPEC_GET",
+        # gnulib's dirent.h defines its own DIR type on MSVC
+        # (GNULIB_defined_DIR=1). fdopendir.c requires REPLACE_FCHDIR
+        # to be set as a preprocessor macro when this is the case.
+        "REPLACE_FCHDIR=1",
+    ],
+    "//conditions:default": [],
+})
+
+GENERATED_SRCS = {
+    "lib/alloca.h": "lib/alloca.in.h",
+    "lib/dirent.h": "lib/dirent.in.h",
+    "lib/error.h": "lib/error.in.h",
+    "lib/fcntl.h": "lib/fcntl.in.h",
+    "lib/getopt-cdefs.h": "lib/getopt-cdefs.in.h",
+    "lib/getopt.h": "lib/getopt.in.h",
+    "lib/inttypes.h": "lib/inttypes.in.h",
+    "lib/limits.h": "lib/limits.in.h",
+    "lib/locale.h": "lib/locale.in.h",
+    "lib/malloc/scratch_buffer.gl.h": "lib/malloc/scratch_buffer.h",
+    "lib/signal.h": "lib/signal.in.h",
+    "lib/stdckdint.h": "lib/stdckdint.in.h",
+    "lib/stddef.h": "lib/stddef.in.h",
+    "lib/stdint.h": "lib/stdint.in.h",
+    "lib/stdio.h": "lib/stdio.in.h",
+    "lib/stdlib.h": "lib/stdlib.in.h",
+    "lib/string.h": "lib/string.in.h",
+    "lib/sys/random.h": "lib/sys_random.in.h",
+    "lib/sys/stat.h": "lib/sys_stat.in.h",
+    "lib/sys/time.h": "lib/sys_time.in.h",
+    "lib/sys/types.h": "lib/sys_types.in.h",
+    "lib/time.h": "lib/time.in.h",
+    "lib/uchar.h": "lib/uchar.in.h",
+    "lib/unistd.h": "lib/unistd.in.h",
+    "lib/unitypes.h": "lib/unitypes.in.h",
+    "lib/wchar.h": "lib/wchar.in.h",
+    "lib/wctype.h": "lib/wctype.in.h",
+}
+
+UNIQUE_M4_FILES = [
+    "m4/gnulib-cache.m4",
+    "m4/gnulib-common.m4",
+    "m4/gnulib-comp.m4",
+    "m4/setmode.m4",
+    "m4/xattr.m4",
+]
+
+GNULIB_M4_DEPS = [
+    "@rules_cc_autoconf//gnulib/m4/{}".format(file[len("m4/"):-len(".m4")])
+    for file in glob(
+        include = ["m4/*.m4"],
+        exclude = UNIQUE_M4_FILES,
+    )
+]
+
+# ---------------------------------------------------------------------------
+# Package info
+# ---------------------------------------------------------------------------
+
+package_info(
+    name = "package_info",
+    package_name = "GNU patch",
+    aliases = {
+        "PACKAGE": "PACKAGE_NAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "bug-patch@gnu.org",
+    package_url = "https://savannah.gnu.org/projects/patch/",
+    strip_bcr_version = True,
+)
+
+# ---------------------------------------------------------------------------
+# m4/gnulib-comp.m4 (GNULIB module indicators)
+# ---------------------------------------------------------------------------
+
+autoconf(
+    name = "gnulib-comp",
+    checks = [
+        checks.AC_DEFINE(
+            "GNULIB_XALLOC",
+            1,
+            subst = True,
+        ),
+        checks.AC_DEFINE(
+            "GNULIB_XALLOC_DIE",
+            1,
+            subst = True,
+        ),
+
+        # gl_MODULE_INDICATOR (AC_DEFINE in config.h)
+        checks.AC_DEFINE("GNULIB_CANONICALIZE_LGPL", 1),
+        checks.AC_DEFINE("GNULIB_CLOSE", 1),
+        checks.AC_DEFINE("GNULIB_CLOSE_STREAM", 1),
+        checks.AC_DEFINE("GNULIB_FACCESSAT", 1),
+        checks.AC_DEFINE("GNULIB_FDOPENDIR", 1),
+        checks.AC_DEFINE("GNULIB_FSTAT", 1),
+        checks.AC_DEFINE("GNULIB_FSTATAT", 1),
+        checks.AC_DEFINE("GNULIB_LSTAT", 1),
+        checks.AC_DEFINE("GNULIB_MSVC_NOTHROW", 1),
+        checks.AC_DEFINE("GNULIB_OPENAT", 1),
+        checks.AC_DEFINE("GNULIB_REALLOCARRAY", 1),
+        checks.AC_DEFINE("GNULIB_STAT", 1),
+        checks.AC_DEFINE("GNULIB_STRERROR", 1),
+        checks.AC_DEFINE("GNULIB_TEMPNAME", 1),
+        checks.AC_DEFINE("GNULIB_XSTDOPEN", 1),
+        checks.AC_DEFINE("GNULIB_FSCANF", 1),
+        checks.AC_DEFINE("GNULIB_SCANF", 1),
+
+        # gl_STDIO_MODULE_INDICATOR (AC_SUBST for stdio.in.h)
+        checks.AC_SUBST("GNULIB_FSEEK", 1),
+        checks.AC_SUBST("GNULIB_FSEEKO", 1),
+        checks.AC_SUBST("GNULIB_FTELL", 1),
+        checks.AC_SUBST("GNULIB_FTELLO", 1),
+        checks.AC_SUBST("GNULIB_RENAME", 1),
+        checks.AC_SUBST("GNULIB_RENAMEAT", 1),
+        checks.AC_SUBST("GNULIB_FSCANF", 1),
+        checks.AC_SUBST("GNULIB_SCANF", 1),
+        checks.AC_SUBST("GNULIB_FPRINTF", 1),
+        checks.AC_SUBST("GNULIB_PRINTF", 1),
+        checks.AC_SUBST("GNULIB_VFPRINTF", 1),
+        checks.AC_SUBST("GNULIB_VPRINTF", 1),
+        checks.AC_SUBST("GNULIB_FGETC", 1),
+        checks.AC_SUBST("GNULIB_GETC", 1),
+        checks.AC_SUBST("GNULIB_GETCHAR", 1),
+        checks.AC_SUBST("GNULIB_FGETS", 1),
+        checks.AC_SUBST("GNULIB_FREAD", 1),
+        checks.AC_SUBST("GNULIB_FPUTC", 1),
+        checks.AC_SUBST("GNULIB_PUTC", 1),
+        checks.AC_SUBST("GNULIB_PUTCHAR", 1),
+        checks.AC_SUBST("GNULIB_FPUTS", 1),
+        checks.AC_SUBST("GNULIB_PUTS", 1),
+        checks.AC_SUBST("GNULIB_FWRITE", 1),
+
+        # gl_UNISTD_MODULE_INDICATOR (AC_SUBST for unistd.in.h)
+        checks.AC_SUBST("GNULIB_ACCESS", 1),
+        checks.AC_SUBST("GNULIB_CHDIR", 1),
+        checks.AC_SUBST("GNULIB_CLOSE", 1),
+        checks.AC_SUBST("GNULIB_DUP", 1),
+        checks.AC_SUBST("GNULIB_DUP2", 1),
+        checks.AC_SUBST("GNULIB_ENVIRON", 1),
+        checks.AC_SUBST("GNULIB_EUIDACCESS", 1),
+        checks.AC_SUBST("GNULIB_FACCESSAT", 1),
+        checks.AC_SUBST("GNULIB_FCHDIR", 1),
+        checks.AC_SUBST("GNULIB_GETCWD", 1),
+        checks.AC_SUBST("GNULIB_GETDTABLESIZE", 1),
+        checks.AC_SUBST("GNULIB_GETOPT_POSIX", 1),
+    ] + select({
+        "@platforms//os:windows": [
+            checks.AC_SUBST("GNULIB_FCHOWNAT", 0),
+            checks.AC_SUBST("GNULIB_GETGROUPS", 0),
+            checks.AC_SUBST("GNULIB_GROUP_MEMBER", 0),
+            checks.AC_SUBST("GNULIB_LCHOWN", 0),
+        ],
+        "//conditions:default": [
+            checks.AC_SUBST("GNULIB_FCHOWNAT", 1),
+            checks.AC_SUBST("GNULIB_GETGROUPS", 1),
+            checks.AC_SUBST("GNULIB_GROUP_MEMBER", 1),
+            checks.AC_SUBST("GNULIB_LCHOWN", 1),
+        ],
+    }) + [
+        checks.AC_SUBST("GNULIB_LSEEK", 1),
+        checks.AC_SUBST("GNULIB_READLINK", 1),
+        checks.AC_SUBST("GNULIB_READLINKAT", 1),
+        checks.AC_SUBST("GNULIB_RMDIR", 1),
+        checks.AC_SUBST("GNULIB_SYMLINK", 1),
+        checks.AC_SUBST("GNULIB_SYMLINKAT", 1),
+        checks.AC_SUBST("GNULIB_UNLINK", 1),
+        checks.AC_SUBST("GNULIB_UNLINKAT", 1),
+        checks.AC_SUBST("GNULIB_UNISTD_H_GETOPT", 1),
+
+        # gl_STDLIB_MODULE_INDICATOR (AC_SUBST for stdlib.in.h)
+        checks.AC_SUBST("GNULIB_CALLOC_GNU", 1),
+        checks.AC_SUBST("GNULIB_CALLOC_POSIX", 1),
+        checks.AC_SUBST("GNULIB_CANONICALIZE_FILE_NAME", 1),
+        checks.AC_SUBST("GNULIB_FREE_POSIX", 1),
+        checks.AC_SUBST("GNULIB_GETPROGNAME", 1),
+        checks.AC_SUBST("GNULIB_MALLOC_GNU", 1),
+        checks.AC_SUBST("GNULIB_MALLOC_POSIX", 1),
+        checks.AC_SUBST("GNULIB_REALLOCARRAY", 1),
+        checks.AC_SUBST("GNULIB_REALLOC_POSIX", 1),
+        checks.AC_SUBST("GNULIB_REALPATH", 1),
+        checks.AC_SUBST("GNULIB_SETENV", 1),
+        checks.AC_SUBST("GNULIB_UNSETENV", 1),
+
+        # gl_STRING_MODULE_INDICATOR (AC_SUBST for string.in.h)
+        checks.AC_SUBST("GNULIB_MEMCHR", 1),
+        checks.AC_SUBST("GNULIB_MEMPCPY", 1),
+        checks.AC_SUBST("GNULIB_MEMRCHR", 1),
+        checks.AC_SUBST("GNULIB_RAWMEMCHR", 1),
+        checks.AC_SUBST("GNULIB_STPCPY", 1),
+        checks.AC_SUBST("GNULIB_STRDUP", 1),
+        checks.AC_SUBST("GNULIB_STRERROR", 1),
+
+        # gl_SYS_STAT_MODULE_INDICATOR (AC_SUBST for sys_stat.in.h)
+        checks.AC_SUBST("GNULIB_CHMOD", 1),
+        checks.AC_SUBST("GNULIB_FCHMODAT", 1),
+        checks.AC_SUBST("GNULIB_FSTAT", 1),
+        checks.AC_SUBST("GNULIB_FSTATAT", 1),
+        checks.AC_SUBST("GNULIB_FUTIMENS", 1),
+        checks.AC_SUBST("GNULIB_LCHMOD", 1),
+        checks.AC_SUBST("GNULIB_LSTAT", 1),
+        checks.AC_SUBST("GNULIB_MKDIR", 1),
+        checks.AC_SUBST("GNULIB_MKDIRAT", 1),
+        checks.AC_SUBST("GNULIB_STAT", 1),
+        checks.AC_SUBST("GNULIB_UTIMENSAT", 1),
+
+        # gl_FCNTL_MODULE_INDICATOR (AC_SUBST for fcntl.in.h)
+        checks.AC_SUBST("GNULIB_FCNTL", 1),
+        checks.AC_SUBST("GNULIB_OPEN", 1),
+        checks.AC_SUBST("GNULIB_OPENAT", 1),
+
+        # gl_DIRENT_MODULE_INDICATOR (AC_SUBST for dirent.in.h)
+        checks.AC_SUBST("GNULIB_CLOSEDIR", 1),
+        checks.AC_SUBST("GNULIB_DIRFD", 1),
+        checks.AC_SUBST("GNULIB_FDOPENDIR", 1),
+        checks.AC_SUBST("GNULIB_OPENDIR", 1),
+        checks.AC_SUBST("GNULIB_READDIR", 1),
+
+        # gl_SIGNAL_MODULE_INDICATOR (AC_SUBST for signal.in.h)
+        checks.AC_SUBST("GNULIB_RAISE", 1),
+
+        # gl_WCHAR_MODULE_INDICATOR (AC_SUBST for wchar.in.h)
+        checks.AC_SUBST("GNULIB_MBRTOWC", 1),
+        checks.AC_SUBST("GNULIB_MBSINIT", 1),
+        checks.AC_SUBST("GNULIB_MBSZERO", 1),
+
+        # gl_LOCALE_MODULE_INDICATOR (AC_SUBST for locale.in.h)
+        checks.AC_SUBST("GNULIB_SETLOCALE_NULL", 1),
+
+        # gl_SYS_RANDOM_MODULE_INDICATOR (AC_SUBST for sys_random.in.h)
+        checks.AC_SUBST("GNULIB_GETRANDOM", 1),
+
+        # gl_SYS_TIME_MODULE_INDICATOR (AC_SUBST for sys_time.in.h)
+        checks.AC_SUBST("GNULIB_GETTIMEOFDAY", 1),
+
+        # gl_UCHAR_MODULE_INDICATOR (AC_SUBST for uchar.in.h)
+        checks.AC_SUBST("GNULIB_C32ISPRINT", 1),
+        checks.AC_SUBST("GNULIB_MBRTOC32", 1),
+
+        # gl_TIME_MODULE_INDICATOR (AC_SUBST for time.in.h)
+        checks.AC_SUBST("GNULIB_MKTIME", 1),
+        checks.AC_SUBST("GNULIB_TIME_R", 1),
+        checks.AC_SUBST("GNULIB_TIME_RZ", 1),
+        checks.AC_SUBST("GNULIB_TIMEGM", 1),
+        checks.AC_SUBST("GNULIB_TZSET", 1),
+
+        # gl_UTIME_MODULE_INDICATOR (AC_SUBST for utime.in.h)
+        checks.AC_SUBST("GNULIB_UTIME", 1),
+
+        # Compatibility substitutions
+        checks.AC_SUBST("REPLACE_CALLOC", 0),
+        checks.AC_SUBST("REPLACE_MALLOC", 0),
+    ] + select({
+        "@platforms//os:linux": [
+            checks.AC_SUBST("REPLACE_REALLOC", 1),
+        ],
+        "//conditions:default": [
+            checks.AC_SUBST("REPLACE_REALLOC", 0),
+        ],
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# configure.ac
+# ---------------------------------------------------------------------------
+
+autoconf(
+    name = "configure_ac",
+    checks = [
+        checks.AC_SUBST("GUARD_PREFIX", "GL"),
+        checks.AC_DEFINE("GNULIB_NO_VLA", 1),
+        checks.AC_DEFINE("EDITOR_PROGRAM", '"/usr/bin/ed"'),
+        checks.AC_DEFINE("ENABLE_MERGE", 1),
+
+        # Function checks from configure.ac
+        checks.AC_CHECK_FUNC("geteuid"),
+        checks.AC_CHECK_FUNC("getuid"),
+        checks.AC_CHECK_FUNC("sigaction"),
+        checks.AC_CHECK_FUNC("sigfillset"),
+
+        # xattr support
+        checks.AC_CHECK_HEADER("sys/xattr.h"),
+        checks.AC_DEFINE(
+            "USE_XATTR",
+            "HAVE_SYS_XATTR_H",
+        ),
+
+        # --- Conditional compilation variables ---
+
+        # Always compile these gnulib replacements
+        checks.AC_SUBST("COMPILE_GETOPT", "1"),
+        checks.AC_SUBST("COMPILE_MBRTOC32", "1"),
+        checks.AC_SUBST("COMPILE_REALLOCARRAY", "1"),
+        checks.AC_SUBST("COMPILE_UNICTYPE_CTYPE_PRINT", "1"),
+
+        # error.c: compile when error_at_line() is missing (macOS)
+        checks.AC_CHECK_FUNC("error_at_line"),
+        checks.AC_SUBST(
+            "COMPILE_ERROR",
+            condition = "!ac_cv_func_error_at_line",
+        ),
+
+        # fpending.c: compile when __fpending() is missing (macOS)
+        checks.AC_TRY_LINK(
+            name = "patch_cv_func___fpending",
+            code = """\
+#include <stdio.h>
+#if HAVE_STDIO_EXT_H
+# include <stdio_ext.h>
+#endif
+int main(void) { return ! __fpending(stdin); }
+""",
+        ),
+        checks.AC_SUBST(
+            "COMPILE_FPENDING",
+            condition = "!patch_cv_func___fpending",
+        ),
+
+        # rawmemchr: GNU extension, missing on macOS
+        checks.AC_TRY_LINK(
+            name = "patch_cv_func_rawmemchr",
+            code = """\
+#define _GNU_SOURCE 1
+#include <string.h>
+int main(void) { (void)rawmemchr; return 0; }
+""",
+        ),
+        checks.AC_SUBST(
+            "COMPILE_RAWMEMCHR",
+            condition = "!patch_cv_func_rawmemchr",
+        ),
+
+        # mempcpy: GNU extension, missing on macOS
+        checks.AC_SUBST(
+            "COMPILE_MEMPCPY",
+            condition = "!ac_cv_func_mempcpy",
+        ),
+
+        # memrchr: GNU extension, missing on macOS
+        checks.AC_TRY_LINK(
+            name = "patch_cv_func_memrchr",
+            code = """\
+#define _GNU_SOURCE 1
+#include <string.h>
+int main(void) { (void)memrchr; return 0; }
+""",
+        ),
+        checks.AC_SUBST(
+            "COMPILE_MEMRCHR",
+            condition = "!patch_cv_func_memrchr",
+        ),
+
+        # getrandom: missing on older macOS
+        checks.AC_TRY_LINK(
+            name = "patch_cv_func_getrandom",
+            code = """\
+#include <sys/random.h>
+int main(void) { char buf[1]; return getrandom(buf, 1, 0); }
+""",
+        ),
+        checks.AC_SUBST(
+            "COMPILE_GETRANDOM",
+            condition = "!patch_cv_func_getrandom",
+        ),
+
+        # euidaccess: missing on macOS
+        # ac_cv_func_euidaccess is already checked by gnulib/m4/euidaccess
+        checks.AC_SUBST(
+            "COMPILE_EUIDACCESS",
+            condition = "!ac_cv_func_euidaccess",
+        ),
+
+        # group_member: missing on macOS
+        checks.AC_CHECK_FUNC("group_member"),
+        checks.AC_SUBST(
+            "COMPILE_GROUP_MEMBER",
+            condition = "!ac_cv_func_group_member",
+        ),
+
+        # lchmod: missing on older Linux
+        checks.AC_CHECK_FUNC("lchmod"),
+        checks.AC_SUBST(
+            "COMPILE_LCHMOD",
+            condition = "!ac_cv_func_lchmod",
+        ),
+
+        # mkdirat: usually available on modern systems
+        # ac_cv_func_mkdirat is already checked by gnulib/m4/mkdirat
+        checks.AC_SUBST(
+            "COMPILE_MKDIRAT",
+            condition = "!ac_cv_func_mkdirat",
+        ),
+
+        # time_rz: compile when tzalloc is missing
+        checks.AC_CHECK_FUNC("tzalloc"),
+        checks.AC_SUBST(
+            "COMPILE_TIME_RZ",
+            condition = "!ac_cv_func_tzalloc",
+        ),
+
+        # setlocale-lock: compile when setlocale_null is not thread-safe
+        checks.AC_SUBST("COMPILE_SETLOCALE_LOCK", "0"),
+    ] + select({
+        "@platforms//os:linux": [
+            checks.AC_SUBST("COMPILE_OPEN", "0"),
+            checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "0"),
+            checks.AC_SUBST("COMPILE_MBRTOWC", "1"),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_SUBST("COMPILE_OPEN", "1"),
+            checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "1"),
+            checks.AC_SUBST("COMPILE_MBRTOWC", "0"),
+        ],
+        "//conditions:default": [
+            checks.AC_SUBST("COMPILE_OPEN", "0"),
+            checks.AC_SUBST("COMPILE_STRERROR_OVERRIDE", "0"),
+            checks.AC_SUBST("COMPILE_MBRTOWC", "0"),
+        ],
+    }),
+    deps = [
+        ":gnulib-comp",
+        ":package_info",
+    ] + GNULIB_M4_DEPS,
+)
+
+# ---------------------------------------------------------------------------
+# Generated headers from .in.h templates
+# ---------------------------------------------------------------------------
+
+[
+    autoconf_hdr(
+        name = hdr[:-len(".h")] + "_h",
+        out = hdr,
+        defaults = True,
+        inlines = {
+            "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+            "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+            "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+        },
+        mode = "subst",
+        substitutions = {
+            "libc_hidden_proto": "// libc_hidden_proto",
+            "__always_inline": "inline _GL_ATTRIBUTE_ALWAYS_INLINE",
+            "__glibc_likely": "_GL_LIKELY",
+            "__glibc_unlikely": "_GL_UNLIKELY",
+        },
+        template = template,
+        deps = [":configure_ac"],
+    )
+    for hdr, template in GENERATED_SRCS.items()
+]
+
+# GL_NEXT_HEADER checks with alternate variable names for MSVC.
+#
+# The standard gnulib modules (assert_h, errno_h) use conditional
+# GL_NEXT_HEADERS which produces a static "<header>" string. On MSVC,
+# where INCLUDE_NEXT is empty, this results in `# <header>` which is a
+# syntax error. The GL_NEXT_HEADER check type handles MSVC correctly by
+# inlining the system header content. We use alternate variable names
+# (PATCH_NEXT_*) to avoid conflicts with the standard modules' variables,
+# and redirect @NEXT_*@ to @PATCH_NEXT_*@ on MSVC via explicit substitutions.
+autoconf(
+    name = "patch_next_assert_h",
+    checks = [
+        gl_checks.GL_NEXT_HEADER(
+            "assert.h",
+            name = "PATCH_NEXT_ASSERT_H",
+        ),
+    ],
+    deps = [
+        "@rules_cc_autoconf//gnulib/m4/include_next",
+    ],
+)
+
+autoconf(
+    name = "patch_next_errno_h",
+    checks = [
+        gl_checks.GL_NEXT_HEADER(
+            "errno.h",
+            name = "PATCH_NEXT_ERRNO_H",
+        ),
+    ],
+    deps = [
+        "@rules_cc_autoconf//gnulib/m4/include_next",
+    ],
+)
+
+_ASSERT_H_SUBST = {
+    "/* The definition of static_assert is copied here.  */": "#define _GL_STATIC_ASSERT_H\n/* The definition of static_assert is copied here.  */",
+}
+
+# This wrapper shadows the system assert.h on the include path, so it must
+# always generate valid content. On modern compilers where HAVE_C_STATIC_ASSERT
+# is set, the conditional GL_NEXT_HEADERS in rules_cc_autoconf leaves
+# NEXT_ASSERT_H empty. On non-MSVC we override it directly; on MSVC we
+# redirect to PATCH_NEXT_ASSERT_H which uses GL_NEXT_HEADER to inline the
+# system header content (since MSVC lacks #include_next).
+autoconf_hdr(
+    name = "assert_h",
+    out = "lib/assert.h",
+    inlines = {
+        "/* The definition of static_assert is copied here.  */": "lib/verify.h",
+    },
+    mode = "subst",
+    substitutions = select({
+        "@rules_cc//cc/compiler:msvc-cl": _ASSERT_H_SUBST | {
+            "@NEXT_ASSERT_H@": "@PATCH_NEXT_ASSERT_H@",
+        },
+        "//conditions:default": _ASSERT_H_SUBST | {
+            "@NEXT_ASSERT_H@": "<assert.h>",
+        },
+    }),
+    tags = ["manual"],
+    template = "lib/assert.in.h",
+    deps = [
+        ":patch_next_assert_h",
+        "@rules_cc_autoconf//gnulib/m4/assert_h",
+    ],
+)
+
+_ERRNO_H_SUBST = {
+    "@EMULTIHOP_HIDDEN@": "0",
+    "@EMULTIHOP_VALUE@": "EMULTIHOP",
+    "@ENOLINK_HIDDEN@": "0",
+    "@ENOLINK_VALUE@": "ENOLINK",
+    "@EOVERFLOW_HIDDEN@": "0",
+    "@EOVERFLOW_VALUE@": "EOVERFLOW",
+}
+
+autoconf_hdr(
+    name = "lib/errno_h",
+    out = "lib/errno.h",
+    defaults = True,
+    inlines = {
+        "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+        "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+        "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+    },
+    mode = "subst",
+    substitutions = select({
+        "@rules_cc//cc/compiler:msvc-cl": _ERRNO_H_SUBST | {
+            "@NEXT_ERRNO_H@": "@PATCH_NEXT_ERRNO_H@",
+        },
+        "//conditions:default": _ERRNO_H_SUBST | {
+            "@NEXT_ERRNO_H@": "<errno.h>",
+        },
+    }),
+    template = "lib/errno.in.h",
+    deps = [
+        ":configure_ac",
+        ":patch_next_errno_h",
+    ],
+)
+
+# MSVC: GL_NEXT_HEADER inlining for utime.h produces empty NEXT_UTIME_H.
+# Override HAVE_UTIME_H=0 on MSVC so the template falls back to
+# #include <sys/utime.h> which reliably defines struct _utimbuf.
+autoconf_hdr(
+    name = "lib/utime_h",
+    out = "lib/utime.h",
+    defaults = True,
+    inlines = {
+        "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+        "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+        "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+    },
+    mode = "subst",
+    substitutions = select({
+        "@rules_cc//cc/compiler:msvc-cl": {
+            "@HAVE_UTIME_H@": "0",
+        },
+        "//conditions:default": {},
+    }),
+    template = "lib/utime.in.h",
+    deps = [":configure_ac"],
+)
+
+_UNICTYPE_DLL_VARS = [
+    "CATEGORY_C",
+    "CATEGORY_CC",
+    "CATEGORY_CF",
+    "CATEGORY_CN",
+    "CATEGORY_CO",
+    "CATEGORY_CS",
+    "CATEGORY_L",
+    "CATEGORY_LC",
+    "CATEGORY_LL",
+    "CATEGORY_LM",
+    "CATEGORY_LO",
+    "CATEGORY_LT",
+    "CATEGORY_LU",
+    "CATEGORY_M",
+    "CATEGORY_MC",
+    "CATEGORY_ME",
+    "CATEGORY_MN",
+    "CATEGORY_N",
+    "CATEGORY_ND",
+    "CATEGORY_NL",
+    "CATEGORY_NO",
+    "CATEGORY_P",
+    "CATEGORY_PC",
+    "CATEGORY_PD",
+    "CATEGORY_PE",
+    "CATEGORY_PF",
+    "CATEGORY_PI",
+    "CATEGORY_PO",
+    "CATEGORY_PS",
+    "CATEGORY_S",
+    "CATEGORY_SC",
+    "CATEGORY_SK",
+    "CATEGORY_SM",
+    "CATEGORY_SO",
+    "CATEGORY_Z",
+    "CATEGORY_ZL",
+    "CATEGORY_ZP",
+    "CATEGORY_ZS",
+    "PROPERTY_ALPHABETIC",
+    "PROPERTY_ASCII_HEX_DIGIT",
+    "PROPERTY_BIDI_ARABIC_DIGIT",
+    "PROPERTY_BIDI_ARABIC_RIGHT_TO_LEFT",
+    "PROPERTY_BIDI_BLOCK_SEPARATOR",
+    "PROPERTY_BIDI_BOUNDARY_NEUTRAL",
+    "PROPERTY_BIDI_COMMON_SEPARATOR",
+    "PROPERTY_BIDI_CONTROL",
+    "PROPERTY_BIDI_EMBEDDING_OR_OVERRIDE",
+    "PROPERTY_BIDI_EUROPEAN_DIGIT",
+    "PROPERTY_BIDI_EUR_NUM_SEPARATOR",
+    "PROPERTY_BIDI_EUR_NUM_TERMINATOR",
+    "PROPERTY_BIDI_HEBREW_RIGHT_TO_LEFT",
+    "PROPERTY_BIDI_LEFT_TO_RIGHT",
+    "PROPERTY_BIDI_NON_SPACING_MARK",
+    "PROPERTY_BIDI_OTHER_NEUTRAL",
+    "PROPERTY_BIDI_PDF",
+    "PROPERTY_BIDI_SEGMENT_SEPARATOR",
+    "PROPERTY_BIDI_WHITESPACE",
+    "PROPERTY_CASED",
+    "PROPERTY_CASE_IGNORABLE",
+    "PROPERTY_CHANGES_WHEN_CASEFOLDED",
+    "PROPERTY_CHANGES_WHEN_CASEMAPPED",
+    "PROPERTY_CHANGES_WHEN_LOWERCASED",
+    "PROPERTY_CHANGES_WHEN_TITLECASED",
+    "PROPERTY_CHANGES_WHEN_UPPERCASED",
+    "PROPERTY_COMBINING",
+    "PROPERTY_COMPOSITE",
+    "PROPERTY_CURRENCY_SYMBOL",
+    "PROPERTY_DASH",
+    "PROPERTY_DECIMAL_DIGIT",
+    "PROPERTY_DEFAULT_IGNORABLE_CODE_POINT",
+    "PROPERTY_DEPRECATED",
+    "PROPERTY_DIACRITIC",
+    "PROPERTY_EMOJI",
+    "PROPERTY_EMOJI_COMPONENT",
+    "PROPERTY_EMOJI_MODIFIER",
+    "PROPERTY_EMOJI_MODIFIER_BASE",
+    "PROPERTY_EMOJI_PRESENTATION",
+    "PROPERTY_EXTENDED_PICTOGRAPHIC",
+    "PROPERTY_EXTENDER",
+    "PROPERTY_FORMAT_CONTROL",
+    "PROPERTY_GRAPHEME_BASE",
+    "PROPERTY_GRAPHEME_EXTEND",
+    "PROPERTY_GRAPHEME_LINK",
+    "PROPERTY_HEX_DIGIT",
+    "PROPERTY_HYPHEN",
+    "PROPERTY_IDEOGRAPHIC",
+    "PROPERTY_IDS_BINARY_OPERATOR",
+    "PROPERTY_IDS_TRINARY_OPERATOR",
+    "PROPERTY_IDS_UNARY_OPERATOR",
+    "PROPERTY_ID_COMPAT_MATH_CONTINUE",
+    "PROPERTY_ID_COMPAT_MATH_START",
+    "PROPERTY_ID_CONTINUE",
+    "PROPERTY_ID_START",
+    "PROPERTY_IGNORABLE_CONTROL",
+    "PROPERTY_ISO_CONTROL",
+    "PROPERTY_JOIN_CONTROL",
+    "PROPERTY_LEFT_OF_PAIR",
+    "PROPERTY_LINE_SEPARATOR",
+    "PROPERTY_LOGICAL_ORDER_EXCEPTION",
+    "PROPERTY_LOWERCASE",
+    "PROPERTY_MATH",
+    "PROPERTY_MODIFIER_COMBINING_MARK",
+    "PROPERTY_NON_BREAK",
+    "PROPERTY_NOT_A_CHARACTER",
+    "PROPERTY_NUMERIC",
+    "PROPERTY_OTHER_ALPHABETIC",
+    "PROPERTY_OTHER_DEFAULT_IGNORABLE_CODE_POINT",
+    "PROPERTY_OTHER_GRAPHEME_EXTEND",
+    "PROPERTY_OTHER_ID_CONTINUE",
+    "PROPERTY_OTHER_ID_START",
+    "PROPERTY_OTHER_LOWERCASE",
+    "PROPERTY_OTHER_MATH",
+    "PROPERTY_OTHER_UPPERCASE",
+    "PROPERTY_PAIRED_PUNCTUATION",
+    "PROPERTY_PARAGRAPH_SEPARATOR",
+    "PROPERTY_PATTERN_SYNTAX",
+    "PROPERTY_PATTERN_WHITE_SPACE",
+    "PROPERTY_PREPENDED_CONCATENATION_MARK",
+    "PROPERTY_PRIVATE_USE",
+    "PROPERTY_PUNCTUATION",
+    "PROPERTY_QUOTATION_MARK",
+    "PROPERTY_RADICAL",
+    "PROPERTY_REGIONAL_INDICATOR",
+    "PROPERTY_SENTENCE_TERMINAL",
+    "PROPERTY_SOFT_DOTTED",
+    "PROPERTY_SPACE",
+    "PROPERTY_TERMINAL_PUNCTUATION",
+    "PROPERTY_TITLECASE",
+    "PROPERTY_UNASSIGNED_CODE_VALUE",
+    "PROPERTY_UNIFIED_IDEOGRAPH",
+    "PROPERTY_UPPERCASE",
+    "PROPERTY_VARIATION_SELECTOR",
+    "PROPERTY_WHITE_SPACE",
+    "PROPERTY_XID_CONTINUE",
+    "PROPERTY_XID_START",
+    "PROPERTY_ZERO_WIDTH",
+]
+
+autoconf_hdr(
+    name = "lib/unictype_h",
+    out = "lib/unictype.h",
+    mode = "subst",
+    substitutions = {"@HAVE_UNISTRING_WOE32DLL_H@": "0"} | {
+        "@GNULIB_UNICTYPE_{}_DLL_VARIABLE@".format(v): ""
+        for v in _UNICTYPE_DLL_VARS
+    },
+    template = "lib/unictype.in.h",
+)
+
+autoconf_hdr(
+    name = "lib/config_h",
+    out = "lib/config.h",
+    template = "config.hin",
+    deps = [":configure_ac"],
+)
+
+# ---------------------------------------------------------------------------
+# configmake.h
+# ---------------------------------------------------------------------------
+
+write_file(
+    name = "configmake_h_src",
+    out = "lib/configmake.h",
+    content = [
+        "#define LOCALEDIR \"\"",
+        "",
+    ],
+    newline = "unix",
+    tags = ["manual"],
+)
+
+# ---------------------------------------------------------------------------
+# lib/ conditional sources (GL_COND_OBJ_*)
+# ---------------------------------------------------------------------------
+
+autoconf_srcs(
+    name = "gnulib_conditional_srcs",
+    srcs = {
+        # REPLACE_* gated (gnulib defaults)
+        "lib/access.c": "REPLACE_ACCESS",
+        "lib/canonicalize-lgpl.c": "REPLACE_CANONICALIZE_FILE_NAME",
+        "lib/chmod.c": "REPLACE_CHMOD",
+        "lib/chown.c": "REPLACE_CHOWN",
+        "lib/close.c": "REPLACE_CLOSE",
+        "lib/closedir.c": "REPLACE_CLOSEDIR",
+        "lib/dirfd.c": "REPLACE_DIRFD",
+        "lib/dup.c": "REPLACE_DUP",
+        "lib/dup2.c": "REPLACE_DUP2",
+
+        # Custom COMPILE_* gated
+        "lib/error.c": "COMPILE_ERROR",
+        "lib/euidaccess.c": "COMPILE_EUIDACCESS",
+        "lib/faccessat.c": "REPLACE_FACCESSAT",
+        "lib/fchdir.c": "REPLACE_FCHDIR",
+        "lib/fchmodat.c": "REPLACE_FCHMODAT",
+        "lib/fchownat.c": "REPLACE_FCHOWNAT",
+        "lib/fcntl.c": "REPLACE_FCNTL",
+        "lib/fdopendir.c": "REPLACE_FDOPENDIR",
+        "lib/fpending.c": "COMPILE_FPENDING",
+        "lib/free.c": "REPLACE_FREE",
+        "lib/fseek.c": "REPLACE_FSEEK",
+        "lib/fseeko.c": "REPLACE_FSEEKO",
+        "lib/fstat.c": "REPLACE_FSTAT",
+        "lib/fstatat.c": "REPLACE_FSTATAT",
+        "lib/ftell.c": "REPLACE_FTELL",
+        "lib/ftello.c": "REPLACE_FTELLO",
+        "lib/futimens.c": "REPLACE_FUTIMENS",
+        "lib/getcwd-lgpl.c": "REPLACE_GETCWD",
+        "lib/getdtablesize.c": "REPLACE_GETDTABLESIZE",
+        "lib/getgroups.c": "REPLACE_GETGROUPS",
+        "lib/getopt.c": "COMPILE_GETOPT",
+        "lib/getopt1.c": "COMPILE_GETOPT",
+        "lib/getprogname.c": "REPLACE_GETPROGNAME",
+        "lib/getrandom.c": "COMPILE_GETRANDOM",
+        "lib/gettimeofday.c": "REPLACE_GETTIMEOFDAY",
+        # group-member.c excluded on MSVC: uses gid_t/struct group (POSIX-only)
+        # "lib/group-member.c": "COMPILE_GROUP_MEMBER",
+        "lib/lchmod.c": "COMPILE_LCHMOD",
+        "lib/lchown.c": "REPLACE_LCHOWN",
+        "lib/lseek.c": "REPLACE_LSEEK",
+        "lib/lstat.c": "REPLACE_LSTAT",
+        "lib/mbrtoc32.c": "COMPILE_MBRTOC32",
+        "lib/mbrtowc.c": "COMPILE_MBRTOWC",
+        "lib/mbsinit.c": "REPLACE_MBSINIT",
+        "lib/memchr.c": "REPLACE_MEMCHR",
+        "lib/mempcpy.c": "COMPILE_MEMPCPY",
+        "lib/memrchr.c": "COMPILE_MEMRCHR",
+        "lib/mkdir.c": "REPLACE_MKDIR",
+        "lib/mkdirat.c": "COMPILE_MKDIRAT",
+        "lib/mktime.c": "REPLACE_MKTIME",
+        "lib/open.c": "COMPILE_OPEN",
+        "lib/openat.c": "REPLACE_OPENAT",
+        "lib/opendir.c": "REPLACE_OPENDIR",
+        "lib/raise.c": "REPLACE_RAISE",
+        "lib/rawmemchr.c": "COMPILE_RAWMEMCHR",
+        "lib/readdir.c": "REPLACE_READDIR",
+        "lib/readlink.c": "REPLACE_READLINK",
+        "lib/readlinkat.c": "REPLACE_READLINKAT",
+        "lib/realloc.c": "REPLACE_REALLOC",
+        "lib/reallocarray.c": "COMPILE_REALLOCARRAY",
+        "lib/rename.c": "REPLACE_RENAME",
+        "lib/renameat.c": "REPLACE_RENAMEAT",
+        "lib/rmdir.c": "REPLACE_RMDIR",
+        "lib/setenv.c": "REPLACE_SETENV",
+        "lib/setlocale-lock.c": "COMPILE_SETLOCALE_LOCK",
+        "lib/stat.c": "REPLACE_STAT",
+        "lib/stdio-read.c": "REPLACE_STDIO_READ_FUNCS",
+        "lib/stdio-write.c": "REPLACE_STDIO_WRITE_FUNCS",
+        "lib/stpcpy.c": "REPLACE_STPCPY",
+        "lib/strdup.c": "REPLACE_STRDUP",
+        "lib/strerror-override.c": "COMPILE_STRERROR_OVERRIDE",
+        "lib/strerror.c": "REPLACE_STRERROR",
+        "lib/symlink.c": "REPLACE_SYMLINK",
+        "lib/symlinkat.c": "REPLACE_SYMLINKAT",
+        "lib/time_r.c": "REPLACE_LOCALTIME_R",
+        "lib/time_rz.c": "COMPILE_TIME_RZ",
+        "lib/timegm.c": "REPLACE_TIMEGM",
+        "lib/tzset.c": "REPLACE_TZSET",
+        "lib/unictype/ctype_print.c": "COMPILE_UNICTYPE_CTYPE_PRINT",
+        "lib/unlink.c": "REPLACE_UNLINK",
+        "lib/unlinkat.c": "REPLACE_UNLINKAT",
+        "lib/unsetenv.c": "REPLACE_UNSETENV",
+        "lib/utime.c": "REPLACE_UTIME",
+        "lib/utimensat.c": "REPLACE_UTIMENSAT",
+    },
+    defaults = True,
+    deps = [":configure_ac"],
+)
+
+# ---------------------------------------------------------------------------
+# Compiler options
+# ---------------------------------------------------------------------------
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang": [
+        "-w",
+        "-std=gnu11",
+    ],
+    "@rules_cc//cc/compiler:gcc": [
+        "-w",
+        "-std=gnu11",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+    ],
+    "//conditions:default": [],
+})
+
+# ---------------------------------------------------------------------------
+# lib/ -> libpatch.a (gnulib support library)
+# ---------------------------------------------------------------------------
+
+alias(
+    name = "libpatch",
+    actual = ":lib/patch",
+)
+
+cc_library(
+    name = "lib/patch",
+    srcs = [
+        "lib/argmatch.c",
+        "lib/backup-find.c",
+        "lib/backupfile.c",
+        "lib/basename-lgpl.c",
+        "lib/bitrotate.c",
+        "lib/c-ctype.c",
+        "lib/c-strcasecmp.c",
+        "lib/c-strncasecmp.c",
+        "lib/c32isprint.c",
+        "lib/chdir-long.c",
+        "lib/cloexec.c",
+        "lib/close-stream.c",
+        "lib/closeout.c",
+        "lib/dirname-lgpl.c",
+        "lib/exitfail.c",
+        "lib/fd-hook.c",
+        "lib/filenamecat-lgpl.c",
+        "lib/gettime.c",
+        "lib/hard-locale.c",
+        "lib/hash.c",
+        "lib/ialloc.c",
+        "lib/localcharset.c",
+        "lib/malloc/scratch_buffer_grow.c",
+        "lib/malloc/scratch_buffer_grow_preserve.c",
+        "lib/malloc/scratch_buffer_set_array_size.c",
+        "lib/malloca.c",
+        "lib/mbszero.c",
+        "lib/openat-die.c",
+        "lib/openat-proc.c",
+        "lib/opendirat.c",
+        "lib/parse-datetime.c",
+        "lib/progname.c",
+        "lib/quotearg.c",
+        "lib/renameatu.c",
+        "lib/same-inode.c",
+        "lib/save-cwd.c",
+        "lib/setlocale_null.c",
+        "lib/setlocale_null-unlocked.c",
+        "lib/stat-time.c",
+        "lib/stdlib.c",
+        "lib/stdopen.c",
+        "lib/stripslash.c",
+        "lib/tempname.c",
+        "lib/timespec.c",
+        "lib/unistd.c",
+        "lib/utimens.c",
+        "lib/wctype-h.c",
+        "lib/xalloc-die.c",
+        "lib/xmalloc.c",
+        "lib/xstdopen.c",
+    ] + [
+        ":gnulib_conditional_srcs",
+    ] + select({
+        "@rules_cc//cc/compiler:msvc-cl": [
+            # MSVC-specific gnulib support files (no autoconf_srcs condition)
+            "lib/msvc-inval.c",
+            "lib/msvc-nothrow.c",
+            "lib/stat-w32.c",
+            # at-func2.c is a standalone file needed when HAVE_RENAMEAT=0 (MSVC).
+            # On Linux/macOS, renameatu.c takes the HAVE_RENAMEAT path instead.
+            "lib/at-func2.c",
+            # Gnulib replacements whose REPLACE_*/COMPILE_* checks evaluate
+            # to 0 on MSVC via rules_cc_autoconf (autoconf_srcs wraps these
+            # in #if 0, so we compile them directly here):
+            "lib/closedir.c",
+            "lib/dirfd.c",
+            "lib/fchdir.c",
+            "lib/fchmodat.c",
+            "lib/fdopendir.c",
+            "lib/getprogname.c",
+            "lib/openat.c",
+            "lib/opendir.c",
+            "lib/readdir.c",
+            "lib/renameat.c",
+            "lib/setenv.c",
+            "lib/symlinkat.c",
+            "lib/timegm.c",
+            "lib/unsetenv.c",
+            "lib/utimensat.c",
+        ],
+        "//conditions:default": ["lib/group-member.c"],
+    }),
+    hdrs = [
+        "lib/config.h",
+        "lib/errno.h",
+        "lib/unictype.h",
+    ] + [
+        ":{}".format(hdr)
+        for hdr in GENERATED_SRCS.keys()
+    ] + [
+        ":assert_h",
+        ":lib/errno_h",
+        ":lib/unictype_h",
+        ":lib/utime_h",
+    ] + glob(
+        include = ["lib/**/*.h"],
+        exclude = GENERATED_SRCS.keys() + [
+            "lib/assert.h",
+            "lib/config.h",
+            "lib/configmake.h",
+            "lib/errno.h",
+            "lib/unictype.h",
+            "lib/utime.h",
+        ],
+    ) + [
+        ":configmake_h_src",
+    ],
+    copts = COPTS,
+    includes = [
+        "lib",
+        "lib/unictype",
+    ],
+    local_defines = LOCAL_DEFINES,
+    textual_hdrs = [
+        "lib/at-func.c",
+        "lib/at-func2.c",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# src/ -> bin/patch
+# ---------------------------------------------------------------------------
+
+cc_binary(
+    name = "patch",
+    srcs = [
+        "src/inp.c",
+        "src/merge.c",
+        "src/patch.c",
+        "src/pch.c",
+        "src/safe.c",
+        "src/util.c",
+        "src/version.c",
+    ] + glob(["src/*.h"]),
+    copts = COPTS,
+    includes = [
+        "lib",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@rules_cc//cc/compiler:msvc-cl": ["advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = LOCAL_DEFINES + [
+        "ENABLE_MERGE",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libpatch",
+    ],
+)
+
+genrule(
+    name = "patch_help",
+    testonly = True,
+    outs = ["patch_help.txt"],
+    cmd = "$(execpath :patch) --help > $@ 2>&1",
+    tools = [":patch"],
+)
