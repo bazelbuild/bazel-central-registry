@@ -1,0 +1,510 @@
+"""This is a BUILD.bazel file for FreeRTOS."""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Label flag that points to the cc_library target providing FreeRTOSConfig.h.
+label_flag(
+    name = "freertos_config",
+    build_setting_default = ":default_freertos_config",
+)
+
+cc_library(
+    name = "default_freertos_config",
+    # The "default" config is not compatible with any configuration: you can't
+    # build FreeRTOS without choosing a config.
+    target_compatible_with = ["@platforms//:incompatible"],
+)
+
+# Constraint setting used to select the FreeRTOSConfig version.
+constraint_setting(
+    name = "freertos_config_setting",
+)
+
+# Label flag that points to the cc_library target providing port-layer sources.
+label_flag(
+    name = "freertos_third_party_port",
+    build_setting_default = ":empty_cc_library",
+)
+
+# Label flag that points to the cc_library target providing port-layer headers.
+label_flag(
+    name = "freertos_third_party_port_headers",
+    build_setting_default = ":empty_cc_library",
+)
+
+constraint_setting(
+    name = "port",
+)
+
+# Cortex-M33 with No TrustZone
+constraint_value(
+    name = "port_ARM_CM33_NTZ",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_ARM_CM4F",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_ARM_CM0",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_ARM_CM3",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_ARM_CM7",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_Xtensa",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_Posix",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_RP2040",
+    constraint_setting = ":port",
+)
+
+constraint_value(
+    name = "port_third_party",
+    constraint_setting = ":port",
+)
+
+cc_library(
+    name = "freertos",
+    srcs = [
+        "croutine.c",
+        "event_groups.c",
+        "list.c",
+        "queue.c",
+        "stream_buffer.c",
+        "timers.c",
+    ],
+    includes = ["include/"],
+    textual_hdrs = [
+        "include/FreeRTOS.h",
+        "include/StackMacros.h",
+        "include/croutine.h",
+        "include/deprecated_definitions.h",
+        "include/event_groups.h",
+        "include/list.h",
+        "include/message_buffer.h",
+        "include/mpu_syscall_numbers.h",
+        "include/mpu_wrappers.h",
+        "include/portable.h",
+        "include/projdefs.h",
+        "include/queue.h",
+        "include/semphr.h",
+        "include/stack_macros.h",
+        "include/stream_buffer.h",
+        "include/task.h",
+        "include/timers.h",
+    ],
+    deps = [
+        ":freertos_config",
+        ":freertos_port",
+        ":freertos_port_headers",
+        ":heap",
+        ":tasks_c",
+    ],
+    # Required because breaking out tasks_c results in the dependencies between
+    # the libraries not being quite correct: to link tasks_c you actually need
+    # a bunch of the source files from here (e.g., list.c).
+    alwayslink = 1,
+)
+
+cc_library(
+    name = "freertos_port",
+    deps = select({
+        ":port_ARM_CM0": [":arm_cm0_port"],
+        ":port_ARM_CM3": [":arm_cm3_port"],
+        ":port_ARM_CM33_NTZ": [":arm_cm33_ntz_port"],
+        ":port_ARM_CM4F": [":arm_cm4f_port"],
+        ":port_ARM_CM7": [":arm_cm7_port"],
+        ":port_Posix": [":posix_port"],
+        ":port_Xtensa": [":extensa_port"],
+        ":port_RP2040": [":rp2040_port"],
+        ":port_third_party": [":freertos_third_party_port"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "arm_cm0_port",
+    srcs = [
+        "portable/GCC/ARM_CM0/port.c",
+        "portable/GCC/ARM_CM0/portasm.c",
+    ],
+    deps = [
+        ":arm_cm0_port_headers",
+        ":freertos_headers",
+    ],
+)
+
+cc_library(
+    name = "arm_cm3_port",
+    srcs = ["portable/GCC/ARM_CM3/port.c"],
+    deps = [
+        ":arm_cm3_port_headers",
+        ":freertos_headers",
+    ],
+)
+
+cc_library(
+    name = "arm_cm33_ntz_port",
+    srcs = [
+        "portable/GCC/ARM_CM33_NTZ/non_secure/port.c",
+        "portable/GCC/ARM_CM33_NTZ/non_secure/portasm.c",
+    ],
+    deps = [
+        ":arm_cm33_ntz_port_headers",
+        ":freertos_headers",
+    ],
+)
+
+cc_library(
+    name = "arm_cm4f_port",
+    srcs = ["portable/GCC/ARM_CM4F/port.c"],
+    deps = [
+        ":arm_cm4f_port_headers",
+        ":freertos_headers",
+    ],
+)
+
+cc_library(
+    name = "arm_cm7_port",
+    srcs = ["portable/GCC/ARM_CM7/r0p1/port.c"],
+    deps = [
+        ":arm_cm7_port_headers",
+        ":freertos_headers",
+    ],
+)
+
+cc_library(
+    name = "posix_port",
+    srcs = [
+        "portable/ThirdParty/GCC/Posix/port.c",
+        "portable/ThirdParty/GCC/Posix/utils/wait_for_event.c",
+        "portable/ThirdParty/GCC/Posix/utils/wait_for_event.h",
+    ],
+    deps = [
+        ":freertos_headers",
+        ":posix_port_headers",
+    ],
+)
+
+cc_library(
+    name = "xtensa_port",
+    srcs = [
+        "portable/ThirdParty/XCC/Xtensa/mpu.S",
+        "portable/ThirdParty/XCC/Xtensa/port.c",
+        "portable/ThirdParty/XCC/Xtensa/portasm.S",
+        "portable/ThirdParty/XCC/Xtensa/portclib.c",
+        "portable/ThirdParty/XCC/Xtensa/portmpu.c",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_context.S",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_coproc_handler.S",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_intr.c",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_intr_asm.S",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_intr_wrapper.c",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_overlay_os_hook.c",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_vectors.S",
+    ],
+    deps = [
+        ":freertos_headers",
+        ":xtensa_port_headers",
+    ],
+)
+
+cc_library(
+    name = "rp2040_port",
+    srcs = ["portable/ThirdParty/GCC/RP2040/port.c"],
+    deps = [
+        ":freertos_headers",
+        ":rp2040_port_headers",
+        ":rp2040_sdk_deps",
+    ],
+)
+
+cc_library(
+    name = "rp2040_sdk_deps",
+    deps = [
+        "@pico-sdk//src/rp2_common/hardware_clocks",
+        "@pico-sdk//src/rp2_common/hardware_exception",
+        "@pico-sdk//src/rp2_common/pico_multicore",
+    ],
+)
+
+cc_library(
+    name = "freertos_port_headers",
+    deps = select({
+        ":port_ARM_CM0": [":arm_cm0_port_headers"],
+        ":port_ARM_CM3": [":arm_cm3_port_headers"],
+        ":port_ARM_CM33_NTZ": [":arm_cm33_ntz_port_headers"],
+        ":port_ARM_CM4F": [":arm_cm4f_port_headers"],
+        ":port_ARM_CM7": [":arm_cm7_port_headers"],
+        ":port_Posix": [":posix_port_headers"],
+        ":port_Xtensa": [":extensa_port_headers"],
+        ":port_RP2040": [":rp2040_port_headers"],
+        ":port_third_party": [":freertos_third_party_port_headers"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "arm_cm0_port_headers",
+    hdrs = [
+        "portable/GCC/ARM_CM0/portasm.h",
+        "portable/GCC/ARM_CM0/portmacro.h",
+    ],
+    strip_include_prefix = "portable/GCC/ARM_CM0/",
+)
+
+cc_library(
+    name = "arm_cm3_port_headers",
+    hdrs = ["portable/GCC/ARM_CM3/portmacro.h"],
+    strip_include_prefix = "portable/GCC/ARM_CM3/",
+)
+
+cc_library(
+    name = "arm_cm33_ntz_port_headers",
+    hdrs = glob(["portable/GCC/ARM_CM33_NTZ/non_secure/*.h"]),
+    strip_include_prefix = "portable/GCC/ARM_CM33_NTZ/non_secure/",
+)
+
+cc_library(
+    name = "arm_cm4f_port_headers",
+    hdrs = ["portable/GCC/ARM_CM4F/portmacro.h"],
+    strip_include_prefix = "portable/GCC/ARM_CM4F/",
+)
+
+cc_library(
+    name = "arm_cm7_port_headers",
+    hdrs = ["portable/GCC/ARM_CM7/r0p1/portmacro.h"],
+    strip_include_prefix = "portable/GCC/ARM_CM7/r0p1/",
+)
+
+cc_library(
+    name = "posix_port_headers",
+    hdrs = ["portable/ThirdParty/GCC/Posix/portmacro.h"],
+    strip_include_prefix = "portable/ThirdParty/GCC/Posix/",
+)
+
+cc_library(
+    name = "xtensa_port_headers",
+    hdrs = [
+        "portable/ThirdParty/XCC/Xtensa/portbenchmark.h",
+        "portable/ThirdParty/XCC/Xtensa/portmacro.h",
+        "portable/ThirdParty/XCC/Xtensa/porttrace.h",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_api.h",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_config.h",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_context.h",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_rtos.h",
+        "portable/ThirdParty/XCC/Xtensa/xtensa_timer.h",
+    ],
+    strip_include_prefix = "portable/ThirdParty/XCC/Xtensa/",
+)
+
+cc_library(
+    name = "rp2040_port_headers",
+    hdrs = [
+        "portable/ThirdParty/GCC/RP2040/include/freertos_sdk_config.h",
+        "portable/ThirdParty/GCC/RP2040/include/portmacro.h",
+        "portable/ThirdParty/GCC/RP2040/include/rp2040_config.h",
+    ],
+    defines = ["PICO_CONFIG_RTOS_ADAPTER_HEADER=\"freertos_sdk_config.h\""],
+    strip_include_prefix = "portable/ThirdParty/GCC/RP2040/include/",
+)
+
+# Headers transitively included by using "FreeRTOS.h"
+cc_library(
+    name = "freertos_headers",
+    hdrs = [
+        "include/FreeRTOS.h",
+        "include/deprecated_definitions.h",
+        "include/list.h",
+        "include/mpu_syscall_numbers.h",
+        "include/mpu_wrappers.h",
+        "include/portable.h",
+        "include/projdefs.h",
+        "include/stack_macros.h",
+        "include/task.h",
+        "include/timers.h",
+    ],
+    includes = [
+        "include/",
+    ],
+    deps = [
+        ":freertos_config",
+        ":freertos_port_headers",
+    ],
+)
+
+# Constraint setting used to determine if task statics should be disabled.
+constraint_setting(
+    name = "disable_tasks_statics_setting",
+    default_constraint_value = ":no_disable_task_statics",
+)
+
+constraint_value(
+    name = "disable_task_statics",
+    constraint_setting = ":disable_tasks_statics_setting",
+)
+
+constraint_value(
+    name = "no_disable_task_statics",
+    constraint_setting = ":disable_tasks_statics_setting",
+)
+
+cc_library(
+    name = "tasks_c",
+    srcs = ["tasks.c"],
+    copts = [
+        "-Wno-cast-qual",
+    ],
+    local_defines = select({
+        ":disable_task_statics": ["portREMOVE_STATIC_QUALIFIER"],
+        "//conditions:default": [],
+    }),
+    deps = [":freertos_headers"] + select({
+        ":port_RP2040": [":rp2040_sdk_deps"],
+        "//conditions:default": [],
+    }),
+)
+
+# Constraint setting for malloc implementation.
+#
+# Note that while a platform may set this via its constraint_values, the top-
+# level "freertos" target depends on "heap". This defaults to using this
+# constraint_setting via "freertos_malloc". The label flag may be configured to
+# be different, e.g. if you want to wrap the heap API.
+constraint_setting(
+    name = "malloc",
+    default_constraint_value = ":no_malloc",
+)
+
+constraint_value(
+    name = "no_malloc",
+    constraint_setting = ":malloc",
+)
+
+constraint_value(
+    name = "malloc_heap_1",
+    constraint_setting = ":malloc",
+)
+
+constraint_value(
+    name = "malloc_heap_2",
+    constraint_setting = ":malloc",
+)
+
+constraint_value(
+    name = "malloc_heap_3",
+    constraint_setting = ":malloc",
+)
+
+constraint_value(
+    name = "malloc_heap_4",
+    constraint_setting = ":malloc",
+)
+
+constraint_value(
+    name = "malloc_heap_5",
+    constraint_setting = ":malloc",
+)
+
+cc_library(
+    name = "freertos_malloc",
+    deps = select({
+        ":malloc_heap_1": [":heap_1"],
+        ":malloc_heap_2": [":heap_2"],
+        ":malloc_heap_3": [":heap_3"],
+        ":malloc_heap_4": [":heap_4"],
+        ":malloc_heap_5": [":heap_5"],
+        ":no_malloc": [],
+    }),
+)
+
+cc_library(
+    name = "heap_1",
+    srcs = ["portable/MemMang/heap_1.c"],
+    deps = [":freertos_headers"],
+)
+
+cc_library(
+    name = "heap_2",
+    srcs = ["portable/MemMang/heap_2.c"],
+    deps = [":freertos_headers"],
+)
+
+cc_library(
+    name = "heap_3",
+    srcs = ["portable/MemMang/heap_3.c"],
+    deps = [":freertos_headers"],
+)
+
+cc_library(
+    name = "heap_4",
+    srcs = ["portable/MemMang/heap_4.c"],
+    deps = [":freertos_headers"],
+)
+
+cc_library(
+    name = "heap_5",
+    srcs = ["portable/MemMang/heap_5.c"],
+    deps = [":freertos_headers"],
+)
+
+# Build target that provide a heap implementation.
+#
+# See also the note on the "malloc" constraint setting.
+label_flag(
+    name = "heap",
+    build_setting_default = ":freertos_malloc",
+)
+
+# Exported for users who need to extract the tskTCB struct. See
+# e.g. https://pigweed.dev/third_party/freertos/.
+exports_files(
+    ["tasks.c"],
+)
+
+cc_library(
+    name = "posix",
+    hdrs = ["host_include/FreeRTOSConfig.h"],
+    defines = [
+        "projENABLE_TRACING=0",
+        "projCOVERAGE_TEST=0",
+    ],
+    includes = ["host_include"],
+    # For CI testing the build only, not part of the API.
+    visibility = ["//visibility:private"],
+)
+
+platform(
+    name = "example_platform",
+    parents = ["@platforms//host"],
+    constraint_values = [
+        ":port_Posix",
+    ],
+    # For CI testing the build only, not part of the API.
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "empty_cc_library",
+    visibility = ["//visibility:private"],
+)

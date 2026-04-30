@@ -4,6 +4,18 @@ This is a community-maintained setup to build Git (and libgit) using Bazel.
 
 ## Release notes
 
+### 2.54.0
+
+- Rebased the Bazel integration on top of upstream Git 2.54.0.
+- Updated the overlay for upstream source layout changes, including
+  `builtin/history.c`, the new `odb/source*` files, Darwin trace2 process
+  info, and `reftable/reftable-system.h`.
+- Added the missing Bzlmod module file and `.bazelrc` needed to build the
+  release consistently with OpenSSL-backed curl.
+- Kept macOS tests compatible with strict action environments without a broad
+  `PATH` override by adding a targeted Darwin `sysctl` shim in the test
+  wrapper.
+
 ### 2.53.0
 
 - Rebased Bazel integration on top of upstream Git 2.53.0.
