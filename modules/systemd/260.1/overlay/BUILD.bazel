@@ -1,0 +1,290 @@
+"""Rules for building systemd, currently only exposes libudev.
+
+systemd generally builds with meson/ninja and is buildable under
+rules_foreign_cc with some patching. But since we only need libudev
+it's relatively elementary to use native rules_cc.
+
+libudev sits on top of systemd's sd-device / sd-netlink / sd-id128 /
+basic utility code, so the .so includes ~218 .c files spanning
+src/basic, src/fundamental, src/libc, src/libsystemd/sd-* and
+src/libudev. They all live in a single `cc_library` here.
+"""
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+load("@rules_license//rules:license.bzl", "license")
+load("//:codegen.bzl", "cc_macro_list")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    package_name = "systemd",
+    license_kinds = ["@rules_license//licenses/spdx:LGPL-2.1-or-later"],
+    license_text = "LICENSE.LGPL2.1",
+    package_url = "https://github.com/systemd/systemd",
+)
+
+COPTS = [
+    "-D_FILE_OFFSET_BITS=64",
+    # systemd does type punning; without -fno-strict-aliasing the
+    # resulting code has UB.
+    "-fno-strict-aliasing",
+    # Every TU `#include`s a `config.h` that meson normally generates. We
+    # ship a hand-curated one (`overlay/config.h`).
+    "-include",
+    "$(execpath :config.h)",
+    # The linker version script (`libudev.sym`) scopes the .so's exports,
+    # but only if the symbols aren't hidden first.
+    "-fvisibility=default",
+    # systemd source uses GCC-only `_Pragma("GCC diagnostic ignored ...")`
+    # lines that clang would otherwise warn about on every compile.
+    "-Wno-unknown-warning-option",
+]
+
+# Override and uapi go via -isystem so override headers (which use
+# `#include_next`) take precedence over the sysroot's.
+ISYSTEM = [
+    "src/include/override",
+    "src/include/uapi",
+]
+
+INCLUDES = ISYSTEM + [
+    ".",
+    "src/basic",
+    "src/fundamental",
+    "src/libsystemd/sd-bus",
+    "src/libsystemd/sd-common",
+    "src/libsystemd/sd-device",
+    "src/libsystemd/sd-event",
+    "src/libsystemd/sd-hwdb",
+    "src/libsystemd/sd-id128",
+    "src/libsystemd/sd-journal",
+    "src/libsystemd/sd-json",
+    "src/libsystemd/sd-netlink",
+    "src/libsystemd/sd-network",
+    "src/libsystemd/sd-path",
+    "src/libsystemd/sd-resolve",
+    "src/libsystemd/sd-varlink",
+    "src/libudev",
+    "src/shared",
+    "src/systemd",
+    "src/version",
+]
+
+# --- Generated sources ---
+
+expand_template(
+    name = "gen_version_h",
+    out = "src/version/version.h",
+    substitutions = {"@VCS_TAG@": ""},
+    template = "src/version/version.h.in",
+)
+
+# A handful of source files `#include` gperf-generated tables for
+# kernel UAPI constants (AF_*, ARPHRD_*, errno, STATX_*, ...). The
+# `cc_macro_list` rule in codegen.bzl runs the configured cross
+# compiler with `cpp -dM` to enumerate those constants from the
+# target's headers, then awk/python/gperf turn the lists into
+# `.inc` files included by the .c files.
+[
+    cc_macro_list(
+        name = family + "_list_txt",
+        out = "src/basic/{0}-list.txt".format(family.replace("_", "-")),
+        headers = [":override_headers"],
+        script = "src/basic/generate-{0}-list.sh".format(family.replace("_", "-")),
+        system_includes = ISYSTEM,
+    )
+    for family in [
+        "af",
+        "arphrd",
+        "capability",
+        "errno",
+        "statx_attribute",
+        "statx_mask",
+    ]
+]
+
+# `lookup_<f>` and `hash_<f>_name` are derivable from the family name.
+# `--ignore-case` is a per-family policy: capability macros
+# (CAP_SYS_ADMIN etc.) are case-sensitive; the others aren't.
+GPERF_FAMILIES = [
+    # (name, macro-prefix, include-string, ignore-case)
+    ("af", "", "<sys/socket.h>", True),
+    ("arphrd", "ARPHRD_", "<linux/if_arp.h>", True),
+    ("capability", "", "<linux/capability.h>", False),
+    ("errno", "", "<errno.h>", True),
+]
+
+[
+    genrule(
+        name = "gen_{0}_from_name_gperf".format(name),
+        srcs = ["src/basic/{0}-list.txt".format(name)],
+        outs = ["src/basic/{0}-from-name.gperf".format(name)],
+        cmd = "python3 $(execpath tools/generate-gperfs.py) {0} '{1}' $< '{2}' > $@".format(
+            name,
+            prefix,
+            header,
+        ),
+        tools = ["tools/generate-gperfs.py"],
+    )
+    for name, prefix, header, _ in GPERF_FAMILIES
+]
+
+[
+    genrule(
+        name = "gen_{0}_from_name_inc".format(name),
+        srcs = ["src/basic/{0}-from-name.gperf".format(name)],
+        outs = ["src/basic/{0}-from-name.inc".format(name)],
+        cmd = "$(execpath @gperf) -L ANSI-C -t {ic}-N lookup_{n} -H hash_{n}_name -p -C < $< > $@".format(
+            ic = "--ignore-case " if ignore_case else "",
+            n = name,
+        ),
+        tools = ["@gperf"],
+    )
+    for name, _, _, ignore_case in GPERF_FAMILIES
+]
+
+# awk-driven to-name reverse lookups. Input list and awk script share
+# the family name as a basename.
+[
+    genrule(
+        name = "gen_{0}_to_name_inc".format(family.replace("-", "_")),
+        srcs = [
+            "src/basic/{0}-to-name.awk".format(family),
+            "src/basic/{0}-list.txt".format(family),
+        ],
+        outs = ["src/basic/{0}-to-name.inc".format(family)],
+        cmd = "awk -f $(execpath src/basic/{0}-to-name.awk) $(execpath src/basic/{0}-list.txt) > $@".format(family),
+    )
+    for family in [
+        "af",
+        "arphrd",
+        "capability",
+        "errno",
+        "statx-attribute",
+        "statx-mask",
+    ]
+]
+
+# Audit-type names live in the awk script itself; feed /dev/null and
+# capture stdout.
+genrule(
+    name = "gen_audit_type_to_name_inc",
+    srcs = ["src/libsystemd/sd-journal/audit_type-to-name.awk"],
+    outs = ["src/libsystemd/sd-journal/audit_type-to-name.inc"],
+    cmd = "awk -f $< /dev/null > $@",
+)
+
+genrule(
+    name = "gen_filesystem_sets_c",
+    srcs = ["src/basic/filesystem-sets.py"],
+    outs = ["src/basic/filesystem-sets.c"],
+    cmd = "python3 $< fs-type-to-string filesystem-sets fs-in-group > $@",
+)
+
+genrule(
+    name = "gen_filesystems_gperf_gperf",
+    srcs = ["src/basic/filesystem-sets.py"],
+    outs = ["src/basic/filesystems-gperf.gperf"],
+    cmd = "python3 $< gperf > $@",
+)
+
+genrule(
+    name = "gen_filesystems_gperf_h",
+    srcs = ["src/basic/filesystems-gperf.gperf"],
+    outs = ["src/basic/filesystems-gperf.h"],
+    cmd = "$(execpath @gperf) -L ANSI-C -t -N _fs_in_group -H _fs_hash -p -C < $< > $@",
+    tools = ["@gperf"],
+)
+
+filegroup(
+    name = "override_headers",
+    srcs = glob(
+        [
+            "src/include/override/**/*.h",
+            "src/include/uapi/**/*.h",
+        ],
+    ),
+)
+
+# --- The library ---
+
+cc_library(
+    name = "libudev_objects",
+    srcs = glob(
+        [
+            "src/basic/*.c",
+            "src/fundamental/*.c",
+            "src/libc/*.c",
+            "src/libsystemd/sd-*/*.c",
+            "src/libudev/libudev*.c",
+        ],
+        exclude = [
+            "src/basic/fuzz-*.c",
+            "src/basic/test-*.c",
+            "src/fundamental/fuzz-*.c",
+            "src/fundamental/test-*.c",
+            "src/libsystemd/sd-*/fuzz-*.c",
+            "src/libsystemd/sd-*/test-*.c",
+            "src/libudev/test-*.c",
+            # Generated, added explicitly below.
+            "src/basic/filesystem-sets.c",
+        ],
+    ) + [
+        "config.h",
+        ":gen_filesystem_sets_c",
+    ],
+    hdrs = glob([
+        "src/basic/*.h",
+        "src/fundamental/*.h",
+        "src/libsystemd/sd-*/*.h",
+        "src/libudev/*.h",
+        "src/shared/*.h",
+        "src/systemd/*.h",
+    ]) + [
+        ":gen_version_h",
+        ":override_headers",
+    ],
+    copts = COPTS,
+    includes = INCLUDES,
+    textual_hdrs = [
+        ":gen_af_from_name_inc",
+        ":gen_af_to_name_inc",
+        ":gen_arphrd_from_name_inc",
+        ":gen_arphrd_to_name_inc",
+        ":gen_audit_type_to_name_inc",
+        ":gen_capability_from_name_inc",
+        ":gen_capability_to_name_inc",
+        ":gen_errno_from_name_inc",
+        ":gen_errno_to_name_inc",
+        ":gen_filesystems_gperf_h",
+        ":gen_statx_attribute_to_name_inc",
+        ":gen_statx_mask_to_name_inc",
+    ],
+    alwayslink = True,
+)
+
+cc_shared_library(
+    name = "libudev_so",
+    additional_linker_inputs = ["src/libudev/libudev.sym"],
+    shared_lib_name = "libudev.so.1",
+    user_link_flags = [
+        "-Wl,-soname,libudev.so.1",
+        "-Wl,--version-script,$(execpath src/libudev/libudev.sym)",
+        "-ldl",
+        "-lrt",
+        "-lpthread",
+        "-lm",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":libudev_objects"],
+)
+
+cc_library(
+    name = "libudev",
+    srcs = [":libudev_so"],
+    hdrs = ["src/libudev/libudev.h"],
+    strip_include_prefix = "src/libudev",
+    visibility = ["//visibility:public"],
+)
