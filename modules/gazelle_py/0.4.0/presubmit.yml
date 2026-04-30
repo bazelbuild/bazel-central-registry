@@ -1,0 +1,40 @@
+matrix:
+  # macOS + Ubuntu only — Debian's coverage overlaps Ubuntu's (both glibc
+  # Linux), and our own CI doesn't test on it either, so the BCR cell only
+  # adds runner cost without catching anything new. `macos_arm64` (not bare
+  # `macos`, which still points at Intel runners) since rules_rs's macOS
+  # Rust toolchains target arm64 by default.
+  platform:
+    - macos_arm64
+    - ubuntu2204
+  bazel:
+    # bazelisk wildcard syntax accepts `<major>.x` / `<major>.*`, not
+    # `<major>.<minor>.x` — `8.5.x` errors out with "invalid version".
+    # The supported floor (rules_rs's) is 8.5.0; bazelisk's `8.x` resolves
+    # to the latest 8.y, which currently is comfortably above.
+    - 9.x
+    - 8.x
+
+tasks:
+  verify_targets:
+    name: Build the gazelle_py plugin
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    # rules_rs's Linux Rust toolchains gate target_compatible_with on
+    # @llvm//constraints/libc:gnu.2.28. The default @platforms//host doesn't
+    # carry that constraint, so we pin host_platform here as a build flag —
+    # NOT in any consumer-visible .bazelrc — because BCR's runner shells
+    # out to `bazel info` before the build, and `info` doesn't trigger
+    # bzlmod resolution. Any --host_platform set in `common`/`build:linux`
+    # of an rc that's read by `info` fails with "Repository '@@gazelle_py'
+    # is not defined". Passing the same flag here keeps it scoped to the
+    # actual `bazel build` invocation, by which point @gazelle_py exists.
+    # End consumers must mirror this in their own .bazelrc — see README.
+    build_flags:
+      - "--host_platform=@gazelle_py//platforms:local_gnu"
+    build_targets:
+      # Go gazelle plugin (transitively cgo-links the Rust staticlib).
+      - "@gazelle_py//py/..."
+      # Rust crate — also exercised via py/, but listed explicitly so the
+      # rlib variant + the proto codegen are covered on every platform.
+      - "@gazelle_py//crates/import_extractor/..."
