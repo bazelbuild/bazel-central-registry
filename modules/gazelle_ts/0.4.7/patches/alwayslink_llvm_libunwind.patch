@@ -1,0 +1,36 @@
+===================================================================
+--- a/ts/BUILD.bazel
++++ b/ts/BUILD.bazel
+@@ -7,6 +7,20 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
+ # matching rule label.
+ exports_files(["defs.bzl"])
+ 
++# rules_go's external cgo link sees Rust std as ordinary static archives.
++# Make LLVM libunwind an always-linked C/C++ input so _Unwind symbols are
++# available even when archive ordering changes under the final Go link.
++cc_library(
++    name = "llvm_libunwind",
++    srcs = select({
++        "@platforms//os:linux": ["@llvm//runtimes/libunwind:unwind"],
++        "//conditions:default": [],
++    }),
++    alwayslink = True,
++    tags = ["manual"],
++    visibility = ["//visibility:private"],
++)
++
+ # `ts` is the gazelle Language. Consumers compose their own gazelle_binary
+ # referencing this label, e.g.
+ #
+@@ -33,7 +47,10 @@ go_library(
+     ],
+     cgo = True,
+     # Link the Rust rlib via cgo so transitive Rust crates remain dedupable.
+-    cdeps = ["//crates/import_extractor:import_extractor"],
++    cdeps = [
++        "//crates/import_extractor:import_extractor",
++        ":llvm_libunwind",
++    ],
+     # Rust std needs libunwind when linked through rlibs into a final cgo
+     # binary. Force-load it because the Rust stdlib archive can otherwise
+     # appear before the objects that reference _Unwind symbols.
