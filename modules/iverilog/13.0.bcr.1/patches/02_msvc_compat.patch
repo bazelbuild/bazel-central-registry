@@ -1,0 +1,518 @@
+diff -ruN a/cadpli/ivl_dlfcn.h b/cadpli/ivl_dlfcn.h
+--- a/cadpli/ivl_dlfcn.h	2026-03-01 23:38:29.000000000 +0000
++++ b/cadpli/ivl_dlfcn.h	2026-04-17 19:07:09.252121406 +0000
+@@ -19,7 +19,7 @@
+  *    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  */
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ # include <windows.h>
+ # include <stdio.h>
+ typedef void * ivl_dll_t;
+@@ -31,7 +31,7 @@
+ typedef shl_t ivl_dll_t;
+ #endif
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ static __inline__ ivl_dll_t ivl_dlopen(const char *name)
+ { return (void *)LoadLibrary(name); }
+ 
+diff -ruN a/compat/getopt.h b/compat/getopt.h
+--- a/compat/getopt.h	1970-01-01 00:00:00.000000000 +0000
++++ b/compat/getopt.h	2026-04-17 19:06:47.133129549 +0000
+@@ -0,0 +1,28 @@
++#ifndef IVL_compat_getopt_H
++#define IVL_compat_getopt_H
++/*
++ * Minimal getopt for systems lacking <getopt.h> and <unistd.h> (e.g. MSVC).
++ * This header is included conditionally by iverilog sources that need
++ * command-line option parsing.
++ */
++#if !defined(HAVE_GETOPT_H) && !defined(HAVE_UNISTD_H)
++#include <string.h>
++static int optind = 1;
++static const char *optarg = 0;
++static int getopt(int argc, char *argv[], const char *fmt) {
++    const char *p;
++    int c;
++    if (optind >= argc || argv[optind][0] != '-' || argv[optind][1] == 0)
++        return -1;
++    c = argv[optind][1];
++    p = strchr(fmt, c);
++    if (!p) { optind++; return '?'; }
++    if (p[1] == ':') {
++        if (argv[optind][2]) { optarg = &argv[optind][2]; optind++; }
++        else if (optind + 1 < argc) { optarg = argv[++optind]; optind++; }
++        else { optind++; return '?'; }
++    } else { optind++; }
++    return c;
++}
++#endif
++#endif /* IVL_compat_getopt_H */
+diff -ruN a/config.h.in b/config.h.in
+--- a/config.h.in	2026-04-17 19:05:29.426145159 +0000
++++ b/config.h.in	2026-04-17 19:06:47.141129546 +0000
+@@ -39,6 +39,53 @@
+ # undef HAVE_UNISTD_H
+ # undef WORDS_BIGENDIAN
+ 
++#ifdef _MSC_VER
++# include <stddef.h>
++# include <sys/stat.h>
++# define WIN32_LEAN_AND_MEAN
++# include <windows.h>
++# undef interface
++# include <io.h>
++# include <stdlib.h>
++# include <string.h>
++# include <stdio.h>
++  typedef ptrdiff_t ssize_t;
++# define __inline__ __inline
++# define __attribute__(x)
++# define strcasecmp _stricmp
++# define strncasecmp _strnicmp
++# define popen _popen
++# define pclose _pclose
++# ifndef S_ISDIR
++#  define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
++# endif
++# ifndef S_ISREG
++#  define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
++# endif
++  struct dirent { char d_name[MAX_PATH]; };
++  typedef struct _ivl_dir { HANDLE h; WIN32_FIND_DATAA fd; struct dirent de; int first; } DIR;
++  static __inline DIR *opendir(const char *name) {
++    char path[MAX_PATH]; DIR *d;
++    snprintf(path, MAX_PATH, "%s\*", name);
++    d = (DIR*)calloc(1, sizeof(DIR));
++    d->h = FindFirstFileA(path, &d->fd);
++    if (d->h == INVALID_HANDLE_VALUE) { free(d); return NULL; }
++    d->first = 1; return d;
++  }
++  static __inline struct dirent *readdir(DIR *d) {
++    if (d->first) d->first = 0;
++    else if (!FindNextFileA(d->h, &d->fd)) return NULL;
++    strncpy(d->de.d_name, d->fd.cFileName, MAX_PATH);
++    return &d->de;
++  }
++  static __inline int closedir(DIR *d) { FindClose(d->h); free(d); return 0; }
++  static __inline char *strndup(const char *s, size_t n) {
++    size_t l = strlen(s); if (l > n) l = n;
++    char *r = (char*)malloc(l + 1); if (r) { memcpy(r, s, l); r[l] = 0; }
++    return r;
++  }
++#endif
++
+ #ifdef HAVE_INTTYPES_H
+ # include  <inttypes.h>
+ #endif
+diff -ruN a/driver/main.c b/driver/main.c
+--- a/driver/main.c	2026-04-17 19:05:29.441145159 +0000
++++ b/driver/main.c	2026-04-17 19:07:09.262121402 +0000
+@@ -64,13 +64,23 @@
+ #include <sys/wait.h>
+ #endif
+ 
+-#ifdef __MINGW32__
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ # include  <windows.h>
+ # include  <io.h>
+ #ifdef HAVE_LIBIBERTY_H
+ # include  <libiberty.h>
+ #endif
+ #endif
++#ifdef _MSC_VER
++# include  <io.h>
++# define access _access
++# ifndef F_OK
++#   define F_OK 0
++# endif
++# ifndef R_OK
++#   define R_OK 4
++# endif
++#endif
+ #include  <fcntl.h>
+ 
+ #ifdef HAVE_GETOPT_H
+@@ -81,6 +91,8 @@
+ extern int getopt(int argc, char*argv[], const char*fmt);
+ extern int optind;
+ extern const char*optarg;
++#else
++# include "compat/getopt.h"
+ #endif
+ 
+ #if !defined(WIFEXITED)
+@@ -1055,7 +1067,7 @@
+ 	   if the user has overridden $(bindir) or $(libdir), but there's
+ 	   not a lot we can do in that case.
+  */
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+       char tmppath[MAXSIZE];
+       len = GetModuleFileName(NULL, tmppath, sizeof tmppath);
+       if (len >= (ssize_t) sizeof ivl_root) {
+diff -ruN a/ivlpp/main.c b/ivlpp/main.c
+--- a/ivlpp/main.c	2026-04-17 19:05:29.442145159 +0000
++++ b/ivlpp/main.c	2026-04-17 19:07:09.272121398 +0000
+@@ -54,6 +54,8 @@
+ extern int getopt(int argc, char*argv[], const char*fmt);
+ extern int optind;
+ extern const char*optarg;
++#else
++# include "compat/getopt.h"
+ #endif
+ /* Path to the dependency file, if there is one. */
+ char *dep_path = NULL;
+diff -ruN a/main.cc b/main.cc
+--- a/main.cc	2026-04-17 19:05:29.443145158 +0000
++++ b/main.cc	2026-04-17 19:07:09.281121394 +0000
+@@ -69,12 +69,12 @@
+ extern "C" int getopt(int argc, char*argv[], const char*fmt);
+ extern "C" int optind;
+ extern "C" const char*optarg;
+-#endif
+-
+-#if defined(__CYGWIN__) && !defined(HAVE_GETOPT_H)
++#elif defined(__CYGWIN__) && !defined(HAVE_GETOPT_H)
+ extern "C" int getopt(int argc, char*argv[], const char*fmt);
+ extern "C" int optind;
+ extern "C" const char*optarg;
++#else
++# include "compat/getopt.h"
+ #endif
+ 
+ #if defined(TRAP_SIGINT_FOR_DEBUG)
+@@ -237,7 +237,7 @@
+ /*
+  * In library searches, Windows file names are never case sensitive.
+  */
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ const bool CASE_SENSITIVE = false;
+ #else
+ const bool CASE_SENSITIVE = true;
+@@ -931,7 +931,7 @@
+           fprintf( stderr, "Waiting for debugger...\n");
+           bool debugger_release = false;
+           while( !debugger_release )  {
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+               Sleep(1000);
+ #else
+               sleep(1);
+diff -ruN a/t-dll.cc b/t-dll.cc
+--- a/t-dll.cc	2026-04-17 19:05:29.454145158 +0000
++++ b/t-dll.cc	2026-04-17 19:07:09.254121405 +0000
+@@ -38,7 +38,7 @@
+ 
+ struct dll_target dll_target_obj;
+ 
+-#if defined(__WIN32__)
++#if defined(__WIN32__) || defined(_MSC_VER)
+ 
+ inline ivl_dll_t ivl_dlopen(const char *name)
+ {
+diff -ruN a/t-dll.h b/t-dll.h
+--- a/t-dll.h	2026-03-01 23:38:29.000000000 +0000
++++ b/t-dll.h	2026-04-17 19:07:09.253121406 +0000
+@@ -27,7 +27,7 @@
+ # include  <vector>
+ # include  <map>
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ #include <windows.h>
+ typedef void *ivl_dll_t;
+ #elif defined(HAVE_DLFCN_H)
+diff -ruN a/tgt-pcb/pcb_config.h.in b/tgt-pcb/pcb_config.h.in
+--- a/tgt-pcb/pcb_config.h.in	2026-03-01 23:38:29.000000000 +0000
++++ b/tgt-pcb/pcb_config.h.in	2026-04-17 19:08:55.703062179 +0000
+@@ -25,4 +25,8 @@
+ # undef _LARGEFILE_SOURCE
+ # undef _LARGEFILE64_SOURCE
+ 
++#ifdef _MSC_VER
++# define __attribute__(x)
++#endif
++
+ #endif /* IVL_pcb_config_H */
+diff -ruN a/tgt-vhdl/vhdl_config.h.in b/tgt-vhdl/vhdl_config.h.in
+--- a/tgt-vhdl/vhdl_config.h.in	2026-03-01 23:38:29.000000000 +0000
++++ b/tgt-vhdl/vhdl_config.h.in	2026-04-17 19:08:55.687062190 +0000
+@@ -24,6 +24,12 @@
+ /* Define to 1 if you have the <unistd.h> header file. */
+ #undef HAVE_UNISTD_H
+ 
++#ifdef _MSC_VER
++# define __attribute__(x)
++# define strcasecmp _stricmp
++# define strncasecmp _strnicmp
++#endif
++
+ /* Define to the address where bug reports for this package should be sent. */
+ #undef PACKAGE_BUGREPORT
+ 
+diff -ruN a/tgt-vvp/vvp.c b/tgt-vvp/vvp.c
+--- a/tgt-vvp/vvp.c	2026-03-01 23:38:29.000000000 +0000
++++ b/tgt-vvp/vvp.c	2026-04-17 19:07:26.600113960 +0000
+@@ -64,7 +64,7 @@
+ 	    if (!extra_args)
+ 		  extra_args = "";
+ 	    fprintf(vvp_out, "#! %s%s\n", cp, extra_args);
+-#if !defined(__MINGW32__)
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+ 	    fchmod(fileno(vvp_out), 0755);
+ #endif
+       }
+diff -ruN a/tgt-vvp/vvp_config.h.in b/tgt-vvp/vvp_config.h.in
+--- a/tgt-vvp/vvp_config.h.in	2026-03-01 23:38:29.000000000 +0000
++++ b/tgt-vvp/vvp_config.h.in	2026-04-17 19:08:55.679062196 +0000
+@@ -22,6 +22,11 @@
+ # undef HAVE_STDINT_H
+ # undef HAVE_INTTYPES_H
+ 
++#ifdef _MSC_VER
++# define __inline__ __inline
++# define __attribute__(x)
++#endif
++
+ # undef _LARGEFILE_SOURCE
+ # undef _LARGEFILE64_SOURCE
+ 
+diff -ruN a/vhdlpp/library.cc b/vhdlpp/library.cc
+--- a/vhdlpp/library.cc	2026-03-01 23:38:29.000000000 +0000
++++ b/vhdlpp/library.cc	2026-04-17 19:07:26.597113962 +0000
+@@ -32,6 +32,11 @@
+ # include  <string>
+ # include  <stdint.h>
+ # include  <sys/stat.h>
++#ifdef _MSC_VER
++# ifndef S_ISDIR
++#  define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
++# endif
++#endif
+ # include  <cassert>
+ 
+ using namespace std;
+diff -ruN a/vhdlpp/main.cc b/vhdlpp/main.cc
+--- a/vhdlpp/main.cc	2026-03-01 23:38:29.000000000 +0000
++++ b/vhdlpp/main.cc	2026-04-17 19:07:26.595113963 +0000
+@@ -88,6 +88,8 @@
+ # include  <limits>
+ #if defined(HAVE_GETOPT_H)
+ # include  <getopt.h>
++#else
++# include "compat/getopt.h"
+ #endif
+ # include  <sys/stat.h>
+ // MinGW only supports mkdir() with a path. If this stops working because
+@@ -96,6 +98,13 @@
+ #if defined(__MINGW32__)
+ # include <io.h>
+ # define mkdir(path, mode) mkdir(path)
++#elif defined(_MSC_VER)
++# include <direct.h>
++# include <io.h>
++# define mkdir(path, mode) _mkdir(path)
++# ifndef S_ISDIR
++#  define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
++# endif
+ #endif
+ 
+ using namespace std;
+diff -ruN a/vhdlpp/vhdlpp_config.h.in b/vhdlpp/vhdlpp_config.h.in
+--- a/vhdlpp/vhdlpp_config.h.in	2026-03-01 23:38:29.000000000 +0000
++++ b/vhdlpp/vhdlpp_config.h.in	2026-04-17 19:08:55.695062185 +0000
+@@ -25,6 +25,12 @@
+ # undef HAVE_FCHMOD
+ # undef HAVE_SYS_WAIT_H
+ 
++#ifdef _MSC_VER
++# define __attribute__(x)
++# define strcasecmp _stricmp
++# define strncasecmp _strnicmp
++#endif
++
+ #ifdef HAVE_INTTYPES_H
+ # include  <inttypes.h>
+ #endif
+diff -ruN a/vpi/fstapi.c b/vpi/fstapi.c
+--- a/vpi/fstapi.c	2026-04-17 19:05:29.452145158 +0000
++++ b/vpi/fstapi.c	2026-04-17 19:08:55.719062168 +0000
+@@ -54,6 +54,12 @@
+ #include <pthread.h>
+ #endif
+ 
++
++/* MSVC uses the same Windows APIs as MinGW */
++#if defined(_MSC_VER) && !defined(__MINGW32__)
++#define __MINGW32__
++#endif
++
+ #ifdef __MINGW32__
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+diff -ruN a/vpi/libvpi.c b/vpi/libvpi.c
+--- a/vpi/libvpi.c	2026-03-01 23:38:29.000000000 +0000
++++ b/vpi/libvpi.c	2026-04-17 19:07:26.598113961 +0000
+@@ -17,7 +17,7 @@
+  *    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  */
+ 
+-#if defined(__MINGW32__) || defined (__CYGWIN__)
++#if defined(__MINGW32__) || defined(__CYGWIN__) || defined(_MSC_VER)
+ 
+ #include "vpi_user.h"
+ #include <assert.h>
+diff -ruN a/vpi/vpi_config.h.in b/vpi/vpi_config.h.in
+--- a/vpi/vpi_config.h.in	2026-04-17 19:05:29.439145159 +0000
++++ b/vpi/vpi_config.h.in	2026-04-17 19:25:59.352599646 +0000
+@@ -22,6 +22,21 @@
+ # undef HAVE_LIBIBERTY_H
+ # undef HAVE_INTTYPES_H
+ # undef HAVE_UNISTD_H
++
++#ifdef _MSC_VER
++# define __inline__ __inline
++# define __attribute__(x)
++# define strcasecmp _stricmp
++# define strncasecmp _strnicmp
++# include <sys/stat.h>
++# ifndef S_ISDIR
++#  define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
++# endif
++# ifndef S_ISREG
++#  define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
++# endif
++#endif
++
+ # undef HAVE_LIBZ
+ # undef HAVE_LIBBZ2
+ # undef HAVE_FMIN
+diff -ruN a/vpi_user.h b/vpi_user.h
+--- a/vpi_user.h	2026-03-01 23:38:29.000000000 +0000
++++ b/vpi_user.h	2026-04-17 19:07:26.599113961 +0000
+@@ -20,7 +20,7 @@
+  */
+ 
+ 
+-#if defined(__MINGW32__) || defined (__CYGWIN__)
++#if defined(__MINGW32__) || defined(__CYGWIN__) || defined(_MSC_VER)
+ #  define DLLEXPORT __declspec(dllexport)
+ #else
+ #  define DLLEXPORT
+@@ -686,7 +686,7 @@
+ #   define _vpi_at_APV 6
+ #endif
+ 
+-#if defined(__MINGW32__) || defined (__CYGWIN__)
++#if defined(__MINGW32__) || defined(__CYGWIN__) || defined(_MSC_VER)
+ /*
+  * In Linux, when loaded, a shared library can automatically bind to functions
+  * provided by its client. In Windows, a DLL can only do this statically at
+diff -ruN a/vvp/config.h.in b/vvp/config.h.in
+--- a/vvp/config.h.in	2026-04-17 19:05:29.438145159 +0000
++++ b/vvp/config.h.in	2026-04-17 19:08:55.711062174 +0000
+@@ -24,6 +24,15 @@
+ # undef SIZEOF_UNSIGNED
+ # undef SIZEOF_VOID_P
+ 
++#ifdef _MSC_VER
++# ifndef SIZEOF_UNSIGNED_LONG_LONG
++#  define SIZEOF_UNSIGNED_LONG_LONG 8
++# endif
++# ifndef SIZEOF_UNSIGNED_LONG
++#  define SIZEOF_UNSIGNED_LONG 4
++# endif
++#endif
++
+ # undef NEED_LU
+ # undef NEED_TU
+ # undef WLU
+diff -ruN a/vvp/ivl_dlfcn.h b/vvp/ivl_dlfcn.h
+--- a/vvp/ivl_dlfcn.h	2026-03-01 23:38:29.000000000 +0000
++++ b/vvp/ivl_dlfcn.h	2026-04-17 19:07:09.252121406 +0000
+@@ -19,7 +19,7 @@
+  *    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  */
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ # include <windows.h>
+ # include <cstdio>
+ typedef void * ivl_dll_t;
+@@ -31,7 +31,7 @@
+ typedef shl_t ivl_dll_t;
+ #endif
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ inline ivl_dll_t ivl_dlopen(const char *name, bool)
+ {
+       static char full_name[4096];
+diff -ruN a/vvp/lib_main.cc b/vvp/lib_main.cc
+--- a/vvp/lib_main.cc	2026-04-17 19:05:29.445145158 +0000
++++ b/vvp/lib_main.cc	2026-04-17 19:07:26.578113970 +0000
+@@ -38,7 +38,7 @@
+ # include  <sys/resource.h>
+ #endif // defined(HAVE_SYS_RESOURCE_H)
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ # include  <windows.h>
+ #endif
+ 
+@@ -52,6 +52,8 @@
+ extern "C" int getopt(int argc, char*argv[], const char*fmt);
+ extern "C" int optind;
+ extern "C" const char*optarg;
++#else
++# include "compat/getopt.h"
+ #endif
+ 
+ bool verbose_flag = false;
+@@ -282,7 +284,7 @@
+           fprintf( stderr, "Waiting for debugger...\n");
+           bool debugger_release = false;
+           while( !debugger_release )  {
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+               Sleep(1000);
+ #else
+               sleep(1);
+diff -ruN a/vvp/main.cc b/vvp/main.cc
+--- a/vvp/main.cc	2026-03-01 23:38:29.000000000 +0000
++++ b/vvp/main.cc	2026-04-17 19:07:26.587113966 +0000
+@@ -40,6 +40,8 @@
+ extern "C" int getopt(int argc, char*argv[], const char*fmt);
+ extern "C" int optind;
+ extern "C" const char*optarg;
++#else
++# include "compat/getopt.h"
+ #endif
+ 
+ bool version_flag = false;
+diff -ruN a/vvp/schedule.cc b/vvp/schedule.cc
+--- a/vvp/schedule.cc	2026-03-01 23:38:29.000000000 +0000
++++ b/vvp/schedule.cc	2026-04-17 19:07:26.600113960 +0000
+@@ -641,7 +641,7 @@
+ {
+       if (no_signals_flag)
+ 	   return;
+-#ifndef __MINGW32__
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+       signal(SIGHUP,  &signals_handler);
+ #endif
+       signal(SIGINT,  &signals_handler);
+@@ -652,7 +652,7 @@
+ {
+       if (no_signals_flag)
+ 	   return;
+-#ifndef __MINGW32__
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+       signal(SIGHUP,  SIG_DFL);
+ #endif
+       signal(SIGINT,  SIG_DFL);
