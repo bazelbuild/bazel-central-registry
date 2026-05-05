@@ -1,0 +1,153 @@
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:defs.bzl", "autoconf_hdr")
+load(
+    "//bazel:iverilog.bzl",
+    "CXX_STD",
+    "WARNING_COPTS",
+)
+
+autoconf_hdr(
+    name = "gen_vhdlpp_config_h",
+    out = "vhdlpp_config.h",
+    template = "vhdlpp_config.h.in",
+    deps = ["//:autoconf"],
+)
+
+cc_library(
+    name = "vhdlpp_config",
+    hdrs = [":gen_vhdlpp_config_h"],
+    includes = ["."],
+)
+
+bison(
+    name = "gen_parse",
+    srcs = ["parse.y"],
+    outs = [
+        "vhdlpp_parse.cc",
+        "vhdlpp_parse.h",
+    ],
+    args = [
+        "--verbose",
+        "-t",
+        "--defines=$(execpath vhdlpp_parse.h)",
+        "-o",
+        "$(execpath vhdlpp_parse.cc)",
+        "$(execpath parse.y)",
+    ],
+)
+
+flex(
+    name = "gen_lexor",
+    srcs = ["lexor.lex"],
+    outs = ["lexor.cc"],
+    args = [
+        "-s",
+        "-o",
+        "$(execpath lexor.cc)",
+        "$(execpath lexor.lex)",
+    ],
+)
+
+cc_binary(
+    name = "vhdlpp",
+    srcs = [
+        "architec.cc",
+        "architec_debug.cc",
+        "architec_elaborate.cc",
+        "architec_emit.cc",
+        "compiler.cc",
+        "debug.cc",
+        "entity.cc",
+        "entity_elaborate.cc",
+        "entity_emit.cc",
+        "entity_stream.cc",
+        "expression.cc",
+        "expression_debug.cc",
+        "expression_elaborate.cc",
+        "expression_emit.cc",
+        "expression_evaluate.cc",
+        "expression_stream.cc",
+        "lexor_keyword.cc",
+        "library.cc",
+        "main.cc",
+        "package.cc",
+        "package_emit.cc",
+        "parse_misc.cc",
+        "scope.cc",
+        "sequential.cc",
+        "sequential_debug.cc",
+        "sequential_elaborate.cc",
+        "sequential_emit.cc",
+        "std_funcs.cc",
+        "std_types.cc",
+        "subprogram.cc",
+        "subprogram_emit.cc",
+        "vhdlint.cc",
+        "vhdlreal.cc",
+        "vsignal.cc",
+        "vtype.cc",
+        "vtype_elaborate.cc",
+        "vtype_emit.cc",
+        "vtype_match.cc",
+        "vtype_stream.cc",
+    ] + [
+        "architec.h",
+        "compiler.h",
+        "entity.h",
+        "expression.h",
+        "ivl_assert.h",
+        "library.h",
+        "package.h",
+        "parse_api.h",
+        "parse_misc.h",
+        "parse_types.h",
+        "parse_wrap.h",
+        "scope.h",
+        "sequential.h",
+        "std_funcs.h",
+        "std_types.h",
+        "subprogram.h",
+        "vhdlint.h",
+        "vhdlnum.h",
+        "vhdlreal.h",
+        "vsignal.h",
+        "vtype.h",
+    ] + [
+        ":gen_lexor",
+        ":gen_parse",
+    ],
+    copts = CXX_STD + WARNING_COPTS + select({
+        # Force-include vhdlpp's versions of headers that share include
+        # guards with root-level headers. Bazel's auto-added -iquote for
+        # the repo root finds the root versions first in generated files
+        # (bison/flex output). Pre-including the correct versions sets the
+        # guards so the root copies are skipped.
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/FIvhdlpp_config.h",
+            "/FIvhdlpp/compiler.h",
+            "/FIvhdlpp/ivl_assert.h",
+            "/FIvhdlpp/parse_api.h",
+            "/FIvhdlpp/parse_misc.h",
+        ],
+        "//conditions:default": [
+            "-include",
+            "vhdlpp/compiler.h",
+            "-include",
+            "vhdlpp/ivl_assert.h",
+            "-include",
+            "vhdlpp/parse_api.h",
+            "-include",
+            "vhdlpp/parse_misc.h",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vhdlpp_config",
+        "//:compat_getopt",
+        "//:ivl_headers",
+        "//:version_tag",
+    ],
+)

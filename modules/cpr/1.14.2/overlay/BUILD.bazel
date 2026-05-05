@@ -1,0 +1,60 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+exports_files(["LICENSE"])
+
+license(
+    name = "license",
+    package_name = "cpr",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/libcpr/cpr",
+)
+
+_VERSION_PARTS = module_version().split(".")
+
+_MAJOR_HEX = "%X" % int(_VERSION_PARTS[0])
+_MINOR_HEX = "%X" % int(_VERSION_PARTS[1])
+_PATCH_HEX = "%X" % int(_VERSION_PARTS[2])
+_VERSION_NUM = (
+    "0x" +
+    ("0" if len(_MAJOR_HEX) < 2 else "") + _MAJOR_HEX +
+    ("0" if len(_MINOR_HEX) < 2 else "") + _MINOR_HEX +
+    ("0" if len(_PATCH_HEX) < 2 else "") + _PATCH_HEX
+)
+
+expand_template(
+    name = "cprver_h",
+    out = "cpr_generated_includes/cpr/cprver.h",
+    template = "cmake/cprver.h.in",
+    substitutions = {
+        "${cpr_VERSION}": module_version(),
+        "${cpr_VERSION_MAJOR}": _VERSION_PARTS[0],
+        "${cpr_VERSION_MINOR}": _VERSION_PARTS[1],
+        "${cpr_VERSION_PATCH}": _VERSION_PARTS[2],
+        "${cpr_VERSION_NUM}": _VERSION_NUM,
+    },
+)
+
+cc_library(
+    name = "cprver_header",
+    hdrs = [":cprver_h"],
+    includes = ["cpr_generated_includes"],
+)
+
+cc_library(
+    name = "cpr",
+    srcs = glob(["cpr/**/*.cpp"]),
+    hdrs = glob(["include/cpr/**/*.h"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cprver_header",
+        "@curl",
+    ],
+)

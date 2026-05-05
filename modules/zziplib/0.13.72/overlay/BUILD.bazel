@@ -1,0 +1,577 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# ===== Configuration flags =================================================
+
+bool_flag(
+    name = "use_mmap",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_mmap_enabled",
+    flag_values = {":use_mmap": "True"},
+)
+
+bool_flag(
+    name = "largefile",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "largefile_enabled",
+    flag_values = {":largefile": "True"},
+)
+
+# ===== Common build settings ===============================================
+
+_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+_LOCAL_DEFINES = ["HAVE_CONFIG_H"] + select({
+    ":use_mmap_enabled": ["_USE_MMAP"],
+    "//conditions:default": [],
+})
+
+_LARGEFILE_DEFINES = select({
+    ":largefile_enabled": [
+        "_LARGEFILE_SOURCE",
+        "_LARGEFILE64_SOURCE",
+        "_FILE_OFFSET_BITS=64",
+        "_LARGE_FILES",
+        "ZZIP_LARGEFILE_SENSITIVE=1",
+    ],
+    "//conditions:default": [],
+})
+
+# ===== Config header generation =============================================
+
+package_info(
+    name = "package_info",
+    aliases = {
+        "ZZIP_PACKAGE": "PACKAGE_NAME",
+        "ZZIP_PACKAGE_NAME": "PACKAGE_NAME",
+        "ZZIP_PACKAGE_VERSION": "PACKAGE_VERSION",
+        "ZZIP_VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "//:MODULE.bazel",
+)
+
+expand_template(
+    name = "config_h_template",
+    out = "zzip/_config.h.in",
+    substitutions = {
+        "#cmakedefine ZZIP_HAVE_ALIGNED_ACCESS_REQUIRED ${ZZIP_HAVE_ALIGNED_ACCESS_REQUIRED}": "#undef ZZIP_HAVE_ALIGNED_ACCESS_REQUIRED",
+        "#cmakedefine ZZIP_HAVE_ANSIDECL_H ${ZZIP_HAVE_ANSIDECL_H}": "#undef ZZIP_HAVE_ANSIDECL_H",
+        "#cmakedefine ZZIP_HAVE_BYTESWAP_H ${ZZIP_HAVE_BYTESWAP_H}": "#undef ZZIP_HAVE_BYTESWAP_H",
+        "#cmakedefine ZZIP_HAVE_DIRECT_H ${ZZIP_HAVE_DIRECT_H}": "#undef ZZIP_HAVE_DIRECT_H",
+        "#cmakedefine ZZIP_HAVE_DIRENT_H ${ZZIP_HAVE_DIRENT_H}": "#undef ZZIP_HAVE_DIRENT_H",
+        "#cmakedefine ZZIP_HAVE_DLFCN_H ${ZZIP_HAVE_DLFCN_H}": "#undef ZZIP_HAVE_DLFCN_H",
+        "#cmakedefine ZZIP_HAVE_FNMATCH_H ${ZZIP_HAVE_FNMATCH_H}": "#undef ZZIP_HAVE_FNMATCH_H",
+        "#cmakedefine ZZIP_HAVE_INTTYPES_H ${ZZIP_HAVE_INTTYPES_H}": "#undef ZZIP_HAVE_INTTYPES_H",
+        "#cmakedefine ZZIP_HAVE_IO_H ${ZZIP_HAVE_IO_H}": "#undef ZZIP_HAVE_IO_H",
+        "#cmakedefine ZZIP_HAVE_MEMORY_H ${ZZIP_HAVE_MEMORY_H}": "#undef ZZIP_HAVE_MEMORY_H",
+        "#cmakedefine ZZIP_HAVE_NDIR_H ${ZZIP_HAVE_NDIR_H}": "#undef ZZIP_HAVE_NDIR_H",
+        "#cmakedefine ZZIP_HAVE_STDINT_H ${ZZIP_HAVE_STDINT_H}": "#undef ZZIP_HAVE_STDINT_H",
+        "#cmakedefine ZZIP_HAVE_STDLIB_H ${ZZIP_HAVE_STDLIB_H}": "#undef ZZIP_HAVE_STDLIB_H",
+        "#cmakedefine ZZIP_HAVE_STRCASECMP ${ZZIP_HAVE_STRCASECMP}": "#undef ZZIP_HAVE_STRCASECMP",
+        "#cmakedefine ZZIP_HAVE_STRINGS_H ${ZZIP_HAVE_STRINGS_H}": "#undef ZZIP_HAVE_STRINGS_H",
+        "#cmakedefine ZZIP_HAVE_STRING_H ${ZZIP_HAVE_STRING_H}": "#undef ZZIP_HAVE_STRING_H",
+        "#cmakedefine ZZIP_HAVE_STRNDUP ${ZZIP_HAVE_STRNDUP}": "#undef ZZIP_HAVE_STRNDUP\n\n/* Define to 1 if you have the `pread' function. */\n#undef ZZIP_HAVE_PREAD",
+        "#cmakedefine ZZIP_HAVE_SYS_DIR_H ${ZZIP_HAVE_SYS_DIR_H}": "#undef ZZIP_HAVE_SYS_DIR_H",
+        "#cmakedefine ZZIP_HAVE_SYS_INT_TYPES_H ${ZZIP_HAVE_SYS_INT_TYPES_H}": "#undef ZZIP_HAVE_SYS_INT_TYPES_H",
+        "#cmakedefine ZZIP_HAVE_SYS_MMAN_H ${ZZIP_HAVE_SYS_MMAN_H}": "#undef ZZIP_HAVE_SYS_MMAN_H",
+        "#cmakedefine ZZIP_HAVE_SYS_NDIR_H ${ZZIP_HAVE_SYS_NDIR_H}": "#undef ZZIP_HAVE_SYS_NDIR_H",
+        "#cmakedefine ZZIP_HAVE_SYS_PARAM_H ${ZZIP_HAVE_SYS_PARAM_H}": "#undef ZZIP_HAVE_SYS_PARAM_H",
+        "#cmakedefine ZZIP_HAVE_SYS_STAT_H ${ZZIP_HAVE_SYS_STAT_H}": "#undef ZZIP_HAVE_SYS_STAT_H",
+        "#cmakedefine ZZIP_HAVE_SYS_TYPES_H ${ZZIP_HAVE_SYS_TYPES_H}": "#undef ZZIP_HAVE_SYS_TYPES_H",
+        "#cmakedefine ZZIP_HAVE_UNISTD_H ${ZZIP_HAVE_UNISTD_H}": "#undef ZZIP_HAVE_UNISTD_H",
+        "#cmakedefine ZZIP_HAVE_WINBASE_H ${ZZIP_HAVE_WINBASE_H}": "#undef ZZIP_HAVE_WINBASE_H",
+        "#cmakedefine ZZIP_HAVE_WINDOWS_H ${ZZIP_HAVE_WINDOWS_H}": "#undef ZZIP_HAVE_WINDOWS_H",
+        "#cmakedefine ZZIP_HAVE_WINNT_H ${ZZIP_HAVE_WINNT_H}": "#undef ZZIP_HAVE_WINNT_H",
+        "#cmakedefine ZZIP_HAVE_ZLIB_H ${ZZIP_HAVE_ZLIB_H}": "#undef ZZIP_HAVE_ZLIB_H",
+        "#cmakedefine ZZIP_LARGEFILE_SENSITIVE ${ZZIP_LARGEFILE_SENSITIVE}": "#undef ZZIP_LARGEFILE_SENSITIVE",
+        "#cmakedefine ZZIP_PACKAGE \"${ZZIP_PACKAGE}\"": "#undef ZZIP_PACKAGE",
+        "#cmakedefine ZZIP_PACKAGE_BUGREPORT \"${ZZIP_PACKAGE_BUGREPORT}\"": "#undef ZZIP_PACKAGE_BUGREPORT",
+        "#cmakedefine ZZIP_PACKAGE_NAME \"${ZZIP_PACKAGE_NAME}\"": "#undef ZZIP_PACKAGE_NAME",
+        "#cmakedefine ZZIP_PACKAGE_STRING \"${ZZIP_PACKAGE_STRING}\"": "#undef ZZIP_PACKAGE_STRING",
+        "#cmakedefine ZZIP_PACKAGE_TARNAME \"${ZZIP_PACKAGE_TARNAME}\"": "#undef ZZIP_PACKAGE_TARNAME",
+        "#cmakedefine ZZIP_PACKAGE_VERSION \"${ZZIP_PACKAGE_VERSION}\"": "#undef ZZIP_PACKAGE_VERSION",
+        "#cmakedefine ZZIP_SIZEOF_INT ${ZZIP_SIZEOF_INT}": "#undef ZZIP_SIZEOF_INT",
+        "#cmakedefine ZZIP_SIZEOF_LONG ${ZZIP_SIZEOF_LONG}": "#undef ZZIP_SIZEOF_LONG",
+        "#cmakedefine ZZIP_SIZEOF_SHORT ${ZZIP_SIZEOF_SHORT}": "#undef ZZIP_SIZEOF_SHORT",
+        "#cmakedefine ZZIP_STDC_HEADERS ${ZZIP_STDC_HEADERS}": "#undef ZZIP_STDC_HEADERS",
+        "#cmakedefine ZZIP_VERSION ${ZZIP_VERSION}": "#undef ZZIP_VERSION",
+        "#cmakedefine ZZIP_WORDS_BIGENDIAN ${ZZIP_WORDS_BIGENDIAN}": "#undef ZZIP_WORDS_BIGENDIAN",
+        "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "#undef _FILE_OFFSET_BITS",
+        "#cmakedefine _LARGE_FILES ${_LARGE_FILES}": "#undef _LARGE_FILES",
+        "#cmakedefine __int64 ${__INT64}": "#undef __int64",
+        "#cmakedefine _zzip_off_t ${OFF_T}": "#undef _zzip_off_t",
+        "#cmakedefine _zzip_size_t ${SIZE_T}": "#undef _zzip_size_t",
+        "#cmakedefine _zzip_ssize_t ${SSIZE_T}": "#undef _zzip_ssize_t",
+        "#cmakedefine const ${const}": "#undef const",
+    },
+    template = "zzip/_config.h.cmake",
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        # Headers (mirrors CMake check_include_files in zzip/CMakeLists.txt)
+        checks.AC_CHECK_HEADER(
+            "byteswap.h",
+            define = "ZZIP_HAVE_BYTESWAP_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "direct.h",
+            define = "ZZIP_HAVE_DIRECT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "dirent.h",
+            define = "ZZIP_HAVE_DIRENT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "dlfcn.h",
+            define = "ZZIP_HAVE_DLFCN_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "fnmatch.h",
+            define = "ZZIP_HAVE_FNMATCH_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "inttypes.h",
+            define = "ZZIP_HAVE_INTTYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "io.h",
+            define = "ZZIP_HAVE_IO_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "memory.h",
+            define = "ZZIP_HAVE_MEMORY_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "ndir.h",
+            define = "ZZIP_HAVE_NDIR_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "ansidecl.h",
+            define = "ZZIP_HAVE_ANSIDECL_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdint.h",
+            define = "ZZIP_HAVE_STDINT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdlib.h",
+            define = "ZZIP_HAVE_STDLIB_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "strings.h",
+            define = "ZZIP_HAVE_STRINGS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "string.h",
+            define = "ZZIP_HAVE_STRING_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/dir.h",
+            define = "ZZIP_HAVE_SYS_DIR_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/int_types.h",
+            define = "ZZIP_HAVE_SYS_INT_TYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/mman.h",
+            define = "ZZIP_HAVE_SYS_MMAN_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/ndir.h",
+            define = "ZZIP_HAVE_SYS_NDIR_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/param.h",
+            define = "ZZIP_HAVE_SYS_PARAM_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/stat.h",
+            define = "ZZIP_HAVE_SYS_STAT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/types.h",
+            define = "ZZIP_HAVE_SYS_TYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "unistd.h",
+            define = "ZZIP_HAVE_UNISTD_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "winbase.h",
+            define = "ZZIP_HAVE_WINBASE_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "windows.h",
+            define = "ZZIP_HAVE_WINDOWS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "winnt.h",
+            define = "ZZIP_HAVE_WINNT_H",
+        ),
+        # Functions (mirrors CMake check_function_exists)
+        checks.AC_CHECK_FUNC(
+            "strcasecmp",
+            define = "ZZIP_HAVE_STRCASECMP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strndup",
+            define = "ZZIP_HAVE_STRNDUP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "pread",
+            define = "ZZIP_HAVE_PREAD",
+        ),
+        # Type sizes (mirrors CMake check_type_size)
+        checks.AC_CHECK_SIZEOF(
+            "int",
+            define = "ZZIP_SIZEOF_INT",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "long",
+            define = "ZZIP_SIZEOF_LONG",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "short",
+            define = "ZZIP_SIZEOF_SHORT",
+        ),
+        # Endianness
+        checks.AC_DEFINE(
+            "ZZIP_WORDS_BIGENDIAN",
+            condition = "WORDS_BIGENDIAN",
+        ),
+        # Fixed defines
+        checks.AC_DEFINE("ZZIP_HAVE_ZLIB_H", 1),
+        checks.AC_DEFINE("ZZIP_STDC_HEADERS", 1),
+    ],
+    deps = [
+        ":package_info",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "zzip/_config.h",
+    template = ":config_h_template",
+    deps = [":autoconf"],
+)
+
+# ===== Header libraries ====================================================
+
+cc_library(
+    name = "zzip_public_headers",
+    hdrs = [
+        "zzip/_msvc.h",
+        "zzip/cdecl.h",
+        "zzip/conf.h",
+        "zzip/cstdint.h",
+        "zzip/fetch.h",
+        "zzip/file.h",
+        "zzip/format.h",
+        "zzip/fseeko.h",
+        "zzip/info.h",
+        "zzip/lib.h",
+        "zzip/memdisk.h",
+        "zzip/mmapped.h",
+        "zzip/plugin.h",
+        "zzip/stdint.h",
+        "zzip/types.h",
+        "zzip/write.h",
+        "zzip/zzip.h",
+        "zzip/zzip32.h",
+        ":config_h",
+    ],
+    defines = _LARGEFILE_DEFINES,
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = ["@zlib"],
+)
+
+cc_library(
+    name = "zzip_internal_headers",
+    hdrs = [
+        "zzip/__debug.h",
+        "zzip/__dirent.h",
+        "zzip/__errno.h",
+        "zzip/__fnmatch.h",
+        "zzip/__hints.h",
+        "zzip/__mkdir.h",
+        "zzip/__mmap.h",
+        "zzip/__param.h",
+        "zzip/__string.h",
+    ],
+    includes = ["."],
+)
+
+# ===== Core libraries =======================================================
+
+alias(
+    name = "libzzip",
+    actual = ":lib/zzip",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "zziplib",
+    actual = ":lib/zzip",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "lib/zzip",
+    srcs = [
+        "zzip/dir.c",
+        "zzip/err.c",
+        "zzip/fetch.c",
+        "zzip/file.c",
+        "zzip/info.c",
+        "zzip/plugin.c",
+        "zzip/stat.c",
+        "zzip/write.c",
+        "zzip/zip.c",
+    ],
+    copts = _COPTS,
+    implementation_deps = [":zzip_internal_headers"],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":zzip_public_headers"],
+)
+
+cc_library(
+    name = "zzipfseeko",
+    srcs = [
+        "zzip/fetch.c",
+        "zzip/fseeko.c",
+    ],
+    copts = _COPTS,
+    implementation_deps = [":zzip_internal_headers"],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":zzip_public_headers"],
+)
+
+cc_library(
+    name = "zzipmmapped",
+    srcs = [
+        "zzip/fetch.c",
+        "zzip/memdisk.c",
+        "zzip/mmapped.c",
+    ],
+    copts = _COPTS,
+    implementation_deps = [":zzip_internal_headers"],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":zzip_public_headers"],
+)
+
+cc_library(
+    name = "zzipwrap",
+    srcs = ["zzipwrap/wrap.c"],
+    hdrs = ["zzipwrap/wrap.h"],
+    copts = _COPTS,
+    includes = ["."],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+# ===== Binary targets =======================================================
+
+_UNZZIP_HDRS = [
+    "bins/unzzip-states.h",
+    "bins/unzzipcat-zip.h",
+    "bins/unzzipdir-zip.h",
+]
+
+cc_binary(
+    name = "zzcat",
+    srcs = ["bins/zzcat.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "zzdir",
+    srcs = ["bins/zzdir.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "zzxorcat",
+    srcs = ["bins/zzxorcat.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "zzxordir",
+    srcs = ["bins/zzxordir.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "zzxorcopy",
+    srcs = ["bins/zzxorcopy.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES + select({
+        "@rules_cc//cc/compiler:msvc-cl": ["ssize_t=int"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "zzobfuscated",
+    srcs = ["bins/zzobfuscated.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "zziptest",
+    srcs = ["bins/zziptest.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+cc_binary(
+    name = "unzzip",
+    srcs = [
+        "bins/unzzip.c",
+        "bins/unzzipcat-zip.c",
+        "bins/unzzipdir-zip.c",
+    ] + _UNZZIP_HDRS,
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libzzip",
+        ":zzip_internal_headers",
+    ],
+)
+
+cc_binary(
+    name = "unzzip-mix",
+    srcs = [
+        "bins/unzzip.c",
+        "bins/unzzipcat-mix.c",
+        "bins/unzzipdir-mix.c",
+    ] + _UNZZIP_HDRS,
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libzzip",
+        ":zzip_internal_headers",
+    ],
+)
+
+cc_binary(
+    name = "unzzip-big",
+    srcs = [
+        "bins/unzzip.c",
+        "bins/unzzipcat-big.c",
+        "bins/unzzipdir-big.c",
+    ] + _UNZZIP_HDRS,
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":zzip_internal_headers",
+        ":zzipfseeko",
+    ],
+)
+
+cc_binary(
+    name = "unzzip-mem",
+    srcs = [
+        "bins/unzzip.c",
+        "bins/unzzipcat-mem.c",
+        "bins/unzzipdir-mem.c",
+    ] + _UNZZIP_HDRS,
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":zzip_internal_headers",
+        ":zzipmmapped",
+    ],
+)
+
+cc_binary(
+    name = "unzip-mem",
+    srcs = ["bins/unzip-mem.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":zzipmmapped"],
+)
+
+cc_binary(
+    name = "bin/zzip",
+    srcs = [
+        "bins/zzip.c",
+        "bins/zzipmake-zip.c",
+        "bins/zzipmake-zip.h",
+    ],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":libzzip"],
+)
+
+alias(
+    name = "zzip",
+    actual = "bin/zzip",
+    visibility = ["//visibility:public"],
+)
+
+# ===== Tests ================================================================
+
+cc_test(
+    name = "zzipself_test",
+    srcs = ["test/zzipself.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    deps = [":libzzip"],
+)
