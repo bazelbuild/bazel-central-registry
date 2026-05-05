@@ -1,7 +1,8 @@
 """Rules and macros for building GMP with Bazel."""
 
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-load("//bazel:mpn.bzl", "ALTERNATIVES", "CPU_PATHS")
+load("@rules_cc_autoconf//autoconf:cc_autoconf_info.bzl", "CcAutoconfInfo")
+load("//bazel:mpn.bzl", "ALTERNATIVES", "CPU_PATHS", "POSSIBLE_NATIVE_DEFINES")
 
 # Default CPU variant per platform architecture (used when cpu="auto").
 _AUTO_CPU = {
@@ -367,7 +368,7 @@ gmp_mpn_m4 = rule(
 )
 
 # =========================================================================
-# gmp_native_defs – extract HAVE_NATIVE_* from .asm PROLOGUE declarations
+# gmp_native_checks – produce CcAutoconfInfo for HAVE_NATIVE_* in config.h
 # =========================================================================
 
 def _filter_asm_by_search_dirs(asm_files, search_dirs, workspace_root):
@@ -381,9 +382,7 @@ def _filter_asm_by_search_dirs(asm_files, search_dirs, workspace_root):
                 filtered.append(f)
     return filtered
 
-def _gmp_native_defs_impl(ctx):
-    out = ctx.actions.declare_file("native_defs.h")
-
+def _gmp_native_checks_impl(ctx):
     search_dirs = _resolve_search_dirs(
         ctx.attr.arch,
         ctx.attr.cpu[BuildSettingInfo].value,
@@ -395,23 +394,45 @@ def _gmp_native_defs_impl(ctx):
         ctx.label.workspace_root,
     )
 
-    if not selected:
-        ctx.actions.write(out, "/* No native assembly functions. */\n")
-        return DefaultInfo(files = depset([out]))
+    result_files = {}
+    outputs = []
+    manifest_lines = []
+
+    for define_name in POSSIBLE_NATIVE_DEFINES:
+        result_file = ctx.actions.declare_file(
+            "{}/{}.result.json".format(ctx.label.name, define_name),
+        )
+        result_files[define_name] = result_file
+        outputs.append(result_file)
+        manifest_lines.append("{}\t{}".format(define_name, result_file.path))
+
+    manifest = ctx.actions.declare_file("{}/manifest.txt".format(ctx.label.name))
+    ctx.actions.write(
+        output = manifest,
+        content = "\n".join(manifest_lines) + "\n",
+    )
+
+    args = ctx.actions.args()
+    args.add(manifest)
+    args.add_all(selected)
 
     ctx.actions.run(
-        inputs = selected,
-        outputs = [out],
+        inputs = selected + [manifest],
+        outputs = outputs,
         executable = ctx.executable._extract_natives,
-        arguments = [out.path] + [f.path for f in selected],
-        mnemonic = "GmpExtractNatives",
-        progress_message = "Extracting HAVE_NATIVE defines",
+        arguments = [args],
+        mnemonic = "GmpNativeChecks",
+        progress_message = "Generating HAVE_NATIVE autoconf results",
     )
-    return DefaultInfo(files = depset([out]))
 
-gmp_native_defs = rule(
-    doc = "Extracts HAVE_NATIVE_mpn_* defines from assembly PROLOGUE declarations.",
-    implementation = _gmp_native_defs_impl,
+    return [CcAutoconfInfo(
+        owner = ctx.label,
+        define_results = result_files,
+    )]
+
+gmp_native_checks = rule(
+    doc = "Produces CcAutoconfInfo with HAVE_NATIVE_mpn_* results derived from assembly PROLOGUE declarations.",
+    implementation = _gmp_native_checks_impl,
     attrs = {
         "arch": attr.string(
             doc = "Target architecture.",
@@ -435,4 +456,5 @@ gmp_native_defs = rule(
             cfg = "exec",
         ),
     },
+    provides = [CcAutoconfInfo],
 )

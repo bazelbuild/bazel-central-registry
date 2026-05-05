@@ -14,7 +14,7 @@ load(
     "gmp_copy",
     "gmp_gen",
     "gmp_mpn_m4",
-    "gmp_native_defs",
+    "gmp_native_checks",
 )
 load(
     "//bazel:mpn.bzl",
@@ -213,6 +213,18 @@ package_info(
     },
     module_bazel = "MODULE.bazel",
     strip_bcr_version = True,
+)
+
+# =============================================================================
+# HAVE_NATIVE_mpn_* checks (derived from assembly PROLOGUE declarations)
+# =============================================================================
+
+gmp_native_checks(
+    name = "native_checks",
+    arch = _MPN_ARCH,
+    asm_srcs = _MPN_ASM_SRCS,
+    cpu = ":cpu",
+    os = _MPN_OS,
 )
 
 # =============================================================================
@@ -486,7 +498,10 @@ int main() { void *p = alloca(1); return p != 0; }
             )],
             "//conditions:default": [],
         }),
-    deps = [":package"],
+    deps = [
+        ":native_checks",
+        ":package",
+    ],
 )
 
 autoconf_hdr(
@@ -767,18 +782,6 @@ gmp_config_m4(
 ]
 
 # =============================================================================
-# HAVE_NATIVE_mpn_* extraction from assembly PROLOGUE declarations
-# =============================================================================
-
-gmp_native_defs(
-    name = "native_defs",
-    arch = _MPN_ARCH,
-    asm_srcs = _MPN_ASM_SRCS,
-    cpu = ":cpu",
-    os = _MPN_OS,
-)
-
-# =============================================================================
 # Internal headers (private, used by all GMP sources)
 # =============================================================================
 
@@ -795,7 +798,6 @@ cc_library(
         ":gen_sieve_table_h",
         ":gmp_h",
         ":gmp_mparam_h",
-        ":native_defs",
     ],
     includes = ["."],
     textual_hdrs = [
@@ -859,13 +861,7 @@ cc_library(
         ],
     ),
     hdrs = [":gmp_h"],
-    copts = _GMP_COPTS + select({
-        "@rules_cc//cc/compiler:msvc-cl": ["/FInative_defs.h"],
-        "//conditions:default": [
-            "-include",
-            "native_defs.h",
-        ],
-    }),
+    copts = _GMP_COPTS,
     includes = ["."],
     textual_hdrs = glob(["mpn/generic/*.c"]) + [
         "mpn/generic/gmp-mparam.h",
@@ -886,7 +882,6 @@ cc_library(
 )
 
 # MPN function implementations (assembly + generic C).
-# Separate library to avoid -include native_defs.h on .s files.
 cc_library(
     name = "_mpn",
     srcs = [":" + fn for fn in _ALL_MPN_FUNCTIONS],
@@ -919,13 +914,7 @@ cc_library(
         "-D__GMP_WITHIN_GMP",
         "-D__GMP_WITHIN_GMPXX",
         "-w",
-    ] + select({
-        "@rules_cc//cc/compiler:msvc-cl": ["/FInative_defs.h"],
-        "//conditions:default": [
-            "-include",
-            "native_defs.h",
-        ],
-    }),
+    ],
     includes = ["."],
     visibility = ["//visibility:public"],
     deps = [
