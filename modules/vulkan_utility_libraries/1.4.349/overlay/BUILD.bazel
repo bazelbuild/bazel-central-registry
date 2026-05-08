@@ -4,8 +4,21 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+config_setting(
+    name = "windows_clang_cl",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang-cl"},
+)
+
+config_setting(
+    name = "windows_msvc",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+)
+
 COMMON_WARNINGS = select({
-    "@platforms//os:windows": [],
+    ":windows_clang_cl": [],
+    ":windows_msvc": [],
     "//conditions:default": [
         "-Wpedantic",
         "-Wunreachable-code",
@@ -54,12 +67,19 @@ APPLE_DEFINES = select({
 })
 
 CXX17_COPTS = select({
-    "@platforms//os:windows": ["/std:c++17"],
+    ":windows_clang_cl": ["/std:c++17"],
+    ":windows_msvc": ["/std:c++17"],
     "//conditions:default": ["-std=c++17"],
 })
 
 _COMPILER_CONFIGURATION_COPTS = COMMON_WARNINGS + CLANG_WARNINGS + select({
-    "@platforms//os:windows": [
+    ":windows_clang_cl": [
+        "/W4",
+        "/we5038",
+        "/wd4324",
+        "/permissive-",
+    ],
+    ":windows_msvc": [
         "/W4",
         "/we5038",
         "/wd4324",
@@ -69,6 +89,12 @@ _COMPILER_CONFIGURATION_COPTS = COMMON_WARNINGS + CLANG_WARNINGS + select({
 })
 
 _COMPILER_CONFIGURATION_DEFINES = ["VK_ENABLE_BETA_EXTENSIONS"] + WINDOWS_DEFINES + ANDROID_DEFINES + APPLE_DEFINES
+
+WINDOWS_SYSTEM_LINKOPTS = select({
+    ":windows_clang_cl": ["Advapi32.lib"],
+    ":windows_msvc": ["Advapi32.lib"],
+    "//conditions:default": [],
+})
 
 cc_library(
     name = "vulkan_utility_headers",
@@ -110,6 +136,7 @@ cc_library(
     copts = CXX17_COPTS + _COMPILER_CONFIGURATION_COPTS,
     defines = _COMPILER_CONFIGURATION_DEFINES,
     includes = ["include"],
+    linkopts = WINDOWS_SYSTEM_LINKOPTS,
     deps = ["@vulkan_headers//:vulkan_headers"],
 )
 
