@@ -1,0 +1,775 @@
+"""MPFR - Multiple Precision Floating-Point Reliable Library."""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//bazel:mpfr_utils.bzl", "mpfr_copy", "mpfr_gen_patches")
+
+# =============================================================================
+# Feature flags
+# =============================================================================
+
+bool_flag(
+    name = "enable_gmp_internals",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_thread_safe",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_shared_cache",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_warnings",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_logging",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_formally_proven_code",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_tune_for_coverage",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "enable_assert",
+    build_setting_default = "no",
+    values = [
+        "none",
+        "no",
+        "yes",
+        "full",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "enable_decimal_float",
+    build_setting_default = "auto",
+    values = [
+        "yes",
+        "no",
+        "auto",
+        "bid",
+        "dpd",
+        "generic",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "enable_float128",
+    build_setting_default = "auto",
+    values = [
+        "yes",
+        "no",
+        "auto",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Config settings
+# =============================================================================
+
+config_setting(
+    name = "thread_safe_enabled",
+    flag_values = {":enable_thread_safe": "True"},
+)
+
+config_setting(
+    name = "gmp_internals_enabled",
+    flag_values = {":enable_gmp_internals": "True"},
+)
+
+config_setting(
+    name = "shared_cache_enabled",
+    flag_values = {":enable_shared_cache": "True"},
+)
+
+config_setting(
+    name = "warnings_enabled",
+    flag_values = {":enable_warnings": "True"},
+)
+
+config_setting(
+    name = "logging_enabled",
+    flag_values = {":enable_logging": "True"},
+)
+
+config_setting(
+    name = "proven_code_enabled",
+    flag_values = {":enable_formally_proven_code": "True"},
+)
+
+config_setting(
+    name = "tune_coverage_enabled",
+    flag_values = {":enable_tune_for_coverage": "True"},
+)
+
+config_setting(
+    name = "assert_none",
+    flag_values = {":enable_assert": "none"},
+)
+
+config_setting(
+    name = "assert_yes",
+    flag_values = {":enable_assert": "yes"},
+)
+
+config_setting(
+    name = "assert_full",
+    flag_values = {":enable_assert": "full"},
+)
+
+config_setting(
+    name = "decimal_float_no",
+    flag_values = {":enable_decimal_float": "no"},
+)
+
+config_setting(
+    name = "decimal_float_yes",
+    flag_values = {":enable_decimal_float": "yes"},
+)
+
+config_setting(
+    name = "decimal_float_bid",
+    flag_values = {":enable_decimal_float": "bid"},
+)
+
+config_setting(
+    name = "decimal_float_dpd",
+    flag_values = {":enable_decimal_float": "dpd"},
+)
+
+config_setting(
+    name = "decimal_float_generic",
+    flag_values = {":enable_decimal_float": "generic"},
+)
+
+config_setting(
+    name = "float128_no",
+    flag_values = {":enable_float128": "no"},
+)
+
+config_setting(
+    name = "float128_yes",
+    flag_values = {":enable_float128": "yes"},
+)
+
+config_setting(
+    name = "aarch64_macos",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:macos",
+    ],
+)
+
+config_setting(
+    name = "aarch64_windows",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "x86_64_windows",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:windows",
+    ],
+)
+
+# =============================================================================
+# Package info (AC_INIT equivalent)
+# =============================================================================
+
+package_info(
+    name = "package",
+    aliases = {
+        "PACKAGE": "PACKAGE_NAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    strip_bcr_version = True,
+)
+
+# =============================================================================
+# Autoconf checks -> config.h
+# =============================================================================
+
+autoconf(
+    name = "configure",
+    checks =
+        macros.AC_CHECK_HEADERS([
+            "alloca.h",
+            "fenv.h",
+            "float.h",
+            "inttypes.h",
+            "locale.h",
+            "math.h",
+            "stdarg.h",
+            "stdint.h",
+            "stdlib.h",
+            "string.h",
+            "strings.h",
+            "sys/fpu.h",
+            "sys/time.h",
+            "unistd.h",
+            "wchar.h",
+        ]) + macros.AC_CHECK_FUNCS([
+            "gettimeofday",
+            "setlocale",
+            "signal",
+        ]) + macros.AC_CHECK_TYPES([
+            "intmax_t",
+            "long long int",
+        ]) + [
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <stdarg.h>
+int main() { va_list ap1, ap2; va_copy(ap1, ap2); return 0; }
+""",
+                define = "HAVE_VA_COPY",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <stdarg.h>
+int main() { va_list ap1, ap2; __va_copy(ap1, ap2); return 0; }
+""",
+                define = "HAVE___VA_COPY",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <stdarg.h>
+int main() { return 0; }
+""",
+                define = "HAVE_STDARG",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <signal.h>
+static int f(int (*func)(int, const struct sigaction *, struct sigaction *))
+{ return 0; }
+int main() { return f(sigaction); }
+""",
+                define = "HAVE_SIGACTION",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <stdint.h>
+int main() { intmax_t x = INTMAX_MAX; return (int)x; }
+""",
+                define = "MPFR_HAVE_INTMAX_MAX",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+_Noreturn void foo(void) { for(;;); }
+int main() { return 0; }
+""",
+                define = "MPFR_HAVE_NORETURN",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+int x;
+int main() { if (x) __builtin_unreachable(); return 0; }
+""",
+                define = "MPFR_HAVE_BUILTIN_UNREACHABLE",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+static void __attribute__((constructor)) ctor(void) {}
+static void __attribute__((destructor)) dtor(void) {}
+int main() { return 0; }
+""",
+                define = "MPFR_HAVE_CONSTRUCTOR_ATTR",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <fenv.h>
+int main() { fesetround(FE_TONEAREST); return 0; }
+""",
+                define = "MPFR_HAVE_FESETROUND",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+_Static_assert(1, "ok");
+int main() { return 0; }
+""",
+                define = "MPFR_USE_STATIC_ASSERT",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <alloca.h>
+int main() { void *p = alloca(1); return p != 0; }
+""",
+                define = "HAVE_ALLOCA",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+typedef int SItype __attribute__ ((mode (SI)));
+int main() { return 0; }
+""",
+                define = "HAVE_ATTRIBUTE_MODE",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <locale.h>
+int main() { struct lconv lc; lc.decimal_point = "."; return 0; }
+""",
+                define = "HAVE_STRUCT_LCONV_DECIMAL_POINT",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <locale.h>
+int main() { struct lconv lc; lc.thousands_sep = ","; return 0; }
+""",
+                define = "HAVE_STRUCT_LCONV_THOUSANDS_SEP",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = "int main() { _Thread_local int x; x = 1; return x; }",
+                define = "MPFR_USE_C11_THREAD_SAFE",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <math.h>
+int main() { double x = round(1.5); return (int)x; }
+""",
+                define = "HAVE_ROUND",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <math.h>
+int main() { double x = trunc(1.5); return (int)x; }
+""",
+                define = "HAVE_TRUNC",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <math.h>
+int main() { double x = floor(1.5); return (int)x; }
+""",
+                define = "HAVE_FLOOR",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <math.h>
+int main() { double x = ceil(1.5); return (int)x; }
+""",
+                define = "HAVE_CEIL",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <math.h>
+int main() { double x = nearbyint(1.5); return (int)x; }
+""",
+                define = "HAVE_NEARBYINT",
+            ),
+            checks.AC_DEFINE(
+                "HAVE_SUBNORM_DBL",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "HAVE_SUBNORM_FLT",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "HAVE_SIGNEDZ",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "STDC_HEADERS",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "HAVE_DOUBLE_IEEE_LITTLE_ENDIAN",
+                condition = "WORDS_BIGENDIAN",
+                if_false = "1",
+                if_true = None,
+            ),
+            checks.AC_DEFINE(
+                "HAVE_DOUBLE_IEEE_BIG_ENDIAN",
+                condition = "WORDS_BIGENDIAN",
+                if_false = None,
+                if_true = "1",
+            ),
+            checks.AC_DEFINE(
+                "HAVE_LITTLE_ENDIAN",
+                condition = "WORDS_BIGENDIAN",
+                if_false = "1",
+                if_true = None,
+            ),
+            checks.AC_DEFINE(
+                "HAVE_BIG_ENDIAN",
+                condition = "WORDS_BIGENDIAN",
+                if_false = None,
+                if_true = "1",
+            ),
+        ] +
+        # -- _Decimal64 auto-detection vs explicit --
+        select({
+            ":decimal_float_bid": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_DECIMAL_FLOATS",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "DECIMAL_BID_FORMAT",
+                    value = "1",
+                ),
+            ],
+            ":decimal_float_dpd": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_DECIMAL_FLOATS",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "DECIMAL_DPD_FORMAT",
+                    value = "1",
+                ),
+            ],
+            ":decimal_float_generic": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_DECIMAL_FLOATS",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "DECIMAL_GENERIC_CODE",
+                    value = "1",
+                ),
+            ],
+            ":decimal_float_no": [],
+            ":decimal_float_yes": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_DECIMAL_FLOATS",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [
+                checks.AC_TRY_COMPILE(
+                    code = "int main() { volatile _Decimal64 x = 1.0dd; return (int)x; }",
+                    define = "MPFR_WANT_DECIMAL_FLOATS",
+                ),
+            ],
+        }) +
+        # -- _Float128 auto-detection vs explicit --
+        select({
+            ":float128_no": [],
+            ":float128_yes": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_FLOAT128",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [
+                checks.AC_TRY_COMPILE(
+                    code = "int main() { volatile _Float128 x = 0x1.fp+16383f128; return x == 0; }",
+                    define = "MPFR_WANT_FLOAT128",
+                ),
+            ],
+        }) +
+        # -- Long double format (platform-specific) --
+        select({
+            ":aarch64_macos": [
+                checks.AC_DEFINE(
+                    "HAVE_LDOUBLE_IS_DOUBLE",
+                    value = "1",
+                ),
+            ],
+            ":aarch64_windows": [
+                checks.AC_DEFINE(
+                    "HAVE_LDOUBLE_IS_DOUBLE",
+                    value = "1",
+                ),
+            ],
+            ":x86_64_windows": [
+                checks.AC_DEFINE(
+                    "HAVE_LDOUBLE_IS_DOUBLE",
+                    value = "1",
+                ),
+            ],
+            "@platforms//cpu:aarch64": [
+                checks.AC_DEFINE(
+                    "HAVE_LDOUBLE_IEEE_QUAD_LITTLE",
+                    value = "1",
+                ),
+            ],
+            "@platforms//cpu:x86_32": [
+                checks.AC_DEFINE(
+                    "HAVE_LDOUBLE_IEEE_EXT_LITTLE",
+                    value = "1",
+                ),
+            ],
+            "@platforms//cpu:x86_64": [
+                checks.AC_DEFINE(
+                    "HAVE_LDOUBLE_IEEE_EXT_LITTLE",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        # -- Thread safety --
+        select({
+            ":thread_safe_enabled": [
+                checks.AC_DEFINE(
+                    "MPFR_USE_THREAD_SAFE",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        # -- Feature flag defines --
+        select({
+            ":gmp_internals_enabled": [
+                checks.AC_DEFINE(
+                    "WANT_GMP_INTERNALS",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":shared_cache_enabled": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_SHARED_CACHE",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":warnings_enabled": [
+                checks.AC_DEFINE(
+                    "MPFR_USE_WARNINGS",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":logging_enabled": [
+                checks.AC_DEFINE(
+                    "MPFR_USE_LOGGING",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":proven_code_enabled": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_PROVEN_CODE",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":tune_coverage_enabled": [
+                checks.AC_DEFINE(
+                    "MPFR_TUNE_COVERAGE",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [],
+        }) +
+        # -- Assert levels --
+        select({
+            ":assert_full": [checks.AC_DEFINE(
+                "MPFR_WANT_ASSERT",
+                value = "2",
+            )],
+            ":assert_none": [checks.AC_DEFINE(
+                "MPFR_WANT_ASSERT",
+                value = "-1",
+            )],
+            ":assert_yes": [checks.AC_DEFINE(
+                "MPFR_WANT_ASSERT",
+                value = "1",
+            )],
+            "//conditions:default": [],
+        }) +
+        # -- MPFR_LONG_WITHIN_LIMB / MPFR_INTMAX_WITHIN_LIMB --
+        select({
+            "@platforms//cpu:aarch64": [
+                checks.AC_DEFINE(
+                    "MPFR_LONG_WITHIN_LIMB",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "MPFR_INTMAX_WITHIN_LIMB",
+                    value = "1",
+                ),
+            ],
+            "@platforms//cpu:x86_64": [
+                checks.AC_DEFINE(
+                    "MPFR_LONG_WITHIN_LIMB",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "MPFR_INTMAX_WITHIN_LIMB",
+                    value = "1",
+                ),
+            ],
+            "//conditions:default": [
+                checks.AC_DEFINE(
+                    "MPFR_LONG_WITHIN_LIMB",
+                    value = "1",
+                ),
+            ],
+        }),
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = "config.in",
+    deps = [":configure"],
+)
+
+# =============================================================================
+# mparam.h (architecture-specific tuning thresholds)
+# =============================================================================
+
+mpfr_copy(
+    name = "mparam_h",
+    src = "src/mparam_h.in",
+    out = "src/mparam.h",
+)
+
+# =============================================================================
+# get_patches.c (generated from PATCHES file)
+# =============================================================================
+
+mpfr_gen_patches(
+    name = "gen_get_patches_c",
+    out = "src/get_patches.c",
+    patches = "PATCHES",
+)
+
+# =============================================================================
+# Internal headers (private, used by all MPFR sources)
+# =============================================================================
+
+cc_library(
+    name = "_mpfr_hdrs",
+    hdrs = [
+        "src/fits_s.h",
+        "src/fits_u.h",
+        "src/gen_inverse.h",
+        "src/ieee_floats.h",
+        "src/invert_limb.h",
+        "src/invsqrt_limb.h",
+        "src/mpf2mpfr.h",
+        "src/mpfr.h",
+        "src/mpfr-cvers.h",
+        "src/mpfr-gmp.h",
+        "src/mpfr-impl.h",
+        "src/mpfr-intmax.h",
+        "src/mpfr-longlong.h",
+        "src/mpfr-mini-gmp.h",
+        "src/mpfr-sassert.h",
+        "src/mpfr-thread.h",
+        "src/random_deviate.h",
+        ":config_h",
+        ":mparam_h",
+    ] + glob([
+        "src/*/mparam.h",
+        "src/*/*/mparam.h",
+    ]),
+    includes = [
+        ".",
+        "src",
+    ],
+    visibility = ["//tests:__subpackages__"],
+    deps = ["@gmp"],
+)
+
+# =============================================================================
+# Compiler options
+# =============================================================================
+
+_MPFR_COPTS = ["-DHAVE_CONFIG_H"] + select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# =============================================================================
+# libmpfr
+# =============================================================================
+
+alias(
+    name = "libmpfr",
+    actual = ":mpfr",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "mpfr",
+    srcs = glob(
+        ["src/*.c"],
+        exclude = [
+            "src/add1sp1_extracted.c",
+            "src/get_patches.c",
+            "src/jyn_asympt.c",
+            "src/mul_1_extracted.c",
+            "src/round_raw_generic.c",
+            "src/sub1sp1_extracted.c",
+        ],
+    ) + [
+        ":gen_get_patches_c",
+    ],
+    hdrs = [
+        "src/mpf2mpfr.h",
+        "src/mpfr.h",
+    ],
+    copts = _MPFR_COPTS,
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+    textual_hdrs = [
+        "src/add1sp1_extracted.c",
+        "src/jyn_asympt.c",
+        "src/lngamma.c",
+        "src/mul_1_extracted.c",
+        "src/pow_si.c",
+        "src/pow_ui.c",
+        "src/round_raw_generic.c",
+        "src/sub1sp1_extracted.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":_mpfr_hdrs",
+        "@gmp",
+    ],
+)
