@@ -32,8 +32,10 @@
 #define HAVE_NETDB_H 1
 #define HAVE_NETINET_IN_H 1
 #define HAVE_STDATOMIC_H 1
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 #define HAVE_STRLCAT 1
 #define HAVE_STRLCPY 1
+#endif
 #define HAVE_STRNLEN 1
 #define HAVE_STPNCPY 1
 #define HAVE_SYS_SOCKET_H 1
