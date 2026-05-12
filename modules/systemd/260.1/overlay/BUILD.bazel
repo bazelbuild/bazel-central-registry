@@ -25,22 +25,104 @@ license(
     package_url = "https://github.com/systemd/systemd",
 )
 
-COPTS = [
+# Things Bazel can't infer the way meson does: feature-test setup and
+# the inclusion of the hand-curated config.h.
+BAZEL_COPTS = [
     "-D_FILE_OFFSET_BITS=64",
-    # systemd does type punning; without -fno-strict-aliasing the
-    # resulting code has UB.
-    "-fno-strict-aliasing",
-    # Every TU `#include`s a `config.h` that meson normally generates. We
-    # ship a hand-curated one (`overlay/config.h`).
     "-include",
     "$(execpath :config.h)",
-    # The linker version script (`libudev.sym`) scopes the .so's exports,
-    # but only if the symbols aren't hidden first.
-    "-fvisibility=default",
-    # systemd source uses GCC-only `_Pragma("GCC diagnostic ignored ...")`
-    # lines that clang would otherwise warn about on every compile.
+]
+
+# Cross-compat between gcc and clang. UPSTREAM_MESON_COPTS below contains
+# both gcc-only (`-Wlogical-op`, `-Wsuggest-attribute=noreturn`, ...) and
+# clang-only (`-Wno-string-plus-int`, `-Wno-error=#warnings`) -W flags;
+# -Wno-unknown-warning-option lets each compiler silently drop the others.
+CROSS_COMPILER_COPTS = [
     "-Wno-unknown-warning-option",
 ]
+
+# Verbatim from systemd's meson.build: basic_disabled_warnings +
+# possible_common_cc_flags + possible_cc_flags. Meson filters each through
+# cc.get_supported_arguments() at configure time; Bazel has no equivalent,
+# so we curate by hand and rely on -Wno-unknown-warning-option above to
+# absorb the rest — but only for clang. gcc errors on unknown *positive*
+# -W flags regardless (it silently accepts unknown -Wno-X to allow forward
+# compat, but unknown -Wfoo is a hard error), and gcc also errors on
+# -Werror=foo when foo isn't a known warning. So flags newer than the
+# gcc we're willing to require have to be dropped here. Dropped vs.
+# upstream:
+#   -fstrict-flex-arrays={1,3}              needs gcc >= 13 / clang >= 16
+#   -Werror=flex-array-member-not-at-end    needs gcc >= 14.1
+#   -Werror=missing-parameter-name          needs gcc >= 14.1
+#   -Werror=strict-flex-arrays              needs gcc >= 13
+#   -Wunterminated-string-initialization    needs gcc >= 15
+#   -Wno-error=#warnings                    clang-only (gcc has no `#warnings`
+#                                           category)
+#   -Wzero-as-null-pointer-constant         gcc warns it's C++-only every
+#                                           compile; we are C-only
+#   -Wno-unknown-warning-option             hoisted to CROSS_COMPILER_COPTS
+#   -fvisibility=hidden                     replaced by OVERRIDE_COPTS below
+UPSTREAM_MESON_COPTS = [
+    "-Wno-missing-field-initializers",
+    "-Wno-unused-parameter",
+    "-Wno-nonnull-compare",
+    "-Warray-bounds",
+    "-Warray-bounds=2",
+    "-Wdate-time",
+    "-Wendif-labels",
+    "-Werror=bool-compare",
+    "-Werror=discarded-qualifiers",
+    "-Werror=format=2",
+    "-Werror=format-signedness",
+    "-Werror=implicit-function-declaration",
+    "-Werror=implicit-int",
+    "-Werror=incompatible-pointer-types",
+    "-Werror=int-conversion",
+    "-Werror=missing-declarations",
+    "-Werror=missing-prototypes",
+    "-Werror=overflow",
+    "-Werror=override-init",
+    "-Werror=pointer-sign",
+    "-Werror=return-type",
+    "-Werror=sequence-point",
+    "-Werror=shift-count-overflow",
+    "-Werror=shift-overflow=2",
+    "-Werror=undef",
+    "-Wfloat-equal",
+    "-Wimplicit-fallthrough=5",
+    "-Winit-self",
+    "-Wlogical-op",
+    "-Wmissing-include-dirs",
+    "-Wmissing-noreturn",
+    "-Wnested-externs",
+    "-Wold-style-definition",
+    "-Wpointer-arith",
+    "-Wredundant-decls",
+    "-Wshadow",
+    "-Wstrict-aliasing=2",
+    "-Wstrict-prototypes",
+    "-Wsuggest-attribute=noreturn",
+    "-Wunused-function",
+    "-Wwrite-strings",
+    "-Wzero-length-bounds",
+    "-Wno-string-plus-int",
+    "-fdiagnostics-show-option",
+    "-fno-common",
+    "-fstack-protector",
+    "-fstack-protector-strong",
+    "--param=ssp-buffer-size=4",
+    # systemd does type punning, so -fno-strict-aliasing is load-bearing.
+    "-fno-strict-aliasing",
+]
+
+# Overrides — must follow UPSTREAM_MESON_COPTS so they win.
+OVERRIDE_COPTS = [
+    # libudev.sym scopes the .so's exports but only if the symbols aren't
+    # hidden first; counters -fvisibility=hidden in possible_cc_flags.
+    "-fvisibility=default",
+]
+
+COPTS = BAZEL_COPTS + CROSS_COMPILER_COPTS + UPSTREAM_MESON_COPTS + OVERRIDE_COPTS
 
 # Override and uapi go via -isystem so override headers (which use
 # `#include_next`) take precedence over the sysroot's.
