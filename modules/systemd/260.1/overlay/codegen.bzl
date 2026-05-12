@@ -28,19 +28,6 @@ def _cc_macro_list_impl(ctx):
         action_name = "c-compile",
     )
 
-    # Inherit the toolchain's --target / --sysroot / -isystem dirs by
-    # asking for the standard c-compile command line (with no source
-    # file) and forwarding it to the generator script.
-    compile_variables = cc_common.create_compile_variables(
-        feature_configuration = feature_configuration,
-        cc_toolchain = cc_toolchain,
-    )
-    base_cmd = cc_common.get_memory_inefficient_command_line(
-        feature_configuration = feature_configuration,
-        action_name = "c-compile",
-        variables = compile_variables,
-    )
-
     out = ctx.outputs.out
     workspace_root = ctx.label.workspace_root
     prefix = (workspace_root + "/") if workspace_root else ""
@@ -48,9 +35,18 @@ def _cc_macro_list_impl(ctx):
     # `-E -x c` is needed because some upstream generate-*-list.sh scripts
     # invoke `$CC -dM -include <header> - </dev/null` without `-E`, relying
     # on gcc's behaviour where `-dM` implies `-E`. clang is stricter.
-    extra = ["-E", "-x", "c"]
+    flags = ["-E", "-x", "c"]
+    # gcc cross-compiles via a target-specific binary (aarch64-linux-gnu-gcc
+    # etc.) and rejects --target=; clang takes a single binary and routes
+    # through --target=. So we sniff.
+    if "clang" in cc_toolchain.compiler:
+        flags.append("--target=" + cc_toolchain.target_gnu_system_name)
+    if cc_toolchain.sysroot:
+        flags.append("--sysroot=" + cc_toolchain.sysroot)
+    for d in cc_toolchain.built_in_include_directories:
+        flags += ["-isystem", d]
     for d in ctx.attr.system_includes:
-        extra += ["-isystem", prefix + d]
+        flags += ["-isystem", prefix + d]
 
     ctx.actions.run_shell(
         outputs = [out],
@@ -58,7 +54,7 @@ def _cc_macro_list_impl(ctx):
             direct = [ctx.file.script] + ctx.files.headers,
             transitive = [cc_toolchain.all_files],
         ),
-        arguments = [out.path, ctx.file.script.path, compiler] + base_cmd + extra,
+        arguments = [out.path, ctx.file.script.path, compiler] + flags,
         command = 'out="$1"; shift; bash "$@" > "$out"',
         mnemonic = "GenMacroList",
         progress_message = "Generating %s" % out.short_path,
