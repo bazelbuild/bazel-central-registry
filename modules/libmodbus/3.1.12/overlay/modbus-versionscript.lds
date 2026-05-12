@@ -1,0 +1,5 @@
+{
+  global:
+    modbus_*;
+  local: *;
+};
