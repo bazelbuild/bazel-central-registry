@@ -13,6 +13,7 @@ src/libudev. They all live in a single `cc_library` here.
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 load("@rules_license//rules:license.bzl", "license")
+load("@rules_python//python:py_binary.bzl", "py_binary")
 load("//:codegen.bzl", "cc_macro_list")
 
 package(default_applicable_licenses = [":license"])
@@ -203,12 +204,12 @@ GPERF_FAMILIES = [
         name = "gen_{0}_from_name_gperf".format(name),
         srcs = ["src/basic/{0}-list.txt".format(name)],
         outs = ["src/basic/{0}-from-name.gperf".format(name)],
-        cmd = "python3 $(execpath tools/generate-gperfs.py) {0} '{1}' $< '{2}' > $@".format(
+        cmd = "$(execpath :generate_gperfs) {0} '{1}' $< '{2}' > $@".format(
             name,
             prefix,
             header,
         ),
-        tools = ["tools/generate-gperfs.py"],
+        tools = [":generate_gperfs"],
     )
     for name, prefix, header, _ in GPERF_FAMILIES
 ]
@@ -262,16 +263,16 @@ genrule(
 
 genrule(
     name = "gen_filesystem_sets_c",
-    srcs = ["src/basic/filesystem-sets.py"],
     outs = ["src/basic/filesystem-sets.c"],
-    cmd = "python3 $< fs-type-to-string filesystem-sets fs-in-group > $@",
+    cmd = "$(execpath :filesystem_sets) fs-type-to-string filesystem-sets fs-in-group > $@",
+    tools = [":filesystem_sets"],
 )
 
 genrule(
     name = "gen_filesystems_gperf_gperf",
-    srcs = ["src/basic/filesystem-sets.py"],
     outs = ["src/basic/filesystems-gperf.gperf"],
-    cmd = "python3 $< gperf > $@",
+    cmd = "$(execpath :filesystem_sets) gperf > $@",
+    tools = [":filesystem_sets"],
 )
 
 genrule(
@@ -280,6 +281,18 @@ genrule(
     outs = ["src/basic/filesystems-gperf.h"],
     cmd = "$(execpath @gperf) $< --output-file $@",
     tools = ["@gperf"],
+)
+
+py_binary(
+    name = "filesystem_sets",
+    srcs = ["src/basic/filesystem-sets.py"],
+    main = "src/basic/filesystem-sets.py",
+)
+
+py_binary(
+    name = "generate_gperfs",
+    srcs = ["tools/generate-gperfs.py"],
+    main = "tools/generate-gperfs.py",
 )
 
 filegroup(
