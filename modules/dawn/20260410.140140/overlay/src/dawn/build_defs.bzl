@@ -10,6 +10,9 @@ DAWN_COPTS = COPTS + select({
     "@platforms//os:macos": [
         "-DDAWN_ENABLE_BACKEND_METAL",
     ],
+    "@platforms//os:ios": [
+        "-DDAWN_ENABLE_BACKEND_METAL",
+    ],
     "@platforms//os:windows": [
         "-DDAWN_ENABLE_BACKEND_D3D12",
         "-DNTDDI_VERSION=0x0A000000",
