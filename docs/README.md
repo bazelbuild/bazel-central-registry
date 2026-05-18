@@ -18,7 +18,7 @@ The BCR follows the format of a regular [Bazel registry](https://bazel.build/ext
     - If the string has the format of `github:<org>/<repo>`, then source URLs from `https://github.com/<org>/<repo>` are allowed (see the [validations](#validations) section below).
     - If the string has the format of a regular URL (such as `https://foo.com/bar`), then source URLs beginning with the string are allowed. The string can optionally end in a slash (`/`), with no difference in the semantics (for example, `https://foo.com/bar/thing.zip` would be accepted, but `https://foo.com/barthing.zip` would not).
   - `deprecated`: a string. When set, this denotes that the module should not be used. Must be set if the module's latest version is [yanked](#yank-a-module-version).
-- The `source.json` file must be of the `type` `archive` (which is the default) or `git_repository`. Other types such as `local_path` are not allowed.
+- The `source.json` file must be of the `type` `archive` (which is the default). Other types such as `git_repository` or `local_path` are not allowed.
 - A presubmit.yml file. See [Presubmit](#presubmit) below.
 
 ## Contribute a Bazel module
