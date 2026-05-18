@@ -298,7 +298,13 @@ class RegistryClient:
         return self.get_version_dir(module_name, version) / PRESUBMIT_YML
 
     def get_patch_file_path(self, module_name, version, patch_name):
-        return self.get_version_dir(module_name, version) / "patches" / patch_name
+        patches_dir = (self.get_version_dir(module_name, version) / "patches").resolve()
+        patch_file = (patches_dir / patch_name).resolve()
+        try:
+            patch_file.relative_to(patches_dir)
+        except ValueError as e:
+            raise RegistryException(f"Patch file path `{patch_name}` must point inside the patches directory.") from e
+        return patch_file
 
     def get_module_dot_bazel_path(self, module_name, version):
         return self.get_version_dir(module_name, version) / "MODULE.bazel"
