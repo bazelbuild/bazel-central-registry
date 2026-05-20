@@ -18,7 +18,7 @@ The BCR follows the format of a regular [Bazel registry](https://bazel.build/ext
     - If the string has the format of `github:<org>/<repo>`, then source URLs from `https://github.com/<org>/<repo>` are allowed (see the [validations](#validations) section below).
     - If the string has the format of a regular URL (such as `https://foo.com/bar`), then source URLs beginning with the string are allowed. The string can optionally end in a slash (`/`), with no difference in the semantics (for example, `https://foo.com/bar/thing.zip` would be accepted, but `https://foo.com/barthing.zip` would not).
   - `deprecated`: a string. When set, this denotes that the module should not be used. Must be set if the module's latest version is [yanked](#yank-a-module-version).
-- The `source.json` file must be of the `type` `archive` (which is the default) or `git_repository`. Other types such as `local_path` are not allowed.
+- The `source.json` file must be of the `type` `archive` (which is the default). Other types such as `git_repository` or `local_path` are not allowed.
 - A presubmit.yml file. See [Presubmit](#presubmit) below.
 
 ## Contribute a Bazel module
@@ -76,7 +76,7 @@ Validations performed in the scripts are:
 - Verify the integrity values of the source archive and patch files (if any) are correct.
 - Verify the checked-in `MODULE.bazel` file matches the one in the extracted and patched source tree.
 - Verify the `compatibility_level` in `MODULE.bazel` matches the previous version. If the bump is intentional, you can comment `@bazel-io skip_check compatibility_level` in the PR to skip this check.
-- Check if the module is new or the `presubmit.yml` file is changed compared to the last version, if so a BCR maintainer review will be required to run jobs specified in `presubmit.yml`.
+- Check if the module is new or the `presubmit.yml` file is too different compared to the last version, if so a BCR maintainer review will be required to run jobs specified in `presubmit.yml`.
 
 Additional validations implemented in the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script:
 

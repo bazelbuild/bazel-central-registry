@@ -173,6 +173,17 @@ sh_test(
 )
 
 py_test(
+    name = "registry_test",
+    size = "small",
+    srcs = [
+        "registry_test.py",
+    ],
+    deps = [
+        "registry",
+    ],
+)
+
+py_test(
     name = "version_test",
     srcs = [
         "version_test.py",

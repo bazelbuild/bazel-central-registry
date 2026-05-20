@@ -1,0 +1,55 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+COMMON_COPTS = select({
+    "@platforms//os:windows": [
+        "/std:c++20",  # Use C++20 features like std::map::contains.
+        "/bigobj",      # Increase object file section limit for large templates.
+        "/W0",          # Disable all warnings to match upstream defaults.
+        "/openmp",      # Enable OpenMP for parallel processing.
+    ],
+    "@platforms//os:macos": [
+        "-std=c++20",
+    ],
+    "//conditions:default": [
+        "-std=c++20",
+        "-fopenmp",
+    ],
+})
+
+COMMON_LINKOPTS = select({
+    "@platforms//os:windows": [],
+    "@platforms//os:macos": [],
+    "//conditions:default": [
+        "-fopenmp",
+        "-pthread",
+    ],
+})
+
+cc_library(
+    name = "coacd",
+    srcs = glob(
+        ["src/**/*.cpp", "src/**/*.h", "src/**/*.hpp", "public/**/*.cpp"],
+        exclude = ["src/main.cpp"],
+    ),
+    hdrs = glob(["public/*.h"]),
+    includes = ["src", "public"],
+    copts = COMMON_COPTS,
+    linkopts = COMMON_LINKOPTS,
+    defines = [
+        "COACD_USE_OPENVDB",
+        "WITH_3RD_PARTY_LIBS=1",
+        "DISABLE_SPDLOG",
+    ] + select({
+        "@platforms//os:windows": ["_USE_MATH_DEFINES"],
+        "//conditions:default": [],
+    }),
+    # linkstatic avoids building broken .so dynamic libraries under newer Binutils
+    # where .sframe relocations for exception-handling COMDAT sections cause ld.lld crashes.
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@openvdb//:openvdb",
+        "@onetbb//:tbb",
+        "@cdt//:cdt",
+    ],
+)
