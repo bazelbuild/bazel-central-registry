@@ -1,0 +1,922 @@
+load(
+    "@bazel_skylib//rules:common_settings.bzl",
+    "bool_flag",
+    "string_flag",
+)
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(
+    "@rules_cc_autoconf//autoconf:defs.bzl",
+    "autoconf",
+    "autoconf_hdr",
+    "checks",
+    "macros",
+    "package_info",
+)
+
+################################################################################
+# Feature flags (matching configure.ac --enable/--disable options)
+################################################################################
+
+bool_flag(
+    name = "enable_microsoft_extensions",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_mslanman",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_cbcp",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_ipv6cp",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_multilink",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_plugins",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_eaptls",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_peap",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_filter",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_openssl",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_openssl_engine",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_systemd",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+################################################################################
+# String flags (matching configure.ac --with-* path options)
+################################################################################
+
+string_flag(
+    name = "sysconfdir",
+    build_setting_default = "/etc",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "runtime_dir",
+    build_setting_default = "/run/pppd",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "logfile_dir",
+    build_setting_default = "/var/log/ppp",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "plugin_dir",
+    build_setting_default = "/usr/lib/pppd/2.5.2",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "system_ca_path",
+    build_setting_default = "/etc/ssl/certs",
+    visibility = ["//visibility:public"],
+)
+
+################################################################################
+# Config settings for select()
+################################################################################
+
+config_setting(
+    name = "microsoft_extensions_enabled",
+    flag_values = {":enable_microsoft_extensions": "True"},
+)
+
+config_setting(
+    name = "mslanman_enabled",
+    flag_values = {
+        ":enable_microsoft_extensions": "True",
+        ":enable_mslanman": "True",
+    },
+)
+
+config_setting(
+    name = "cbcp_enabled",
+    flag_values = {":enable_cbcp": "True"},
+)
+
+config_setting(
+    name = "ipv6cp_enabled",
+    flag_values = {":enable_ipv6cp": "True"},
+)
+
+config_setting(
+    name = "multilink_enabled",
+    flag_values = {":enable_multilink": "True"},
+)
+
+config_setting(
+    name = "plugins_enabled",
+    flag_values = {":enable_plugins": "True"},
+)
+
+config_setting(
+    name = "eaptls_enabled",
+    flag_values = {":enable_eaptls": "True"},
+)
+
+config_setting(
+    name = "peap_enabled",
+    flag_values = {
+        ":enable_microsoft_extensions": "True",
+        ":enable_peap": "True",
+    },
+)
+
+config_setting(
+    name = "openssl_enabled",
+    flag_values = {":enable_openssl": "True"},
+)
+
+config_setting(
+    name = "openssl_engine_disabled",
+    flag_values = {":enable_openssl_engine": "False"},
+)
+
+config_setting(
+    name = "systemd_enabled",
+    flag_values = {":enable_systemd": "True"},
+)
+
+config_setting(
+    name = "filter_enabled",
+    flag_values = {":enable_filter": "True"},
+)
+
+config_setting(
+    name = "peap_without_eaptls",
+    flag_values = {
+        ":enable_eaptls": "False",
+        ":enable_microsoft_extensions": "True",
+        ":enable_peap": "True",
+    },
+)
+
+################################################################################
+# Autoconf configuration
+################################################################################
+
+package_info(
+    name = "package_info",
+    aliases = {
+        "PPPD_VERSION": "PACKAGE_VERSION",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://github.com/ppp-project/ppp",
+)
+
+autoconf(
+    name = "configure_ac",
+    checks = (
+        macros.AC_CHECK_HEADERS([
+            "asm/types.h",
+            "crypt.h",
+            "paths.h",
+            "shadow.h",
+            "stddef.h",
+            "stdarg.h",
+            "sys/dlpi.h",
+            "sys/ioctl.h",
+            "sys/socket.h",
+            "sys/time.h",
+            "sys/uio.h",
+            "time.h",
+            "unistd.h",
+            "utmp.h",
+        ]) + macros.AC_CHECK_HEADERS([
+            "net/bpf.h",
+            "net/if.h",
+            "net/if_types.h",
+            "net/if_arp.h",
+            "linux/if.h",
+            "linux/if_ether.h",
+            "linux/if_packet.h",
+            "netinet/if_ether.h",
+            "netpacket/packet.h",
+        ]) + macros.AC_CHECK_FUNCS([
+            "mmap",
+            "logwtmp",
+            "strerror",
+        ]) + [
+            checks.AC_CHECK_SIZEOF(
+                "unsigned int",
+                define = "SIZEOF_UNSIGNED_INT",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "unsigned long",
+                define = "SIZEOF_UNSIGNED_LONG",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "unsigned short",
+                define = "SIZEOF_UNSIGNED_SHORT",
+            ),
+            checks.AC_CHECK_LIB("util", "logwtmp"),
+            checks.AC_CHECK_LIB("crypt", "crypt"),
+            checks.AC_TRY_COMPILE(
+                name = "ac_cv_struct_sockaddr_ll",
+                code = """\
+#include <linux/if_packet.h>
+int main(void) { (void)sizeof(struct sockaddr_ll); return 0; }
+""",
+                define = "HAVE_STRUCT_SOCKADDR_LL",
+            ),
+            checks.AC_DEFINE("STDC_HEADERS", 1),
+        ] + select({
+            ":openssl_enabled": [
+                checks.AC_DEFINE("PPP_WITH_OPENSSL", 1),
+                checks.AC_DEFINE("OPENSSL_HAVE_MD5", 1),
+                checks.AC_DEFINE("OPENSSL_HAVE_DES", 1),
+                checks.AC_DEFINE("OPENSSL_HAVE_SHA", 1),
+            ],
+            "//conditions:default": [],
+        }) + select({
+            ":filter_enabled": [
+                checks.AC_DEFINE("PPP_WITH_FILTER", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":microsoft_extensions_enabled": [
+                checks.AC_DEFINE("PPP_WITH_CHAPMS", 1),
+                checks.AC_DEFINE("PPP_WITH_MPPE", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":mslanman_enabled": [
+                checks.AC_DEFINE("PPP_WITH_MSLANMAN", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":cbcp_enabled": [
+                checks.AC_DEFINE("PPP_WITH_CBCP", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":ipv6cp_enabled": [
+                checks.AC_DEFINE("PPP_WITH_IPV6CP", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":multilink_enabled": [
+                checks.AC_DEFINE("PPP_WITH_MULTILINK", 1),
+                checks.AC_DEFINE("PPP_WITH_TDB", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":plugins_enabled": [
+                checks.AC_DEFINE("PPP_WITH_PLUGINS", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":eaptls_enabled": [
+                checks.AC_DEFINE("PPP_WITH_EAPTLS", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":peap_enabled": [
+                checks.AC_DEFINE("PPP_WITH_PEAP", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":openssl_engine_disabled": [
+                checks.AC_DEFINE("OPENSSL_NO_ENGINE", 1),
+            ],
+            "//conditions:default": [],
+        }) +
+        select({
+            ":systemd_enabled": [
+                checks.AC_DEFINE("SYSTEMD", 1),
+            ],
+            "//conditions:default": [],
+        })
+    ),
+    deps = [":package_info"],
+)
+
+################################################################################
+# Generated headers
+################################################################################
+
+autoconf_hdr(
+    name = "pppd_config_h",
+    out = "pppd/config.h",
+    template = "pppd/config.h.in",
+    deps = [":configure_ac"],
+)
+
+autoconf_hdr(
+    name = "pppd_pppdconf_h",
+    out = "pppd/pppdconf.h",
+    template = "pppd/pppdconf.h.in",
+    deps = [":configure_ac"],
+)
+
+cc_library(
+    name = "pppd_config",
+    hdrs = [
+        ":pppd_config_h",
+        ":pppd_pppdconf_h",
+    ],
+    includes = ["pppd"],
+)
+
+autoconf_hdr(
+    name = "pppoe_config_h",
+    out = "pppoe_autoconf/config.h",
+    template = "pppd/plugins/pppoe/config.h.in",
+    deps = [":configure_ac"],
+)
+
+cc_library(
+    name = "pppoe_config",
+    hdrs = [":pppoe_config_h"],
+    includes = ["pppoe_autoconf"],
+)
+
+################################################################################
+# Compiler options
+################################################################################
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang": ["-w"],
+    "@rules_cc//cc/compiler:gcc": ["-w"],
+    "//conditions:default": [],
+})
+
+PPPD_LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    'SYSCONFDIR=\\"/etc\\"',
+    'PPPD_RUNTIME_DIR=\\"/run/pppd\\"',
+    'PPPD_LOGFILE_DIR=\\"/var/log/ppp\\"',
+    'SYSTEM_CA_PATH=\\"/etc/ssl/certs\\"',
+] + select({
+    ":plugins_enabled": [
+        'PPPD_PLUGIN_DIR=\\"/usr/lib/pppd/2.5.2\\"',
+    ],
+    "//conditions:default": [],
+})
+
+PLUGIN_CPPFLAGS = [
+    "HAVE_CONFIG_H",
+]
+
+################################################################################
+# Internal crypto library (libppp_crypto)
+################################################################################
+
+cc_library(
+    name = "pppd_crypto",
+    srcs = [
+        "pppd/crypto.c",
+        "pppd/ppp-des.c",
+        "pppd/ppp-md4.c",
+        "pppd/ppp-md5.c",
+        "pppd/ppp-sha1.c",
+    ],
+    hdrs = [
+        "pppd/crypto.h",
+        "pppd/crypto-priv.h",
+    ],
+    copts = COPTS,
+    includes = ["pppd"],
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [
+        ":pppd_headers",
+    ] + select({
+        ":openssl_enabled": ["@openssl//:crypto"],
+        "//conditions:default": [],
+    }),
+)
+
+################################################################################
+# pppd headers (for plugins that #include <pppd/pppd.h>)
+################################################################################
+
+cc_library(
+    name = "pppd_headers",
+    hdrs = glob(
+        ["pppd/*.h"],
+        exclude = [
+            "pppd/config.h",
+            "pppd/pppdconf.h",
+        ],
+    ),
+    copts = COPTS,
+    includes = [
+        ".",
+        "pppd",
+    ],
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [":pppd_config"],
+)
+
+################################################################################
+# pppd binary
+################################################################################
+
+alias(
+    name = "pppd",
+    actual = "bin/pppd",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "bin/pppd",
+    srcs = [
+        "pppd/auth.c",
+        "pppd/ccp.c",
+        "pppd/chap.c",
+        "pppd/chap-md5.c",
+        "pppd/demand.c",
+        "pppd/eap.c",
+        "pppd/ecp.c",
+        "pppd/fsm.c",
+        "pppd/ipcp.c",
+        "pppd/lcp.c",
+        "pppd/magic.c",
+        "pppd/main.c",
+        "pppd/options.c",
+        "pppd/session.c",
+        "pppd/sys-linux.c",
+        "pppd/tty.c",
+        "pppd/upap.c",
+        "pppd/utils.c",
+    ] + glob(
+        ["pppd/*.h"],
+        exclude = [
+            "pppd/config.h",
+            "pppd/pppdconf.h",
+        ],
+    ) + select({
+        ":microsoft_extensions_enabled": [
+            "pppd/chap_ms.c",
+            "pppd/crypto_ms.c",
+            "pppd/mppe.c",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":cbcp_enabled": ["pppd/cbcp.c"],
+        "//conditions:default": [],
+    }) + select({
+        ":multilink_enabled": [
+            "pppd/multilink.c",
+            "pppd/spinlock.c",
+            "pppd/tdb.c",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":ipv6cp_enabled": [
+            "pppd/eui64.c",
+            "pppd/ipv6cp.c",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":eaptls_enabled": [
+            "pppd/eap-tls.c",
+            "pppd/tls.c",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":peap_without_eaptls": ["pppd/tls.c"],
+        "//conditions:default": [],
+    }) + select({
+        ":peap_enabled": ["pppd/peap.c"],
+        "//conditions:default": [],
+    }),
+    copts = COPTS,
+    includes = ["pppd"],
+    linkopts = [
+        "-lcrypt",
+    ] + select({
+        ":plugins_enabled": [
+            "-ldl",
+            "-Wl,-E",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = PPPD_LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pppd_crypto",
+    ] + select({
+        ":openssl_enabled": ["@openssl//:ssl"],
+        "//conditions:default": [],
+    }) + select({
+        ":filter_enabled": ["@libpcap"],
+        "//conditions:default": [],
+    }),
+)
+
+################################################################################
+# Utility binaries
+################################################################################
+
+cc_binary(
+    name = "chat",
+    srcs = ["chat/chat.c"],
+    copts = COPTS,
+    local_defines = [
+        "TERMIOS",
+        "SIGTYPE=void",
+        "FNDELAY=O_NDELAY",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "pppdump",
+    srcs = ["pppdump/pppdump.c"],
+    copts = COPTS,
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "pppstats",
+    srcs = ["pppstats/pppstats.c"],
+    copts = COPTS,
+    visibility = ["//visibility:public"],
+)
+
+################################################################################
+# Plugins
+################################################################################
+
+cc_library(
+    name = "minconn_plugin",
+    srcs = ["pppd/plugins/minconn.c"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [":pppd_headers"],
+)
+
+cc_library(
+    name = "passwordfd_plugin",
+    srcs = ["pppd/plugins/passwordfd.c"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [":pppd_headers"],
+)
+
+cc_library(
+    name = "winbind_plugin",
+    srcs = ["pppd/plugins/winbind.c"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pppd_crypto",
+        ":pppd_headers",
+    ],
+)
+
+# PPPoE plugin
+
+cc_library(
+    name = "pppoe_common",
+    srcs = [
+        "pppd/plugins/pppoe/common.c",
+        "pppd/plugins/pppoe/discovery.c",
+        "pppd/plugins/pppoe/if.c",
+    ],
+    hdrs = ["pppd/plugins/pppoe/pppoe.h"],
+    copts = COPTS,
+    includes = [
+        ".",
+        "pppd/plugins/pppoe",
+    ],
+    local_defines = PLUGIN_CPPFLAGS,
+    deps = [
+        ":pppd_headers",
+        ":pppoe_config",
+    ],
+)
+
+cc_library(
+    name = "pppoe_plugin",
+    srcs = ["pppd/plugins/pppoe/plugin.c"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS + [
+        "PLUGIN",
+        'SYSCONFDIR=\\"/etc\\"',
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pppd_headers",
+        ":pppoe_common",
+        ":pppoe_config",
+    ],
+)
+
+cc_binary(
+    name = "pppoe-discovery",
+    srcs = ["pppd/plugins/pppoe/pppoe-discovery.c"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pppd_headers",
+        ":pppoe_common",
+        ":pppoe_config",
+    ],
+)
+
+# PPPoATM plugin (without libatm, using bundled ATM sources)
+
+cc_library(
+    name = "pppoatm_plugin",
+    srcs = [
+        "pppd/plugins/pppoatm/ans.c",
+        "pppd/plugins/pppoatm/misc.c",
+        "pppd/plugins/pppoatm/pppoatm.c",
+        "pppd/plugins/pppoatm/text2atm.c",
+        "pppd/plugins/pppoatm/text2qos.c",
+    ],
+    hdrs = [
+        "pppd/plugins/pppoatm/atm.h",
+        "pppd/plugins/pppoatm/atmres.h",
+        "pppd/plugins/pppoatm/atmsap.h",
+    ],
+    copts = COPTS,
+    includes = ["pppd/plugins/pppoatm"],
+    linkopts = ["-lresolv"],
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [":pppd_headers"],
+)
+
+# PPPoL2TP plugins
+
+cc_library(
+    name = "pppol2tp_plugin",
+    srcs = ["pppd/plugins/pppol2tp/pppol2tp.c"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [":pppd_headers"],
+)
+
+cc_library(
+    name = "openl2tp_plugin",
+    srcs = ["pppd/plugins/pppol2tp/openl2tp.c"],
+    hdrs = ["pppd/plugins/pppol2tp/l2tp_event.h"],
+    copts = COPTS,
+    local_defines = PLUGIN_CPPFLAGS,
+    visibility = ["//visibility:public"],
+    deps = [":pppd_headers"],
+)
+
+# RADIUS plugins
+
+alias(
+    name = "libradiusclient",
+    actual = ":radiusclient",
+)
+
+cc_library(
+    name = "radiusclient",
+    srcs = [
+        "pppd/plugins/radius/avpair.c",
+        "pppd/plugins/radius/buildreq.c",
+        "pppd/plugins/radius/clientid.c",
+        "pppd/plugins/radius/config.c",
+        "pppd/plugins/radius/dict.c",
+        "pppd/plugins/radius/ip_util.c",
+        "pppd/plugins/radius/lock.c",
+        "pppd/plugins/radius/md5.c",
+        "pppd/plugins/radius/sendserver.c",
+        "pppd/plugins/radius/util.c",
+    ],
+    hdrs = [
+        "pppd/plugins/radius/includes.h",
+        "pppd/plugins/radius/options.h",
+        "pppd/plugins/radius/pathnames.h",
+        "pppd/plugins/radius/radiusclient.h",
+    ],
+    copts = COPTS,
+    includes = ["pppd/plugins/radius"],
+    local_defines = PLUGIN_CPPFLAGS + [
+        "RC_LOG_FACILITY=LOG_DAEMON",
+        'SYSCONFDIR=\\"/etc\\"',
+    ],
+    deps = [":pppd_headers"],
+)
+
+cc_library(
+    name = "radius_plugin",
+    srcs = ["pppd/plugins/radius/radius.c"],
+    copts = COPTS,
+    includes = ["pppd/plugins/radius"],
+    local_defines = PLUGIN_CPPFLAGS + [
+        "RC_LOG_FACILITY=LOG_DAEMON",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libradiusclient",
+        ":pppd_crypto",
+        ":pppd_headers",
+    ],
+)
+
+cc_library(
+    name = "radattr_plugin",
+    srcs = ["pppd/plugins/radius/radattr.c"],
+    copts = COPTS,
+    includes = ["pppd/plugins/radius"],
+    local_defines = PLUGIN_CPPFLAGS + [
+        "RC_LOG_FACILITY=LOG_DAEMON",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libradiusclient",
+        ":pppd_headers",
+    ],
+)
+
+cc_library(
+    name = "radrealms_plugin",
+    srcs = ["pppd/plugins/radius/radrealms.c"],
+    copts = COPTS,
+    includes = ["pppd/plugins/radius"],
+    local_defines = PLUGIN_CPPFLAGS + [
+        "RC_LOG_FACILITY=LOG_DAEMON",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libradiusclient",
+        ":pppd_headers",
+    ],
+)
+
+SCRIPTS = glob(["scripts/*"])
+
+filegroup(
+    name = "scripts",
+    srcs = SCRIPTS,
+    visibility = ["//visibility:public"],
+)
+
+exports_files(SCRIPTS)
+
+################################################################################
+# Tests
+################################################################################
+
+cc_test(
+    name = "utest_crypto",
+    srcs = [
+        "pppd/crypto.c",
+        "pppd/ppp-des.c",
+        "pppd/ppp-md4.c",
+        "pppd/ppp-md5.c",
+        "pppd/ppp-sha1.c",
+        "pppd/utils.c",
+    ],
+    copts = COPTS,
+    includes = ["pppd"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "UNIT_TEST",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":pppd_headers",
+    ] + select({
+        ":openssl_enabled": ["@openssl//:crypto"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_test(
+    name = "utest_utils",
+    srcs = [
+        "pppd/utils.c",
+        "pppd/utils_utest.c",
+    ],
+    copts = COPTS,
+    includes = ["pppd"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "UNIT_TEST",
+    ],
+    deps = [":pppd_headers"],
+)
+
+cc_test(
+    name = "utest_chap",
+    srcs = [
+        "pppd/chap_ms.c",
+        "pppd/crypto_ms.c",
+        "pppd/utils.c",
+    ],
+    copts = COPTS,
+    includes = ["pppd"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "UNIT_TEST",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":pppd_crypto",
+        ":pppd_headers",
+    ],
+)
+
+cc_test(
+    name = "utest_pppcrypt",
+    srcs = ["pppd/crypto_ms.c"],
+    copts = COPTS,
+    includes = ["pppd"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "UNIT_TEST_MSCRYPTO",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":pppd_crypto",
+        ":pppd_headers",
+    ],
+)
+
+cc_test(
+    name = "utest_peap",
+    srcs = [
+        "pppd/mppe.c",
+        "pppd/peap.c",
+        "pppd/utils.c",
+    ],
+    copts = COPTS,
+    includes = ["pppd"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "UNIT_TEST",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":pppd_crypto",
+        ":pppd_headers",
+        "@openssl//:ssl",
+    ],
+)

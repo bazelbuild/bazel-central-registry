@@ -1,0 +1,218 @@
+module(
+    name = "llvm",
+    version = "0.7.6",
+    bazel_compatibility = [">=7.7.0"],
+)
+
+bazel_dep(name = "bazel_lib", version = "3.2.2")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "bazel_features", version = "1.42.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "with_cfg.bzl", version = "0.12.0")
+bazel_dep(name = "tar.bzl", version = "0.9.0")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+rbe_platform_repository = use_repo_rule("//:rbe.bzl", "rbe_platform_repository")
+
+rbe_platform_repository(
+    name = "rbe_platform",
+)
+
+LLVM_VERSION = "22.1.4"
+
+PREBUILT_LLVM_VERSION = "22.1.4"
+
+PREBUILT_LLVM_SUFFIX = "-1"
+
+LLVM_TOOLCHAIN_MINIMAL_SHA256 = {
+    "darwin-amd64": "662d7902d00b0b9e80a7f0330098e6ad81693c8f7b5434f6e36db947964e44e4",
+    "darwin-arm64": "38e06dbfbdbcedbb7bbfc3984a1ef54b5517daa1e8bacc9d1a1bd2ed6c02a282",
+    "linux-amd64-musl": "379f4a009e873c7dc0a9ef2593dab44d3da48ee5c4f05db1382f8cd18779d26d",
+    "linux-arm64-musl": "9ddfbca0cd3fdb90b5c8d6bd35729d4769aca39659892ad5e1b1fb83dd272634",
+    "windows-amd64": "ec573e76ed2d68c04c6a6416eb5d68a66f2c546d78977b4372e3325a452d13c8",
+    "windows-arm64": "4793d79460643653ff12bdf9696614c0aa238b0b8b8327e4239929c25c571f7e",
+}
+
+[
+    http_archive(
+        name = "llvm-toolchain-minimal-{llvm_version}-{target}".format(
+            llvm_version = PREBUILT_LLVM_VERSION,
+            target = target.replace("-musl", ""),
+        ),
+        build_file = "//toolchain/llvm:llvm_release.BUILD.bazel" if "windows" not in target else "//toolchain/llvm:llvm_release_windows.BUILD.bazel",
+        sha256 = sha256,
+        urls = ["https://github.com/hermeticbuild/hermetic-llvm/releases/download/llvm-{llvm_version}{prebuilt_llvm_suffix}/llvm-toolchain-minimal-{llvm_version}-{target}.tar.zst".format(
+            llvm_version = PREBUILT_LLVM_VERSION,
+            prebuilt_llvm_suffix = PREBUILT_LLVM_SUFFIX,
+            target = target,
+        )],
+    )
+    for (target, sha256) in LLVM_TOOLCHAIN_MINIMAL_SHA256.items()
+]
+
+TOOLCHAIN_EXTRAS_SHA256 = {
+    "darwin-amd64": "7f982146b033650295a568e2db2795753d6610919c4d0e90bc4baf53dfb88d04",
+    "darwin-arm64": "4244309df7e1cb3c602597dc30b2cf25064960b877e8087dfaaa2c3f57580588",
+    "linux-amd64-musl": "418a27a0ab8ecf46e2e00bd4381efc0bcb54c28312261c4f36114842e5ecb20e",
+    "linux-arm64-musl": "5f6bcc5a806902de3e6564675bb9a75cdcbc6167af05e0c888b9930b8890b2e1",
+    "windows-amd64-gnu": "a4d8f7893d3d373a928fe4d7be3fb113d3c73101f967718973518acb2a43544e",
+    "windows-arm64-gnu": "4a3835588fe46a5d48424d57e8a1c2743215143100bb4fe10b918374787b3505",
+}
+
+TOOLCHAIN_EXTRAS_VERSION = "20260429"
+
+[
+    http_archive(
+        name = "toolchain-extra-prebuilts-{target}".format(target = target.replace("-musl", "").replace("-gnu", "")),
+        build_file = "//prebuilt/extras:extras.BUILD.bazel",
+        sha256 = sha256,
+        urls = ["https://github.com/hermeticbuild/hermetic-llvm/releases/download/prebuilts-extras-{version}/toolchain-extra-prebuilts-{version}-{target}.tar.zst".format(
+            target = target,
+            version = TOOLCHAIN_EXTRAS_VERSION,
+        )],
+    )
+    for (target, sha256) in TOOLCHAIN_EXTRAS_SHA256.items()
+]
+
+tar_toolchains = use_extension("@tar.bzl//tar:extensions.bzl", "toolchains")
+use_repo(
+    tar_toolchains,
+    "bsd_tar_toolchains_darwin_amd64",
+    "bsd_tar_toolchains_darwin_arm64",
+    "bsd_tar_toolchains_linux_amd64",
+    "bsd_tar_toolchains_linux_arm64",
+    "bsd_tar_toolchains_windows_amd64",
+    "bsd_tar_toolchains_windows_arm64",
+)
+
+llvm_source = use_extension("//extensions:llvm_source.bzl", "llvm_source")
+llvm_source.version(llvm_version = LLVM_VERSION)
+use_repo(llvm_source, "compiler-rt", "libcxx", "libcxxabi", "libunwind", "llvm-libc", "llvm-raw", "llvm_config", "llvm_zlib", "llvm_zstd", "openmp")
+
+llvm = use_extension("//extensions:llvm.bzl", "llvm")
+llvm.configure(
+    targets = [
+        "AArch64",
+        "AMDGPU",
+        "ARM",
+        "BPF",
+        "NVPTX",
+        "RISCV",
+        "SystemZ",
+        "WebAssembly",
+        "X86",
+    ],
+)
+use_repo(llvm, "llvm-project")
+
+musl = use_extension("//runtimes/musl/extension:musl.bzl", "musl")
+use_repo(musl, "musl_libc")
+
+mingw = use_extension("//runtimes/mingw/extension:mingw.bzl", "mingw")
+use_repo(mingw, "mingw")
+
+osx = use_extension("//extensions:osx.bzl", "osx")
+osx.from_archive(
+    sha256 = "edc7ce9b8f09e0c7a39aaa714f941b4c2597f333ec1ffe59a14d67eb36cdb7e7",
+    strip_prefix = "Payload/Library/Developer/CommandLineTools/SDKs/MacOSX26.4.sdk",
+    type = "pkg",
+    urls = [
+        "https://swcdn.apple.com/content/downloads/60/13/122-35686-A_30JUXWIJFR/ck0gzuw5qccefzm3ptlwou3pu6a55d0o02/CLTools_macOSNMOS_SDK.pkg",
+    ],
+)
+use_repo(osx, "macos_sdk")
+
+glibc = use_extension("//runtimes/glibc/extension:glibc.bzl", "glibc")
+
+# https://cerisier.github.io/glibc-headers/index.json
+glibc.index(file = "//runtimes/glibc/extension:glibc_headers_index.json")
+use_repo(glibc, "glibc")
+
+kernel_headers = use_extension("//kernel/extension:kernel_headers.bzl", "kernel_headers")
+
+# https://cerisier.github.io/kernel-headers/index.json
+kernel_headers.index(file = "//kernel/extension:kernel_headers_index.json")
+use_repo(kernel_headers, "kernel_headers")
+
+######################### DEV DEPENDENCIES ###################################
+
+bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
+
+GLIBC_STUBS_GENERATOR_COMMIT = "33276300351d5a3cbedd308f4d21669b8e8ef83d"
+
+bazel_dep(name = "glibc-stubs-generator", version = "2.0.1", dev_dependency = True)
+archive_override(
+    module_name = "glibc-stubs-generator",
+    integrity = "sha256-q7bwGW3nRigiGuXj/2kIZMi/LFCHZpVbMD/kRdllLCg=",
+    strip_prefix = "glibc-stubs-generator-{}".format(GLIBC_STUBS_GENERATOR_COMMIT),
+    urls = ["https://github.com/cerisier/glibc-stubs-generator/archive/{}.tar.gz".format(GLIBC_STUBS_GENERATOR_COMMIT)],
+)
+
+LIBSTDCXX_STUBS_GENERATOR_COMMIT = "ed896a140ef8466140c3bcfd066e710a80a41ebe"
+
+bazel_dep(name = "libstdcxx-stubs-generator", version = "0.0.1", dev_dependency = True)
+archive_override(
+    module_name = "libstdcxx-stubs-generator",
+    integrity = "sha256-OAZfeifniTQmKit60qHpZanOLLIJVyYEiMlpN5Q7Fjw=",
+    strip_prefix = "libstdcxx-stubs-generator-{}".format(LIBSTDCXX_STUBS_GENERATOR_COMMIT),
+    urls = ["https://github.com/cerisier/libstdcxx-stubs-generator/archive/{}.tar.gz".format(LIBSTDCXX_STUBS_GENERATOR_COMMIT)],
+)
+
+PKGUTIL_COMMIT = "2fdc9a2d34d62332aa18e0c735afc8a7e7270530"  # v1.2.0
+
+bazel_dep(name = "xpkgutil", version = "1.2.0", dev_dependency = True)
+archive_override(
+    module_name = "xpkgutil",
+    integrity = "sha256-XHk51jB2RHDmeUI6JiYBAd5hqfI4kN+wpjTqE17WTqA=",
+    strip_prefix = "pkgutil-{}".format(PKGUTIL_COMMIT),
+    urls = ["https://github.com/cerisier/pkgutil/archive/{}.tar.gz".format(PKGUTIL_COMMIT)],
+)
+
+# pbzx support for libarchive
+bazel_dep(name = "libarchive", version = "3.8.1.bcr.2", dev_dependency = True)
+single_version_override(
+    module_name = "libarchive",
+    patch_strip = 1,
+    patches = [
+        "//3rd_party/libarchive:0001-libarchive_enable_xar_support.patch",
+        "//3rd_party/libarchive:0002-feat-add-pbzx-read-filter.patch",
+        "//3rd_party/libarchive:0003-give-mingw-acceptable-posix-types.patch",
+    ],
+)
+
+# Workaround for their terrible toolchains...
+bazel_dep(name = "rules_swift", version = "3.4.2", dev_dependency = True)
+single_version_override(
+    module_name = "rules_swift",
+    patch_strip = 1,
+    patches = ["//3rd_party/rules_swift:0001-allow-disabling-autoconfiguration.patch"],
+    version = "3.4.2",
+)
+
+## OVERRIDES PORTS FROM DEPENDENCIES
+
+bazel_dep(name = "rules_zig", version = "0.12.2", dev_dependency = True)
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig", dev_dependency = True)
+zig.index(file = "//:zig_index.json")
+zig.toolchain(zig_version = "0.14.0")
+zig.mirrors(urls = [
+    "https://mirror.zml.ai/zig",
+])
+use_repo(zig, "zig_toolchains")
+
+register_toolchains(
+    "@rules_zig//zig/target:all",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "@zig_toolchains//:all",
+    dev_dependency = True,
+)

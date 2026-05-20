@@ -1,0 +1,56 @@
+load("@aspect_rules_py//py:defs.bzl", "py_library")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_extension")
+load("@rules_pycross//pycross:defs.bzl", "pycross_wheel_library")
+load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
+
+# Slang version is major.minor.micro
+# Strip away any sub-version numbers after the first 3 (e.g. remove a potential `.bcr.1`)
+SLANG_VERSION = ".".join(module_version().split(".")[:3])
+
+# TODO: add .pyi stubs for the pybind python
+
+pybind_extension(
+    # Must be called "pyslang" to match the underlying C++
+    name = "pyslang",
+    srcs = [
+        "//:pyslang_bindings_srcs",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fPIC",
+    ],
+    defines = [
+        "VERSION_INFO={}".format(SLANG_VERSION),
+    ],
+    deps = [
+        "//:pyslang_bindings_lib",
+    ],
+)
+
+py_library(
+    name = "pyslang_lib",
+    srcs = ["__init__.py"],
+    data = [":pyslang"],
+    visibility = ["//visibility:public"],
+)
+
+py_package(
+    name = "pyslang_pkg",
+    deps = [":pyslang_lib"],
+)
+
+py_wheel(
+    name = "pyslang_wheel",
+    distribution = "pyslang",
+    strip_path_prefixes = ["pyslang"],
+    version = SLANG_VERSION,
+    deps = [":pyslang_pkg"],
+)
+
+
+pycross_wheel_library(
+    name = "pyslang_wheel_lib",
+    enable_implicit_namespace_pkgs = False,
+    visibility = ["//visibility:public"],
+    wheel = ":pyslang_wheel",
+)

@@ -173,10 +173,10 @@ class Version:
 class Module:
     """A class to represent all information of a Bazel module."""
 
-    def __init__(self, name=None, version=None, compatibility_level=1):
+    def __init__(self, name=None, version=None):
         self.name = name
         self.version = version
-        self.compatibility_level = compatibility_level
+        self.compatibility_level = None
         self.module_dot_bazel = None
         self.url = None
         self.strip_prefix = None
@@ -252,14 +252,6 @@ class RegistryException(Exception):
 class RegistryClient:
     """A class to help create a Bazel registry."""
 
-    _MODULE_BAZEL = """
-module(
-    name = "{0}",
-    version = "{1}",
-    compatibility_level = {2},
-)
-""".strip()
-
     def __init__(self, root):
         self.root = pathlib.Path(root)
 
@@ -306,7 +298,13 @@ module(
         return self.get_version_dir(module_name, version) / PRESUBMIT_YML
 
     def get_patch_file_path(self, module_name, version, patch_name):
-        return self.get_version_dir(module_name, version) / "patches" / patch_name
+        patches_dir = (self.get_version_dir(module_name, version) / "patches").resolve()
+        patch_file = (patches_dir / patch_name).resolve()
+        try:
+            patch_file.relative_to(patches_dir)
+        except ValueError as e:
+            raise RegistryException(f"Patch file path `{patch_name}` must point inside the patches directory.") from e
+        return patch_file
 
     def get_module_dot_bazel_path(self, module_name, version):
         return self.get_version_dir(module_name, version) / "MODULE.bazel"
@@ -387,13 +385,17 @@ module(
             #   - no override is used
             shutil.copy(module.module_dot_bazel, module_dot_bazel)
         else:
-            deps = "\n".join(f'bazel_dep(name = "{name}", version = "{version}")' for name, version in module.deps)
             with module_dot_bazel.open("w") as f:
-                f.write(self._MODULE_BAZEL.format(module.name, module.version, module.compatibility_level))
-                if deps:
+                f.write("module(\n")
+                f.write(f'    name = "{module.name}",\n')
+                f.write(f'    version = "{module.version}",\n')
+                if module.compatibility_level is not None:
+                    f.write(f"    compatibility_level = {module.compatibility_level},\n")
+                f.write(")\n")
+                if module.deps:
                     f.write("\n")
-                    f.write(deps)
-                f.write("\n")
+                    for name, version in module.deps:
+                        f.write(f'bazel_dep(name = "{name}", version = "{version}")\n')
 
         # Create source.json & copy patch files to the registry
         source = {
