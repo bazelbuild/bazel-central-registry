@@ -1,85 +1,53 @@
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
 
-# --- Build flags (mirrors incdefs.sh feature detection) ---
+VERSION = "4.4"
 
-bool_flag(
-    name = "have_clock_adjtime",
-    build_setting_default = True,
-    visibility = ["//visibility:public"],
-)
+# --- Build flags ---
 
-config_setting(
-    name = "have_clock_adjtime_enabled",
-    flag_values = {":have_clock_adjtime": "True"},
-)
+AUTOCONF_FEATURES = {
+    "have_clock_adjtime": "HAVE_CLOCK_ADJTIME",
+    "have_if_team": "HAVE_IF_TEAM",
+    "have_onestep_p2p": "HAVE_ONESTEP_P2P",
+    "have_onestep_sync": "HAVE_ONESTEP_SYNC",
+    "have_posix_spawn": "HAVE_POSIX_SPAWN",
+    "have_vclocks": "HAVE_VCLOCKS",
+}
 
-bool_flag(
-    name = "have_posix_spawn",
-    build_setting_default = True,
-    visibility = ["//visibility:public"],
-)
+[
+    string_flag(
+        name = feat,
+        build_setting_default = "auto",
+        values = [
+            "auto",
+            "True",
+            "False",
+        ],
+        visibility = ["//visibility:public"],
+    )
+    for feat in AUTOCONF_FEATURES
+]
 
-config_setting(
-    name = "have_posix_spawn_enabled",
-    flag_values = {":have_posix_spawn": "True"},
-)
+[
+    config_setting(
+        name = feat + "_true",
+        flag_values = {":" + feat: "true"},
+    )
+    for feat in AUTOCONF_FEATURES
+]
 
-bool_flag(
-    name = "have_onestep_sync",
-    build_setting_default = True,
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "have_onestep_sync_enabled",
-    flag_values = {":have_onestep_sync": "True"},
-)
-
-bool_flag(
-    name = "have_onestep_p2p",
-    build_setting_default = False,
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "have_onestep_p2p_enabled",
-    flag_values = {":have_onestep_p2p": "True"},
-)
-
-bool_flag(
-    name = "have_vclocks",
-    build_setting_default = False,
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "have_vclocks_enabled",
-    flag_values = {":have_vclocks": "True"},
-)
-
-bool_flag(
-    name = "have_ptp_caps_adjust_phase",
-    build_setting_default = False,
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "have_ptp_caps_adjust_phase_enabled",
-    flag_values = {":have_ptp_caps_adjust_phase": "True"},
-)
-
-bool_flag(
-    name = "have_if_team",
-    build_setting_default = True,
-    visibility = ["//visibility:public"],
-)
-
-config_setting(
-    name = "have_if_team_enabled",
-    flag_values = {":have_if_team": "True"},
-)
+[
+    config_setting(
+        name = feat + "_false",
+        flag_values = {":" + feat: "false"},
+    )
+    for feat in AUTOCONF_FEATURES
+]
 
 string_flag(
     name = "crypto_backend",
@@ -120,34 +88,160 @@ config_setting(
     flag_values = {":crypto_backend": "openssl_system"},
 )
 
+# --- Feature detection (mirrors incdefs.sh) ---
+#
+# The original Makefile runs incdefs.sh at parse time to probe system headers
+# and emit -D flags directly into CFLAGS. In Bazel, autoconf checks run as
+# build actions which cannot influence the analysis phase, so the detected
+# values cannot be passed as -D flags in copts. Instead, the results are
+# written to a generated config header (linuxptp_config.h) which is
+# force-included via -include and is expected to contain all the same defines
+# that incdefs.sh would have produced.
+
+write_file(
+    name = "linuxptp_config_h_in",
+    out = "linuxptp_config.h.in",
+    content = [
+        "#undef HAVE_CLOCK_ADJTIME",
+        "#undef HAVE_IF_TEAM",
+        "#undef HAVE_ONESTEP_P2P",
+        "#undef HAVE_ONESTEP_SYNC",
+        "#undef HAVE_POSIX_SPAWN",
+        "#undef HAVE_VCLOCKS",
+        "",
+    ],
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        checks.AC_DEFINE("_GNU_SOURCE"),
+    ] + select({
+        ":have_clock_adjtime_false": [checks.AC_FAIL(
+            "HAVE_CLOCK_ADJTIME",
+        )],
+        ":have_clock_adjtime_true": [checks.AC_DEFINE(
+            "HAVE_CLOCK_ADJTIME",
+        )],
+        "//conditions:default": [
+            checks.AC_CHECK_DECL(
+                "clock_adjtime",
+                compile_defines = ["_GNU_SOURCE"],
+                includes = ["#include <time.h>"],
+            ),
+            checks.AC_DEFINE(
+                "HAVE_CLOCK_ADJTIME",
+                requires = ["ac_cv_have_decl_clock_adjtime==1"],
+            ),
+        ],
+    }) + select({
+        ":have_onestep_sync_false": [checks.AC_FAIL(
+            "HAVE_ONESTEP_SYNC",
+        )],
+        ":have_onestep_sync_true": [checks.AC_DEFINE(
+            "HAVE_ONESTEP_SYNC",
+        )],
+        "//conditions:default": [
+            checks.AC_CHECK_DECL(
+                "HWTSTAMP_TX_ONESTEP_SYNC",
+                includes = ["#include <linux/net_tstamp.h>"],
+            ),
+            checks.AC_DEFINE(
+                "HAVE_ONESTEP_SYNC",
+                requires = ["ac_cv_have_decl_hwtstamp_tx_onestep_sync==1"],
+            ),
+        ],
+    }) + select({
+        ":have_onestep_p2p_false": [checks.AC_FAIL(
+            "HAVE_ONESTEP_P2P",
+        )],
+        ":have_onestep_p2p_true": [checks.AC_DEFINE(
+            "HAVE_ONESTEP_P2P",
+        )],
+        "//conditions:default": [
+            checks.AC_CHECK_DECL(
+                "HWTSTAMP_TX_ONESTEP_P2P",
+                includes = ["#include <linux/net_tstamp.h>"],
+            ),
+            checks.AC_DEFINE(
+                "HAVE_ONESTEP_P2P",
+                requires = ["ac_cv_have_decl_hwtstamp_tx_onestep_p2p==1"],
+            ),
+        ],
+    }) + select({
+        ":have_vclocks_false": [checks.AC_FAIL(
+            "HAVE_VCLOCKS",
+        )],
+        ":have_vclocks_true": [checks.AC_DEFINE(
+            "HAVE_VCLOCKS",
+        )],
+        "//conditions:default": [
+            checks.AC_CHECK_DECL(
+                "SOF_TIMESTAMPING_BIND_PHC",
+                includes = [
+                    "#include <linux/ethtool_netlink.h>",
+                    "#include <linux/net_tstamp.h>",
+                ],
+            ),
+            checks.AC_DEFINE(
+                "HAVE_VCLOCKS",
+                requires = ["ac_cv_have_decl_sof_timestamping_bind_phc==1"],
+            ),
+        ],
+    }) + select({
+        ":have_if_team_false": [checks.AC_FAIL(
+            "HAVE_IF_TEAM",
+        )],
+        ":have_if_team_true": [checks.AC_DEFINE(
+            "HAVE_IF_TEAM",
+        )],
+        "//conditions:default": [
+            checks.AC_CHECK_DECL(
+                "TEAM_GENL_NAME",
+                includes = ["#include <linux/if_team.h>"],
+            ),
+            checks.AC_DEFINE(
+                "HAVE_IF_TEAM",
+                requires = ["ac_cv_have_decl_team_genl_name==1"],
+            ),
+        ],
+    }) + select({
+        ":have_posix_spawn_false": [checks.AC_FAIL(
+            "HAVE_POSIX_SPAWN",
+        )],
+        ":have_posix_spawn_true": [checks.AC_DEFINE(
+            "HAVE_POSIX_SPAWN",
+        )],
+        "//conditions:default": [
+            checks.AC_CHECK_DECL(
+                "posix_spawn",
+                compile_defines = ["_GNU_SOURCE"],
+                includes = ["#include <spawn.h>"],
+            ),
+            checks.AC_DEFINE(
+                "HAVE_POSIX_SPAWN",
+                requires = ["ac_cv_have_decl_posix_spawn==1"],
+            ),
+        ],
+    }),
+)
+
+autoconf_hdr(
+    name = "linuxptp_config_h",
+    out = "linuxptp_config.h",
+    template = "linuxptp_config.h.in",
+    deps = [":autoconf"],
+)
+
 # --- Common settings ---
 
 # Makefile: CFLAGS = -Wall $(VER) $(incdefs) $(DEBUG) $(EXTRA_CFLAGS)
 LINUXPTP_COPTS = [
     "-D_GNU_SOURCE",
-    "-DVER=4.4",
-] + select({
-    ":have_clock_adjtime_enabled": ["-DHAVE_CLOCK_ADJTIME"],
-    "//conditions:default": [],
-}) + select({
-    ":have_posix_spawn_enabled": ["-DHAVE_POSIX_SPAWN"],
-    "//conditions:default": [],
-}) + select({
-    ":have_onestep_sync_enabled": ["-DHAVE_ONESTEP_SYNC"],
-    "//conditions:default": [],
-}) + select({
-    ":have_onestep_p2p_enabled": ["-DHAVE_ONESTEP_P2P"],
-    "//conditions:default": [],
-}) + select({
-    ":have_vclocks_enabled": ["-DHAVE_VCLOCKS"],
-    "//conditions:default": [],
-}) + select({
-    ":have_ptp_caps_adjust_phase_enabled": ["-DHAVE_PTP_CAPS_ADJUST_PHASE"],
-    "//conditions:default": [],
-}) + select({
-    ":have_if_team_enabled": ["-DHAVE_IF_TEAM"],
-    "//conditions:default": [],
-})
+    "-DVER={}".format(VERSION),
+    "-include",
+    "$(execpath :linuxptp_config_h)",
+]
 
 # Makefile: LDLIBS = -lm -lrt -pthread $(EXTRA_LDFLAGS)
 LINUXPTP_LINKOPTS = [
@@ -160,7 +254,7 @@ LINUXPTP_LINKOPTS = [
 
 cc_library(
     name = "hdrs",
-    hdrs = glob(["*.h"]),
+    hdrs = glob(["*.h"]) + [":linuxptp_config_h"],
 )
 
 # --- Libraries matching Makefile variable groups ---
@@ -173,7 +267,10 @@ cc_library(
 # Makefile: SECURITY = sad.o [+ conditional crypto backend]
 cc_library(
     name = "security",
-    srcs = ["sad.c"] + select({
+    srcs = [
+        "sad.c",
+        ":linuxptp_config_h",
+    ] + select({
         ":crypto_gnupg": ["sad_gnupg.c"],
         ":crypto_gnutls": ["sad_gnutls.c"],
         ":crypto_nettle": ["sad_nettle.c"],
@@ -214,9 +311,12 @@ cc_library(
         "filter.c",
         "mave.c",
         "mmedian.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 # Makefile: SERVOS = linreg.o ntpshm.o nullf.o pi.o refclock_sock.o servo.o
@@ -229,6 +329,7 @@ cc_library(
         "pi.c",
         "refclock_sock.c",
         "servo.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
     deps = [
@@ -246,6 +347,7 @@ cc_library(
         "udp.c",
         "udp6.c",
         "uds.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
     deps = [
@@ -267,6 +369,7 @@ cc_library(
         "ts2phc_phc_pps_source.c",
         "ts2phc_pps_sink.c",
         "ts2phc_pps_source.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
     deps = [
@@ -281,9 +384,14 @@ cc_library(
 
 cc_library(
     name = "version",
-    srcs = ["version.c"],
+    srcs = [
+        "version.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 # phc.c, print.c, sk.c, util.c — shared by all binaries except hwstamp_ctl.
@@ -294,9 +402,12 @@ cc_library(
         "print.c",
         "sk.c",
         "util.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 # config.c, hash.c, interface.c, msg.c, tlv.c — shared by protocol binaries.
@@ -308,6 +419,7 @@ cc_library(
         "interface.c",
         "msg.c",
         "tlv.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
     deps = [
@@ -318,28 +430,46 @@ cc_library(
 
 cc_library(
     name = "clockadj",
-    srcs = ["clockadj.c"],
+    srcs = [
+        "clockadj.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 cc_library(
     name = "clockcheck",
-    srcs = ["clockcheck.c"],
+    srcs = [
+        "clockcheck.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 cc_library(
     name = "lstab",
-    srcs = ["lstab.c"],
+    srcs = [
+        "lstab.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 cc_library(
     name = "pmc_agent",
-    srcs = ["pmc_agent.c"],
+    srcs = [
+        "pmc_agent.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     deps = [
         ":hdrs",
@@ -350,7 +480,10 @@ cc_library(
 
 cc_library(
     name = "pmc_common",
-    srcs = ["pmc_common.c"],
+    srcs = [
+        "pmc_common.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     deps = [
         ":core",
@@ -363,28 +496,46 @@ cc_library(
 
 cc_library(
     name = "rtnl",
-    srcs = ["rtnl.c"],
+    srcs = [
+        "rtnl.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 cc_library(
     name = "stats",
-    srcs = ["stats.c"],
+    srcs = [
+        "stats.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 cc_library(
     name = "sysoff",
-    srcs = ["sysoff.c"],
+    srcs = [
+        "sysoff.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
-    deps = [":hdrs"],
+    deps = [
+        ":hdrs",
+    ],
 )
 
 cc_library(
     name = "tsproc",
-    srcs = ["tsproc.c"],
+    srcs = [
+        "tsproc.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     deps = [
         ":filters",
@@ -412,6 +563,7 @@ cc_library(
         "unicast_client.c",
         "unicast_fsm.c",
         "unicast_service.c",
+        ":linuxptp_config_h",
     ],
     copts = LINUXPTP_COPTS,
     deps = [
@@ -435,7 +587,10 @@ cc_library(
 # Makefile: ptp4l: $(OBJ)
 cc_binary(
     name = "ptp4l",
-    srcs = ["ptp4l.c"],
+    srcs = [
+        "ptp4l.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -462,7 +617,10 @@ cc_binary(
 #   print.o rtnl.o $(SECURITY) sk.o $(TRANSP) tlv.o tsproc.o util.o version.o
 cc_binary(
     name = "nsm",
-    srcs = ["nsm.c"],
+    srcs = [
+        "nsm.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -483,7 +641,10 @@ cc_binary(
 #   print.o $(SECURITY) sk.o tlv.o $(TRANSP) util.o version.o
 cc_binary(
     name = "pmc",
-    srcs = ["pmc.c"],
+    srcs = [
+        "pmc.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -503,7 +664,10 @@ cc_binary(
 #   sk.o stats.o sysoff.o tlv.o $(TRANSP) util.o version.o
 cc_binary(
     name = "phc2sys",
-    srcs = ["phc2sys.c"],
+    srcs = [
+        "phc2sys.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -527,7 +691,10 @@ cc_binary(
 # Makefile: hwstamp_ctl: hwstamp_ctl.o version.o
 cc_binary(
     name = "hwstamp_ctl",
-    srcs = ["hwstamp_ctl.c"],
+    srcs = [
+        "hwstamp_ctl.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -541,7 +708,10 @@ cc_binary(
 #   version.o
 cc_binary(
     name = "phc_ctl",
-    srcs = ["phc_ctl.c"],
+    srcs = [
+        "phc_ctl.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -557,7 +727,10 @@ cc_binary(
 # Makefile: timemaster: phc.o print.o rtnl.o sk.o timemaster.o util.o version.o
 cc_binary(
     name = "timemaster",
-    srcs = ["timemaster.c"],
+    srcs = [
+        "timemaster.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -574,7 +747,10 @@ cc_binary(
 #   tlv.o transport.o raw.o udp.o udp6.o uds.o util.o version.o
 cc_binary(
     name = "ts2phc",
-    srcs = ["ts2phc.c"],
+    srcs = [
+        "ts2phc.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
@@ -599,7 +775,10 @@ cc_binary(
 #   version.o
 cc_binary(
     name = "tz2alt",
-    srcs = ["tz2alt.c"],
+    srcs = [
+        "tz2alt.c",
+        ":linuxptp_config_h",
+    ],
     copts = LINUXPTP_COPTS,
     linkopts = LINUXPTP_LINKOPTS,
     visibility = ["//visibility:public"],
