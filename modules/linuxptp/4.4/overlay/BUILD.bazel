@@ -1,0 +1,616 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# --- Build flags (mirrors incdefs.sh feature detection) ---
+
+bool_flag(
+    name = "have_clock_adjtime",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_clock_adjtime_enabled",
+    flag_values = {":have_clock_adjtime": "True"},
+)
+
+bool_flag(
+    name = "have_posix_spawn",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_posix_spawn_enabled",
+    flag_values = {":have_posix_spawn": "True"},
+)
+
+bool_flag(
+    name = "have_onestep_sync",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_onestep_sync_enabled",
+    flag_values = {":have_onestep_sync": "True"},
+)
+
+bool_flag(
+    name = "have_onestep_p2p",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_onestep_p2p_enabled",
+    flag_values = {":have_onestep_p2p": "True"},
+)
+
+bool_flag(
+    name = "have_vclocks",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_vclocks_enabled",
+    flag_values = {":have_vclocks": "True"},
+)
+
+bool_flag(
+    name = "have_ptp_caps_adjust_phase",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_ptp_caps_adjust_phase_enabled",
+    flag_values = {":have_ptp_caps_adjust_phase": "True"},
+)
+
+bool_flag(
+    name = "have_if_team",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "have_if_team_enabled",
+    flag_values = {":have_if_team": "True"},
+)
+
+string_flag(
+    name = "crypto_backend",
+    build_setting_default = "none",
+    values = [
+        "none",
+        "nettle",
+        "gnutls",
+        "gnupg",
+        "openssl",
+        "openssl_system",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "crypto_nettle",
+    flag_values = {":crypto_backend": "nettle"},
+)
+
+config_setting(
+    name = "crypto_gnutls",
+    flag_values = {":crypto_backend": "gnutls"},
+)
+
+config_setting(
+    name = "crypto_gnupg",
+    flag_values = {":crypto_backend": "gnupg"},
+)
+
+config_setting(
+    name = "crypto_openssl",
+    flag_values = {":crypto_backend": "openssl"},
+)
+
+config_setting(
+    name = "crypto_openssl_system",
+    flag_values = {":crypto_backend": "openssl_system"},
+)
+
+# --- Common settings ---
+
+# Makefile: CFLAGS = -Wall $(VER) $(incdefs) $(DEBUG) $(EXTRA_CFLAGS)
+LINUXPTP_COPTS = [
+    "-D_GNU_SOURCE",
+    "-DVER=4.4",
+] + select({
+    ":have_clock_adjtime_enabled": ["-DHAVE_CLOCK_ADJTIME"],
+    "//conditions:default": [],
+}) + select({
+    ":have_posix_spawn_enabled": ["-DHAVE_POSIX_SPAWN"],
+    "//conditions:default": [],
+}) + select({
+    ":have_onestep_sync_enabled": ["-DHAVE_ONESTEP_SYNC"],
+    "//conditions:default": [],
+}) + select({
+    ":have_onestep_p2p_enabled": ["-DHAVE_ONESTEP_P2P"],
+    "//conditions:default": [],
+}) + select({
+    ":have_vclocks_enabled": ["-DHAVE_VCLOCKS"],
+    "//conditions:default": [],
+}) + select({
+    ":have_ptp_caps_adjust_phase_enabled": ["-DHAVE_PTP_CAPS_ADJUST_PHASE"],
+    "//conditions:default": [],
+}) + select({
+    ":have_if_team_enabled": ["-DHAVE_IF_TEAM"],
+    "//conditions:default": [],
+})
+
+# Makefile: LDLIBS = -lm -lrt -pthread $(EXTRA_LDFLAGS)
+LINUXPTP_LINKOPTS = [
+    "-lm",
+    "-lrt",
+    "-pthread",
+]
+
+# --- Headers ---
+
+cc_library(
+    name = "hdrs",
+    hdrs = glob(["*.h"]),
+)
+
+# --- Libraries matching Makefile variable groups ---
+
+cc_library(
+    name = "system_openssl",
+    linkopts = ["-lcrypto"],
+)
+
+# Makefile: SECURITY = sad.o [+ conditional crypto backend]
+cc_library(
+    name = "security",
+    srcs = ["sad.c"] + select({
+        ":crypto_gnupg": ["sad_gnupg.c"],
+        ":crypto_gnutls": ["sad_gnutls.c"],
+        ":crypto_nettle": ["sad_nettle.c"],
+        ":crypto_openssl": ["sad_openssl.c"],
+        ":crypto_openssl_system": ["sad_openssl.c"],
+        "//conditions:default": [],
+    }),
+    copts = LINUXPTP_COPTS,
+    linkopts = select({
+        ":crypto_gnupg": ["-lgcrypt"],
+        ":crypto_gnutls": ["-lgnutls"],
+        ":crypto_nettle": ["-lnettle"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        ":crypto_gnupg": ["HAVE_GNUPG"],
+        ":crypto_gnutls": ["HAVE_GNUTLS"],
+        ":crypto_nettle": ["HAVE_NETTLE"],
+        ":crypto_openssl": ["HAVE_OPENSSL"],
+        ":crypto_openssl_system": ["HAVE_OPENSSL"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":core",
+        ":hdrs",
+        ":protocol",
+    ] + select({
+        ":crypto_openssl": ["@openssl//:crypto"],
+        ":crypto_openssl_system": [":system_openssl"],
+        "//conditions:default": [],
+    }),
+)
+
+# Makefile: FILTERS = filter.o mave.o mmedian.o
+cc_library(
+    name = "filters",
+    srcs = [
+        "filter.c",
+        "mave.c",
+        "mmedian.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+# Makefile: SERVOS = linreg.o ntpshm.o nullf.o pi.o refclock_sock.o servo.o
+cc_library(
+    name = "servos",
+    srcs = [
+        "linreg.c",
+        "ntpshm.c",
+        "nullf.c",
+        "pi.c",
+        "refclock_sock.c",
+        "servo.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":hdrs",
+        ":protocol",
+    ],
+)
+
+# Makefile: TRANSP = raw.o transport.o udp.o udp6.o uds.o
+cc_library(
+    name = "transport",
+    srcs = [
+        "raw.c",
+        "transport.c",
+        "udp.c",
+        "udp6.c",
+        "uds.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":core",
+        ":hdrs",
+        ":protocol",
+    ],
+)
+
+# Makefile: TS2PHC (minus ts2phc.c entry point and lstab.c which is shared with tz2alt)
+cc_library(
+    name = "ts2phc_sources",
+    srcs = [
+        "nmea.c",
+        "serial.c",
+        "sock.c",
+        "ts2phc_generic_pps_source.c",
+        "ts2phc_nmea_pps_source.c",
+        "ts2phc_phc_pps_source.c",
+        "ts2phc_pps_sink.c",
+        "ts2phc_pps_source.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":core",
+        ":hdrs",
+        ":lstab",
+        ":protocol",
+    ],
+)
+
+# --- Shared libraries for ungrouped OBJ files ---
+
+cc_library(
+    name = "version",
+    srcs = ["version.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+# phc.c, print.c, sk.c, util.c — shared by all binaries except hwstamp_ctl.
+cc_library(
+    name = "core",
+    srcs = [
+        "phc.c",
+        "print.c",
+        "sk.c",
+        "util.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+# config.c, hash.c, interface.c, msg.c, tlv.c — shared by protocol binaries.
+cc_library(
+    name = "protocol",
+    srcs = [
+        "config.c",
+        "hash.c",
+        "interface.c",
+        "msg.c",
+        "tlv.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":core",
+        ":hdrs",
+    ],
+)
+
+cc_library(
+    name = "clockadj",
+    srcs = ["clockadj.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+cc_library(
+    name = "clockcheck",
+    srcs = ["clockcheck.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+cc_library(
+    name = "lstab",
+    srcs = ["lstab.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+cc_library(
+    name = "pmc_agent",
+    srcs = ["pmc_agent.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":hdrs",
+        ":pmc_common",
+        ":protocol",
+    ],
+)
+
+cc_library(
+    name = "pmc_common",
+    srcs = ["pmc_common.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":core",
+        ":hdrs",
+        ":protocol",
+        ":security",
+        ":transport",
+    ],
+)
+
+cc_library(
+    name = "rtnl",
+    srcs = ["rtnl.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+cc_library(
+    name = "stats",
+    srcs = ["stats.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+cc_library(
+    name = "sysoff",
+    srcs = ["sysoff.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [":hdrs"],
+)
+
+cc_library(
+    name = "tsproc",
+    srcs = ["tsproc.c"],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":filters",
+        ":hdrs",
+    ],
+)
+
+# ptp4l-specific OBJ files (only used by the ptp4l binary).
+cc_library(
+    name = "ptp4l_lib",
+    srcs = [
+        "bmc.c",
+        "clock.c",
+        "designated_fsm.c",
+        "e2e_tc.c",
+        "fault.c",
+        "fsm.c",
+        "monitor.c",
+        "p2p_tc.c",
+        "port.c",
+        "port_signaling.c",
+        "pqueue.c",
+        "tc.c",
+        "telecom.c",
+        "unicast_client.c",
+        "unicast_fsm.c",
+        "unicast_service.c",
+    ],
+    copts = LINUXPTP_COPTS,
+    deps = [
+        ":clockadj",
+        ":clockcheck",
+        ":core",
+        ":hdrs",
+        ":pmc_common",
+        ":protocol",
+        ":rtnl",
+        ":security",
+        ":servos",
+        ":stats",
+        ":transport",
+        ":tsproc",
+    ],
+)
+
+# --- Binaries ---
+
+# Makefile: ptp4l: $(OBJ)
+cc_binary(
+    name = "ptp4l",
+    srcs = ["ptp4l.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":clockadj",
+        ":clockcheck",
+        ":core",
+        ":filters",
+        ":hdrs",
+        ":pmc_common",
+        ":protocol",
+        ":ptp4l_lib",
+        ":rtnl",
+        ":security",
+        ":servos",
+        ":stats",
+        ":transport",
+        ":tsproc",
+        ":version",
+    ],
+)
+
+# Makefile: nsm: config.o $(FILTERS) hash.o interface.o msg.o nsm.o phc.o
+#   print.o rtnl.o $(SECURITY) sk.o $(TRANSP) tlv.o tsproc.o util.o version.o
+cc_binary(
+    name = "nsm",
+    srcs = ["nsm.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":filters",
+        ":hdrs",
+        ":protocol",
+        ":rtnl",
+        ":security",
+        ":transport",
+        ":tsproc",
+        ":version",
+    ],
+)
+
+# Makefile: pmc: config.o hash.o interface.o msg.o phc.o pmc.o pmc_common.o
+#   print.o $(SECURITY) sk.o tlv.o $(TRANSP) util.o version.o
+cc_binary(
+    name = "pmc",
+    srcs = ["pmc.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":hdrs",
+        ":pmc_common",
+        ":protocol",
+        ":security",
+        ":transport",
+        ":version",
+    ],
+)
+
+# Makefile: phc2sys: clockadj.o clockcheck.o config.o hash.o interface.o msg.o
+#   phc.o phc2sys.o pmc_agent.o pmc_common.o print.o $(SECURITY) $(SERVOS)
+#   sk.o stats.o sysoff.o tlv.o $(TRANSP) util.o version.o
+cc_binary(
+    name = "phc2sys",
+    srcs = ["phc2sys.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":clockadj",
+        ":clockcheck",
+        ":core",
+        ":hdrs",
+        ":pmc_agent",
+        ":pmc_common",
+        ":protocol",
+        ":security",
+        ":servos",
+        ":stats",
+        ":sysoff",
+        ":transport",
+        ":version",
+    ],
+)
+
+# Makefile: hwstamp_ctl: hwstamp_ctl.o version.o
+cc_binary(
+    name = "hwstamp_ctl",
+    srcs = ["hwstamp_ctl.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hdrs",
+        ":version",
+    ],
+)
+
+# Makefile: phc_ctl: phc_ctl.o phc.o sk.o util.o clockadj.o sysoff.o print.o
+#   version.o
+cc_binary(
+    name = "phc_ctl",
+    srcs = ["phc_ctl.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":clockadj",
+        ":core",
+        ":hdrs",
+        ":sysoff",
+        ":version",
+    ],
+)
+
+# Makefile: timemaster: phc.o print.o rtnl.o sk.o timemaster.o util.o version.o
+cc_binary(
+    name = "timemaster",
+    srcs = ["timemaster.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":hdrs",
+        ":rtnl",
+        ":version",
+    ],
+)
+
+# Makefile: ts2phc: config.o clockadj.o hash.o interface.o msg.o phc.o
+#   pmc_agent.o pmc_common.o print.o $(SECURITY) $(SERVOS) sk.o $(TS2PHC)
+#   tlv.o transport.o raw.o udp.o udp6.o uds.o util.o version.o
+cc_binary(
+    name = "ts2phc",
+    srcs = ["ts2phc.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":clockadj",
+        ":core",
+        ":hdrs",
+        ":lstab",
+        ":pmc_agent",
+        ":pmc_common",
+        ":protocol",
+        ":security",
+        ":servos",
+        ":transport",
+        ":ts2phc_sources",
+        ":version",
+    ],
+)
+
+# Makefile: tz2alt: config.o hash.o interface.o lstab.o msg.o phc.o
+#   pmc_common.o print.o $(SECURITY) sk.o tlv.o $(TRANSP) tz2alt.o util.o
+#   version.o
+cc_binary(
+    name = "tz2alt",
+    srcs = ["tz2alt.c"],
+    copts = LINUXPTP_COPTS,
+    linkopts = LINUXPTP_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":hdrs",
+        ":lstab",
+        ":pmc_common",
+        ":protocol",
+        ":security",
+        ":transport",
+        ":version",
+    ],
+)
