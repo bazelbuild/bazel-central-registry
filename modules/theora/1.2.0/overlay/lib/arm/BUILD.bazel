@@ -1,0 +1,121 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_perl//perl:perl.bzl", "perl_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+perl_binary(
+    name = "arm2gnu_pl",
+    srcs = ["arm2gnu.pl"],
+)
+
+genrule(
+    name = "gen_armopts_s",
+    srcs = ["armopts.s.in"],
+    outs = ["armopts.s"],
+    cmd = "sed -e 's/@HAVE_ARM_ASM_EDSP@/0/g' " +
+          "-e 's/@HAVE_ARM_ASM_MEDIA@/0/g' " +
+          "-e 's/@HAVE_ARM_ASM_NEON@/1/g' " +
+          "$< > $@",
+)
+
+genrule(
+    name = "armbits_gnu_s",
+    srcs = ["armbits.s"],
+    outs = ["armbits-gnu.S"],
+    cmd = "$(location :arm2gnu_pl) < $< > $@",
+    tools = [":arm2gnu_pl"],
+)
+
+genrule(
+    name = "armfrag_gnu_s",
+    srcs = ["armfrag.s", ":gen_armopts_s"],
+    outs = ["armfrag-gnu.S"],
+    cmd = "cat $(location :gen_armopts_s) > $@ && $(location :arm2gnu_pl) < $(location armfrag.s) >> $@",
+    tools = [":arm2gnu_pl"],
+)
+
+genrule(
+    name = "armidct_gnu_s",
+    srcs = ["armidct.s", ":gen_armopts_s"],
+    outs = ["armidct-gnu.S"],
+    cmd = "cat $(location :gen_armopts_s) > $@ && $(location :arm2gnu_pl) < $(location armidct.s) >> $@",
+    tools = [":arm2gnu_pl"],
+)
+
+genrule(
+    name = "armloop_gnu_s",
+    srcs = ["armloop.s", ":gen_armopts_s"],
+    outs = ["armloop-gnu.S"],
+    cmd = "cat $(location :gen_armopts_s) > $@ && $(location :arm2gnu_pl) < $(location armloop.s) >> $@",
+    tools = [":arm2gnu_pl"],
+)
+
+genrule(
+    name = "armencfrag_gnu_s",
+    srcs = ["armencfrag.s", ":gen_armopts_s"],
+    outs = ["armencfrag-gnu.S"],
+    cmd = "cat $(location :gen_armopts_s) > $@ && $(location :arm2gnu_pl) < $(location armencfrag.s) >> $@",
+    tools = [":arm2gnu_pl"],
+)
+
+genrule(
+    name = "armenquant_gnu_s",
+    srcs = ["armenquant.s", ":gen_armopts_s"],
+    outs = ["armenquant-gnu.S"],
+    cmd = "cat $(location :gen_armopts_s) > $@ && $(location :arm2gnu_pl) < $(location armenquant.s) >> $@",
+    tools = [":arm2gnu_pl"],
+)
+
+cc_library(
+    name = "arm_decoder",
+    srcs = [
+        "armcpu.c",
+        "armstate.c",
+        ":armbits_gnu_s",
+        ":armfrag_gnu_s",
+        ":armidct_gnu_s",
+        ":armloop_gnu_s",
+    ],
+    hdrs = [
+        "armcpu.h",
+        "armint.h",
+        "armbits.h",
+    ],
+    includes = ["."],
+    local_defines = ["HAVE_CONFIG_H", "OC_ARM_ASM"],
+    target_compatible_with = select({
+        "@platforms//cpu:arm": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//lib:lib_hdrs",
+        "//:hdrs",
+        "@ogg//:libogg",
+    ],
+    visibility = ["//lib:__pkg__"],
+)
+
+cc_library(
+    name = "arm_encoder",
+    srcs = [
+        "armenc.c",
+        ":armencfrag_gnu_s",
+        ":armenquant_gnu_s",
+    ],
+    hdrs = [
+        "armenc.h",
+    ],
+    includes = ["."],
+    local_defines = ["HAVE_CONFIG_H", "OC_ARM_ASM"],
+    target_compatible_with = select({
+        "@platforms//cpu:arm": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":arm_decoder",
+        "//lib:lib_hdrs",
+        "//:hdrs",
+        "@ogg//:libogg",
+    ],
+    visibility = ["//lib:__pkg__"],
+)
