@@ -1,0 +1,105 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_library")
+load("@rules_python//python:pip.bzl", "whl_filegroup")
+load("@swig//:swig.bzl", "swig_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Extract NumPy headers from pip package
+whl_filegroup(
+    name = "numpy_headers",
+    pattern = "numpy/_core/include/numpy",
+    whl = "@nlopt_pip//numpy:whl",
+)
+
+cc_library(
+    name = "numpy_cc_headers",
+    hdrs = [":numpy_headers"],
+    includes = [
+        "numpy_headers/numpy/_core/include",
+    ],
+)
+
+# Generate nlopt-enum-renames.i from nlopt.h
+genrule(
+    name = "generate_enum_renames",
+    srcs = ["//:src/api/nlopt.h"],
+    outs = ["nlopt-enum-renames.i"],
+    cmd = """
+        echo "// AUTOMATICALLY GENERATED -- DO NOT EDIT" > $@
+        # Extract NLOPT_ enum constants and generate SWIG rename directives
+        while IFS= read -r line; do
+            if echo "$$line" | grep -q '    NLOPT_[A-Z0-9_]'; then
+                enum_name=$$(echo "$$line" | sed -E 's/.*NLOPT_([A-Z0-9_]+).*/\\1/')
+                echo "%%rename(NLOPT_$$enum_name) nlopt::$$enum_name;" >> $@
+            fi
+        done < $(location //:src/api/nlopt.h)
+    """,
+)
+
+# Generate Python wrapper using SWIG
+swig_library(
+    name = "swig_python",
+    srcs = [
+        "nlopt.i",
+        "nlopt-python.i",
+        "nlopt-exceptions.i",
+        "numpy.i",
+        ":generate_enum_renames",
+        "//:src/api/nlopt.h",
+        "//:generate_cpp_header",  # nlopt.hpp
+    ],
+    language = "python",
+    module = "nlopt",
+    defines = ["SWIGPYTHON"],
+)
+
+# Python extension module (_nlopt.so)
+cc_binary(
+    name = "_nlopt.so",
+    srcs = [":swig_python"],
+    copts = [
+        "-fPIC",
+        "-Wno-unused-parameter",
+        "-Wno-missing-field-initializers",
+        "-Wno-deprecated-declarations",
+        "-Wno-unused-variable",
+        "-Wno-unused-but-set-variable",
+        "-Wno-maybe-uninitialized",
+        "-Wno-nonnull",
+    ] + select({
+        "@platforms//os:windows": ["/D_CRT_SECURE_NO_WARNINGS"],
+        "//conditions:default": [],
+    }),
+    linkshared = True,
+    linkstatic = False,
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-undefined",
+            "dynamic_lookup",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//:nlopt",
+        ":numpy_cc_headers",
+        "@rules_python//python/cc:current_py_cc_headers",
+    ],
+)
+
+# Python library
+py_library(
+    name = "nlopt_python",
+    srcs = [":swig_python"],
+    data = [":_nlopt.so"],
+    imports = ["."],
+)
+
+# Convenience filegroup for installation
+filegroup(
+    name = "python_lib",
+    srcs = [
+        ":swig_python",
+        ":_nlopt.so",
+    ],
+)
