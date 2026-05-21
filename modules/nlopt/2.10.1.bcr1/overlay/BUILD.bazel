@@ -8,19 +8,22 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 
+# src/algs/luksan has different licensing conditions than the rest of nlopt, so
+# we allow consumers to opt out of including it.
+# Set --@nlopt//:use_luksan=false to exclude it.
 bool_flag(
-    name = "with_luksan",
+    name = "use_luksan",
     build_setting_default = True,
 )
 
 config_setting(
     name = "luksan_enabled",
-    flag_values = {":with_luksan": "True"},
+    flag_values = {":use_luksan": "True"},
 )
 
 config_setting(
     name = "luksan_disabled",
-    flag_values = {":with_luksan": "False"},
+    flag_values = {":use_luksan": "False"},
 )
 
 # Generate nlopt_config.h from template
@@ -50,7 +53,6 @@ cmake_configure_file(
         "HAVE_UNISTD_H",
         # C++ support
         "NLOPT_CXX",
-        "NLOPT_CXX11",
         # Thread local storage
         "THREADLOCAL=__thread",
         # Type sizes
@@ -58,7 +60,7 @@ cmake_configure_file(
         "SIZEOF_UNSIGNED_LONG=8",
         # Time handling
         "TIME_WITH_SYS_TIME",
-    ],
+    ]
 )
 
 # Generate C++ header (nlopt.hpp) from template
@@ -126,9 +128,7 @@ cc_library(
     }) + select({
         ":luksan_enabled": glob([
             "src/algs/luksan/**/*.c",
-            "src/algs/luksan/**/*.cc",
             "src/algs/luksan/**/*.h",
-            "src/algs/luksan/**/*.hpp",
         ]),
         "//conditions:default": [],
     }),
@@ -153,9 +153,13 @@ cc_library(
     defines = select({
         "@platforms//os:windows": ["NLOPT_DLL"],
         "//conditions:default": [],
+    }) + select({
+        ":luksan_enabled": ["NLOPT_LUKSAN"],
+        ":luksan_disabled": [],
+        "//conditions:default": [],
     }),
     includes = [
-        ".",
+        #".",
         "src/api",
         "src/util",
         "src/algs/direct",
