@@ -902,7 +902,7 @@ class BcrValidator:
         tmp_dir = tempfile.mkdtemp()
         for attestation in attestations:
             try:
-                self._verifier.run(attestation, source_uri, version, tmp_dir)
+                self._verifier.run(module_name, attestation, source_uri, version, tmp_dir)
             except attestations_lib.Error as ex:
                 self.report(BcrValidationResult.FAILED, f"{module_name}@{version}: {ex}")
                 success = False
