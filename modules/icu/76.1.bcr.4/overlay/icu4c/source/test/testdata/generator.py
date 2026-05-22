@@ -1,13 +1,12 @@
 # Wrapper script for generating ICU test data in Bazel.
 #
-# This script orchestrates the ICU test data generation pipeline:
+# This script orchestrates the first part of the ICU test data pipeline:
 # 1. databuilder - generates .res files from source test data
-# 2. pkgdata - packages .res files into a .dat archive
-# 3. genccode - converts .dat to assembly for static linking
+# 2. pkgdata     - packages .res files into a .dat archive
 #
-# Additionally, it handles:
-# - Copying the main ICU data file for genrb collation compilation
-# - Copying standalone test files (zoneinfo64.res, nam.typ)
+# Additionally, this script handles:
+# - Copying the main ICU data file for genrb collation compilation.
+# - Copying standalone test files (zoneinfo64.res, nam.typ).
 
 from __future__ import annotations
 
@@ -23,6 +22,19 @@ import tempfile
 from icutools.databuilder import __main__ as databuilder_main
 
 
+# Tool-cfg sub-directory name used by 'windows-exec' mode on Windows. It must
+# match the Windows replace_prefixes layout in '//icu4c/source/tools/BUILD.bazel'.
+# On Linux/macOS the tooldir is flat and this is unused.
+WINDOWS_TOOL_CFG = "bin"
+
+
+def tool_executable(tool_dir: str, tool_name: str) -> str:
+    """Resolve the on-disk path of a tool in the Bazel-built tooldir."""
+    if platform.system() == "Windows":
+        return os.path.join(tool_dir, tool_name, WINDOWS_TOOL_CFG, f"{tool_name}.exe")
+    return os.path.join(tool_dir, tool_name)
+
+
 def run_databuilder(
     src_dir: str,
     out_dir: str,
@@ -31,15 +43,28 @@ def run_databuilder(
 ) -> None:
     """Run the databuilder to generate .res files."""
     argv = [
-        "--mode", "windows-exec" if platform.system() == "Windows" else "unix-exec",
-        "--src_dir", src_dir,
-        "--out_dir", out_dir,
-        "--tmp_dir", tmp_dir,
-        "--tool_dir", tool_dir,
-        "--seqmode", "parallel",
+        "--mode",
+        "windows-exec" if platform.system() == "Windows" else "unix-exec",
+        "--src_dir",
+        src_dir,
+        "--out_dir",
+        out_dir,
+        "--tmp_dir",
+        tmp_dir,
+        "--tool_dir",
+        tool_dir,
+        "--seqmode",
+        "parallel",
+        # Always pass --verbose: in quiet mode the databuilder redirects each
+        # tool's stderr to devnull, so we'd lose genrb/gencnval failures in
+        # CI logs. The verbose output is a few extra lines per tool, not a
+        # firehose.
+        "--verbose",
     ]
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        argv.append("--verbose")
+
+    if platform.system() == "Windows":
+        argv += ["--tool_cfg", WINDOWS_TOOL_CFG]
+
     logging.debug("Running databuilder with args: %s", " ".join(argv))
     databuilder_main.main(argv)
 
@@ -54,39 +79,16 @@ def run_pkgdata(
     """Run pkgdata to package .res files into .dat."""
     cmd = [
         pkgdata_bin,
-        "-m", "common",
-        "-p", pkg_name,
+        "-m",
+        "common",
+        "-p",
+        pkg_name,
         "-c",
-        "-s", res_dir,
-        "-d", out_dir,
+        "-s",
+        res_dir,
+        "-d",
+        out_dir,
         lst_file,
-    ]
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        cmd.insert(1, "-v")
-    logging.debug("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.stdout:
-        logging.debug("%s", result.stdout)
-    if result.stderr:
-        logging.debug("%s", result.stderr)
-    if result.returncode != 0:
-        sys.exit(result.returncode)
-
-
-def run_genccode(
-    genccode_bin: str,
-    dat_file: str,
-    entry_name: str,
-    out_dir: str,
-) -> None:
-    """Run genccode to convert .dat to assembly."""
-    cmd = [
-        genccode_bin,
-        "--assembly", "gcc",
-        "--name", entry_name,
-        "--entrypoint", entry_name,
-        "--destdir", out_dir,
-        dat_file,
     ]
     if logging.getLogger().isEnabledFor(logging.DEBUG):
         cmd.insert(1, "-v")
@@ -126,21 +128,16 @@ def create_package_list(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate ICU test data for Bazel")
-    parser.add_argument("--src_dir", required=True,
-                        help="Source data directory containing BUILDRULES.py")
-    parser.add_argument("--tool_dir", required=True,
-                        help="Directory containing ICU tools (pkgdata, genccode, etc.)")
-    parser.add_argument("--out_dir", required=True,
-                        help="Output directory for generated files")
-    parser.add_argument("--pkg_name", required=True,
-                        help="Package name (e.g., testdata)")
-    parser.add_argument("--entry_name", required=True,
-                        help="Entry point name for assembly (e.g., testdata)")
-    parser.add_argument("--icu_data_dir", required=True,
-                        help="Directory containing the main ICU data file (icudt76l.dat) "
-                             "for genrb collation compilation")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Enable verbose output")
+    parser.add_argument("--src_dir", required=True, help="Source data directory containing BUILDRULES.py")
+    parser.add_argument("--tool_dir", required=True, help="Directory containing ICU tools (pkgdata, genccode, etc.)")
+    parser.add_argument("--out_dir", required=True, help="Output directory for generated files")
+    parser.add_argument("--pkg_name", required=True, help="Package name (e.g., testdata)")
+    parser.add_argument(
+        "--icu_data_dir",
+        required=True,
+        help="Directory containing the main ICU data file (icudt76l.dat) " "for genrb collation compilation",
+    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -154,7 +151,12 @@ def main() -> None:
     icu_data_dir = os.path.normpath(args.icu_data_dir)
     icu_data_file = os.path.join(icu_data_dir, "icudt76l.dat")
 
-    with tempfile.TemporaryDirectory() as tmp_base:
+    # `ignore_cleanup_errors=True` is needed on Windows: ICU tools mmap data
+    # files and Windows keeps handles live for a beat after the child exits,
+    # so the recursive `os.unlink` cleanup races with the OS and raises
+    # PermissionError. Swallow cleanup errors so the actual build status
+    # isn't masked by a stray traceback. See //icu4c/source/data/generator.py.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_base:
         work_out_dir = os.path.join(tmp_base, "out", args.pkg_name)
         work_tmp_dir = os.path.join(tmp_base, "tmp")
         os.makedirs(work_out_dir)
@@ -177,27 +179,25 @@ def main() -> None:
         create_package_list(work_out_dir, lst_file, exclude_dirs=["build"])
 
         # Step 3: Run pkgdata (.res → .dat)
-        pkgdata_bin = os.path.join(tool_dir, "pkgdata")
+        pkgdata_bin = tool_executable(tool_dir, "pkgdata")
         run_pkgdata(pkgdata_bin, work_out_dir, lst_file, args.pkg_name, work_tmp_dir)
 
-        # Step 4: Run genccode (.dat → .S)
+        # Step 4: Copy .dat to the declared output location (out/testdata.dat).
+        # The .dat → linkable source (.S / .c) step lives in separate run_binary
+        # targets in BUILD.bazel — see file header.
         dat_file = os.path.join(work_tmp_dir, f"{args.pkg_name}.dat")
-        genccode_bin = os.path.join(tool_dir, "genccode")
-        os.makedirs(out_dir, exist_ok=True)
-        run_genccode(genccode_bin, dat_file, args.entry_name, out_dir)
-
-        # Step 5: Copy .dat to the declared output location (out/testdata.dat)
         dat_out_dir = os.path.join(out_dir, "out")
         os.makedirs(dat_out_dir, exist_ok=True)
         shutil.copy(dat_file, os.path.join(dat_out_dir, f"{args.pkg_name}.dat"))
         logging.debug("Copied .dat file to: %s", dat_out_dir)
 
-        # Step 6: Copy standalone test files that tests expect outside the
+        # Step 5: Copy standalone test files that tests expect outside the
         # .dat package (TmpFile outputs from the databuilder).
         standalone_files = [
             ("zoneinfo64.res", f"out/{args.pkg_name}/zoneinfo64.res"),
-            ("nam.typ",        f"out/{args.pkg_name}/nam.typ"),
+            ("nam.typ", f"out/{args.pkg_name}/nam.typ"),
         ]
+
         for src_name, dst_rel_path in standalone_files:
             src_path = os.path.join(work_tmp_dir, src_name)
             if os.path.exists(src_path):

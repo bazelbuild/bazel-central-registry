@@ -5,7 +5,7 @@
 #   2. pkgdata      — .res files   → icudt76l.dat archive
 #
 # The tool binaries are compiled against stub ICU data (via the bootstrap
-# transition in tools/bootstrap.bzl), so no real .dat file is required as
+# transition in defs.bzl), so no real .dat file is required as
 # input — the circular dependency is broken at the compilation level.
 
 from __future__ import annotations
@@ -21,6 +21,18 @@ import tempfile
 
 from icutools.databuilder import __main__ as databuilder_main
 
+# Tool-cfg sub-directory name used by 'windows-exec' mode on Windows. It must
+# match the Windows replace_prefixes layout in '//icu4c/source/tools/BUILD.bazel'.
+# On Linux/macOS the tooldir is flat and this is unused.
+WINDOWS_TOOL_CFG = "bin"
+
+
+def tool_executable(tool_dir: str, tool_name: str) -> str:
+    """Resolve the on-disk path of a tool in the Bazel-built tooldir."""
+    if platform.system() == "Windows":
+        return os.path.join(tool_dir, tool_name, WINDOWS_TOOL_CFG, f"{tool_name}.exe")
+    return os.path.join(tool_dir, tool_name)
+
 
 def run_databuilder(
     src_dir: str,
@@ -30,15 +42,28 @@ def run_databuilder(
 ) -> None:
     """Run the ICU databuilder to compile source data into .res files."""
     argv = [
-        "--mode", "windows-exec" if platform.system() == "Windows" else "unix-exec",
-        "--src_dir", src_dir,
-        "--out_dir", out_dir,
-        "--tmp_dir", tmp_dir,
-        "--tool_dir", tool_dir,
-        "--seqmode", "parallel",
+        "--mode",
+        "windows-exec" if platform.system() == "Windows" else "unix-exec",
+        "--src_dir",
+        src_dir,
+        "--out_dir",
+        out_dir,
+        "--tmp_dir",
+        tmp_dir,
+        "--tool_dir",
+        tool_dir,
+        "--seqmode",
+        "parallel",
+        # Always pass --verbose: in quiet mode the databuilder redirects each
+        # tool's stderr to devnull, so we'd lose genrb/gencnval failures in
+        # CI logs. The verbose output is a few extra lines per tool, not a
+        # firehose.
+        "--verbose",
     ]
-    if logging.getLogger().isEnabledFor(logging.DEBUG):
-        argv.append("--verbose")
+
+    if platform.system() == "Windows":
+        argv += ["--tool_cfg", WINDOWS_TOOL_CFG]
+
     logging.debug("Running databuilder with args: %s", " ".join(argv))
     databuilder_main.main(argv)
 
@@ -53,11 +78,15 @@ def run_pkgdata(
     """Run pkgdata to package .res files into a .dat archive."""
     cmd = [
         pkgdata_bin,
-        "-m", "common",
-        "-p", pkg_name,
+        "-m",
+        "common",
+        "-p",
+        pkg_name,
         "-c",
-        "-s", res_dir,
-        "-d", out_dir,
+        "-s",
+        res_dir,
+        "-d",
+        out_dir,
         lst_file,
     ]
     if logging.getLogger().isEnabledFor(logging.DEBUG):
@@ -100,16 +129,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate the main ICU data bundle for Bazel (bootstrap mode).",
     )
-    parser.add_argument("--src_dir", required=True,
-                        help="Source data directory (icu4c/source/data)")
-    parser.add_argument("--tool_dir", required=True,
-                        help="Directory containing bootstrap-compiled ICU tools")
-    parser.add_argument("--out_dir", required=True,
-                        help="Output directory for generated files")
-    parser.add_argument("--pkg_name", required=True,
-                        help="ICU data package name (e.g. icudt76l)")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Enable verbose output")
+    parser.add_argument("--src_dir", required=True, help="Source data directory (icu4c/source/data)")
+    parser.add_argument("--tool_dir", required=True, help="Directory containing bootstrap-compiled ICU tools")
+    parser.add_argument("--out_dir", required=True, help="Output directory for generated files")
+    parser.add_argument("--pkg_name", required=True, help="ICU data package name (e.g. icudt76l)")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -121,7 +145,13 @@ def main() -> None:
     tool_dir = os.path.normpath(args.tool_dir)
     out_dir = os.path.normpath(args.out_dir)
 
-    with tempfile.TemporaryDirectory() as tmp_base:
+    # `ignore_cleanup_errors=True` is needed on Windows: ICU tools mmap data
+    # files (cnvalias.icu, icudt<v>l.dat) and Windows keeps handles live for
+    # a beat after the child exits, so `os.unlink` during the cleanup walk
+    # races with the OS and raises PermissionError. Swallowing the cleanup
+    # errors keeps the actual build-failure (or success) status visible
+    # instead of being masked by a stray cleanup traceback.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp_base:
         work_out_dir = os.path.join(tmp_base, "out", args.pkg_name)
         work_tmp_dir = os.path.join(tmp_base, "tmp")
         os.makedirs(work_out_dir)
@@ -135,7 +165,7 @@ def main() -> None:
         create_package_list(work_out_dir, lst_file)
 
         # Step 3: Run pkgdata (.res → .dat)
-        pkgdata_bin = os.path.join(tool_dir, "pkgdata")
+        pkgdata_bin = tool_executable(tool_dir, "pkgdata")
         run_pkgdata(pkgdata_bin, work_out_dir, lst_file, args.pkg_name, work_tmp_dir)
 
         # Step 4: Copy .dat to the declared output location

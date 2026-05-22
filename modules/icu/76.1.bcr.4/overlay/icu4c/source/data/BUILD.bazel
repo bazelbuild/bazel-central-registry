@@ -54,7 +54,7 @@ copy_to_directory(
 # ---------------------------------------------------------------------------
 # Bootstrap data generation pipeline (mode = source).
 #
-# All tool binaries are defined with bootstrap_cc_binary (see tools/bootstrap.bzl),
+# All tool binaries are defined with bootstrap_cc_binary (see //icu4c/source:defs.bzl),
 # which builds them against stub ICU data, breaking the circular dependency.
 # The generated icudt<version>l.dat is little-endian; cross-compilation to big-endian
 # targets with mode=source is not currently supported.
@@ -164,7 +164,27 @@ cc_library(
         "@platforms//os:windows": [":generate-icudata-c"],
         "//conditions:default": [":generate-icudata-asm"],
     }),
+    # On Windows, force-export the data symbol via /EXPORT instead of relying on
+    # a __declspec(dllexport) marker in the generated C source. The generator
+    # emits plain `const struct` with no linkage decoration. This is the same
+    # export mechanism upstream uses for icudt<v>.dll, just inlined into the
+    # linker invocation rather than going through a pkgdata-generated .def file.
+    # The ',DATA' suffix tells the linker the symbol is a data variable
+    # (no thunk needed). Without this, 'udata.cpp' dllimport reference to
+    # icudt<v>_dat in the icuuc.dll build (cc_shared_library wrapping) fails to
+    # resolve with "unresolved external symbol __imp_icudt<v>_dat".
+    linkopts = select({
+        "//icu4c/source:windows-shared-build": ["/EXPORT:icudt%s_dat,DATA" % module_version().split(".")[0]],
+        "//conditions:default": [],
+    }),
     visibility = ["//icu4c/source/common:__pkg__"],
+    # The generated C source on Windows has '#includes <unicode/umachine.h>' for
+    # U_CAPI / data-symbol type declarations. Assembly outputs on other
+    # platforms don't need headers.
+    deps = select({
+        "@platforms//os:windows": ["//icu4c/source/common:headers"],
+        "//conditions:default": [],
+    }),
 )
 
 # The .dat directory, kept for tools that need to locate the data package on
