@@ -15,13 +15,23 @@ extern "C" {
  * runfiles library.
  *
  * rlocation_path must be a canonical runfiles-root-relative path as produced
- * by $(rlocationpath ...) in a BUILD file, e.g.
- * "icu+/icu4c/source/test/testdata/testdata_dir".
+ * by $(rlocationpath ...) in a BUILD file. Sub-paths may be appended with
+ * adjacent string literals at the call site (preprocessor concatenation):
+ *
+ *     icu_bazel_rlocation(BAZEL_ICU_TESTDATA_SRC_DIR "/out");
  *
  * Returns a pointer to a process-lifetime buffer (caller must NOT free it),
  * or nullptr/NULL if the runfiles library cannot initialise (no env vars set).
  */
 const char* icu_bazel_rlocation(const char* rlocation_path);
+
+/**
+ * Like icu_bazel_rlocation(), but appends a trailing path separator ('/') to
+ * the resolved result. Intended for callers that hand the returned pointer
+ * to ICU code which concatenates a relative filename directly onto it (e.g.
+ * pathToDataDirectory(), loadSourceTestData()).
+ */
+const char* icu_bazel_rlocation_dir(const char* rlocation_path);
 
 #ifdef __cplusplus
 }
