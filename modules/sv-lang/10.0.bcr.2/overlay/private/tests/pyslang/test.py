@@ -9,7 +9,7 @@ def test_pyslang():
     """
     Import pyslang and show that we can load a syntax tree from an RTL file.
     """
-    tree = pyslang.SyntaxTree.fromFile(f"{test_dir}/test_module.sv")
+    tree = pyslang.syntax.SyntaxTree.fromFile(f"{test_dir}/test_module.sv")
     mod = tree.root.members[0]
     if mod.header.name.value != "test_module":
         raise RuntimeError(f"Expected module name 'test_module', got '{mod.header.name.value}'")
