@@ -538,13 +538,12 @@ class BcrValidator:
             try:
                 candidate.relative_to(output_dir.resolve())
             except ValueError:
-                error_msg = "CRITICAL FAILURE: " \
-                    f"strip_prefix '{strip_prefix}' resolves outside the " \
+                error_msg = (
+                    "CRITICAL FAILURE: "
+                    f"strip_prefix '{strip_prefix}' resolves outside the "
                     f"extraction directory. Resolved to: {candidate}"
-                self.report(
-                    BcrValidationResult.FAILED,
-                    error_msg
                 )
+                self.report(BcrValidationResult.FAILED, error_msg)
                 shutil.rmtree(tmp_dir)
                 raise BcrValidationException(error_msg)
         source_root = output_dir / strip_prefix

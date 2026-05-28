@@ -29,36 +29,22 @@ class TestBcrValidation(unittest.TestCase):
     def setUp(self):
         registry = RegistryClient("/fake")
 
-        self.bcr_validator = BcrValidator(
-            registry=registry, upstream=None, should_fix=False
-        )
+        self.bcr_validator = BcrValidator(registry=registry, upstream=None, should_fix=False)
 
     def test_fail_module_dot_bazel_source_is_not_archive(self):
-        self.bcr_validator.registry.get_source = MagicMock(
-            return_value=dict(type="not_archive")
-        )
+        self.bcr_validator.registry.get_source = MagicMock(return_value=dict(type="not_archive"))
         with self.assertRaises(BcrValidationException) as _:
-            self.bcr_validator.verify_module_dot_bazel(
-                module_name="foobar", version="0.0.0"
-            )
+            self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
 
     def test_fail_module_dot_bazel_no_relative_strip_prefix_outside_module(self):
-        self.bcr_validator.registry.get_source = MagicMock(
-            return_value=dict(strip_prefix="..")
-        )
+        self.bcr_validator.registry.get_source = MagicMock(return_value=dict(strip_prefix=".."))
         with self.assertRaises(BcrValidationException) as _:
-            self.bcr_validator.verify_module_dot_bazel(
-                module_name="foobar", version="0.0.0"
-            )
+            self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
 
     def test_fail_module_dot_bazel_no_absolute_strip_prefix(self):
-        self.bcr_validator.registry.get_source = MagicMock(
-            return_value=dict(strip_prefix="/fake2")
-        )
+        self.bcr_validator.registry.get_source = MagicMock(return_value=dict(strip_prefix="/fake2"))
         with self.assertRaises(BcrValidationException) as _:
-            self.bcr_validator.verify_module_dot_bazel(
-                module_name="foobar", version="0.0.0"
-            )
+            self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
 
 
 if __name__ == "__main__":
