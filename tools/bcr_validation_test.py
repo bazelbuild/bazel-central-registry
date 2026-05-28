@@ -18,8 +18,7 @@ import unittest
 from registry import RegistryClient
 from tools.bcr_validation import (
     BcrValidator,
-    BcrValidationException,
-    UPSTREAM_MODULES_DIR_URL,
+    BcrValidationException
 )
 
 from unittest.mock import MagicMock
