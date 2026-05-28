@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+#
+# Copyright 2026 The Bazel Authors. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import unittest
+from registry import RegistryClient
+from tools.bcr_validation import (
+    BcrValidator,
+    BcrValidationException,
+    UPSTREAM_MODULES_DIR_URL,
+)
+
+from unittest.mock import MagicMock
+
+
+class TestBcrValidation(unittest.TestCase):
+    def setUp(self):
+        registry = RegistryClient("/fake")
+
+        self.bcr_validator = BcrValidator(
+            registry=registry, upstream=None, should_fix=False
+        )
+
+    def test_fail_module_dot_bazel_source_is_not_archive(self):
+        self.bcr_validator.registry.get_source = MagicMock(
+            return_value=dict(type="not_archive")
+        )
+        with self.assertRaises(BcrValidationException) as _:
+            self.bcr_validator.verify_module_dot_bazel(
+                module_name="foobar", version="0.0.0"
+            )
+
+    def test_fail_module_dot_bazel_no_relative_strip_prefix_outside_module(self):
+        self.bcr_validator.registry.get_source = MagicMock(
+            return_value=dict(strip_prefix="..")
+        )
+        with self.assertRaises(BcrValidationException) as _:
+            self.bcr_validator.verify_module_dot_bazel(
+                module_name="foobar", version="0.0.0"
+            )
+
+    def test_fail_module_dot_bazel_no_absolute_strip_prefix(self):
+        self.bcr_validator.registry.get_source = MagicMock(
+            return_value=dict(strip_prefix="/fake2")
+        )
+        with self.assertRaises(BcrValidationException) as _:
+            self.bcr_validator.verify_module_dot_bazel(
+                module_name="foobar", version="0.0.0"
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

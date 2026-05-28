@@ -531,6 +531,24 @@ class BcrValidator:
 
         tmp_dir = Path(tempfile.mkdtemp())
         output_dir = tmp_dir.joinpath("source_root")
+        # Validate the stripped output directory.
+        strip_prefix = source.get("strip_prefix", "")
+        if strip_prefix:
+            candidate = (output_dir / strip_prefix).resolve()
+            try:
+                candidate.relative_to(output_dir.resolve())
+            except ValueError:
+                error_msg = "CRITICAL FAILURE: " \
+                    f"strip_prefix '{strip_prefix}' resolves outside the " \
+                    f"extraction directory. Resolved to: {candidate}"
+                self.report(
+                    BcrValidationResult.FAILED,
+                    error_msg
+                )
+                shutil.rmtree(tmp_dir)
+                raise BcrValidationException(error_msg)
+        source_root = output_dir / strip_prefix
+
         self._download_source_archive(source, output_dir)
 
         module_file = self.registry.get_module_dot_bazel_path(module_name, version)
