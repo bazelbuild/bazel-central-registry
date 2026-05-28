@@ -58,6 +58,12 @@ py_binary(
     ],
 )
 
+py_test(
+    name = "bcr_validation_test",
+    srcs = ["bcr_validation_test.py"],
+    deps = [":bcr_validation"],
+)
+
 py_library(
     name = "verify_stable_archives",
     srcs = ["verify_stable_archives.py"],
