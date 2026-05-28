@@ -16,10 +16,7 @@
 
 import unittest
 from registry import RegistryClient
-from tools.bcr_validation import (
-    BcrValidator,
-    BcrValidationException
-)
+from tools.bcr_validation import BcrValidator, BcrValidationException
 
 from unittest.mock import MagicMock
 
