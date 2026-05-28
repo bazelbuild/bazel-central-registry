@@ -33,18 +33,21 @@ class TestBcrValidation(unittest.TestCase):
 
     def test_fail_module_dot_bazel_source_is_not_archive(self):
         self.bcr_validator.registry.get_source = MagicMock(return_value=dict(type="not_archive"))
-        with self.assertRaises(BcrValidationException) as _:
+        with self.assertRaises(BcrValidationException) as e:
             self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
+        self.assertEqual("Module source \"type\" must be \"archive\" (the default)", str(e.exception))
 
     def test_fail_module_dot_bazel_no_relative_strip_prefix_outside_module(self):
         self.bcr_validator.registry.get_source = MagicMock(return_value=dict(strip_prefix=".."))
-        with self.assertRaises(BcrValidationException) as _:
+        with self.assertRaises(BcrValidationException) as e:
             self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
+        self.assertTrue("CRITICAL FAILURE: strip_prefix '..' resolves outside the extraction directory. Resolved to: /" in str(e.exception))
 
     def test_fail_module_dot_bazel_no_absolute_strip_prefix(self):
         self.bcr_validator.registry.get_source = MagicMock(return_value=dict(strip_prefix="/fake2"))
-        with self.assertRaises(BcrValidationException) as _:
+        with self.assertRaises(BcrValidationException) as e:
             self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
+        self.assertTrue("CRITICAL FAILURE: strip_prefix '/fake2' resolves outside the extraction directory. Resolved to: /" in str(e.exception))
 
 
 if __name__ == "__main__":
