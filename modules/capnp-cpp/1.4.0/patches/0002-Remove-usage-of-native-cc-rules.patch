@@ -1,0 +1,240 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shantanu Gontia <gontia.shantanu@gmail.com>
+Date: Thu, 28 May 2026 22:09:37 +0530
+Subject: Remove usage of native cc rules
+
+
+diff --git c++/.bazelversion c++/.bazelversion
+index 5e32542..b26a34e 100644
+--- c++/.bazelversion
++++ c++/.bazelversion
+@@ -1 +1 @@
+-6.1.2
++7.2.1
+diff --git c++/build/configure.bzl c++/build/configure.bzl
+index bafee63..a05529b 100644
+--- c++/build/configure.bzl
++++ c++/build/configure.bzl
+@@ -1,4 +1,5 @@
+ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "int_flag")
++load("@rules_cc//cc:defs.bzl", "cc_library")
+ 
+ def kj_configure():
+     """Generates set of flag, settings for kj configuration.
+@@ -79,7 +80,7 @@ def kj_configure():
+         flag_values = {"track_lock_blocking": "True"},
+     )
+ 
+-    native.cc_library(
++    cc_library(
+         name = "kj-defines",
+         defines = select({
+             "//src/kj:use_openssl": ["KJ_HAS_OPENSSL"],
+diff --git c++/src/capnp/BUILD.bazel c++/src/capnp/BUILD.bazel
+index 8e2d42d..bb78f46 100644
+--- c++/src/capnp/BUILD.bazel
++++ c++/src/capnp/BUILD.bazel
+@@ -1,4 +1,5 @@
+ load("@capnp-cpp//src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+ 
+ cc_library(
+     name = "capnp",
+@@ -211,13 +212,13 @@ cc_library(
+     name = "capnp-test",
+     srcs = ["test-util.c++"],
+     hdrs = ["test-util.h"],
++    visibility = [":__subpackages__"],
+     deps = [
+         ":capnp-rpc",
+         ":capnp_test",
+         ":capnpc",
+         "//src/kj:kj-test",
+     ],
+-    visibility = [":__subpackages__" ]
+ )
+ 
+ [cc_test(
+@@ -256,11 +257,11 @@ cc_library(
+ cc_test(
+     name = "endian-reverse-test",
+     srcs = ["endian-reverse-test.c++"],
+-    deps = [":capnp-test"],
+     target_compatible_with = select({
+         "@platforms//os:windows": ["@platforms//:incompatible"],
+         "//conditions:default": [],
+     }),
++    deps = [":capnp-test"],
+ )
+ 
+ cc_library(
+diff --git c++/src/capnp/cc_capnp_library.bzl c++/src/capnp/cc_capnp_library.bzl
+index 9e4acd3..4c04eb3 100644
+--- c++/src/capnp/cc_capnp_library.bzl
++++ c++/src/capnp/cc_capnp_library.bzl
+@@ -1,5 +1,7 @@
+ """Bazel rule to compile .capnp files into c++."""
+ 
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
+ capnp_provider = provider("Capnproto Provider", fields = {
+     "includes": "includes for this target (transitive)",
+     "inputs": "src + data for the target",
+@@ -117,7 +119,7 @@ def cc_capnp_library(
+         visibility = visibility,
+         target_compatible_with = target_compatible_with,
+     )
+-    native.cc_library(
++    cc_library(
+         name = name,
+         srcs = srcs_cpp,
+         hdrs = hdrs,
+diff --git c++/src/capnp/compat/BUILD.bazel c++/src/capnp/compat/BUILD.bazel
+index 8637c1d..9c8f216 100644
+--- c++/src/capnp/compat/BUILD.bazel
++++ c++/src/capnp/compat/BUILD.bazel
+@@ -1,4 +1,5 @@
+ load("@capnp-cpp//src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+ 
+ exports_files([
+     "json.capnp",
+@@ -73,9 +74,9 @@ cc_library(
+     name = f.removesuffix(".c++"),
+     srcs = [f],
+     deps = [
+-        ":websocket-rpc",
+         ":http-over-capnp",
+-        "//src/capnp:capnp-test"
++        ":websocket-rpc",
++        "//src/capnp:capnp-test",
+     ],
+ ) for f in [
+     "byte-stream-test.c++",
+@@ -92,8 +93,8 @@ cc_test(
+     name = "http-over-capnp-old-test",
+     srcs = ["http-over-capnp-old-test.c++"],
+     deps = [
+-        ":http-over-capnp-test-as-header",
+         ":http-over-capnp",
+-        "//src/capnp:capnp-test"
++        ":http-over-capnp-test-as-header",
++        "//src/capnp:capnp-test",
+     ],
+ )
+diff --git c++/src/kj/BUILD.bazel c++/src/kj/BUILD.bazel
+index e04b22b..1eac895 100644
+--- c++/src/kj/BUILD.bazel
++++ c++/src/kj/BUILD.bazel
+@@ -1,3 +1,4 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+ load("//:build/configure.bzl", "kj_configure")
+ 
+ kj_configure()
+@@ -195,25 +196,25 @@ cc_library(
+ cc_test(
+     name = "filesystem-disk-generic-test",
+     srcs = ["filesystem-disk-generic-test.c++"],
++    target_compatible_with = [
++        "@platforms//os:linux",
++    ],
+     deps = [
+         ":filesystem-disk-test-base",
+         ":kj-test",
+     ],
+-    target_compatible_with = [
+-        "@platforms//os:linux",
+-    ],
+ )
+ 
+ cc_test(
+     name = "filesystem-disk-old-kernel-test",
+     srcs = ["filesystem-disk-old-kernel-test.c++"],
++    target_compatible_with = [
++        "@platforms//os:linux",
++    ],
+     deps = [
+         ":filesystem-disk-test-base",
+         ":kj-test",
+     ],
+-    target_compatible_with = [
+-        "@platforms//os:linux",
+-    ],
+ )
+ 
+ cc_test(
+@@ -250,12 +251,12 @@ cc_test(
+ cc_test(
+     name = "exception-override-symbolizer-test",
+     srcs = ["exception-override-symbolizer-test.c++"],
+-    deps = [
+-        ":kj",
+-        ":kj-test",
+-    ],
+     linkstatic = True,
+     target_compatible_with = [
+         "@platforms//os:linux",
+     ],
++    deps = [
++        ":kj",
++        ":kj-test",
++    ],
+ )
+diff --git c++/src/kj/compat/BUILD.bazel c++/src/kj/compat/BUILD.bazel
+index f9e31ce..30c5eb1 100644
+--- c++/src/kj/compat/BUILD.bazel
++++ c++/src/kj/compat/BUILD.bazel
+@@ -1,3 +1,5 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
+ exports_files(["gtest.h"])
+ 
+ cc_library(
+@@ -57,15 +59,15 @@ cc_library(
+     srcs = ["brotli.c++"],
+     hdrs = ["brotli.h"],
+     include_prefix = "kj/compat",
+-    visibility = ["//visibility:public"],
+     target_compatible_with = select({
+         "//src/kj:use_brotli": [],
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
++    visibility = ["//visibility:public"],
+     deps = [
+         "//src/kj:kj-async",
+-        "@brotli//:brotlienc",
+         "@brotli//:brotlidec",
++        "@brotli//:brotlienc",
+     ],
+ )
+ 
+@@ -99,14 +101,14 @@ cc_library(
+ cc_test(
+     name = "http-socketpair-test",
+     srcs = ["http-socketpair-test.c++"],
++    target_compatible_with = [
++        "@platforms//os:linux",  # TODO: Investigate why this fails on macOS
++    ],
+     deps = [
+         ":http-socketpair-test-base",
+         ":kj-http",
+         "//src/kj:kj-test",
+     ],
+-    target_compatible_with = [
+-        "@platforms//os:linux", # TODO: Investigate why this fails on macOS
+-    ],
+ )
+ 
+ kj_tls_tests = [
+@@ -122,8 +124,8 @@ kj_tls_tests = [
+         "//conditions:default": ["@platforms//:incompatible"],
+     }),
+     deps = [
+-        ":kj-tls",
+         ":kj-http",
++        ":kj-tls",
+         "//src/kj:kj-test",
+     ],
+ ) for f in kj_tls_tests]
+-- 
+2.54.0
