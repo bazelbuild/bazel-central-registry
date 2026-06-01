@@ -72,6 +72,13 @@ def download(url):
     opener = urllib.request.build_opener(Github404ErrorProcessor)
     urllib.request.install_opener(opener)
     parts = urllib.parse.urlparse(url)
+    # Module source/mirror URLs come from untrusted submissions. Restrict the
+    # scheme to http/https so that a submission cannot make the validation
+    # tooling read local files (file://) or use other urllib-supported schemes.
+    if parts.scheme not in ("http", "https"):
+        raise ValueError(
+            f"Unsupported URL scheme '{parts.scheme}' in {url}; only http and https are allowed"
+        )
     headers = {"User-Agent": "curl/8.7.1"}  # Set the User-Agent header
     try:
         authenticators = netrc.netrc().authenticators(parts.netloc)
