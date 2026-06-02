@@ -5,10 +5,10 @@
 /* #undef AC_APPLE_UNIVERSAL_BUILD */
 
 /* Define to 1 if the compiler supports __builtin_expect. */
-#if WIN32 || WIN64
-#	define HAVE_BUILTIN_EXPECT 0
-#else
+#if defined(__GNUC__) || defined(__clang__)
 #	define HAVE_BUILTIN_EXPECT 1
+#else
+#	define HAVE_BUILTIN_EXPECT 0
 #endif
 
 /* Define to 1 if you have the <dlfcn.h> header file. */
