@@ -50,10 +50,13 @@ def parse_file(attestations_json, module_name, version, registry):
     }
 
     attestations_metadata = attestations_json.get("attestations")
-    _assert_is_dict_with_keys(attestations_metadata, list(full_locations.keys()))
+    files_with_att = list(full_locations.keys())
+    # Ignore attestations for other files.
+    _assert_is_dict_with_keys(attestations_metadata, files_with_att, ignore_unexpected_entries=True)
 
     attestations = []
-    for basename, metadata in attestations_metadata.items():
+    for basename in files_with_att:
+        metadata = attestations_metadata[basename]
         _assert_is_dict_with_keys(metadata, ["url", "integrity"])
 
         # verify_source_archive_url_match_github_repo in bcr_validation.py
@@ -63,7 +66,7 @@ def parse_file(attestations_json, module_name, version, registry):
         url = metadata["url"]
         # Basename can have an optional prefix since a GitHub release may
         # contain multiple modules (and thus attestation files).
-        if not re.match(f"^{url_prefix}/[^/]*{basename}.intoto.jsonl$", url):
+        if not re.match(f"^{url_prefix}/[^/]*{basename}(\.vsa)?.intoto.jsonl$", url):
             raise Error(
                 f"Expected url {url_prefix}/[prefix]{basename}.intoto.jsonl, but got {url} in {basename} attestation."
             )
@@ -83,11 +86,24 @@ def parse_file(attestations_json, module_name, version, registry):
     return attestations
 
 
-def _assert_is_dict_with_keys(candidate, keys):
+def _assert_is_dict_with_keys(candidate, keys, ignore_unexpected_entries=False):
     def format(k):
         return ", ".join(k)
 
     if not isinstance(candidate, dict):
         raise Error("Expected a dictionary.")
-    if set(keys).symmetric_difference(candidate.keys()):
-        raise Error(f"Expected keys {format(keys)}, but got {format(candidate.keys())}.")
+
+    expected = set(keys)
+    actual = set(candidate.keys())
+
+    def fail():
+        raise Error(f"Expected keys {format(expected)}, but got {format(actual)}.")
+
+    # Ensure that all expected attestations exist.
+    if not expected.issubset(actual):
+        fail()
+
+    # Unexpected keys may either be an error or can be ignored,
+    # depending on ignore_unexpected_entries.
+    if not ignore_unexpected_entries and actual.difference(expected):
+        fail()
