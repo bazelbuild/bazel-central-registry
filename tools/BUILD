@@ -55,6 +55,7 @@ py_binary(
         ":slsa",
         ":verify_stable_archives",
         requirement("requests"),
+        requirement("zstandard"),
     ],
 )
 
