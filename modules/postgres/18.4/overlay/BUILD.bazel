@@ -1,0 +1,1489 @@
+"""PostgreSQL 18.4 - libpq, libcommon and libpgport built with rules_cc_autoconf.
+
+This file replaces the hand-crafted `pg_config.h` from earlier postgres BCR
+modules with a real autoconf-style probe driven by `rules_cc_autoconf`.
+
+Public configure-style flags are exposed as `bool_flag`/`string_flag`, mirroring
+the `--with-*` / `--enable-*` switches of upstream `./configure`. See the top of
+the file for the full list.
+"""
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros", "utils")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//private:curl_ssl_transition.bzl", "pg_ssl_bundle")
+
+# ---------------------------------------------------------------------------
+# Version metadata.
+# ---------------------------------------------------------------------------
+PG_MAJORVERSION_NUM = "18"
+
+PG_MINORVERSION_NUM = "4"
+
+PG_VERSION = "18.4"
+
+PG_VERSION_NUM = "180004"
+
+# ---------------------------------------------------------------------------
+# Public configure-style flags.
+#
+# Each maps to an `--with-*` / `--enable-*` switch in upstream configure.ac.
+# Only flags meaningful to libpq, libcommon, libpgport (and the frontend tools
+# layered on top) are exposed. Server-only switches such as `--with-icu` are
+# intentionally omitted because nothing in this build links them.
+# ---------------------------------------------------------------------------
+
+# `--with-ssl=LIB` (`--with-openssl` in older releases). Selects the SSL/TLS
+# backend libpq compiles against. "openssl" pulls in `@openssl`, "boringssl"
+# pulls in `@boringssl` (a Bazel-specific extension of the upstream switch),
+# "none" disables SSL entirely. Drives `USE_OPENSSL`, `HAVE_LIBSSL`,
+# `HAVE_LIBCRYPTO`, and the per-backend optional function probes.
+string_flag(
+    name = "with_ssl",
+    build_setting_default = "openssl",
+    values = [
+        "none",
+        "openssl",
+        "boringssl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# `--with-gssapi`: build with Kerberos/GSSAPI authentication. When enabled
+# `fe-gssapi-common.c` and `fe-secure-gssapi.c` are compiled into libpq and
+# linked against the GSSAPI library named by `:gssapi_lib`. The BCR has no
+# canonical Kerberos module today, so consumers must point `:gssapi_lib` at a
+# `cc_library` they provide (e.g. a `system_library` wrapping the host
+# `libgssapi_krb5.so`). With the flag off, neither `ENABLE_GSS` nor the
+# GSSAPI source files are added — `:gssapi_lib` is unused.
+bool_flag(
+    name = "with_gssapi",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+# Label of the `cc_library` that provides GSSAPI headers + link inputs. Only
+# consulted when `:with_gssapi` is `True`. There is no canonical Kerberos
+# module in the BCR, so the default points at `:gssapi_system_lib`, a tiny
+# `cc_library` that uses `linkopts = ["-lgssapi_krb5"]` to pick up the host
+# system's MIT/Heimdal Kerberos. Consumers that want to vendor their own
+# Kerberos build (or disable the dep entirely) override this flag with their
+# own `cc_library`:
+#
+#     bazel build --//:with_gssapi=True \
+#                 --//:gssapi_lib=//my:vendored_kerberos
+#
+# Setting it to an empty cc_library disables the link entirely while still
+# compiling the GSSAPI source paths.
+label_flag(
+    name = "gssapi_lib",
+    build_setting_default = ":gssapi_system_lib",
+    visibility = ["//visibility:public"],
+)
+
+# Default GSSAPI provider — links the host's system Kerberos via -l flags.
+# Assumes MIT or Heimdal's libgssapi_krb5 / com_err are installed; if not,
+# override `--//:gssapi_lib` with a `cc_library` you control.
+cc_library(
+    name = "gssapi_system_lib",
+    linkopts = select({
+        "@platforms//os:macos": [
+            # macOS ships Heimdal in /usr/lib but the headers live in the
+            # GSS.framework. Consumers who want full GSSAPI on macOS should
+            # override this with a cc_library that adds the framework.
+            "-lgssapi_krb5",
+        ],
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lgssapi_krb5",
+            "-lkrb5",
+            "-lk5crypto",
+            "-lcom_err",
+        ],
+    }),
+)
+
+bool_flag(
+    name = "with_zlib",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_lz4",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_zstd",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_libcurl",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_readline",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_cassert",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "with_pgport",
+    build_setting_default = "5432",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "with_krb_srvnam",
+    build_setting_default = "postgres",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "with_blocksize",
+    build_setting_default = "8",
+    values = [
+        "1",
+        "2",
+        "4",
+        "8",
+        "16",
+        "32",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "with_wal_blocksize",
+    build_setting_default = "8",
+    values = [
+        "1",
+        "2",
+        "4",
+        "8",
+        "16",
+        "32",
+        "64",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "with_segsize",
+    build_setting_default = "1",
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# config_setting helpers (used in select()s below).
+# ---------------------------------------------------------------------------
+
+config_setting(
+    name = "ssl_openssl",
+    flag_values = {":with_ssl": "openssl"},
+)
+
+config_setting(
+    name = "ssl_boringssl",
+    flag_values = {":with_ssl": "boringssl"},
+)
+
+config_setting(
+    name = "ssl_none",
+    flag_values = {":with_ssl": "none"},
+)
+
+config_setting(
+    name = "gssapi_on",
+    flag_values = {":with_gssapi": "True"},
+)
+
+config_setting(
+    name = "zlib_on",
+    flag_values = {":with_zlib": "True"},
+)
+
+config_setting(
+    name = "lz4_on",
+    flag_values = {":with_lz4": "True"},
+)
+
+config_setting(
+    name = "zstd_on",
+    flag_values = {":with_zstd": "True"},
+)
+
+config_setting(
+    name = "libcurl_on",
+    flag_values = {":with_libcurl": "True"},
+)
+
+config_setting(
+    name = "readline_on",
+    flag_values = {":with_readline": "True"},
+)
+
+config_setting(
+    name = "cassert_on",
+    flag_values = {":enable_cassert": "True"},
+)
+
+# Compiler-aware config_setting_groups so the autoconf rule below can emit
+# different defines on MSVC than on GCC/Clang. MSVC doesn't grok
+# `__int128`, GCC's `gnu_printf` format attribute, or x86_64 inline-asm
+# popcntq / SSE4.2 CRC32C; it does have `__cpuid` / `__cpuidex` intrinsics
+# in their place. The `clang-cl` variant of clang is also MSVC-syntax, so
+# it falls into the same bucket.
+selects.config_setting_group(
+    name = "_msvc_like",
+    match_any = [
+        "@rules_cc//cc/compiler:msvc-cl",
+        "@rules_cc//cc/compiler:clang-cl",
+    ],
+)
+
+selects.config_setting_group(
+    name = "_gcc_like",
+    match_any = [
+        "@rules_cc//cc/compiler:clang",
+        "@rules_cc//cc/compiler:emscripten",
+        "@rules_cc//cc/compiler:gcc",
+        "@rules_cc//cc/compiler:mingw-gcc",
+    ],
+)
+
+selects.config_setting_group(
+    name = "_x86_64_msvc_like",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        ":_msvc_like",
+    ],
+)
+
+selects.config_setting_group(
+    name = "_x86_64_gcc_like",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        ":_gcc_like",
+    ],
+)
+
+# OAuth flow requires libcurl AND either `<sys/epoll.h>` (Linux) or
+# `<sys/event.h>` (macOS / BSD). Windows has neither, so upstream's
+# meson.build leaves `oauth_flow_supported = false` there: it doesn't
+# compile `libpq-oauth/oauth-curl.c` and doesn't set `USE_LIBCURL`. The
+# source file even has `#error libpq-oauth is not supported on this
+# platform` to enforce the rule. We mirror that with this group.
+selects.config_setting_group(
+    name = "_oauth_supported_os",
+    match_any = [
+        "@platforms//os:freebsd",
+        "@platforms//os:linux",
+        "@platforms//os:macos",
+        "@platforms//os:netbsd",
+        "@platforms//os:openbsd",
+    ],
+)
+
+selects.config_setting_group(
+    name = "_libcurl_on_oauth_supported",
+    match_all = [
+        ":libcurl_on",
+        ":_oauth_supported_os",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Hand-written / generated headers that don't fit autoconf's probe model.
+# ---------------------------------------------------------------------------
+
+write_file(
+    name = "pg_config_ext_h_lp64",
+    out = "src/include/pg_config_ext.h.lp64",
+    content = [
+        "/* src/include/pg_config_ext.h.  Generated from Bazel.  */",
+        "",
+        "/* Define to the name of a signed 64-bit integer type. */",
+        "#define PG_INT64_TYPE long int",
+    ],
+    newline = "unix",
+)
+
+write_file(
+    name = "pg_config_ext_h_llp64",
+    out = "src/include/pg_config_ext.h.llp64",
+    content = [
+        "/* src/include/pg_config_ext.h.  Generated from Bazel.  */",
+        "",
+        "/* Define to the name of a signed 64-bit integer type. */",
+        "#define PG_INT64_TYPE long long int",
+    ],
+    newline = "unix",
+)
+
+copy_file(
+    name = "pg_config_ext_h",
+    src = select({
+        "@platforms//os:windows": ":pg_config_ext_h_llp64",
+        "//conditions:default": ":pg_config_ext_h_lp64",
+    }),
+    out = "src/include/pg_config_ext.h",
+)
+
+write_file(
+    name = "pg_config_paths_h",
+    out = "src/include/pg_config_paths.h",
+    content = [
+        "/* src/include/pg_config_paths.h.  Generated from Bazel.  */",
+        "#define PGBINDIR \"/usr/local/pgsql/bin\"",
+        "#define PGSHAREDIR \"/usr/local/pgsql/share\"",
+        "#define SYSCONFDIR \"/usr/local/pgsql/etc\"",
+        "#define INCLUDEDIR \"/usr/local/pgsql/include\"",
+        "#define PKGINCLUDEDIR \"/usr/local/pgsql/include\"",
+        "#define INCLUDEDIRSERVER \"/usr/local/pgsql/include/server\"",
+        "#define LIBDIR \"/usr/local/pgsql/lib\"",
+        "#define PKGLIBDIR \"/usr/local/pgsql/lib\"",
+        "#define LOCALEDIR \"/usr/local/pgsql/share/locale\"",
+        "#define DOCDIR \"/usr/local/pgsql/share/doc/\"",
+        "#define HTMLDIR \"/usr/local/pgsql/share/doc/\"",
+        "#define MANDIR \"/usr/local/pgsql/share/man\"",
+    ],
+    newline = "unix",
+)
+
+copy_file(
+    name = "pg_config_os_h",
+    src = select({
+        "@platforms//os:freebsd": "src/include/port/freebsd.h",
+        "@platforms//os:macos": "src/include/port/darwin.h",
+        "@platforms//os:netbsd": "src/include/port/netbsd.h",
+        "@platforms//os:openbsd": "src/include/port/openbsd.h",
+        "@platforms//os:windows": "src/include/port/win32.h",
+        "//conditions:default": "src/include/port/linux.h",
+    }),
+    out = "src/include/pg_config_os.h",
+)
+
+# ---------------------------------------------------------------------------
+# Autoconf probes.
+# ---------------------------------------------------------------------------
+
+package_info(
+    name = "package_info",
+    package_name = "PostgreSQL",
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "pgsql-bugs@lists.postgresql.org",
+    package_tarname = "postgresql",
+    package_url = "https://www.postgresql.org/",
+)
+
+_AUTOCONF_HEADERS = macros.AC_CHECK_HEADERS([
+    "atomic.h",
+    "copyfile.h",
+    "crtdefs.h",
+    "editline/history.h",
+    "editline/readline.h",
+    "execinfo.h",
+    "getopt.h",
+    "gssapi.h",
+    "gssapi/gssapi.h",
+    "gssapi_ext.h",
+    "gssapi/gssapi_ext.h",
+    "history.h",
+    "ifaddrs.h",
+    "inttypes.h",
+    "mbarrier.h",
+    "memory.h",
+    "ossp/uuid.h",
+    "pam/pam_appl.h",
+    "readline.h",
+    "readline/history.h",
+    "readline/readline.h",
+    "security/pam_appl.h",
+    "stdint.h",
+    "stdlib.h",
+    "strings.h",
+    "string.h",
+    "sys/epoll.h",
+    "sys/event.h",
+    "sys/personality.h",
+    "sys/prctl.h",
+    "sys/procctl.h",
+    "sys/signalfd.h",
+    "sys/stat.h",
+    "sys/types.h",
+    "sys/ucred.h",
+    "termios.h",
+    "ucred.h",
+    "unistd.h",
+    "uuid.h",
+    "uuid/uuid.h",
+    "xlocale.h",
+])
+
+_AUTOCONF_FUNCS = macros.AC_CHECK_FUNCS([
+    "append_history",
+    "backtrace_symbols",
+    "copyfile",
+    "copy_file_range",
+    "elf_aux_info",
+    "explicit_bzero",
+    "getauxval",
+    "getifaddrs",
+    "getopt",
+    "getopt_long",
+    "getpeereid",
+    "getpeerucred",
+    "history_truncate_file",
+    "inet_aton",
+    "inet_pton",
+    "kqueue",
+    "ldap_initialize",
+    "localeconv_l",
+    "mbstowcs_l",
+    "mkdtemp",
+    "posix_fadvise",
+    "posix_fallocate",
+    "ppoll",
+    "pthread_barrier_wait",
+    "pthread_is_threaded_np",
+    "rl_completion_matches",
+    "rl_filename_completion_function",
+    "rl_reset_screen_size",
+    "rl_variable_bind",
+    "setproctitle",
+    "setproctitle_fast",
+    "strerror_r",
+    "strlcat",
+    "strlcpy",
+    "strnlen",
+    "strsep",
+    "strsignal",
+    "syncfs",
+    "sync_file_range",
+    "timingsafe_bcmp",
+    "uselocale",
+    "wcstombs_l",
+])
+
+_AUTOCONF_DECLS = [
+    checks.AC_CHECK_DECL(
+        "fdatasync",
+        define = "HAVE_DECL_FDATASYNC",
+        includes = ["#include <unistd.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "F_FULLFSYNC",
+        define = "HAVE_DECL_F_FULLFSYNC",
+        includes = ["#include <fcntl.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "posix_fadvise",
+        define = "HAVE_DECL_POSIX_FADVISE",
+        includes = ["#include <fcntl.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "preadv",
+        define = "HAVE_DECL_PREADV",
+        includes = ["#include <sys/uio.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "pwritev",
+        define = "HAVE_DECL_PWRITEV",
+        includes = ["#include <sys/uio.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "strchrnul",
+        define = "HAVE_DECL_STRCHRNUL",
+        includes = ["#include <string.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "strlcat",
+        define = "HAVE_DECL_STRLCAT",
+        includes = ["#include <string.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "strlcpy",
+        define = "HAVE_DECL_STRLCPY",
+        includes = ["#include <string.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "strnlen",
+        define = "HAVE_DECL_STRNLEN",
+        includes = ["#include <string.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "strsep",
+        define = "HAVE_DECL_STRSEP",
+        includes = ["#include <string.h>"],
+    ),
+    checks.AC_CHECK_DECL(
+        "memset_s",
+        define = "HAVE_DECL_MEMSET_S",
+        includes = [
+            "#define __STDC_WANT_LIB_EXT1__ 1",
+            "#include <string.h>",
+        ],
+    ),
+    checks.AC_CHECK_DECL(
+        "timingsafe_bcmp",
+        define = "HAVE_DECL_TIMINGSAFE_BCMP",
+        includes = ["#include <string.h>"],
+    ),
+]
+
+_AUTOCONF_TYPES = [
+    checks.AC_CHECK_TYPE(
+        "socklen_t",
+        define = "HAVE_SOCKLEN_T",
+        includes = ["#include <sys/socket.h>"],
+    ),
+    checks.AC_CHECK_TYPE(
+        "struct option",
+        define = "HAVE_STRUCT_OPTION",
+        includes = ["#include <getopt.h>"],
+    ),
+    checks.AC_CHECK_TYPE(
+        "union semun",
+        define = "HAVE_UNION_SEMUN",
+        includes = [
+            "#include <sys/ipc.h>",
+            "#include <sys/sem.h>",
+            "#include <sys/types.h>",
+        ],
+    ),
+    checks.AC_CHECK_MEMBER(
+        "struct sockaddr.sa_len",
+        define = "HAVE_STRUCT_SOCKADDR_SA_LEN",
+        includes = [
+            "#include <sys/socket.h>",
+            "#include <sys/types.h>",
+        ],
+    ),
+    checks.AC_CHECK_MEMBER(
+        "struct tm.tm_zone",
+        define = "HAVE_STRUCT_TM_TM_ZONE",
+        includes = [
+            "#include <sys/types.h>",
+            "#include <time.h>",
+        ],
+    ),
+]
+
+_AUTOCONF_SIZEOF = [
+    checks.AC_CHECK_SIZEOF(
+        "long",
+        define = "SIZEOF_LONG",
+    ),
+    checks.AC_CHECK_SIZEOF(
+        "long long",
+        define = "SIZEOF_LONG_LONG",
+    ),
+    checks.AC_CHECK_SIZEOF(
+        "off_t",
+        define = "SIZEOF_OFF_T",
+    ),
+    checks.AC_CHECK_SIZEOF(
+        "size_t",
+        define = "SIZEOF_SIZE_T",
+    ),
+    checks.AC_CHECK_SIZEOF(
+        "void *",
+        define = "SIZEOF_VOID_P",
+    ),
+    checks.AC_CHECK_ALIGNOF(
+        "double",
+        define = "ALIGNOF_DOUBLE",
+    ),
+    checks.AC_CHECK_ALIGNOF(
+        "int",
+        define = "ALIGNOF_INT",
+    ),
+    checks.AC_CHECK_ALIGNOF(
+        "int64_t",
+        define = "ALIGNOF_INT64_T",
+    ),
+    checks.AC_CHECK_ALIGNOF(
+        "long",
+        define = "ALIGNOF_LONG",
+    ),
+    checks.AC_CHECK_ALIGNOF(
+        "short",
+        define = "ALIGNOF_SHORT",
+    ),
+    checks.AC_CHECK_ALIGNOF(
+        "__int128",
+        define = "ALIGNOF_PG_INT128_TYPE",
+    ),
+]
+
+_AUTOCONF_BUILTINS = [
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_bswap16",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_bswap16((unsigned short)0);"),
+        define = "HAVE__BUILTIN_BSWAP16",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_bswap32",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_bswap32(0u);"),
+        define = "HAVE__BUILTIN_BSWAP32",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_bswap64",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_bswap64(0ull);"),
+        define = "HAVE__BUILTIN_BSWAP64",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_clz",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_clz(1u);"),
+        define = "HAVE__BUILTIN_CLZ",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_ctz",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_ctz(1u);"),
+        define = "HAVE__BUILTIN_CTZ",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_popcount",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_popcount(1u);"),
+        define = "HAVE__BUILTIN_POPCOUNT",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_constant_p",
+        code = utils.AC_LANG_PROGRAM([], "int x[__builtin_constant_p(1) ? 1 : -1]; (void)x;"),
+        define = "HAVE__BUILTIN_CONSTANT_P",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_frame_address",
+        code = utils.AC_LANG_PROGRAM([], "(void)__builtin_frame_address(0);"),
+        define = "HAVE__BUILTIN_FRAME_ADDRESS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_unreachable",
+        code = utils.AC_LANG_PROGRAM([], "__builtin_unreachable();"),
+        define = "HAVE__BUILTIN_UNREACHABLE",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_types_compatible_p",
+        code = utils.AC_LANG_PROGRAM([], "int x[__builtin_types_compatible_p(int, int) ? 1 : -1]; (void)x;"),
+        define = "HAVE__BUILTIN_TYPES_COMPATIBLE_P",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have__builtin_op_overflow",
+        code = utils.AC_LANG_PROGRAM(
+            [],
+            "int r; (void)__builtin_add_overflow(1, 2, &r);",
+        ),
+        define = "HAVE__BUILTIN_OP_OVERFLOW",
+    ),
+    checks.AC_TRY_COMPILE(
+        # Test `_Static_assert` at *file scope* — that's where postgres's
+        # `StaticAssertDecl` macro lands. MSVC's default C mode (no
+        # `/std:c11`) accepts `_Static_assert(...)` inside `main` as an
+        # implicit function call but rejects it at file scope, so a probe
+        # that wraps it in a function body would spuriously pass and then
+        # `pqsignal.c`'s `StaticAssertDecl(SIGUSR2 < PG_NSIG, ...)` would
+        # fail to compile.
+        name = "ac_cv_have__static_assert",
+        code = utils.AC_LANG_PROGRAM(
+            ["_Static_assert(1, \"ok\");"],
+            "(void) 0;",
+        ),
+        define = "HAVE__STATIC_ASSERT",
+    ),
+    checks.AC_TRY_COMPILE(
+        name = "ac_cv_have_typeof",
+        code = utils.AC_LANG_PROGRAM([], "int x = 1; __typeof__(x) y = x; (void)y;"),
+        define = "HAVE_TYPEOF",
+    ),
+    checks.AC_TRY_COMPILE(
+        name = "ac_cv_have_computed_goto",
+        code = utils.AC_LANG_PROGRAM([], "void *p = &&label; goto *p; label:;"),
+        define = "HAVE_COMPUTED_GOTO",
+    ),
+    checks.AC_TRY_COMPILE(
+        name = "ac_cv_have_visibility_attribute",
+        code = utils.AC_LANG_PROGRAM(
+            ["int foo(void) __attribute__((visibility(\"hidden\")));"],
+            "(void)0;",
+        ),
+        define = "HAVE_VISIBILITY_ATTRIBUTE",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_gcc__sync_char_tas",
+        code = utils.AC_LANG_PROGRAM(
+            [],
+            "char lock = 0; (void)__sync_lock_test_and_set(&lock, 1); __sync_lock_release(&lock);",
+        ),
+        define = "HAVE_GCC__SYNC_CHAR_TAS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_gcc__sync_int32_tas",
+        code = utils.AC_LANG_PROGRAM(
+            [],
+            "int lock = 0; (void)__sync_lock_test_and_set(&lock, 1); __sync_lock_release(&lock);",
+        ),
+        define = "HAVE_GCC__SYNC_INT32_TAS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_gcc__sync_int32_cas",
+        code = utils.AC_LANG_PROGRAM(
+            [],
+            "int v = 0; (void)__sync_val_compare_and_swap(&v, 0, 1);",
+        ),
+        define = "HAVE_GCC__SYNC_INT32_CAS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_gcc__sync_int64_cas",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <stdint.h>"],
+            "int64_t v = 0; (void)__sync_val_compare_and_swap(&v, 0, 1);",
+        ),
+        define = "HAVE_GCC__SYNC_INT64_CAS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_gcc__atomic_int32_cas",
+        code = utils.AC_LANG_PROGRAM(
+            [],
+            "int e = 0; int v = 0; (void)__atomic_compare_exchange_n(&v, &e, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);",
+        ),
+        define = "HAVE_GCC__ATOMIC_INT32_CAS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_gcc__atomic_int64_cas",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <stdint.h>"],
+            "int64_t e = 0; int64_t v = 0; (void)__atomic_compare_exchange_n(&v, &e, 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);",
+        ),
+        define = "HAVE_GCC__ATOMIC_INT64_CAS",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_var_int_opterr",
+        code = utils.AC_LANG_PROGRAM(
+            [
+                "#include <unistd.h>",
+                "extern int opterr;",
+            ],
+            "opterr = 1;",
+        ),
+        define = "HAVE_INT_OPTERR",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_var_int_optreset",
+        code = utils.AC_LANG_PROGRAM(
+            [
+                "#include <unistd.h>",
+                "extern int optreset;",
+            ],
+            "optreset = 1;",
+        ),
+        define = "HAVE_INT_OPTRESET",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_var_int_timezone",
+        code = utils.AC_LANG_PROGRAM(
+            [
+                "#include <time.h>",
+                "extern long int timezone;",
+            ],
+            "timezone = 0;",
+        ),
+        define = "HAVE_INT_TIMEZONE",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_func_fseeko",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <stdio.h>"],
+            "(void)fseeko(stdin, 0, 0);",
+        ),
+        define = "HAVE_FSEEKO",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_func_syslog",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <syslog.h>"],
+            "openlog(\"x\", 0, 0); syslog(0, \"%s\", \"x\"); closelog();",
+        ),
+        define = "HAVE_SYSLOG",
+    ),
+    checks.AC_TRY_LINK(
+        name = "ac_cv_have_pthread",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <pthread.h>"],
+            "pthread_t t; (void)pthread_create(&t, 0, 0, 0);",
+        ),
+        define = "HAVE_PTHREAD",
+    ),
+    checks.AC_TRY_COMPILE(
+        name = "ac_cv_have_pthread_prio_inherit",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <pthread.h>"],
+            "int x = PTHREAD_PRIO_INHERIT; (void)x;",
+        ),
+        define = "HAVE_PTHREAD_PRIO_INHERIT",
+    ),
+    checks.AC_CHECK_LIB(
+        "m",
+        "main",
+        define = "HAVE_LIBM",
+    ),
+    checks.AC_TRY_COMPILE(
+        name = "ac_cv_func_strerror_r_int",
+        code = utils.AC_LANG_PROGRAM(
+            ["#include <string.h>"],
+            "char buf[16]; int x = strerror_r(0, buf, sizeof(buf)); (void)x;",
+        ),
+        define = "STRERROR_R_INT",
+    ),
+]
+
+autoconf(
+    name = "autoconf_probes",
+    checks = (
+        _AUTOCONF_HEADERS +
+        _AUTOCONF_FUNCS +
+        _AUTOCONF_DECLS +
+        _AUTOCONF_TYPES +
+        _AUTOCONF_SIZEOF +
+        _AUTOCONF_BUILTINS + [
+            checks.AC_DEFINE("STDC_HEADERS", "1"),
+            # Both GCC and MSVC accept `__restrict` as a spelling of the
+            # C99 `restrict` qualifier, so this define is compiler-agnostic.
+            checks.AC_DEFINE("restrict", "__restrict"),
+            checks.AC_DEFINE("pg_restrict", "__restrict"),
+            checks.AC_DEFINE("MAXIMUM_ALIGNOF", "8"),
+            checks.AC_DEFINE("MEMSET_LOOP_LIMIT", "1024"),
+            checks.AC_DEFINE(
+                "PG_VERSION",
+                "\"{}\"".format(PG_VERSION),
+            ),
+            checks.AC_DEFINE(
+                "PG_VERSION_STR",
+                "\"PostgreSQL {} compiled by Bazel\"".format(PG_VERSION),
+            ),
+            checks.AC_DEFINE("PG_VERSION_NUM", PG_VERSION_NUM),
+            checks.AC_DEFINE(
+                "PG_MAJORVERSION",
+                "\"{}\"".format(PG_MAJORVERSION_NUM),
+            ),
+            checks.AC_DEFINE("PG_MAJORVERSION_NUM", PG_MAJORVERSION_NUM),
+            checks.AC_DEFINE("PG_MINORVERSION_NUM", PG_MINORVERSION_NUM),
+            checks.AC_DEFINE("CONFIGURE_ARGS", "\" (built by Bazel via rules_cc_autoconf)\""),
+            checks.AC_DEFINE("OPENSSL_API_COMPAT", "0x10002000L"),
+            checks.AC_DEFINE("HAVE_THREADSAFE_CURL_GLOBAL_INIT", "1"),
+            checks.AC_DEFINE("PG_KRB_SRVNAM", "\"postgres\""),
+            checks.AC_DEFINE("BLCKSZ", "8192"),
+            checks.AC_DEFINE("XLOG_BLCKSZ", "8192"),
+            checks.AC_DEFINE("RELSEG_SIZE", "131072"),
+            checks.AC_DEFINE("DEF_PGPORT", "5432"),
+            checks.AC_DEFINE("DEF_PGPORT_STR", "\"5432\""),
+        ]
+    ) + select({
+        ":ssl_boringssl": [
+            checks.AC_DEFINE("USE_OPENSSL", "1"),
+            checks.AC_DEFINE("HAVE_LIBSSL", "1"),
+            checks.AC_DEFINE("HAVE_LIBCRYPTO", "1"),
+        ],
+        ":ssl_openssl": [
+            checks.AC_DEFINE("USE_OPENSSL", "1"),
+            checks.AC_DEFINE("HAVE_LIBSSL", "1"),
+            checks.AC_DEFINE("HAVE_LIBCRYPTO", "1"),
+            # OpenSSL 1.1.1+ adds these. Not present in BoringSSL, which has
+            # to fall back to the legacy spellings postgres carries.
+            checks.AC_DEFINE("HAVE_SSL_CTX_SET_CERT_CB", "1"),
+            checks.AC_DEFINE("HAVE_SSL_CTX_SET_CIPHERSUITES", "1"),
+            checks.AC_DEFINE("HAVE_SSL_CTX_SET_KEYLOG_CALLBACK", "1"),
+            checks.AC_DEFINE("HAVE_SSL_CTX_SET_NUM_TICKETS", "1"),
+            checks.AC_DEFINE("HAVE_X509_GET_SIGNATURE_INFO", "1"),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":gssapi_on": [checks.AC_DEFINE("ENABLE_GSS", "1")],
+        "//conditions:default": [],
+    }) + select({
+        ":zlib_on": [checks.AC_DEFINE("HAVE_LIBZ", "1")],
+        "//conditions:default": [],
+    }) + select({
+        ":lz4_on": [
+            checks.AC_DEFINE("USE_LZ4", "1"),
+            checks.AC_DEFINE("HAVE_LIBLZ4", "1"),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":zstd_on": [
+            checks.AC_DEFINE("USE_ZSTD", "1"),
+            checks.AC_DEFINE("HAVE_LIBZSTD", "1"),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        # Only set USE_LIBCURL where the OAuth flow is actually wired up
+        # (libcurl + epoll/kqueue). On Windows the OAuth flow isn't
+        # supported, so leave the define off even if `:libcurl_on`.
+        ":_libcurl_on_oauth_supported": [
+            checks.AC_DEFINE("USE_LIBCURL", "1"),
+            checks.AC_DEFINE("HAVE_LIBCURL", "1"),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":readline_on": [checks.AC_DEFINE("HAVE_LIBREADLINE", "1")],
+        "//conditions:default": [],
+    }) + select({
+        ":cassert_on": [checks.AC_DEFINE("USE_ASSERT_CHECKING", "1")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:macos": [
+            checks.AC_DEFINE("USE_SYSV_SEMAPHORES", "1"),
+            checks.AC_DEFINE("USE_SYSV_SHARED_MEMORY", "1"),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("USE_WIN32_SEMAPHORES", "1"),
+            checks.AC_DEFINE("USE_WIN32_SHARED_MEMORY", "1"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("USE_UNNAMED_POSIX_SEMAPHORES", "1"),
+            checks.AC_DEFINE("USE_SYSV_SHARED_MEMORY", "1"),
+        ],
+    }) + select({
+        "@platforms//os:macos": [checks.AC_DEFINE("DLSUFFIX", "\".dylib\"")],
+        "@platforms//os:windows": [checks.AC_DEFINE("DLSUFFIX", "\".dll\"")],
+        "//conditions:default": [checks.AC_DEFINE("DLSUFFIX", "\".so\"")],
+    }) + select({
+        # GCC/Clang-only spellings. `__int128` is GCC/Clang-only (MSVC
+        # has no 128-bit integer type); `gnu_printf` is the GCC format
+        # archetype; `__typeof__` is a GCC extension. postgres's `c.h`
+        # has `#ifdef PG_INT128_TYPE` and `#ifdef typeof` guards, so
+        # leaving these undefined on MSVC is the right behavior.
+        ":_msvc_like": [],
+        "//conditions:default": [
+            checks.AC_DEFINE("PG_INT128_TYPE", "__int128"),
+            checks.AC_DEFINE("PG_C_PRINTF_ATTRIBUTE", "gnu_printf"),
+            checks.AC_DEFINE("PG_CXX_PRINTF_ATTRIBUTE", "gnu_printf"),
+            checks.AC_DEFINE("typeof", "__typeof__"),
+        ],
+    }) + select({
+        ":_x86_64_gcc_like": [
+            checks.AC_DEFINE("HAVE_X86_64_POPCNTQ", "1"),
+            checks.AC_DEFINE("USE_SSE42_CRC32C_WITH_RUNTIME_CHECK", "1"),
+            checks.AC_DEFINE("HAVE__GET_CPUID", "1"),
+        ],
+        # CRC32C strategy + CPUID intrinsics. GCC/Clang on x86_64 can use
+        # inline-asm `popcntq` and SSE4.2 CRC32C with a runtime check via
+        # `__get_cpuid`. MSVC/clang-cl don't grok GCC inline asm; they
+        # have `__cpuid`/`__cpuidex` intrinsics and fall back to the
+        # software slicing-by-8 CRC32C. ARMv8 has its own CRC32 path.
+        ":_x86_64_msvc_like": [
+            checks.AC_DEFINE("HAVE__CPUID", "1"),
+            checks.AC_DEFINE("HAVE__CPUIDEX", "1"),
+            checks.AC_DEFINE("USE_SLICING_BY_8_CRC32C", "1"),
+        ],
+        "@platforms//cpu:arm64": [
+            checks.AC_DEFINE("USE_ARMV8_CRC32C_WITH_RUNTIME_CHECK", "1"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("USE_SLICING_BY_8_CRC32C", "1"),
+        ],
+    }),
+    deps = [":package_info"],
+)
+
+autoconf_hdr(
+    name = "pg_config_h",
+    out = "src/include/pg_config.h",
+    template = "src/include/pg_config.h.in",
+    deps = [":autoconf_probes"],
+)
+
+# ---------------------------------------------------------------------------
+# Headers + source layout.
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "include",
+    hdrs = [
+        ":pg_config_ext_h",
+        ":pg_config_h",
+        ":pg_config_os_h",
+        ":pg_config_paths_h",
+    ] + glob([
+        "src/include/**/*.h",
+        "src/common/*.h",
+        "src/port/*.h",
+        # libpq's pqexpbuffer.h is consumed by `pgcommon`'s frontend `jsonapi.c`
+        # (via JSONAPI_USE_PQEXPBUFFER), so expose it as a visible header.
+        "src/interfaces/libpq/*.h",
+        # libpq-oauth headers — only included from libpq sources when
+        # `:libcurl_on`, but globbing them unconditionally keeps the include
+        # search path stable.
+        "src/interfaces/libpq-oauth/*.h",
+    ]),
+    includes = [
+        "src/include",
+    ] + select({
+        # Upstream postgres ships POSIX compatibility shims under
+        # `src/include/port/win32/` (all Windows builds, MinGW + MSVC) and
+        # `src/include/port/win32_msvc/` (MSVC-only). These provide
+        # `<netinet/in.h>`, `<sys/socket.h>`, `<sys/time.h>`, `<unistd.h>`,
+        # etc. so the unconditional POSIX includes in `port.h`,
+        # `libpq-int.h`, and the win32 port files resolve cleanly. Upstream
+        # meson adds these paths in its main meson.build; we mirror that
+        # here so we don't have to patch postgres source.
+        "@platforms//os:windows": ["src/include/port/win32"],
+        "//conditions:default": [],
+    }) + select({
+        ":_msvc_like": ["src/include/port/win32_msvc"],
+        "//conditions:default": [],
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# libpgport — small portability shim. Sources vary per OS.
+# ---------------------------------------------------------------------------
+
+_LIBPORT_BASE_SRCS = [
+    "src/port/bsearch_arg.c",
+    "src/port/chklocale.c",
+    "src/port/inet_net_ntop.c",
+    "src/port/noblock.c",
+    "src/port/path.c",
+    "src/port/pg_bitutils.c",
+    "src/port/pg_crc32c_sb8.c",
+    "src/port/pg_localeconv_r.c",
+    "src/port/pg_popcount_aarch64.c",
+    "src/port/pg_strong_random.c",
+    "src/port/pgcheckdir.c",
+    "src/port/pgmkdirp.c",
+    "src/port/pgsleep.c",
+    "src/port/pgstrcasecmp.c",
+    "src/port/pgstrsignal.c",
+    "src/port/pqsignal.c",
+    "src/port/qsort.c",
+    "src/port/qsort_arg.c",
+    "src/port/quotes.c",
+    "src/port/snprintf.c",
+    "src/port/strerror.c",
+    "src/port/tar.c",
+]
+
+# Replacement files compiled when the OS libc lacks the function. Upstream's
+# `meson.build` enables these via `replace_funcs_neg`, gated on the HAVE_*
+# autoconf result. We can't easily select on probe-results from srcs, so we
+# pick the canonical set for each platform.
+_LIBPORT_LINUX_SRCS = [
+    # glibc has explicit_bzero (>=2.25), getopt(_long), inet_aton, mkdtemp,
+    # strnlen, strsep and pthread_barrier_wait. Everything else needs a
+    # postgres-supplied replacement.
+    "src/port/explicit_bzero.c",
+    "src/port/getpeereid.c",
+    "src/port/strlcat.c",
+    "src/port/strlcpy.c",
+    "src/port/timingsafe_bcmp.c",
+]
+
+_LIBPORT_MACOS_SRCS = [
+    # macOS provides strlcat/strlcpy/timingsafe_bcmp natively but lacks
+    # explicit_bzero and pthread_barrier_wait.
+    "src/port/explicit_bzero.c",
+    "src/port/pthread_barrier_wait.c",
+]
+
+_LIBPORT_WINDOWS_SRCS = [
+    "src/port/dirent.c",
+    "src/port/dirmod.c",
+    # MSVC's libc lacks these; postgres ships replacements that meson's
+    # `replace_funcs_neg` would add when the probe fails. We can't drive
+    # cc_library srcs from probe results, so we list them statically.
+    # `strnlen` is intentionally omitted — MSVC's CRT has it since at
+    # least 2010.
+    "src/port/explicit_bzero.c",
+    "src/port/getopt.c",
+    "src/port/getopt_long.c",
+    "src/port/getpeereid.c",
+    "src/port/inet_aton.c",
+    "src/port/kill.c",
+    "src/port/mkdtemp.c",
+    "src/port/open.c",
+    "src/port/strlcat.c",
+    "src/port/strlcpy.c",
+    "src/port/strsep.c",
+    "src/port/timingsafe_bcmp.c",
+    "src/port/win32common.c",
+    "src/port/win32dlopen.c",
+    "src/port/win32env.c",
+    "src/port/win32error.c",
+    "src/port/win32fdatasync.c",
+    "src/port/win32fseek.c",
+    # Postgres's own thread-safe replacement for Winsock `gai_strerror`;
+    # `port/win32/sys/socket.h` `#undef`s the Windows macro and declares
+    # the postgres extern.
+    "src/port/win32gai_strerror.c",
+    "src/port/win32getrusage.c",
+    "src/port/win32gettimeofday.c",
+    "src/port/win32link.c",
+    "src/port/win32ntdll.c",
+    "src/port/win32pread.c",
+    "src/port/win32pwrite.c",
+    "src/port/win32security.c",
+    "src/port/win32setlocale.c",
+    "src/port/win32stat.c",
+]
+
+cc_library(
+    name = "pgport",
+    srcs = _LIBPORT_BASE_SRCS + select({
+        "@platforms//os:linux": _LIBPORT_LINUX_SRCS,
+        "@platforms//os:macos": _LIBPORT_MACOS_SRCS,
+        "@platforms//os:windows": _LIBPORT_WINDOWS_SRCS,
+        "//conditions:default": _LIBPORT_LINUX_SRCS,
+    }),
+    # Upstream meson explicitly adds these as raw `cppflags`
+    # (`/DWIN32 /DWINDOWS /D__WIN32__ /D__WINDOWS__
+    # /D_CRT_SECURE_NO_DEPRECATE /D_CRT_NONSTDC_NO_DEPRECATE`). Going
+    # through `copts` rather than `local_defines`/`defines` matches
+    # upstream's meson.build exactly and bypasses flag-ordering quirks in
+    # Bazel's MSVC toolchain that have caused `#ifndef WIN32` in
+    # `chklocale.c` to evaluate true even when we set WIN32 via
+    # `local_defines`/`defines`. Symbol names match upstream meson
+    # exactly (`WINDOWS`, not `_WINDOWS`).
+    copts = select({
+        "@platforms//os:windows": [
+            "/DWIN32",
+            "/DWINDOWS",
+            "/D__WIN32__",
+            "/D__WINDOWS__",
+            "/D_CRT_SECURE_NO_DEPRECATE",
+            "/D_CRT_NONSTDC_NO_DEPRECATE",
+        ],
+        "//conditions:default": [],
+    }),
+    # Also on `defines` so they propagate to consumer-compile commands
+    # (libpq, libpgcommon, the tests) without each having to repeat the
+    # copts dance.
+    defines = select({
+        "@platforms//os:windows": [
+            "WIN32",
+            "WINDOWS",
+            "__WIN32__",
+            "__WINDOWS__",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "FRONTEND",
+    ] + select({
+        "@platforms//os:linux": ["_GNU_SOURCE"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":include",
+        # pg_strong_random.c calls into OpenSSL's RAND_bytes when USE_OPENSSL
+        # is defined; pull the SSL backend in even though pgport otherwise has
+        # no link-time requirement on it.
+        ":ssl_backend",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# libpgcommon (frontend variant).
+# ---------------------------------------------------------------------------
+
+# Frontend-safe pgcommon sources. Limited to the subset libpq actually links
+# against. Upstream's full `common_sources` list pulls in files like
+# `hashfn.c` that unconditionally include backend-only `postgres.h`, and
+# files like `rmtree.c` that depend on backend-side helpers from
+# `file_utils.c`. Those belong in the frontend-tools (pg_dump, pg_basebackup)
+# build layer, not in libpq.
+_LIBCOMMON_BASE = [
+    "src/common/base64.c",
+    "src/common/encnames.c",
+    "src/common/fe_memutils.c",
+    "src/common/ip.c",
+    "src/common/jsonapi.c",
+    "src/common/kwlookup.c",
+    "src/common/link-canary.c",
+    "src/common/logging.c",
+    "src/common/md5.c",
+    "src/common/md5_common.c",
+    "src/common/percentrepl.c",
+    "src/common/pg_get_line.c",
+    "src/common/pg_prng.c",
+    "src/common/psprintf.c",
+    "src/common/saslprep.c",
+    "src/common/scram-common.c",
+    "src/common/sha1.c",
+    "src/common/sha2.c",
+    "src/common/sprompt.c",
+    "src/common/string.c",
+    "src/common/stringinfo.c",
+    "src/common/unicode_norm.c",
+    "src/common/username.c",
+    "src/common/wait_error.c",
+    "src/common/wchar.c",
+]
+
+# cryptohash + hmac: postgres ships two implementations — a fallback `*.c`
+# pair and an OpenSSL-backed `*_openssl.c` pair. We pick the OpenSSL variants
+# whenever the user wires up an SSL backend.
+_LIBCOMMON_NOSSL = [
+    "src/common/cryptohash.c",
+    "src/common/hmac.c",
+]
+
+_LIBCOMMON_SSL = [
+    "src/common/cryptohash_openssl.c",
+    "src/common/hmac_openssl.c",
+]
+
+cc_library(
+    name = "pgcommon",
+    srcs = _LIBCOMMON_BASE + select({
+        ":ssl_none": _LIBCOMMON_NOSSL,
+        "//conditions:default": _LIBCOMMON_SSL,
+    }),
+    includes = [
+        "src/interfaces/libpq",
+    ],
+    local_defines = [
+        "FRONTEND",
+        # `jsonapi.c` needs an error-recovery buffer that does not exit() on
+        # OOM — libpq supplies one via `pqexpbuffer.h`. The default backend
+        # build uses `lib/stringinfo.h` + `miscadmin.h` which we can't pull in
+        # from a frontend-only library.
+        "JSONAPI_USE_PQEXPBUFFER",
+    ] + select({
+        "@platforms//os:linux": ["_GNU_SOURCE"],
+        # Windows defines (WIN32 / _WINDOWS / etc.) come in transitively
+        # via `:pgport`'s `defines`.
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":include",
+        ":pgport",
+        ":ssl_backend",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# SSL backend.
+# ---------------------------------------------------------------------------
+
+# All of libpq's SSL link inputs in one place: openssl or boringssl plus,
+# when `:with_libcurl=True`, `@curl//:curl`. Wrapping this one bundle with
+# `pg_ssl_bundle` (below) pins `@curl//:ssl_lib` to whatever `//:with_ssl`
+# is set to and routes every SSL-touching dep of libpq through a single
+# configuration of `@openssl` / `@boringssl`. See
+# `//private:curl_ssl_transition.bzl` for the why.
+cc_library(
+    name = "_ssl_backend_raw",
+    defines = select({
+        ":ssl_boringssl": ["BAZEL_PQ_USE_BORINGSSL=1"],
+        "//conditions:default": [],
+    }),
+    deps = select({
+        ":ssl_boringssl": [
+            "@boringssl//:crypto",
+            "@boringssl//:ssl",
+        ],
+        ":ssl_none": [],
+        ":ssl_openssl": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }) + select({
+        # Curl is only linked where the OAuth flow is supported (libcurl +
+        # epoll/kqueue). On Windows that's never true, so don't pull
+        # `@curl` into the SSL bundle there.
+        ":_libcurl_on_oauth_supported": ["@curl"],
+        "//conditions:default": [],
+    }),
+)
+
+pg_ssl_bundle(
+    name = "ssl_backend",
+    target = ":_ssl_backend_raw",
+)
+
+# ---------------------------------------------------------------------------
+# libpq.
+# ---------------------------------------------------------------------------
+
+_LIBPQ_PUBLIC_HDRS = [
+    "src/include/pg_config.h",
+    "src/include/pg_config_ext.h",
+    "src/include/pg_config_manual.h",
+    "src/include/postgres_ext.h",
+    "src/include/postgres_fe.h",
+    "src/include/port.h",
+    "src/include/c.h",
+    "src/include/libpq/libpq-fs.h",
+    "src/include/libpq/pqcomm.h",
+    "src/interfaces/libpq/fe-auth-sasl.h",
+    "src/interfaces/libpq/libpq-fe.h",
+    "src/interfaces/libpq/pqexpbuffer.h",
+    "src/interfaces/libpq/libpq-int.h",
+    "src/interfaces/libpq/libpq-events.h",
+]
+
+_LIBPQ_BASE_SRCS = [
+    "src/interfaces/libpq/fe-auth.c",
+    "src/interfaces/libpq/fe-auth-oauth.c",
+    "src/interfaces/libpq/fe-auth-scram.c",
+    "src/interfaces/libpq/fe-cancel.c",
+    "src/interfaces/libpq/fe-connect.c",
+    "src/interfaces/libpq/fe-exec.c",
+    "src/interfaces/libpq/fe-lobj.c",
+    "src/interfaces/libpq/fe-misc.c",
+    "src/interfaces/libpq/fe-print.c",
+    "src/interfaces/libpq/fe-protocol3.c",
+    "src/interfaces/libpq/fe-secure.c",
+    "src/interfaces/libpq/fe-trace.c",
+    "src/interfaces/libpq/legacy-pqsignal.c",
+    "src/interfaces/libpq/libpq-events.c",
+    "src/interfaces/libpq/pqexpbuffer.c",
+]
+
+_LIBPQ_WINDOWS = [
+    "src/interfaces/libpq/pthread-win32.c",
+    "src/interfaces/libpq/win32.c",
+]
+
+# `fe-secure-common.c` provides `pq_verify_peer_name_matches_certificate*`,
+# called from `fe-secure-openssl.c`. Upstream adds it whenever SSL is on,
+# regardless of platform (and an earlier version of this BUILD excluded it
+# on Windows by mistake).
+_LIBPQ_SSL_SRCS = [
+    "src/interfaces/libpq/fe-secure-common.c",
+    "src/interfaces/libpq/fe-secure-openssl.c",
+]
+
+_LIBPQ_GSSAPI_SRCS = [
+    "src/interfaces/libpq/fe-gssapi-common.c",
+    "src/interfaces/libpq/fe-secure-gssapi.c",
+]
+
+# Static-link variant of the libpq-oauth plugin. When `:with_libcurl` is True
+# we don't go through dlopen/USE_DYNAMIC_OAUTH; the curl-backed flow gets
+# compiled straight into libpq. `oauth-utils.c` is *only* used by the dynamic
+# variant (it errors out under static link) and is intentionally excluded.
+_LIBPQ_OAUTH_SRCS = [
+    "src/interfaces/libpq-oauth/oauth-curl.c",
+]
+
+cc_library(
+    name = "pq",
+    srcs = select({
+        "@platforms//os:windows": _LIBPQ_BASE_SRCS + _LIBPQ_WINDOWS,
+        "//conditions:default": _LIBPQ_BASE_SRCS,
+    }) + select({
+        ":ssl_none": [],
+        "//conditions:default": _LIBPQ_SSL_SRCS,
+    }) + select({
+        ":gssapi_on": _LIBPQ_GSSAPI_SRCS,
+        "//conditions:default": [],
+    }) + select({
+        # OAuth flow is only built where libcurl + epoll/kqueue is
+        # available. `oauth-curl.c` has `#error libpq-oauth is not
+        # supported on this platform` for the Windows case, so skip it.
+        ":_libcurl_on_oauth_supported": _LIBPQ_OAUTH_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = _LIBPQ_PUBLIC_HDRS,
+    includes = [
+        "src/include",
+        "src/interfaces",
+        "src/interfaces/libpq",
+        "src/interfaces/libpq-oauth",
+        "src/port",
+    ],
+    linkopts = select({
+        # `fe-secure.c` calls `pthread_sigmask` to block SIGPIPE during SSL
+        # writes. glibc x86_64 happens to resolve `pthread_sigmask` from
+        # libc directly, but glibc aarch64 (and musl on either arch) keeps
+        # it in `libpthread.so`. `-pthread` pulls the right link inputs on
+        # both glibc and musl.
+        "@platforms//os:linux": ["-pthread"],
+        "@platforms//os:windows": [
+            # MSVC's link.exe treats bare names as `.obj` files; the `.lib`
+            # extension makes it look for system import libraries (it's
+            # also the convention `link.exe` documents). MinGW's
+            # `ld` accepts both `foo.lib` and `-lfoo`; the `.lib` form is
+            # the lowest-common-denominator that works for both Windows
+            # toolchains.
+            #
+            # `Advapi32.lib` provides `GetUserName` (used by libpq's
+            # `pg_fe_getusername`) and the EventLog / CryptoAPI symbols
+            # that `@openssl`'s `e_capi.obj` / `cryptlib.obj` reach for
+            # internally. `Crypt32.lib` provides `Cert*` Windows
+            # certificate-store APIs that OpenSSL's CAPI engine calls.
+            # `User32.lib` provides `MessageBoxW` for OpenSSL's
+            # `OPENSSL_showfatal`. The OpenSSL Bazel module should
+            # arguably declare these itself; until it does, we link them
+            # transitively from libpq.
+            "Advapi32.lib",
+            "Crypt32.lib",
+            "Secur32.lib",
+            "Shell32.lib",
+            "User32.lib",
+            # Winsock — provides struct in_addr, gethostbyname, ntohl, and
+            # the rest of the symbols libpq + libpgport call on Windows.
+            "Ws2_32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "FRONTEND",
+        "SO_MAJOR_VERSION=5",
+    ] + select({
+        "@platforms//os:linux": ["_GNU_SOURCE"],
+        "@platforms//os:macos": ["_FORTIFY_SOURCE=0"],
+        # Windows defines (WIN32 / _WINDOWS / etc.) come in transitively
+        # via `:pgport`'s `defines`. HAVE_SOCKLEN_T mutes a libpq warning
+        # since Winsock declares socklen_t.
+        "@platforms//os:windows": [
+            "HAVE_SOCKLEN_T=1",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":include",
+        ":pgcommon",
+        ":pgport",
+        ":ssl_backend",
+    ] + select({
+        # When --//:with_gssapi=True, the consumer-supplied label at
+        # --//:gssapi_lib (typically a system_library wrapping
+        # libgssapi_krb5.so) supplies gss_* symbols + headers. The default
+        # --//:gssapi_lib points at -lgssapi_krb5 so consumers without a
+        # vendored Kerberos still get a working link as long as the host
+        # libgssapi-dev is installed.
+        ":gssapi_on": [":gssapi_lib"],
+        "//conditions:default": [],
+    }),
+)
+
+alias(
+    name = "libpq",
+    actual = ":pq",
+    visibility = ["//visibility:public"],
+)
