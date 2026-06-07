@@ -1,0 +1,76 @@
+"Bazel dependencies"
+
+# NOTE: The version field is intentionally omitted. Leaving it unset (the
+# default "") prevents issues when the module is used via non-registry
+# overrides (e.g. https://github.com/bazel-contrib/rules_go/issues/4380).
+# The publish-to-bcr GitHub Action patches in the release version when
+# submitting to the Bazel Central Registry.
+#
+# NOTE: compatibility_level is omitted (defaults to 0). Bumping it is very
+# disruptive — as soon as a module is requested at two different compatibility
+# levels in the dependency tree, users see an error. Only bump it when the
+# breaking change affects most use cases and isn't easy to work around, and
+# in the same commit that introduces the incompatible change.
+module(
+    name = "rules_dart",
+    version = "0.4.2",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "package_metadata", version = "0.0.10")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "yaml.bzl", version = "0.1.2")
+
+# The Gazelle plugin at //gazelle/dart is a go_library, so its BUILD file
+# loads @io_bazel_rules_go//go:def.bzl. In bzlmod, BUILD files are evaluated
+# in the context of their owning module — so rules_go must be a regular (not
+# dev) dependency for the plugin to be loadable from downstream modules.
+# The Go SDK and toolchain are only fetched if a target in //gazelle/... is
+# actually built; they are not downloaded for normal Dart-only usage.
+bazel_dep(name = "gazelle", version = "0.51.0", repo_name = "bazel_gazelle")
+bazel_dep(name = "rules_go", version = "0.60.0", repo_name = "io_bazel_rules_go")
+
+# Native code-asset support under //dart/ext/<package> (e.g. //dart/ext/sqlite3)
+# builds a cc_shared_library, so its BUILD loads @rules_cc and wraps a BCR
+# native module. Like rules_go above, these are regular (not dev) deps so the
+# `//dart/ext/sqlite3:code_asset` target is usable from downstream modules.
+# The native libraries are only built if a target referencing them is built;
+# they are not fetched for normal Dart-only usage.
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "sqlite3", version = "3.51.2.bcr.1")
+
+# Used by `dart_library`/`dart_source_set` to assemble generated + hand-written
+# sources into one directory (copy_to_directory). Regular (not dev) dep so
+# downstream modules get it; self-registers its copy toolchains.
+bazel_dep(name = "bazel_lib", version = "3.3.1")
+
+bazel_dep(name = "rules_multitool", version = "1.11.1", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
+
+bazel_dep(name = "bazelrc-preset.bzl", version = "1.9.2")
+
+dart = use_extension("//dart:extensions.bzl", "dart")
+dart.toolchain(dart_version = "3.12.0")
+use_repo(dart, "dart_toolchains")
+
+register_toolchains("@dart_toolchains//:all")
+
+multitool = use_extension(
+    "@rules_multitool//multitool:extension.bzl",
+    "multitool",
+    dev_dependency = True,
+)
+multitool.hub(lockfile = "//:multitool.lock.json")
+use_repo(multitool, "multitool")
+
+# Pub deps for the //dart/ext/* shim binaries (build_runner replacement).
+# Pinned by //dart/ext:pubspec.lock; resolved into @ext_pub_deps so per-builder
+# shims can depend on packages like json_serializable, freezed, mockito, …
+pub = use_extension("//dart/pub:extensions.bzl", "pub")
+pub.from_lock(
+    name = "ext_pub_deps",
+    lock = "//dart/ext:pubspec.lock",
+)
+use_repo(pub, "ext_pub_deps")

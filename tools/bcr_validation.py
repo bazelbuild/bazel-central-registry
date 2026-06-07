@@ -37,8 +37,10 @@ import requests
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import yaml
+import zstandard
 
 from difflib import unified_diff
 from enum import Enum
@@ -434,8 +436,9 @@ class BcrValidator:
 
         # Differences in only platform names or bazel versions don't need BCR maintainer review.
         for doc in (previous_presubmit_doc, current_presubmit_doc):
-            for scrub in ("bazel", "platform"):
-                doc.setdefault("matrix", {})[scrub] = None
+            for matrixed_node in (doc, doc.setdefault("bcr_test_module", {})):
+                for scrub in ("bazel", "platform"):
+                    matrixed_node.setdefault("matrix", {})[scrub] = None
         if current_presubmit_doc == previous_presubmit_doc:
             self.report(
                 BcrValidationResult.GOOD,
@@ -482,10 +485,20 @@ class BcrValidator:
         # https://docs.python.org/3/library/shutil.html#shutil.unpack_archive
         archive_type = source.get("archive_type")
         if not archive_type:
-            for ext in ["tar.gz", "tgz", "tar.bz2", "tar.xz", "tar", "zip", "jar", "war", "aar"]:
+            for ext in ["tar.gz", "tgz", "tar.bz2", "tar.xz", "tar.zst", "tzst", "tar", "zip", "jar", "war", "aar"]:
                 if str(archive_file).endswith("." + ext):
                     archive_type = ext
                     break
+        # shutil has no native zstd support, so stream-decompress with the
+        # `zstandard` package straight into tarfile.
+        if archive_type in ("tar.zst", "tzst"):
+            with open(archive_file, "rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as reader:
+                with tarfile.open(fileobj=reader, mode="r|") as tar:
+                    if sys.version_info >= (3, 12):
+                        tar.extractall(output_dir, filter="data")
+                    else:
+                        tar.extractall(output_dir)
+            return
         format = {
             "tar.gz": "gztar",
             "tgz": "gztar",
@@ -531,6 +544,23 @@ class BcrValidator:
 
         tmp_dir = Path(tempfile.mkdtemp())
         output_dir = tmp_dir.joinpath("source_root")
+        # Validate the stripped output directory.
+        strip_prefix = source.get("strip_prefix", "")
+        if strip_prefix:
+            candidate = (output_dir / strip_prefix).resolve()
+            try:
+                candidate.relative_to(output_dir.resolve())
+            except ValueError:
+                error_msg = (
+                    "CRITICAL FAILURE: "
+                    f"strip_prefix '{strip_prefix}' resolves outside the "
+                    f"extraction directory. Resolved to: {candidate}"
+                )
+                self.report(BcrValidationResult.FAILED, error_msg)
+                shutil.rmtree(tmp_dir)
+                raise BcrValidationException(error_msg)
+        source_root = output_dir / strip_prefix
+
         self._download_source_archive(source, output_dir)
 
         module_file = self.registry.get_module_dot_bazel_path(module_name, version)
