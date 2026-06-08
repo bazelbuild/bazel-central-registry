@@ -1,3 +1,4 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
@@ -46,6 +47,17 @@ config_setting(
     flag_values = {":tls": "no"},
 )
 
+# OpenSSL on Windows pulls in Win32 system libraries (the cert store via
+# crypt32, plus user32) that BoringSSL bundles itself. Used to gate the
+# extra linkopts below.
+selects.config_setting_group(
+    name = "tls_openssl_on_windows",
+    match_all = [
+        ":tls_openssl",
+        "@platforms//os:windows",
+    ],
+)
+
 # The main clickhouse-cpp library. Downstream callers use
 # `#include <clickhouse/client.h>` and link `@clickhouse-cpp-client//:clickhouse`.
 cc_library(
@@ -80,6 +92,25 @@ cc_library(
         ],
         ":tls_openssl": ["WITH_OPENSSL"],
         ":tls_no": [],
+    }),
+    # Winsock, required by base/socket.cpp et al. Mirrors CMake's
+    # `IF (WIN32 OR MINGW)` link block. (The BoringSSL backend already
+    # propagates ws2_32 itself; declare it explicitly so the openssl
+    # and no-TLS configurations link too.)
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:ws2_32.lib",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        # OpenSSL references the Win32 cert store and user32; declare
+        # them so downstream executables link without each consumer
+        # having to repeat it. Mirrors CMake's MSVC `Crypt32` link.
+        ":tls_openssl_on_windows": [
+            "-DEFAULTLIB:crypt32.lib",
+            "-DEFAULTLIB:user32.lib",
+        ],
+        "//conditions:default": [],
     }),
     # Expose headers at their workspace path so both internal
     # (`#include "client.h"` from clickhouse/*.cpp via quote-form
