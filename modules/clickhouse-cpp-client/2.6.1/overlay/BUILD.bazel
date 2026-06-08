@@ -14,8 +14,10 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 #     entirely. `USE_BORINGSSL` ifdef-guards the two OpenSSL-only
 #     surfaces (`SSL_CONF_*` command API and `SSL_read_ex`) that
 #     BoringSSL doesn't provide; see clickhouse/base/sslsocket.cpp.
-#   * cityhash / lz4 / zstd / abseil come from BCR modules instead of
-#     contrib/; the contrib/ trees are only used by the CMake build.
+#   * lz4 / zstd / abseil come from BCR modules instead of contrib/.
+#     cityhash is the exception: it is built from contrib/ because the
+#     wire protocol needs ClickHouse's frozen CityHash variant, which
+#     differs from the stock BCR module (see the :cityhash target).
 
 # Selects the TLS implementation: `--@clickhouse-cpp-client//:tls=boringssl`
 # (default), `--@clickhouse-cpp-client//:tls=openssl`, or
@@ -56,6 +58,34 @@ selects.config_setting_group(
         ":tls_openssl",
         "@platforms//os:windows",
     ],
+)
+
+# Vendored CityHash from contrib/, NOT the BCR `@cityhash` module.
+# ClickHouse's wire protocol checksums compressed blocks with a specific
+# frozen CityHash128 variant (see clickhouse/base/compressed.cpp); the
+# stock Google CityHash 1.0.2 that BCR packages produces *different*
+# hashes, so a server rejects compressed blocks with "Checksum doesn't
+# match: corrupted data". This is the exact copy the CMake build uses,
+# guaranteeing byte-identical hashing and wire compatibility.
+cc_library(
+    name = "cityhash",
+    srcs = [
+        "contrib/cityhash/cityhash/city.cc",
+        "contrib/cityhash/cityhash/config.h",
+    ],
+    hdrs = [
+        "contrib/cityhash/cityhash/city.h",
+        "contrib/cityhash/cityhash/citycrc.h",
+    ],
+    # config.h gates __builtin_expect off with `#if WIN32 || WIN64`, but
+    # MSVC only predefines `_WIN32`/`_WIN64`. Under CMake it's CMake that
+    # defines WIN32, which Bazel's MSVC toolchain doesn't. Define it here
+    # so the GCC/Clang-only builtin isn't used on MSVC.
+    copts = select({
+        "@platforms//os:windows": ["/DWIN32"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "contrib/cityhash/cityhash",
 )
 
 # The main clickhouse-cpp library. Downstream callers use
@@ -120,7 +150,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         "@abseil-cpp//absl/numeric:int128",
-        "@cityhash//:cityhash",
+        ":cityhash",
         "@lz4//:lz4",
         "@zstd//:zstd",
     ] + select({
