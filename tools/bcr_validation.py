@@ -436,8 +436,9 @@ class BcrValidator:
 
         # Differences in only platform names or bazel versions don't need BCR maintainer review.
         for doc in (previous_presubmit_doc, current_presubmit_doc):
-            for scrub in ("bazel", "platform"):
-                doc.setdefault("matrix", {})[scrub] = None
+            for matrixed_node in (doc, doc.setdefault("bcr_test_module", {})):
+                for scrub in ("bazel", "platform"):
+                    matrixed_node.setdefault("matrix", {})[scrub] = None
         if current_presubmit_doc == previous_presubmit_doc:
             self.report(
                 BcrValidationResult.GOOD,
