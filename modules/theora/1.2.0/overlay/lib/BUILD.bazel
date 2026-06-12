@@ -1,0 +1,121 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "lib_hdrs",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+    visibility = ["//lib:__subpackages__"],
+)
+
+COMMON_SRCS = [
+    "apiwrapper.c",
+    "bitpack.c",
+    "dequant.c",
+    "fragment.c",
+    "idct.c",
+    "info.c",
+    "internal.c",
+    "quant.c",
+    "state.c",
+]
+
+DECODER_SRCS = [
+    "decapiwrapper.c",
+    "decinfo.c",
+    "decode.c",
+    "huffdec.c",
+]
+
+ENCODER_SRCS = [
+    "analyze.c",
+    "encapiwrapper.c",
+    "encfrag.c",
+    "encinfo.c",
+    "encode.c",
+    "enquant.c",
+    "fdct.c",
+    "huffenc.c",
+    "mathops.c",
+    "mcenc.c",
+    "rate.c",
+    "tokenize.c",
+]
+
+cc_library(
+    name = "theoradec",
+    srcs = COMMON_SRCS + DECODER_SRCS,
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        "//:asm_disabled": [],
+        "@platforms//cpu:x86_64": ["OC_X86_ASM", "OC_X86_64_ASM"],
+        "@platforms//cpu:x86_32": ["OC_X86_ASM"],
+        "@platforms//cpu:arm": ["OC_ARM_ASM"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": ["-DEFAULTLIB:ole32.lib"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//:hdrs",
+        "@ogg//:libogg",
+    ] + select({
+        "//:asm_disabled": [],
+        "@platforms//cpu:x86_64": ["//lib/x86:x86_decoder"],
+        "@platforms//cpu:x86_32": ["//lib/x86:x86_decoder"],
+        "@platforms//cpu:arm": ["//lib/arm:arm_decoder"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "theoraenc",
+    srcs = ENCODER_SRCS,
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        "//:asm_disabled": [],
+        "@platforms//cpu:x86_64": ["OC_X86_ASM", "OC_X86_64_ASM"],
+        "@platforms//cpu:x86_32": ["OC_X86_ASM"],
+        "@platforms//cpu:arm": ["OC_ARM_ASM"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":theoradec",
+        "//:hdrs",
+        "@ogg//:libogg",
+    ] + select({
+        "//:asm_disabled": [],
+        "@platforms//cpu:x86_64": ["//lib/x86:x86_encoder", "//lib/x86:x86_64_encoder"],
+        "@platforms//cpu:x86_32": ["//lib/x86:x86_encoder"],
+        "@platforms//cpu:arm": ["//lib/arm:arm_encoder"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "theora",
+    srcs = COMMON_SRCS + DECODER_SRCS + ENCODER_SRCS,
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        "//:asm_disabled": [],
+        "@platforms//cpu:x86_64": ["OC_X86_ASM", "OC_X86_64_ASM"],
+        "@platforms//cpu:x86_32": ["OC_X86_ASM"],
+        "@platforms//cpu:arm": ["OC_ARM_ASM"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//:hdrs",
+        "@ogg//:libogg",
+    ] + select({
+        "//:asm_disabled": [],
+        "@platforms//cpu:x86_64": ["//lib/x86:x86_decoder", "//lib/x86:x86_encoder", "//lib/x86:x86_64_encoder"],
+        "@platforms//cpu:x86_32": ["//lib/x86:x86_decoder", "//lib/x86:x86_encoder"],
+        "@platforms//cpu:arm": ["//lib/arm:arm_decoder", "//lib/arm:arm_encoder"],
+        "//conditions:default": [],
+    }),
+)
