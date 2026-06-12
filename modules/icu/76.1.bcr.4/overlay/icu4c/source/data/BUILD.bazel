@@ -1,0 +1,201 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_bazel_lib//lib:run_binary.bzl", "run_binary")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+string_flag(
+    name = "mode",
+    build_setting_default = "prebuilt",
+    values = [
+        "prebuilt",
+        "source",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "prebuilt-mode",
+    flag_values = {":mode": "prebuilt"},
+)
+
+config_setting(
+    name = "source-mode",
+    flag_values = {":mode": "source"},
+)
+
+# ---------------------------------------------------------------------------
+# Data source directory for tests.
+# Exposes unidata/ + sprep/ under a single rlocationpath so that
+# cintltst / intltest can call pathToDataDirectory() and find source data
+# files without knowing the canonical repo name.
+# ---------------------------------------------------------------------------
+# Raw unidata source files exposed as a filegroup so they land at their
+# original source paths in the sandbox (copy_to_directory does not do that).
+# Used by testdata-gen which passes the path to gensprep via -n.
+filegroup(
+    name = "unidata-src",
+    srcs = glob(["unidata/**"]),
+    visibility = ["//icu4c/source/test/testdata:__pkg__"],
+)
+
+copy_to_directory(
+    name = "icudata-src-dir",
+    srcs = glob([
+        "sprep/**",
+        "unidata/**",
+    ]),
+    visibility = [
+        "//icu4c/source/test/cintltst:__pkg__",
+        "//icu4c/source/test/intltest:__pkg__",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Bootstrap data generation pipeline (mode = source).
+#
+# All tool binaries are defined with bootstrap_cc_binary (see //icu4c/source:defs.bzl),
+# which builds them against stub ICU data, breaking the circular dependency.
+# The generated icudt<version>l.dat is little-endian; cross-compilation to big-endian
+# targets with mode=source is not currently supported.
+# ---------------------------------------------------------------------------
+py_binary(
+    name = "generator",
+    srcs = ["generator.py"],
+    imports = ["../../python"],
+    deps = ["//icu4c/source/python/icutools/databuilder"],
+)
+
+run_binary(
+    name = "generate-icudata",
+    srcs = [
+        "BUILDRULES.py",
+        "//icu4c/source/tools:tooldir",
+    ] + glob([
+        "**/*.txt",
+        "**/*.ucm",
+        "**/*.icu",
+        "**/*.nrm",
+        "**/*.json",
+    ]),
+    outs = [
+        "icudt%sl.dat" % module_version().split(".")[0],
+    ],
+    args = [
+        "--src_dir",
+        "$(execpath BUILDRULES.py)/..",
+        "--tool_dir",
+        "$(execpath //icu4c/source/tools:tooldir)",
+        "--out_dir",
+        "$(RULEDIR)",
+        "--pkg_name",
+        "icudt%sl" % module_version().split(".")[0],
+    ],
+    mnemonic = "IcuGenerateData",
+    progress_message = "Generating ICU data bundle %{output}",
+    tool = ":generator",
+)
+
+run_binary(
+    name = "generate-icudata-asm",
+    srcs = select({
+        ":prebuilt-mode": ["@icu_dat_le//:icudt%sl.dat" % module_version().split(".")[0]],
+        ":source-mode": [":icudt%sl.dat" % module_version().split(".")[0]],
+    }),
+    outs = ["icudt%sl_dat.S" % module_version().split(".")[0]],
+    args = select({
+        "@platforms//os:macos": [
+            "--assembly",
+            "gcc-darwin",
+        ],
+        "@platforms//os:linux": [
+            "--assembly",
+            "gcc",
+        ],
+    }) + [
+        "--entrypoint",
+        "icudt%s" % module_version().split(".")[0],
+        "--destdir",
+        "$(RULEDIR)",
+    ] + select({
+        ":prebuilt-mode": ["$(execpath @icu_dat_le//:icudt%sl.dat)" % module_version().split(".")[0]],
+        ":source-mode": ["$(execpath :icudt%sl.dat)" % module_version().split(".")[0]],
+    }),
+    mnemonic = "IcuGenerateDataAsm",
+    progress_message = "Generating ICU data assembly stub %{output}",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    tool = "//icu4c/source/tools/genccode",
+)
+
+# Windows: genccode has no assembler output format, so emit a C byte-array
+# instead. Compiles on any toolchain but is slower to compile than .S.
+run_binary(
+    name = "generate-icudata-c",
+    srcs = select({
+        ":prebuilt-mode": ["@icu_dat_le//:icudt%sl.dat" % module_version().split(".")[0]],
+        ":source-mode": [":icudt%sl.dat" % module_version().split(".")[0]],
+    }),
+    outs = ["icudt%sl_dat.c" % module_version().split(".")[0]],
+    args = [
+        "--entrypoint",
+        "icudt%s" % module_version().split(".")[0],
+        "--destdir",
+        "$(RULEDIR)",
+    ] + select({
+        ":prebuilt-mode": ["$(execpath @icu_dat_le//:icudt%sl.dat)" % module_version().split(".")[0]],
+        ":source-mode": ["$(execpath :icudt%sl.dat)" % module_version().split(".")[0]],
+    }),
+    mnemonic = "IcuGenerateDataC",
+    progress_message = "Generating ICU data C source %{output}",
+    target_compatible_with = ["@platforms//os:windows"],
+    tool = "//icu4c/source/tools/genccode",
+)
+
+# Statically links the ICU data bundle into consumers. The source is produced
+# by generate-icudata-asm (Linux/macOS) or generate-icudata-c (Windows) above
+# and defines the icudt<ver>l_dat symbol that udata.cpp resolves without any
+# filesystem lookup.
+cc_library(
+    name = "icudata",
+    srcs = select({
+        "@platforms//os:windows": [":generate-icudata-c"],
+        "//conditions:default": [":generate-icudata-asm"],
+    }),
+    # On Windows, force-export the data symbol via /EXPORT instead of relying on
+    # a __declspec(dllexport) marker in the generated C source. The generator
+    # emits plain `const struct` with no linkage decoration. This is the same
+    # export mechanism upstream uses for icudt<v>.dll, just inlined into the
+    # linker invocation rather than going through a pkgdata-generated .def file.
+    # The ',DATA' suffix tells the linker the symbol is a data variable
+    # (no thunk needed). Without this, 'udata.cpp' dllimport reference to
+    # icudt<v>_dat in the icuuc.dll build (cc_shared_library wrapping) fails to
+    # resolve with "unresolved external symbol __imp_icudt<v>_dat".
+    linkopts = select({
+        "//icu4c/source:windows-shared-build": ["/EXPORT:icudt%s_dat,DATA" % module_version().split(".")[0]],
+        "//conditions:default": [],
+    }),
+    visibility = ["//icu4c/source/common:__pkg__"],
+    # The generated C source on Windows has '#includes <unicode/umachine.h>' for
+    # U_CAPI / data-symbol type declarations. Assembly outputs on other
+    # platforms don't need headers.
+    deps = select({
+        "@platforms//os:windows": ["//icu4c/source/common:headers"],
+        "//conditions:default": [],
+    }),
+)
+
+# The .dat directory, kept for tools that need to locate the data package on
+# disk (e.g. genrb collation tailoring in the testdata pipeline). Not used
+# by icuuc itself — the data is linked in via the icudata cc_library above.
+copy_to_directory(
+    name = "icudata-dir",
+    srcs = select({
+        ":prebuilt-mode": ["@icu_dat_le//:icudt%sl.dat" % module_version().split(".")[0]],
+        ":source-mode": [":icudt%sl.dat" % module_version().split(".")[0]],
+    }),
+    include_external_repositories = ["*"],
+    visibility = ["//icu4c/source/test/testdata:__pkg__"],
+)

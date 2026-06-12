@@ -1,0 +1,56 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
+# Flag that controls whether icuuc links stub data or the real .dat bundle.
+#
+# Defaults to False (real data). bootstrap_cc_binary in //icu4c/source:defs.bzl
+# applies a per-binary transition that sets this to True for each data-gen
+# tool and its entire transitive dependency graph, so those tools never depend
+# on the data they are about to generate.
+bool_flag(
+    name = "bootstrapping",
+    build_setting_default = False,
+    visibility = ["//icu4c/source:__subpackages__"],
+)
+
+config_setting(
+    name = "is-bootstrapping",
+    flag_values = {":bootstrapping": "True"},
+    visibility = ["//icu4c/source:__subpackages__"],
+)
+
+# Mirrors upstream ICU's autoconf --enable-shared / makefile ENABLE_SHARED
+# knob, with the default inverted to match Bazel's static-default cc_library
+# norm.
+#
+# When False (default), Windows compiles get -DU_STATIC_IMPLEMENTATION so that
+# ICU's public API macros expand to no declspec which is required for static
+# linking of icuuc.lib / icui18n.lib / icuio.lib (per ICU's --enable-static docs).
+#
+# When True, the define is omitted so U_COMMON_API / U_I18N_API / U_IO_API
+# expand to __declspec(dllexport) in the implementing library and dllimport in
+# its consumers which is required when wrapping the 'cc_library' targets in a
+# 'cc_shared_library' to produce icuuc.dll / icui18n.dll / icuio.dll.
+# The shared-library targets at '//:{lib-name}_shared' flip this flag via a
+# per-target transition, so end users don't have to touch it directly.
+#
+# On Linux/macOS the flag has no effect because ICU's API macros do not
+# depend on it.
+bool_flag(
+    name = "enable-shared",
+    build_setting_default = False,
+    visibility = ["//icu4c/source:__subpackages__"],
+)
+
+config_setting(
+    name = "windows-static-build",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {":enable-shared": "False"},
+    visibility = ["//icu4c/source:__subpackages__"],
+)
+
+config_setting(
+    name = "windows-shared-build",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {":enable-shared": "True"},
+    visibility = ["//icu4c/source:__subpackages__"],
+)

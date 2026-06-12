@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Albert Lloveras <albert.l@canva.com>
+Date: Thu, 1 Jan 1970 00:00:00 +0000
+Subject: [PATCH] Fix testidn path construction for forward-slash source dirs
+
+testData() in icu4c/source/test/intltest/testidn.cpp has two issues that
+manifest as TestDataFile failing with U_FILE_ACCESS_ERROR on Windows under
+a Bazel build, where the source-dir path comes from Bazel runfiles and uses
+forward slashes on every platform.
+
+(1) The "is srcDir relative?" check only looks for U_FILE_SEP_CHAR, which is
+`\` on Windows. Our srcDir contains forward slashes (e.g.
+`C:/.../icudata-src-dir/`), so the check thinks the path is a bare filename
+and prepends ".\\". The resulting path `.\\C:/.../sprep\\rfc3491.txt` is
+malformed (mixed relative prefix and absolute drive-letter path) and Windows
+refuses to open it. Extend the check so either separator counts.
+
+(2) After `*basename++ = U_FILE_SEP_CHAR;` the buffer is not null-terminated
+(the increment moved past the freshly-written separator). The very next
+`uprv_strlen(filename)` then walks past the intended end into uninitialized
+malloc memory until it finds a stray zero byte, basename ends up positioned
+in garbage, and the next uprv_strcpy writes the next path segment in the
+wrong place. Null-terminate after each conditional append.
+
+Both issues are dormant in upstream Makefile builds: their srcDir already
+ends with U_FILE_SEP_CHAR (so the conditional append never fires) and uses
+platform-native separators (so the relative-path check correctly passes).
+
+---
+diff --git a/icu4c/source/test/intltest/testidn.cpp b/icu4c/source/test/intltest/testidn.cpp
+index 1234567..89abcde 100644
+--- a/icu4c/source/test/intltest/testidn.cpp
++++ b/icu4c/source/test/intltest/testidn.cpp
+@@ -100,7 +100,7 @@
+     pTestIDNA = &test;
+     
+     /* prepare the filename beginning with the source dir */
+-    if(uprv_strchr(srcDir,U_FILE_SEP_CHAR) == nullptr){
++    if(uprv_strchr(srcDir,U_FILE_SEP_CHAR) == nullptr && uprv_strchr(srcDir,'/') == nullptr){
+         filename[0] = 0x2E;
+         filename[1] = U_FILE_SEP_CHAR;
+         uprv_strcpy(filename+2,srcDir);
+@@ -110,12 +110,14 @@
+     basename=filename+uprv_strlen(filename);
+     if(basename>filename && *(basename-1)!=U_FILE_SEP_CHAR) {
+         *basename++=U_FILE_SEP_CHAR;
++        *basename=0; /* null-terminate so the next uprv_strlen() reads the right length. */
+     }
+ 
+     /* process unassigned */
+     basename=filename+uprv_strlen(filename);
+     if(basename>filename && *(basename-1)!=U_FILE_SEP_CHAR) {
+         *basename++=U_FILE_SEP_CHAR;
++        *basename=0; /* same as above; defensive in case this block is ever reached. */
+     }
+     
+     /* first copy misc directory */

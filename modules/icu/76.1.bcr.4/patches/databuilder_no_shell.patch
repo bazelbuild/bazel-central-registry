@@ -1,0 +1,83 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Albert Lloveras <albert.l@canva.com>
+Date: Thu, 1 Jan 1970 00:00:00 +0000
+Subject: [PATCH] Invoke databuilder tools via CreateProcess (shell=False)
+
+cmd.exe on Windows has an 8191-character command-line limit, which the
+writePoolBundle invocation (~600 locale filenames) overflows. Upstream
+databuilder's PowerShell fallback for that case re-issues the command
+via shell=True, and PowerShell's argument re-quoting subtly mangles
+paths (especially trailing backslashes) before launching the native
+tool. The PowerShell stop-parsing operator (`--%`) doesn't reliably
+fix this when PowerShell is invoked via `-Command "<string>"`, so the
+fallback path still produces a missing or unusable pool.res and the
+next --usePoolBundle command fails with a generic exit code 1.
+
+Bypass shell=True / cmd.exe / PowerShell entirely: tokenize the
+rendered command line with shlex.split and hand the argv list to
+subprocess.call with shell=False. Windows CreateProcess accepts
+~32767-character command lines and is immune to either shell's
+quoting quirks. shlex.split handles quoted args correctly in case
+databuilder ever emits paths with embedded spaces.
+
+---
+diff --git a/icu4c/source/python/icutools/databuilder/renderers/common_exec.py b/icu4c/source/python/icutools/databuilder/renderers/common_exec.py
+index 1234567..89abcde 100644
+--- a/icu4c/source/python/icutools/databuilder/renderers/common_exec.py
++++ b/icu4c/source/python/icutools/databuilder/renderers/common_exec.py
+@@ -120,36 +120,34 @@
+     assert False
+
+ def run_shell_command(command_line, platform, verbose):
+-    changed_windows_comspec = False
+-    # If the command line length on Windows exceeds the absolute maximum that CMD supports (8191), then
+-    # we temporarily switch over to use PowerShell for the command, and then switch back to CMD.
+-    # We don't want to use PowerShell for everything though, as it tends to be slower.
+-    if (platform == "windows"):
+-        previous_comspec = os.environ["COMSPEC"]
+-        # Add 7 to the length for the argument /c with quotes.
+-        # For example:  C:\WINDOWS\system32\cmd.exe /c "<command_line>"
+-        if ((len(previous_comspec) + len(command_line) + 7) > 8190):
+-            if verbose:
+-                print("Command length exceeds the max length for CMD on Windows, using PowerShell instead.")
+-            os.environ["COMSPEC"] = 'powershell'
+-            changed_windows_comspec = True
++    # Bypass shell=True / cmd.exe / PowerShell. On Windows, cmd.exe's
++    # 8191-char command-line limit overflows for the writePoolBundle
++    # invocation (~600 locale filenames). The upstream PowerShell fallback
++    # for that case subtly mangles argument quoting (especially trailing
++    # backslashes in paths), leaving a missing/unusable pool.res that breaks
++    # every subsequent --usePoolBundle command with a generic exit code 1.
++    # subprocess.call with shell=False goes through CreateProcess directly
++    # (limit ~32767) and is immune to either shell's quoting quirks.
++    #
++    # Tokenizer note: we use str.split, not shlex.split. shlex.split in its
++    # default POSIX mode treats backslash as an escape character and mangles
++    # Windows paths like `bazel-out\x64_windows\...` into `bazel-outx64_-
++    # windows...`. str.split is fine here because every arg ICU's
++    # databuilder emits is whitespace-free (paths, flags, and bare locale
++    # filenames, so no quoting is needed).
++    argv = command_line.split()
+     if verbose:
+         print("Running: %s" % command_line)
+-        returncode = subprocess.call(
+-            command_line,
+-            shell = True
+-        )
++        returncode = subprocess.call(argv, shell = False)
+     else:
+         # Pipe output to /dev/null in quiet mode
+         with open(os.devnull, "w") as devnull:
+             returncode = subprocess.call(
+-                command_line,
+-                shell = True,
++                argv,
++                shell = False,
+                 stdout = devnull,
+                 stderr = devnull
+             )
+-    if changed_windows_comspec:
+-        os.environ["COMSPEC"] = previous_comspec
+     if returncode != 0:
+         print("Command failed: %s" % command_line, file=sys.stderr)
+     return returncode
