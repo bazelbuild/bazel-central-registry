@@ -39,6 +39,30 @@ Both also have `with_defaults/` variants (e.g. `@ffmpeg//:with_defaults/ffmpeg`)
 
 Note that there is no `ffplay` binary as it requires SDL2 which is not in the bazel-central-registry. ([bazelbuild/bazel-central-registry#7077](https://github.com/bazelbuild/bazel-central-registry/issues/7077))
 
+### Install tree
+
+For consumers that need FFmpeg as files on disk instead of Bazel `cc_library`
+targets, the module also exposes `@ffmpeg//:gen_dir`.
+
+Building `gen_dir` materializes an install-style directory tree containing:
+
+- `include/` with the headers exported through Bazel's C++ compilation
+  context for the FFmpeg libraries
+- `lib/` with the built FFmpeg libraries and native library dependencies
+- `link-flags.txt` with additional linker flags needed to consume the libraries
+
+This is useful for packaging workflows, generated toolchains, or integrations
+that expect an `include/` + `lib/` layout.
+
+By default, `gen_dir` uses FFmpeg's platform-appropriate default component set.
+Additional codecs, muxers, demuxers, filters, and protocols can still be
+enabled with the same `--@ffmpeg//:enable_<component>=True` flags:
+
+```bash
+bazel build @ffmpeg//:gen_dir
+bazel build @ffmpeg//:gen_dir --@ffmpeg//:enable_http_protocol=True
+```
+
 ### Component flags
 
 FFmpeg codecs, muxers, demuxers, parsers, bitstream filters, filters, and device I/O modules are individually gated by `bool_flag` settings. Each flag defaults to `False` and can be enabled on the command line or via `.bazelrc`:
