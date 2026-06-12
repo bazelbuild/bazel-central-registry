@@ -1,0 +1,129 @@
+module(
+    name = "codesign.bzl",
+    version = "0.0.13",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+[
+    http_file(
+        name = "codesign_%s_%s" % (os, cpu),
+        downloaded_file_path = "codesign" + extension,
+        executable = True,
+        integrity = integrity,
+        urls = ["https://github.com/hermeticbuild/codesign.bzl/releases/download/prebuilts-v0.0.9/codesign_%s_%s%s" % (
+            os,
+            cpu,
+            extension,
+        )],
+    )
+    for os, cpu, extension, integrity in [
+        ("darwin", "arm64", "", "sha256-DFBsXWXxgcJ5wPI/PqHNqbjcnDimCSKyF6gPXeEWljQ="),
+        ("darwin", "amd64", "", "sha256-ZLA1pqQJ4N8BVmRnP/+e4VSIi1epEJMeCftxgHADVg0="),
+        ("linux", "arm64", "", "sha256-llGp7yNl2bfyzUht+fjEP32TW16e/ShUnjP+9q/GrVE="),
+        ("linux", "amd64", "", "sha256-nvTUJ+NaTtlfXHhXd9GtUcDl7SXPGZHvhKmryTOl5d4="),
+        ("windows", "arm64", ".exe", "sha256-KP9c3QddwnrsTM0ChlEq9ZkGopYu1Sp8FtYEx/FBFcw="),
+        ("windows", "amd64", ".exe", "sha256-u6I77WI4eBA+RR3xNoWY2cqLLdrhJEnDzndRj8l7nKc="),
+    ]
+]
+
+### Build dependencies
+
+bazel_dep(name = "bazel_lib", version = "3.2.2", dev_dependency = True)
+bazel_dep(name = "bzip2", version = "1.0.8.bcr.3", dev_dependency = True)
+bazel_dep(name = "rules_cc", version = "0.2.17", dev_dependency = True)
+bazel_dep(name = "llvm", version = "0.7.7", dev_dependency = True)
+bazel_dep(name = "rules_rs", version = "0.0.83", dev_dependency = True)
+bazel_dep(name = "windows_support", version = "0.1.8", dev_dependency = True)
+bazel_dep(name = "xz", version = "5.4.5.bcr.8", dev_dependency = True)
+
+single_version_override(
+    module_name = "windows_support",
+    patch_strip = 1,
+    patches = ["//patches:windows-support-default-sdk.patch"],
+    version = "0.1.8",
+)
+
+# TODO(archangelx360): remove once https://github.com/hermeticbuild/hermetic-llvm/pull/187 is merged
+archive_override(
+    module_name = "llvm",
+    integrity = "sha256-sSr0NUsY06DQwPoxgh+drMpOkeG/N7Lx+KxWkZTFUDM=",
+    strip_prefix = "hermetic-llvm-85d29dc776702879eb9cbcbe560428df7fd24e64",
+    urls = ["https://github.com/ArchangelX360/toolchains_llvm_bootstrapped/archive/85d29dc776702879eb9cbcbe560428df7fd24e64.tar.gz"],
+)
+
+register_toolchains(
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)
+
+# TODO(archangelx360): remove once https://github.com/bazelbuild/rules_cc/pull/561 is merged
+archive_override(
+    module_name = "rules_cc",
+    integrity = "sha256-yLVbuU8I/7wTSmCifWYUqY45Q5aMRqWZkkkX6uXaFio=",
+    strip_prefix = "rules_cc-cb995b18db7c855fe95cacf0a0e84fda8c58725d",
+    urls = ["https://github.com/ArchangelX360/rules_cc/archive/cb995b18db7c855fe95cacf0a0e84fda8c58725d.tar.gz"],
+)
+
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust", dev_dependency = True)
+use_repo(rules_rust, "rules_rust")
+
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains", dev_dependency = True)
+toolchains.toolchain(
+    edition = "2024",
+    version = "1.96.0",
+)
+use_repo(toolchains, "default_rust_toolchains")
+
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate", dev_dependency = True)
+crate.annotation(
+    crate = "apple-codesign",
+    gen_binaries = ["rcodesign"],
+)
+crate.annotation(
+    crate = "bzip2-sys",
+    gen_build_script = "off",
+    deps = ["@bzip2//:bz2"],
+)
+crate.annotation(
+    crate = "lzma-sys",
+    gen_build_script = "off",
+    deps = ["@xz//:lzma"],
+)
+crate.annotation(
+    crate = "ring",
+    patch_args = ["-p1"],
+    patch_tool = "patch",
+    patches = ["//patches:ring-windows-aarch64-clang-cl.patch"],
+)
+crate.from_cargo(
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+    ],
+)
+use_repo(crate, "crates")
+
+inject_repo(crate, "bzip2", "xz")
+
+msvc_runtime = use_extension("@windows_support//windows:extensions.bzl", "msvc_runtime", dev_dependency = True)
+use_repo(msvc_runtime, "msvc_runtime")
+
+windows_sdk = use_extension("@windows_support//windows:extensions.bzl", "windows_sdk", dev_dependency = True)
+use_repo(windows_sdk, "windows_sdk")

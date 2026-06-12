@@ -25,7 +25,6 @@ What this script can do:
   - Generate MODULE.bazel file with given module information
     - module name
     - version
-    - compatibility level
     - dependencies
   - Generate the source.json file with given source information
     - The archive url
@@ -79,8 +78,7 @@ def ask_input(msg):
 def from_user_input():
     name = ask_input("Please enter the module name: ")
     version = ask_input("Please enter the module version: ")
-    compatibility = ask_input("Please enter the compatibility level [default is 0]: ") or "0"
-    module = Module(name, version, compatibility)
+    module = Module(name, version)
 
     url = ask_input("Please enter the URL of the source archive: ")
     strip_prefix = ask_input("Please enter the strip_prefix value of the archive [default None]: ") or None
