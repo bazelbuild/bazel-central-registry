@@ -1,0 +1,69 @@
+"""NVC - VHDL compiler and simulator.
+
+A native Bazel build that does not use rules_foreign_cc for the compiler
+itself.  Only modules that are available on the Bazel Central Registry are
+used.  The LLVM code generator is disabled; NVC's built-in interpreter and
+x86-64 JIT back end are used instead, which keeps the dependency set small and
+entirely BCR-hosted.
+"""
+
+module(
+    name = "nvc",
+    version = "1.22.0.bcr.0",
+    bazel_compatibility = [">=9.0.0"],
+)
+
+# Core rule sets and helpers.
+bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+
+# Native, hermetic flex toolchain for the lexer (built from source via
+# rules_m4 -- no rules_foreign_cc involved).
+bazel_dep(name = "rules_flex", version = "0.4.1")
+
+# Used only for the convenience `bazel run //:nvc_cmd` launcher.
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+# Third party C libraries linked into nvc.
+bazel_dep(name = "zlib", version = "1.3.2")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1")
+bazel_dep(name = "libffi", version = "3.4.7.bcr.4")
+
+# The libcheck unit-test framework.  This is a dev_dependency so that modules
+# depending on nvc never pull it (or its rules_foreign_cc transitive dep); it
+# is only needed to build and run //test:unit_test in this repository.
+bazel_dep(name = "check", version = "0.15.2.bcr.2", dev_dependency = True)
+
+# libcheck's CMake build mis-detects a host libsubunit and then fails to
+# compile (CK_SUBUNIT is referenced but left out of the generated enum).
+# Disable subunit so the build is consistent regardless of the host.
+single_version_override(
+    module_name = "check",
+    patch_strip = 1,
+    patches = ["//bazel/patches:check_disable_subunit.patch"],
+)
+
+# libcheck is built with rules_foreign_cc (cmake).  Register hermetic build
+# tools so the host's cmake/make are never used: a pinned, downloaded CMake and
+# Ninja plus GNU make built from source.  All dev_dependency, so none of this
+# reaches modules that depend on nvc.
+bazel_dep(name = "rules_foreign_cc", version = "0.15.1", dev_dependency = True)
+
+foreign_cc_tools = use_extension(
+    "@rules_foreign_cc//foreign_cc:extensions.bzl",
+    "tools",
+    dev_dependency = True,
+)
+use_repo(
+    foreign_cc_tools,
+    "cmake_3.31.8_toolchains",
+    "ninja_1.13.0_toolchains",
+)
+
+register_toolchains(
+    "@cmake_3.31.8_toolchains//:all",
+    "@ninja_1.13.0_toolchains//:all",
+    "@rules_foreign_cc//toolchains:built_make_toolchain",
+    dev_dependency = True,
+)

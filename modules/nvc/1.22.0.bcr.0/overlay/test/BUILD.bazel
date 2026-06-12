@@ -1,0 +1,75 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The libcheck-based unit test suite (the autotools `bin/unit_test`).
+#
+# TESTDIR is baked in at compile time and the tests reference their data files
+# as TESTDIR "/parse/foo.vhd" etc.  A `bazel test` runs with the working
+# directory at the runfiles root of the main repository, so a relative TESTDIR
+# of "test" resolves against the data files staged below.  NVC_LIBPATH points
+# at the bootstrapped standard libraries (//:std), also staged into runfiles.
+cc_test(
+    name = "unit_test",
+    size = "small",
+    srcs = glob(
+        [
+            "test_*.c",
+            "test_*.h",
+        ],
+        exclude = [
+            "test_native.c",  # x86-64 only, added below
+            "test_shell.c",   # requires the (disabled) TCL shell
+        ],
+    ) + ["unit_test.c"] + select({
+        "@platforms//cpu:x86_64": ["test_native.c"],
+        "//conditions:default": [],
+    }),
+    data = ["//:std"] + glob(
+        ["**/*"],
+        exclude = [
+            "BUILD.bazel",
+            "regress/**",  # only used by the regression runner
+            "vests/**",
+            "vi_suite*/**",
+        ],
+    ),
+    env = {
+        "NVC_LIBPATH": "stdlib",
+    },
+    local_defines = ['TESTDIR=\\"test\\"'],
+    # Export the same dynamic symbol list as the nvc binary so the JIT's
+    # foreign function interface resolves the runtime support routines during
+    # the model and jit tests (and constant folding matches the real binary).
+    additional_linker_inputs = ["//:src/symbols.txt"],
+    linkopts = [
+        "-Wl,--dynamic-list=$(location //:src/symbols.txt)",
+        "-pthread",
+        "-ldl",
+        "-lm",
+    ],
+    deps = [
+        "//:libnvc",
+        "@check//:check",
+    ],
+)
+
+# The regression test runner and the FST dump utility are part of the test
+# tooling.  They are built (so `bazel build //...` exercises them) but are not
+# wired as `bazel test` targets: run_regr expects an installed bin/ + ../lib/
+# layout and drives the large regress suite, which is out of scope here.
+cc_binary(
+    name = "run_regr",
+    srcs = ["run_regr.c"],
+    local_defines = ['TESTDIR=\\"test\\"'],
+    # run_regr is a self-contained harness (it forks the nvc binary); it only
+    # needs config.h for the SH_PATH/DIR_SEP/EXEEXT macros.
+    deps = ["//bazel:config"],
+)
+
+cc_binary(
+    name = "fstdump",
+    srcs = ["fstdump.c"],
+    deps = ["//:thirdparty"],
+)
