@@ -1,0 +1,75 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    package_name = "librealsense",
+    license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/realsenseai/librealsense",
+)
+
+exports_files(["LICENSE"])
+
+cmake(
+    name = "librealsense",
+    build_data = [
+        "@nlohmann_json_src//:all_files",
+        "@nlohmann_json_src//:CMakeLists.txt",
+    ],
+    cache_entries = {
+        "BUILD_EXAMPLES": "OFF",
+        "BUILD_GRAPHICAL_EXAMPLES": "OFF",
+        "BUILD_RS2_ALL": "OFF",
+        "BUILD_SHARED_LIBS": "OFF",
+        "BUILD_TOOLS": "OFF",
+        "BUILD_UNIT_TESTS": "OFF",
+        "BUILD_WITH_DDS": "OFF",
+        "CHECK_FOR_UPDATES": "OFF",
+        "IMPORT_DEPTH_CAM_FW": "OFF",
+        # Consumed by the nlohmann_json_use_bazel_provided.patch early-return;
+        # points at the pre-fetched nlohmann/json source tree.
+        "NLOHMANN_JSON_CMAKELISTS": "$(execpath @nlohmann_json_src//:CMakeLists.txt)",
+    },
+    env = {
+        # Apple SDK headers use CF_ENUM patterns that trip newer Clang's
+        # -Welaborated-enum-base diagnostic when included from C++.
+        "CXXFLAGS": "-Wno-elaborated-enum-base",
+    },
+    lib_source = "//:all_files",
+    # macOS frameworks aren't propagated because we're producing a static library.
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-Wl,-framework,CoreFoundation",
+            "-Wl,-framework,IOKit",
+        ],
+        "//conditions:default": [],
+    }),
+    out_data_dirs = ["lib/pkgconfig"],
+    out_static_libs = [
+        "librealsense2.a",
+        "librealsense-file.a",
+        "librsutils.a",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libusb",
+    ] + select({
+        "@platforms//os:linux": ["@systemd//:libudev"],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(
+    name = "all_files",
+    srcs = glob(["**"]),
+)
+
+filegroup(
+    name = "gen_dir",
+    srcs = [":librealsense"],
+    output_group = "gen_dir",
+    visibility = ["//visibility:public"],
+)
