@@ -1,0 +1,156 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_flex//flex:flex.bzl", "flex")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//bazel:bootstrap.bzl", "nvc_bootstrap")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "COPYING",
+    "src/symbols.txt",
+])
+
+# ---------------------------------------------------------------------------
+# Generated sources
+# ---------------------------------------------------------------------------
+
+# The VHDL/Verilog scanner.  The raw `flex` rule emits the generated C file as
+# its default output so it can be compiled directly inside libnvc, picking up
+# the same include paths and defines as the rest of the tree.
+flex(
+    name = "lexer_gen",
+    src = "src/lexer.l",
+)
+
+# Embed the coverage HTML stylesheet as a C string (see src/cov/Makemodule.am).
+genrule(
+    name = "cov_style_h",
+    srcs = ["src/cov/cov-style.css"],
+    outs = ["src/cov/cov-style.h"],
+    cmd = "bash $(execpath //bazel:gen_cov_style.sh) $(location src/cov/cov-style.css) $@",
+    tools = ["//bazel:gen_cov_style.sh"],
+)
+
+# ---------------------------------------------------------------------------
+# Bundled third party C code
+# ---------------------------------------------------------------------------
+
+# On Linux/glibc the gnulib replacement sources (memmem, strcasestr, getline,
+# strchrnul, strndup, ...) are not needed; the corresponding HAVE_* macros are
+# defined in bazel/config.h.
+cc_library(
+    name = "thirdparty",
+    srcs = [
+        "thirdparty/cpustate.c",
+        "thirdparty/fastlz.c",
+        "thirdparty/fstapi.c",
+        "thirdparty/lz4.c",
+        "thirdparty/sha1.c",
+        "thirdparty/svrand.c",
+    ],
+    hdrs = glob(["thirdparty/*.h"]),
+    includes = ["thirdparty"],
+    alwayslink = True,
+    deps = [
+        "//bazel:config",
+        "@zlib//:zlib",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# The compiler core
+# ---------------------------------------------------------------------------
+
+cc_library(
+    name = "libnvc",
+    srcs = glob(
+        [
+            "src/*.c",
+            "src/cov/*.c",
+            "src/jit/*.c",
+            "src/mir/*.c",
+            "src/psl/*.c",
+            "src/rt/*.c",
+            "src/sdf/*.c",
+            "src/vhdl/*.c",
+            "src/vhpi/*.c",
+            "src/vlog/*.c",
+            "src/vpi/*.c",
+        ],
+        exclude = [
+            "src/nvc.c",           # program entry point -> :nvc
+            "src/jit/jit-llvm.c",  # LLVM back end is disabled
+            "src/jit/jit-x86.c",   # added below for x86-64 targets only
+        ],
+    ) + [":lexer_gen"] + select({
+        "@platforms//cpu:x86_64": ["src/jit/jit-x86.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob([
+        "src/**/*.h",
+        "thirdparty/*.h",
+    ]) + [":cov_style_h"],
+    includes = [
+        "src",
+        "thirdparty",
+    ],
+    # The runtime support routines that back the VHDL standard library are
+    # reached from JIT-compiled code by name, so every object must be retained.
+    alwayslink = True,
+    deps = [
+        "//bazel:config",
+        ":thirdparty",
+        "@libffi//:libffi",
+        "@zstd//:zstd",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# The nvc executable
+# ---------------------------------------------------------------------------
+
+cc_binary(
+    name = "nvc",
+    srcs = ["src/nvc.c"],
+    # Export exactly the runtime support symbols (the same dynamic symbol list
+    # the autotools build uses) so the JIT's foreign function interface can
+    # resolve them with dlsym, and no more.  Using the full -rdynamic instead
+    # would expose extra internal symbols and change constant-folding results.
+    additional_linker_inputs = ["src/symbols.txt"],
+    linkopts = [
+        "-Wl,--dynamic-list=$(location src/symbols.txt)",
+        "-pthread",
+        "-ldl",
+        "-lm",
+    ],
+    deps = [":libnvc"],
+)
+
+# ---------------------------------------------------------------------------
+# Bootstrapped VHDL standard libraries
+# ---------------------------------------------------------------------------
+
+# Run the freshly built nvc over the library sources to produce the runtime
+# library tree (std, ieee, nvc for VHDL-1993/2008/2019, plus the Synopsys and
+# VITAL packages).  Point NVC_LIBPATH at this directory to use them.
+nvc_bootstrap(
+    name = "std",
+    out_dir = "stdlib",
+    compiler = ":nvc",
+    srcs = glob([
+        "lib/**/*.vhd",
+        "lib/**/*.vhdl",
+    ]),
+    deps = glob(["lib/*/deps.mk"]),
+)
+
+# Convenience launcher: `bazel run //:nvc_cmd -- -a foo.vhd -e top -r`
+sh_binary(
+    name = "nvc_cmd",
+    srcs = ["//bazel:nvc_wrapper.sh"],
+    data = [
+        ":nvc",
+        ":std",
+    ],
+)
