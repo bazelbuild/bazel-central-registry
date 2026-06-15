@@ -1,0 +1,132 @@
+"""rules_swift MODULE.bazel file"""
+
+module(
+    name = "rules_swift",
+    version = "4.0.0-rc3",
+    bazel_compatibility = [">=8.0.0"],
+    compatibility_level = 3,
+)
+
+bazel_dep(name = "abseil-cpp", version = "20250814.1")
+bazel_dep(name = "apple_support", version = "2.6.1")
+bazel_dep(name = "bazel_features", version = "1.46.0")
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.1")
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "protobuf", version = "34.0.bcr.1")
+bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "rules_shell", version = "0.3.0")
+bazel_dep(name = "swift_argument_parser", version = "1.7.0")
+
+non_module_deps = use_extension("//swift:extensions.bzl", "non_module_deps")
+use_repo(
+    non_module_deps,
+    "com_github_apple_swift_docc_symbolkit",
+    "com_github_apple_swift_log",
+    "com_github_apple_swift_mmio",
+    "com_github_apple_swift_nio",
+    "com_github_apple_swift_nio_extras",
+    "com_github_apple_swift_nio_http2",
+    "com_github_apple_swift_nio_transport_services",
+    "com_github_apple_swift_protobuf",
+    "com_github_grpc_grpc_swift",
+    "rules_swift_index_import_5_8",
+    "rules_swift_index_import_6_1",
+    "rules_swift_local_config",
+)
+
+apple_cc_configure = use_extension("@apple_support//crosstool:setup.bzl", "apple_cc_configure_extension")
+use_repo(apple_cc_configure, "local_config_apple_cc")
+
+register_toolchains("//swift/toolchains:all")
+
+system_sdk = use_extension("//swift:extensions.bzl", "system_sdk")
+system_sdk.configure_sdks(
+    # NOTE: This doesn't apply to downstream repos
+    exclude_modules = {
+        "AppleTVOS": [
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+        "AppleTVSimulator": [
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+        "iPhoneSimulator": [
+            "AssetsLibrary",  #  TODO: Remove once CI >= Xcode 26.4
+            "CoreAudio_Private",
+        ],
+        "iPhoneOS": [
+            "AssetsLibrary",  #  TODO: Remove once CI >= Xcode 26.4
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+        "XROS": [
+            "AccessoryTransportExtension",
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+        "XRSimulator": [
+            "AccessoryTransportExtension",
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+        "WatchOS": [
+            "BrowserEngineKit",
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+        "WatchSimulator": [
+            "BrowserEngineKit",
+            "CoreAudio_Private",  # TODO: Remove once CI >= Xcode 26.4
+        ],
+    },
+    include_all = True,
+)
+use_repo(system_sdk, "system_sdk")
+
+swift = use_extension("//swift:extensions.bzl", "swift", dev_dependency = True)
+swift.toolchain(
+    name = "swift_toolchain",
+    swift_version = "6.3",
+)
+use_repo(
+    swift,
+    "swift_toolchain",
+    "swift_toolchain_ubuntu22.04",
+    "swift_toolchain_ubuntu22.04-aarch64",
+    "swift_toolchain_xcode",
+)
+
+register_toolchains(
+    # We're using ubuntu22.04 here because that's what's used in the current rules_swift buildkite CI.
+    # In a perfect world, we would be able to have bazel automatically use the toolchain that just works.
+    # Unfortunately, we are not in this world yet. This would require either one of these two things to happen:
+    # * either have a constraint to select on the current distribution, which would allow us to register all
+    #   the toolchains and have bazel automatically select the right one. But there is no such constraint today.
+    # * or have a swift universal Linux toolchain. Which is not the case today.
+    # Anyway, for now we will need to update this every time we update the CI environment. Contributors might also
+    # have to update this list if they're testing on a different Linux distribution.
+    "@swift_toolchain//:cc_toolchain_embedded_ubuntu22.04",
+    "@swift_toolchain//:cc_toolchain_embedded_ubuntu22.04-aarch64",
+    "@swift_toolchain//:cc_toolchain_embedded_xcode",
+    "@swift_toolchain//:swift_toolchain_embedded_ubuntu22.04",
+    "@swift_toolchain//:swift_toolchain_embedded_ubuntu22.04-aarch64",
+    "@swift_toolchain//:swift_toolchain_embedded_xcode",
+    dev_dependency = True,
+)
+
+# Dev dependencies
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.5.0", dev_dependency = True)
+bazel_dep(name = "gazelle", version = "0.46.0", dev_dependency = True)
+bazel_dep(name = "rules_go", version = "0.59.0", dev_dependency = True)  # TODO: Remove when transitives update past this version
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "swift-syntax", version = "602.0.0.bcr.2", dev_dependency = True)
+bazel_dep(name = "rules_swift_layering_check_external_test", version = "0.0.0", dev_dependency = True)
+local_path_override(
+    module_name = "rules_swift_layering_check_external_test",
+    path = "third_party/rules_swift_layering_check_external_test",
+)
+
+# TODO: In stardoc 0.7.1+, the `load` statements added to the docs are relative to the `alias` targets which is incorrect.
+# To keep the docs without confusing load statements we patch a partial revert of: https://github.com/bazelbuild/stardoc/pull/216
+# https://github.com/bazelbuild/stardoc/issues/297
+single_version_override(
+    module_name = "stardoc",
+    patch_strip = 1,
+    patches = ["//third_party/patches:stardoc-revert-load-statements-in-docs.patch"],
+)
