@@ -86,6 +86,9 @@ expand_template(
     template = "CMake/Templates/OgreBuildSettings.h.in",
 )
 
+# Select the appropriate windowing/GL API implementation based on the platform:
+# - macOS: Use Cocoa for native macOS windowing support, disable headless EGL.
+# - Linux/Other: Use headless EGL (OGRE_GLSUPPORT_USE_EGL_HEADLESS) by default.
 expand_template(
     name = "OgreGL3PlusBuildSettings",
     out = "OgreMain/include/OgreGL3PlusBuildSettings.h",
@@ -106,6 +109,30 @@ expand_template(
     template = "CMake/Templates/OgreGL3PlusBuildSettings.h.in",
 )
 
+# ==============================================================================
+# Multi-platform Build Structure for OgreNext (OgreMain & RenderSystem_GL3Plus)
+# ==============================================================================
+#
+# 1. OgreMain Compilation Split:
+#    - Native 'cc_library' rules in Bazel strictly forbid compile-ready Objective-C++
+#      ('.mm') files in the 'srcs' list.
+#    - To bypass this limitation, macOS-specific Objective-C++ implementation files
+#      (OgreErrorDialog.mm, macUtils.mm, OgreConfigDialog.mm) are compiled inside
+#      the 'ogre-main-macos' 'objc_library' target.
+#    - All other core C++ source files are compiled inside 'ogre-main-cpp' ('cc_library').
+#    - The public 'ogre-main' alias routes dependency requests based on the target OS:
+#      * macOS: Resolves to 'ogre-main-macos' (which compiles the macOS windowing code
+#        and transitively depends on 'ogre-main-cpp').
+#      * Others: Resolves directly to 'ogre-main-cpp'.
+#
+# 2. RenderSystem_GL3Plus Windowing & API Selection:
+#    - Linux, and other non-macOS systems build headless EGL rendering support
+#      unconditionally by including EGL/PBuffer sources directly in the main target.
+#    - macOS targets compile Cocoa-specific windowing code (OSX/*.mm) inside a helper
+#      'RenderSystem_GL3Plus_macos' 'objc_library' target.
+#    - 'RenderSystem_GL3Plus.so' links with 'RenderSystem_GL3Plus_macos' on macOS and
+#      adds required system Apple frameworks (-framework OpenGL, -framework Cocoa, etc.).
+# ==============================================================================
 main_srcs = glob(
     [
         "OgreMain/src/*.cpp",
