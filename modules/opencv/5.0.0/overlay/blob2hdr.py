@@ -26,7 +26,7 @@ with open(blob_path, "rb") as f:
     data = f.read()
 
 hex_bytes = ["0x{:02x}".format(b) for b in data]
-chunks = [hex_bytes[i:i + 16] for i in range(0, len(hex_bytes), 16)]
+chunks = [hex_bytes[i : i + 16] for i in range(0, len(hex_bytes), 16)]
 lines = []
 for i, chunk in enumerate(chunks):
     if i < len(chunks) - 1:
