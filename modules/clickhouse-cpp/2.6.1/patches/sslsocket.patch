@@ -1,0 +1,57 @@
+--- a/clickhouse/base/sslsocket.cpp
++++ b/clickhouse/base/sslsocket.cpp
+@@ -2,6 +2,7 @@
+ #include "../client.h"
+ #include "../exceptions.h"
+ 
++#include <iostream>
+ #include <stdexcept>
+ 
+ #include <openssl/ssl.h>
+@@ -50,6 +51,19 @@ void throwSSLError(SSL * ssl, int error, const char * /*location*/, const char *
+ }
+ 
+ void configureSSL(const clickhouse::SSLParams::ConfigurationType & configuration, SSL * ssl, SSL_CTX * context = nullptr) {
++#ifdef USE_BORINGSSL
++    // BoringSSL doesn't ship the SSL_CONF_* command API, so the
++    // configuration vector cannot be applied. Users who rely on
++    // SSL_CONF commands should build against
++    // OpenSSL (e.g. --@clickhouse-cpp-client//:tls=openssl with Bazel).
++    (void)ssl;
++    (void)context;
++    if (!configuration.empty()) {
++        throw clickhouse::OpenSSLError(
++            "SSLParams::configuration cannot be used when the library is built against BoringSSL "
++            "To apply these settings, build against OpenSSL by using the `tls=openssl` option in Bazel.");
++    }
++#else
+     std::unique_ptr<SSL_CONF_CTX, decltype(&SSL_CONF_CTX_free)> conf_ctx_holder(SSL_CONF_CTX_new(), SSL_CONF_CTX_free);
+     auto conf_ctx = conf_ctx_holder.get();
+ 
+@@ -84,6 +98,7 @@ void configureSSL(const clickhouse::SSLParams::ConfigurationType & configuration
+         else
+             throw clickhouse::OpenSSLError("Failed to configure OpenSSL: command '" + kv.first + "' unknown error: " + std::to_string(err));
+     }
++#endif
+ }
+ 
+ #define STRINGIFY_HELPER(x) #x
+@@ -285,9 +300,18 @@ SSLSocketInput::SSLSocketInput(SSL *ssl)
+ {}
+ 
+ size_t SSLSocketInput::DoRead(void* buf, size_t len) {
++#ifdef USE_BORINGSSL
++    // BoringSSL doesn't have SSL_read_ex (OpenSSL 3.0+ API); fall back to
++    // SSL_read with the length clamped to INT_MAX.
++    const int max_read = static_cast<int>(
++        std::min<std::size_t>(len, std::numeric_limits<int>::max()));
++    return static_cast<size_t>(
++        HANDLE_SSL_ERROR(ssl_, SSL_read(ssl_, buf, max_read)));
++#else
+     size_t actually_read;
+     HANDLE_SSL_ERROR(ssl_, SSL_read_ex(ssl_, buf, len, &actually_read));
+     return actually_read;
++#endif
+ }
+ 
+ SSLSocketOutput::SSLSocketOutput(SSL *ssl)
