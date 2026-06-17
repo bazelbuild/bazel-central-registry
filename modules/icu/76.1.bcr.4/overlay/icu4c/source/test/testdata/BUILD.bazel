@@ -1,0 +1,154 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@aspect_bazel_lib//lib:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+# Wrapper script that drives the testdata generation pipeline.
+py_binary(
+    name = "generator",
+    srcs = ["generator.py"],
+    imports = ["../../python"],
+    deps = ["//icu4c/source/python/icutools/databuilder"],
+)
+
+run_binary(
+    name = "testdata-gen",
+    srcs = glob([
+        "**/*.txt",
+        "**/*.ucm",
+        "**/*.utf16be",
+        "**/*.res",
+        "**/*.toml",
+        "**/*.bin",
+    ]) + [
+        "BUILDRULES.py",
+        "//icu4c/source/data:icudata-dir",
+        "//icu4c/source/data:unidata-src",
+        "//icu4c/source/tools:tooldir",
+    ],
+    outs = [
+        "out/testdata.dat",
+        "out/testdata/nam.typ",
+        "out/testdata/zoneinfo64.res",
+    ],
+    args = [
+        "--src_dir",
+        "$(execpath BUILDRULES.py)/..",
+        "--tool_dir",
+        "$(execpath //icu4c/source/tools:tooldir)",
+        "--out_dir",
+        "$(RULEDIR)",
+        "--pkg_name",
+        "testdata",
+        "--icu_data_dir",
+        "$(execpath //icu4c/source/data:icudata-dir)",
+    ],
+    mnemonic = "IcuGenerateTestdata",
+    progress_message = "Generating ICU test data bundle %{output}",
+    tool = ":generator",
+)
+
+run_binary(
+    name = "testdata-gen-asm",
+    srcs = ["out/testdata.dat"],
+    outs = ["testdata_dat.S"],
+    args = select({
+        "@platforms//os:macos": [
+            "--assembly",
+            "gcc-darwin",
+        ],
+        "@platforms//os:linux": [
+            "--assembly",
+            "gcc",
+        ],
+    }) + [
+        "--name",
+        "testdata",
+        "--entrypoint",
+        "testdata",
+        "--destdir",
+        "$(RULEDIR)",
+        "$(execpath out/testdata.dat)",
+    ],
+    mnemonic = "IcuGenerateTestdataAsm",
+    progress_message = "Generating ICU test data assembly stub %{output}",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    tool = "//icu4c/source/tools/genccode",
+)
+
+# Step 2 (Windows): testdata.dat → testdata_dat.c (C byte-array). genccode's
+# masm output doesn't fit MSVC's link flow, so we use the C variant — same
+# strategy as generate-icudata-c in //icu4c/source/data/BUILD.bazel.
+run_binary(
+    name = "testdata-gen-c",
+    srcs = ["out/testdata.dat"],
+    outs = ["testdata_dat.c"],
+    args = [
+        "--name",
+        "testdata",
+        "--entrypoint",
+        "testdata",
+        "--destdir",
+        "$(RULEDIR)",
+        "$(execpath out/testdata.dat)",
+    ],
+    mnemonic = "IcuGenerateTestdataC",
+    progress_message = "Generating ICU test data C source %{output}",
+    target_compatible_with = ["@platforms//os:windows"],
+    tool = "//icu4c/source/tools/genccode",
+)
+
+# Compiled test data linked statically into test binaries. Provides the
+# "testdata" ICU package so that ures_open("testdata", …) resolves without
+# needing to find a .dat file on the filesystem.
+cc_library(
+    name = "testdata",
+    srcs = select({
+        "@platforms//os:windows": [":testdata-gen-c"],
+        "//conditions:default": [":testdata-gen-asm"],
+    }),
+    visibility = [
+        "//icu4c/source/test/cintltst:__pkg__",
+        "//icu4c/source/test/intltest:__pkg__",
+        "//icu4c/source/test/iotest:__pkg__",
+    ],
+    # The generated C source on Windows has '#includes <unicode/umachine.h>' for
+    # U_CAPI / data-symbol type declarations. Assembly outputs on other
+    # platforms don't need headers.
+    deps = select({
+        "@platforms//os:windows": ["//icu4c/source/common:headers"],
+        "//conditions:default": [],
+    }),
+)
+
+# ---------------------------------------------------------------------------
+# Combined testdata directory for tests.
+# Merges source testdata (golden files, break-iterator rules, ...) and the
+# compiled output (out/testdata.dat, out/testdata/*.res) into one directory
+# so that tests can locate both via a single rlocationpath macro without
+# knowing the canonical repo name at compile time.
+#
+# Layout inside the directory:
+#   regextst.txt, cldr/*, ...  ← source testdata   (getSourceTestData)
+#   out/testdata.dat           ← compiled bundle   (loadTestData → out/)
+#   out/testdata/*.res         ← standalone files  (loadTestData → out/)
+# ---------------------------------------------------------------------------
+copy_to_directory(
+    name = "testdata-dir",
+    srcs = glob(
+        include = ["**"],
+        exclude = ["generate_testdata.py"],
+    ) + [
+        "out/testdata.dat",
+        "out/testdata/nam.typ",
+        "out/testdata/zoneinfo64.res",
+    ],
+    visibility = [
+        "//icu4c/source/test/cintltst:__pkg__",
+        "//icu4c/source/test/intltest:__pkg__",
+        "//icu4c/source/test/iotest:__pkg__",
+    ],
+)

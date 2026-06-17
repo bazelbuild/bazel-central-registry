@@ -1,0 +1,52 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Monolithic libicui18n.
+# Public unicode headers are propagated to consumers. The rest of the top-level
+# header files are private.
+cc_library(
+    name = "icui18n",
+    srcs = glob(["*.cpp"]),
+    hdrs = glob(["unicode/*.h"]),
+    defines = select({
+        "//icu4c/source:windows-static-build": ["U_STATIC_IMPLEMENTATION"],
+        "//conditions:default": [],
+    }),
+    # Private headers from common are used throughout i18n's implementation.
+    # The 'implementation_deps' attribute materializes them in the input tree
+    # without leaking them to external consumers.
+    implementation_deps = [
+        ":private_headers",
+        "//icu4c/source/common:private_headers",
+    ],
+    includes = ["."],
+    local_defines = ["U_I18N_IMPLEMENTATION"],
+    visibility = [
+        "//:__pkg__",
+        "//icu4c/source:__subpackages__",
+    ],
+    deps = [
+        "//icu4c/source/common:icuuc",
+    ],
+)
+
+# Private headers.
+# Exposed to sibling ICU packages and never propagated to external consumers.
+cc_library(
+    name = "private_headers",
+    hdrs = glob(
+        include = ["*.h"],
+        exclude = ["unicode/*.h"],  # Public headers.
+    ),
+    includes = ["."],
+    visibility = ["//icu4c/source:__subpackages__"],
+)
+
+# Exposes the vendored double-conversion header for test code that directly
+# exercises the double-conversion API (intltest/numbertest_doubleconversion.cpp).
+# This header is NOT part of ICU's public API and, hence, must not be exported.
+cc_library(
+    name = "double-conversion",
+    hdrs = ["double-conversion.h"],
+    includes = ["."],
+    visibility = ["//icu4c/source/test/intltest:__pkg__"],
+)

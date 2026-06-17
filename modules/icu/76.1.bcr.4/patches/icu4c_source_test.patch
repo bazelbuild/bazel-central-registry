@@ -1,0 +1,279 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Albert Lloveras <albert.l@canva.com>
+Date: Thu, 1 Jan 1970 00:00:00 +0000
+Subject: [PATCH] Redirect ICU test data lookups to Bazel runfiles
+
+Redirect test data directory lookups in the upstream test harnesses (cintltst, intltest, iotest)
+to Bazel runfiles via the BAZEL_ICU_TESTDATA_SRC_DIR and BAZEL_ICU_DATA_SRC_DIR macros, replacing
+the U_TOPSRCDIR / U_TOPBUILDDIR filesystem paths that are unavailable in the Bazel sandbox.
+
+---
+diff --git a/icu4c/source/test/cintltst/cintltst.c b/icu4c/source/test/cintltst/cintltst.c
+index ab82fde..666a3dc 100644
+--- a/icu4c/source/test/cintltst/cintltst.c
++++ b/icu4c/source/test/cintltst/cintltst.c
+@@ -38,6 +38,7 @@
+ #ifdef URES_DEBUG
+ #include "uresimp.h" /* for ures_dumpCacheContents() */
+ #endif
++#include "bazel_runfiles.h"
+
+ #ifdef XP_MAC_CONSOLE
+ #   include <console.h>
+@@ -311,6 +312,15 @@ const char *  ctest_dataSrcDir(void)
+     //              The value is complete with quotes, so it can be used
+     //              as-is as a string constant.
+     */
++#if defined(BAZEL_ICU_DATA_SRC_DIR)
++    {
++        const char *resolved = icu_bazel_rlocation_dir(BAZEL_ICU_DATA_SRC_DIR);
++        if (resolved != NULL) {
++            dataSrcDir = resolved;
++            return dataSrcDir;
++        }
++    }
++#endif
+ #if defined (U_TOPSRCDIR)
+     {
+         dataSrcDir = U_TOPSRCDIR  U_FILE_SEP_STRING "data" U_FILE_SEP_STRING;
+@@ -549,6 +559,17 @@ const char* loadTestData(UErrorCode* err){
+ #elif defined (U_TOPBUILDDIR)
+         tdrelativepath = "test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING"out"U_FILE_SEP_STRING;
+         directory = U_TOPBUILDDIR;
++#elif defined (BAZEL_ICU_TESTDATA_SRC_DIR)
++        {
++            const char *resolved = icu_bazel_rlocation_dir(BAZEL_ICU_TESTDATA_SRC_DIR "/out");
++            if (resolved != NULL) {
++                tdrelativepath = "";
++                directory = resolved;
++            } else {
++                tdrelativepath = ".."U_FILE_SEP_STRING".."U_FILE_SEP_STRING"test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING"out"U_FILE_SEP_STRING;
++                directory= ctest_dataOutDir();
++            }
++        }
+ #else
+         tdrelativepath = ".."U_FILE_SEP_STRING".."U_FILE_SEP_STRING"test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING"out"U_FILE_SEP_STRING;
+         directory= ctest_dataOutDir();
+@@ -590,6 +611,14 @@ const char* loadTestData(UErrorCode* err){
+ const char *loadSourceTestData(UErrorCode* err) {
+     (void)err;
+     const char *srcDataDir = NULL;
++#if defined(BAZEL_ICU_TESTDATA_SRC_DIR)
++    {
++        const char *resolved = icu_bazel_rlocation_dir(BAZEL_ICU_TESTDATA_SRC_DIR);
++        if (resolved != NULL) {
++            return resolved;
++        }
++    }
++#endif
+ #ifdef U_TOPSRCDIR
+     srcDataDir = U_TOPSRCDIR U_FILE_SEP_STRING"test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING;
+ #else
+diff --git a/icu4c/source/test/cintltst/creststn.c b/icu4c/source/test/cintltst/creststn.c
+index d5b0bb4..20744c8 100644
+--- a/icu4c/source/test/cintltst/creststn.c
++++ b/icu4c/source/test/cintltst/creststn.c
+@@ -697,10 +697,23 @@ static void TestNewTypes(void) {
+     }
+ #endif
+     {
+-        const char *sourcePath = ctest_dataSrcDir();
+-        int32_t srcPathLen = (int32_t)strlen(sourcePath);
+-        const char *deltaPath = ".."U_FILE_SEP_STRING"test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING;
+-        int32_t deltaPathLen = (int32_t)strlen(deltaPath);
++        const char *sourcePath;
++        const char *deltaPath;
++        int32_t srcPathLen;
++        int32_t deltaPathLen;
++#if defined (BAZEL_ICU_TESTDATA_SRC_DIR)
++        /* In a Bazel build use loadSourceTestData() which already points to
++         * the testdata source directory via BAZEL_ICU_TESTDATA_SRC_DIR. */
++        {   UErrorCode srcStatus = U_ZERO_ERROR;
++            sourcePath = loadSourceTestData(&srcStatus);
++            deltaPath = "";
++        }
++#else
++        sourcePath = ctest_dataSrcDir();
++        deltaPath = ".."U_FILE_SEP_STRING"test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING;
++#endif
++        srcPathLen = (int32_t)strlen(sourcePath);
++        deltaPathLen = (int32_t)strlen(deltaPath);
+         char *testDataFileName = (char *) malloc( srcPathLen+ deltaPathLen + 50 );
+         char *path = testDataFileName;
+
+diff --git a/icu4c/source/test/cintltst/sprpdata.c b/icu4c/source/test/cintltst/sprpdata.c
+index 6238879..a32b5e4 100644
+--- a/icu4c/source/test/cintltst/sprpdata.c
++++ b/icu4c/source/test/cintltst/sprpdata.c
+@@ -33,6 +33,7 @@
+ #include "cmemory.h"
+ #include "ustr_imp.h"
+ #include "cstring.h"
++#include "bazel_runfiles.h"
+
+ static void
+ parseMappings(const char *filename, UStringPrepProfile* data, UBool reportError, UErrorCode *pErrorCode);
+@@ -286,6 +287,14 @@ doStringPrepTest(const char* binFileName, const char* txtFileName, int32_t optio
+ #ifdef U_TOPSRCDIR
+     srcdatapath = U_TOPSRCDIR;
+     relativepath = U_FILE_SEP_STRING"test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING;
++#elif defined (BAZEL_ICU_TESTDATA_SRC_DIR)
++    {
++        const char *resolved = icu_bazel_rlocation(BAZEL_ICU_TESTDATA_SRC_DIR);
++        if (resolved != NULL) {
++            srcdatapath = resolved;
++            relativepath = U_FILE_SEP_STRING;
++        }
++    }
+ #else
+     srcdatapath = ctest_dataOutDir();
+     relativepath = ".."U_FILE_SEP_STRING".."U_FILE_SEP_STRING"test"U_FILE_SEP_STRING"testdata"U_FILE_SEP_STRING;
+diff --git a/icu4c/source/test/cintltst/ucnvseltst.c b/icu4c/source/test/cintltst/ucnvseltst.c
+index b4f48ae..6bcb11e 100644
+--- a/icu4c/source/test/cintltst/ucnvseltst.c
++++ b/icu4c/source/test/cintltst/ucnvseltst.c
+@@ -166,8 +166,20 @@ static FILE *fopenOrError(const char *filename) {
+     int32_t needLen;
+     FILE *f;
+     char fnbuf[FILENAME_BUFFER];
+-    const char* directory = ctest_dataSrcDir();
+-    needLen = (int32_t)(uprv_strlen(directory) + uprv_strlen(TDSRCPATH) + uprv_strlen(filename) + 1);
++    const char* directory;
++    const char* tdsrcpath;
++#if defined (BAZEL_ICU_TESTDATA_SRC_DIR)
++    /* In a Bazel build use loadSourceTestData() which already points to
++     * the testdata source directory via BAZEL_ICU_TESTDATA_SRC_DIR. */
++    {   UErrorCode status = U_ZERO_ERROR;
++        directory = loadSourceTestData(&status);
++        tdsrcpath = "";
++    }
++#else
++    directory = ctest_dataSrcDir();
++    tdsrcpath = TDSRCPATH;
++#endif
++    needLen = (int32_t)(uprv_strlen(directory) + uprv_strlen(tdsrcpath) + uprv_strlen(filename) + 1);
+     if(needLen > FILENAME_BUFFER) {
+         log_err("FAIL: Could not load %s. Filename buffer overflow, needed %d but buffer is %d\n",
+                 filename, needLen, FILENAME_BUFFER);
+@@ -175,7 +187,7 @@ static FILE *fopenOrError(const char *filename) {
+     }
+
+     strcpy(fnbuf, directory);
+-    strcat(fnbuf, TDSRCPATH);
++    strcat(fnbuf, tdsrcpath);
+     strcat(fnbuf, filename);
+
+     f = fopen(fnbuf, "rb");
+diff --git a/icu4c/source/test/intltest/intltest.cpp b/icu4c/source/test/intltest/intltest.cpp
+index e46eaaf..88b4d44 100644
+--- a/icu4c/source/test/intltest/intltest.cpp
++++ b/icu4c/source/test/intltest/intltest.cpp
+@@ -47,6 +47,7 @@
+ #include "umutex.h"
+ #include "uoptions.h"
+ #include "number_decnum.h"
++#include "bazel_runfiles.h"
+
+ #ifdef XP_MAC_CONSOLE
+ #include <console.h>
+@@ -1617,6 +1618,20 @@ const char* IntlTest::loadTestData(UErrorCode& err){
+ #if defined (U_TOPBUILDDIR)
+         tdrelativepath = "test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING "out" U_FILE_SEP_STRING;
+         directory = U_TOPBUILDDIR;
++#elif defined (BAZEL_ICU_TESTDATA_SRC_DIR)
++        /* In a Bazel build, load compiled testdata from the testdata_dir
++         * runfiles output: BAZEL_ICU_TESTDATA_SRC_DIR/out/
++         */
++        {
++            const char *resolved = icu_bazel_rlocation(BAZEL_ICU_TESTDATA_SRC_DIR "/out");
++            if (resolved != nullptr) {
++                tdrelativepath = U_FILE_SEP_STRING;
++                directory = resolved;
++            } else {
++                tdrelativepath = ".." U_FILE_SEP_STRING "test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING "out" U_FILE_SEP_STRING;
++                directory = pathToDataDirectory();
++            }
++        }
+ #else
+         tdrelativepath = ".." U_FILE_SEP_STRING "test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING "out" U_FILE_SEP_STRING;
+         directory = pathToDataDirectory();
+@@ -1661,6 +1676,14 @@ const char* IntlTest::getTestDataPath(UErrorCode& err) {
+  */
+ const char *IntlTest::getSourceTestData(UErrorCode& /*err*/) {
+     const char *srcDataDir = nullptr;
++#if defined(BAZEL_ICU_TESTDATA_SRC_DIR)
++    {
++        const char *resolved = icu_bazel_rlocation_dir(BAZEL_ICU_TESTDATA_SRC_DIR);
++        if (resolved != nullptr) {
++            return resolved;
++        }
++    }
++#endif
+ #ifdef U_TOPSRCDIR
+     srcDataDir = U_TOPSRCDIR U_FILE_SEP_STRING"test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING;
+ #else
+@@ -1714,6 +1737,18 @@ const char *IntlTest::getSharedTestData(UErrorCode& err) {
+                 srcDataDir = nullptr;
+             }
+         }
++#elif defined (BAZEL_ICU_SHARED_TESTDATA_DIR)
++        {
++            const char *resolved_dir = icu_bazel_rlocation_dir(BAZEL_ICU_SHARED_TESTDATA_DIR);
++            const char *resolved_file = icu_bazel_rlocation(
++                BAZEL_ICU_SHARED_TESTDATA_DIR "/message2" U_FILE_SEP_STRING "valid-tests.json");
++            if (resolved_dir != nullptr && resolved_file != nullptr && fileExists(resolved_file)) {
++                srcDataDir = resolved_dir;
++            } else {
++                err = U_FILE_ACCESS_ERROR;
++                srcDataDir = nullptr;
++            }
++        }
+ #else
+         // Try ../../../../testdata (if we're in icu/source/test/intltest)
+         // and ../../../../../../testdata (if we're in icu/source/test/intltest/Platform/(Debug|Release)
+@@ -1794,6 +1829,15 @@ const char *  IntlTest::pathToDataDirectory()
+     //              The value is complete with quotes, so it can be used
+     //              as-is as a string constant.
+     */
++#if defined(BAZEL_ICU_DATA_SRC_DIR)
++    {
++        const char *resolved = icu_bazel_rlocation_dir(BAZEL_ICU_DATA_SRC_DIR);
++        if (resolved != nullptr) {
++            fgDataDir = resolved;
++            return fgDataDir;
++        }
++    }
++#endif
+ #if defined (U_TOPSRCDIR)
+     {
+         fgDataDir = U_TOPSRCDIR  U_FILE_SEP_STRING "data" U_FILE_SEP_STRING;
+diff --git a/icu4c/source/test/iotest/iotest.cpp b/icu4c/source/test/iotest/iotest.cpp
+index 64ff66f..7b2ad23 100644
+--- a/icu4c/source/test/iotest/iotest.cpp
++++ b/icu4c/source/test/iotest/iotest.cpp
+@@ -27,6 +27,7 @@
+ #include "iotest.h"
+ #include "unicode/tstdtmod.h"
+ #include "putilimp.h"
++#include "bazel_runfiles.h"
+
+ #include <string.h>
+ #include <stdlib.h>
+@@ -138,6 +139,17 @@ class DataDrivenLogger : public TestLog {
+ #if defined (U_TOPBUILDDIR)
+             tdrelativepath = "test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING "out" U_FILE_SEP_STRING;
+             directory = U_TOPBUILDDIR;
++#elif defined (BAZEL_ICU_TESTDATA_SRC_DIR)
++            {
++                const char *resolved = icu_bazel_rlocation(BAZEL_ICU_TESTDATA_SRC_DIR "/out");
++                if (resolved != nullptr) {
++                    tdrelativepath = U_FILE_SEP_STRING;
++                    directory = resolved;
++                } else {
++                    tdrelativepath = ".." U_FILE_SEP_STRING "test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING "out" U_FILE_SEP_STRING;
++                    directory = pathToDataDirectory();
++                }
++            }
+ #else
+             tdrelativepath = ".." U_FILE_SEP_STRING "test" U_FILE_SEP_STRING "testdata" U_FILE_SEP_STRING "out" U_FILE_SEP_STRING;
+             directory = pathToDataDirectory();

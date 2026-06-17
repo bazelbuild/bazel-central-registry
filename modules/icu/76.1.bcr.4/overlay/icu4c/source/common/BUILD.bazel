@@ -1,0 +1,63 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Monolithic icuuc.
+# Public unicode headers are propagated to consumers. The rest of the top-level
+# header files are private.
+cc_library(
+    name = "icuuc",
+    srcs = glob(["*.cpp"]),
+    hdrs = glob(["unicode/*.h"]),
+    defines = select({
+        "//icu4c/source:windows-static-build": ["U_STATIC_IMPLEMENTATION"],
+        "//conditions:default": [],
+    }),
+    implementation_deps = [":private_headers"],
+    includes = ["."],
+    # wintz.cpp uses the Windows Registry API (advapi32) to detect timezones.
+    linkopts = select({
+        "@platforms//os:windows": ["-DEFAULTLIB:advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = ["U_COMMON_IMPLEMENTATION"],
+    visibility = [
+        "//:__pkg__",
+        "//icu4c/source:__subpackages__",
+    ],
+    # Bootstrap mode uses the empty stub so that the tools can be compiled
+    # before the real data bundle exists (breaking the circular dependency).
+    # Non-bootstrap mode links in the real assembly data (icudata) which
+    # satisfies the icudt<ver>l_dat symbol without any filesystem lookup,
+    # and deps on stubdata:headers only for the symbol declaration.
+    deps = select({
+        "//icu4c/source:is-bootstrapping": ["//icu4c/source/stubdata"],
+        "//conditions:default": [
+            "//icu4c/source/data:icudata",
+            "//icu4c/source/stubdata:headers",
+        ],
+    }),
+)
+
+# Public ICU headers. They are kept as a separate target so that stubdata
+# can depend on it without creating a circular dependency through icuuc.
+cc_library(
+    name = "headers",
+    hdrs = glob(["unicode/*.h"]),
+    defines = select({
+        "//icu4c/source:windows-static-build": ["U_STATIC_IMPLEMENTATION"],
+        "//conditions:default": [],
+    }),
+    includes = ["."],
+    visibility = ["//icu4c/source:__subpackages__"],
+)
+
+# Private headers.
+# Exposed to sibling ICU packages and never propagated to external consumers.
+cc_library(
+    name = "private_headers",
+    hdrs = glob(
+        include = ["*.h"],
+        exclude = ["unicode/*.h"],  # Public headers.
+    ),
+    includes = ["."],
+    visibility = ["//icu4c/source:__subpackages__"],
+)
