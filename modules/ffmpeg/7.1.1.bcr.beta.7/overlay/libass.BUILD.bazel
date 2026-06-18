@@ -1,0 +1,81 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "meson")
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "all_srcs",
+    srcs = glob(["**"]),
+)
+
+genrule(
+    name = "meson_pkgconfig_wrapper",
+    outs = ["meson_pkgconfig_wrapper.sh"],
+    cmd = """
+cat >"$@" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+pkgconfig_dir="$$EXT_BUILD_DEPS/lib/pkgconfig"
+mkdir -p "$$pkgconfig_dir"
+export PKG_CONFIG_PATH="$$pkgconfig_dir:$${PKG_CONFIG_PATH:-}"
+
+cat >"$$pkgconfig_dir/freetype2.pc" <<'PC'
+prefix=$${pcfiledir}/../..
+exec_prefix=$${prefix}
+libdir=$${exec_prefix}/lib
+includedir=$${prefix}/include
+
+Name: FreeType 2
+Description: FreeType font engine
+Version: 26.4.20
+Libs: -L$${libdir} -lfreetype
+Cflags: -I$${includedir}/include
+PC
+
+cat >"$$pkgconfig_dir/harfbuzz.pc" <<'PC'
+prefix=$${pcfiledir}/../..
+exec_prefix=$${prefix}
+libdir=$${exec_prefix}/lib
+includedir=$${prefix}/include
+
+Name: harfbuzz
+Description: HarfBuzz text shaping library
+Version: 14.1.0
+Libs: -L$${libdir} -lharfbuzz -lharfbuzz-subset
+Cflags: -I$${includedir} -I$${includedir}/src
+PC
+
+exec "$$@"
+EOF
+chmod +x "$@"
+""",
+)
+
+meson(
+    name = "libass",
+    lib_source = ":all_srcs",
+    build_data = [":meson_pkgconfig_wrapper"],
+    tool_prefix = "$(execpath :meson_pkgconfig_wrapper)",
+    options = {
+        "asm": "disabled",
+        "checkasm": "disabled",
+        "compare": "disabled",
+        "coretext": "disabled",
+        "default_library": "static",
+        "directwrite": "disabled",
+        "fontconfig": "disabled",
+        "fuzz": "disabled",
+        "includedir": "include",
+        "libdir": "lib",
+        "libunibreak": "disabled",
+        "profile": "disabled",
+        "require-system-font-provider": "false",
+        "test": "disabled",
+    },
+    out_static_libs = ["libass.a"],
+    deps = [
+        "@fribidi",
+        "@freetype",
+        "@harfbuzz",
+    ],
+)
