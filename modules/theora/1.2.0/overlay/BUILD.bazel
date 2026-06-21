@@ -1,0 +1,132 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
+package(default_visibility = ["//visibility:public"])
+
+bool_flag(
+    name = "with_asm_optimization",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "asm_disabled",
+    flag_values = {
+        ":with_asm_optimization": "False",
+    },
+)
+
+config_setting(
+    name = "asm_enabled",
+    flag_values = {
+        ":with_asm_optimization": "True",
+    },
+)
+
+package_info(
+    name = "package",
+    module_bazel = "//:MODULE.bazel",
+)
+
+autoconf(
+    name = "autoconf",
+    checks = macros.AC_CHECK_HEADERS([
+        "inttypes.h",
+        "stdint.h",
+        "stdlib.h",
+        "string.h",
+        "memory.h",
+        "sys/types.h",
+        "sys/stat.h",
+        "unistd.h",
+        "dlfcn.h",
+        "sys/soundcard.h",
+        "soundcard.h",
+        "machine/soundcard.h",
+    ]) + select({
+        "//:asm_enabled": [
+            checks.AC_TRY_COMPILE(
+                name = "ac_cv_x86_asm",
+                code = """
+                #if !defined(__i386__) && !defined(__x86_64__) && !defined(_M_IX86) && !defined(_M_X64)
+                #error "Not x86 platform"
+                #endif
+                int main(void) { return 0; }
+                """,
+                define = "OC_X86_ASM",
+            ),
+            checks.AC_TRY_COMPILE(
+                name = "ac_cv_x86_64_asm",
+                code = """
+                #if !defined(__x86_64__) && !defined(_M_X64)
+                #error "Not x86_64 platform"
+                #endif
+                int main(void) { return 0; }
+                """,
+                define = "OC_X86_64_ASM",
+            ),
+            checks.AC_TRY_COMPILE(
+                name = "ac_cv_arm_asm",
+                code = """
+                #if !defined(__arm__) && !defined(_M_ARM)
+                #error "Not 32-bit ARM platform"
+                #endif
+                #if defined(__aarch64__) || defined(_M_ARM64)
+                #error "ARM64 not supported, assembly is for 32-bit ARM only"
+                #endif
+                int main(void) { return 0; }
+                """,
+                define = "OC_ARM_ASM",
+            ),
+            checks.AC_TRY_COMPILE(
+                name = "ac_cv_c64x_asm",
+                code = """
+                #if !defined(__c6x__) && !defined(_TMS320C6X)
+                #error "Not C64X platform"
+                #endif
+                int main(void) { return 0; }
+                """,
+                define = "OC_C64X_ASM",
+            ),
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":package"],
+)
+
+autoconf_hdr(
+    name = "config",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "hdrs",
+    hdrs = glob(["include/**/*.h"]),
+    textual_hdrs = [":config.h"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "theoradec",
+    actual = "//lib:theoradec",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "theoraenc",
+    actual = "//lib:theoraenc",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "theora",
+    actual = "//lib:theora",
+    visibility = ["//visibility:public"],
+)
