@@ -1,0 +1,70 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+# Renamed (not `config.h`) so the force-include below finds our header
+# instead of kpathsea's identically-named one. Sources still
+# `#include "config.h"` later — that resolves to kpathsea's, which
+# doesn't undef the HAVE_* defines we put in scope here.
+autoconf_hdr(
+    name = "config_h",
+    out = "dvipdfm_x_config.h",
+    template = "config.h.in",
+    deps = ["//:configure"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    includes = ["."],
+)
+
+texk_program(
+    name = "dvipdfm-x",
+    srcs = glob(["**/*.c"]),
+    hdrs = glob(["**/*.h"]),
+    copts = force_include_copts("dvipdfm_x_config.h"),
+    local_defines = [
+        "HAVE_LIBPNG",
+        "HAVE_LIBPAPER",
+        "HAVE_ZLIB",
+        # Upstream sets HAVE_ZLIB_COMPRESS2 unconditionally; without it
+        # pdfobj.c falls back to plain compress(), producing weaker
+        # (deflate-only) PDFs.
+        "HAVE_ZLIB_COMPRESS2",
+    ],
+    # dpxfile.c needs <kpathsea/dirent.h> under _MSC_VER — upstream
+    # ships that shim only for the MinGW/Cygwin build. MSVC has no
+    # native <dirent.h> and no equivalent kpathsea-side stub here.
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":config",
+        "@libpaper",
+        "@libpng//:png",
+        "@zlib",
+    ],
+)
+
+# dvipdfmx dispatches on argv[0]; copy the binary under each name
+# (alias won't do — Bazel doesn't rewrite argv[0]). `.copy` suffix
+# avoids the rule-vs-file name collision.
+[
+    copy_file(
+        name = mode + ".copy",
+        src = ":dvipdfm-x",
+        out = mode,
+        is_executable = True,
+        visibility = ["//visibility:public"],
+    )
+    for mode in [
+        "dvipdfmx",
+        "dvipdfm",
+        "xdvipdfmx",
+        "extractbb",
+    ]
+]
