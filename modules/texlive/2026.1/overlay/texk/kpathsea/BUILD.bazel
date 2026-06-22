@@ -1,0 +1,260 @@
+"""kpathsea - TeX file path searching library."""
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("//bazel:texlive.bzl", "kpathsea_paths_h", "sh_texlive_test")
+
+autoconf_hdr(
+    name = "c_auto_h",
+    out = "c-auto.h",
+    template = "c-auto.in",
+    deps = ["//:configure"],
+)
+
+_KPATHSEA_DIRECT_HEADERS = [
+    "config.h",
+    "paths.h",
+    "absolute.h",
+    "c-dir.h",
+    "c-fopen.h",
+    "c-namemx.h",
+    "c-pathch.h",
+    "c-pathmx.h",
+    "c-stat.h",
+    "cnf.h",
+    "concatn.h",
+    "expand.h",
+    "getopt.h",
+    "line.h",
+    "magstep.h",
+    "pathsearch.h",
+    "proginit.h",
+    "readable.h",
+    "tex-glyph.h",
+    "tex-hush.h",
+    "tex-make.h",
+    "variable.h",
+    "version.h",
+]
+
+write_file(
+    name = "gen_kpathsea_h",
+    out = "kpathsea.h",
+    content = ["/* Generated file collecting all public kpathsea headers. */"] + [
+        "#include <kpathsea/{}>".format(h)
+        for h in _KPATHSEA_DIRECT_HEADERS
+    ],
+)
+
+kpathsea_paths_h(
+    name = "gen_paths_h",
+    bsnl_awk = "bsnl.awk",
+    cnf = "texmf.cnf",
+    cnf_to_paths_awk = "cnf-to-paths.awk",
+)
+
+KPATHSEA_COMMON_SRCS = [
+    "tex-file.c",
+    "absolute.c",
+    "atou.c",
+    "cnf.c",
+    "concat.c",
+    "concat3.c",
+    "concatn.c",
+    "db.c",
+    "debug.c",
+    "dir.c",
+    "elt-dirs.c",
+    "expand.c",
+    "extend-fname.c",
+    "file-p.c",
+    "find-suffix.c",
+    "fn.c",
+    "fontmap.c",
+    "hash.c",
+    "kdefault.c",
+    "kpathsea.c",
+    "line.c",
+    "magstep.c",
+    "make-suffix.c",
+    "path-elt.c",
+    "pathsearch.c",
+    "proginit.c",
+    "progname.c",
+    "readable.c",
+    "rm-suffix.c",
+    "str-list.c",
+    "str-llist.c",
+    "tex-glyph.c",
+    "tex-hush.c",
+    "tex-make.c",
+    "tilde.c",
+    "uppercasify.c",
+    "variable.c",
+    "version.c",
+    "xbasename.c",
+    "xcalloc.c",
+    "xdirname.c",
+    "xfopen.c",
+    "xfseek.c",
+    "xftell.c",
+    "xgetcwd.c",
+    "xmalloc.c",
+    "xopendir.c",
+    "xputenv.c",
+    "xrealloc.c",
+    "xstat.c",
+    "xstrdup.c",
+]
+
+cc_library(
+    name = "kpathsea",
+    # Upstream Makefile.am splits Windows srcs by compiler:
+    #   MinGW: mingw32.c + xfseeko.c + xftello.c + knj.c (+ MinGW's getopt)
+    #   MSVC : win32lib.c + knj.c + getopt.c + getopt1.c (its own getopt)
+    # We optimize for MSVC + POSIX (the two toolchains we actually test);
+    # MinGW would need adjusted srcs (a future config_setting can split it).
+    srcs = KPATHSEA_COMMON_SRCS + [
+        "getopt.c",
+        "getopt1.c",
+        "xfseeko.c",
+        "xftello.c",
+    ] + select({
+        "@platforms//os:windows": [
+            "knj.c",
+            "win32lib.c",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(["*.h"]) + [
+        ":c_auto_h",
+        ":gen_kpathsea_h",
+        ":gen_paths_h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    include_prefix = "kpathsea",
+    includes = ["."],
+    # shell32 → CommandLineToArgvW; user32 → CharLowerA; advapi32 →
+    # GetUserNameA — referenced from knj.c / hash.c / db.c / win32lib.c
+    # under WIN32.
+    linkopts = select({
+        "@rules_cc//cc/compiler:clang-cl": [
+            "/DEFAULTLIB:shell32.lib",
+            "/DEFAULTLIB:user32.lib",
+            "/DEFAULTLIB:advapi32.lib",
+        ],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/DEFAULTLIB:shell32.lib",
+            "/DEFAULTLIB:user32.lib",
+            "/DEFAULTLIB:advapi32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    # MAKE_KPSE_DLL has dual meaning upstream: on MSVC it selects
+    # __declspec(dllexport), but everywhere it also gates 10+ internal
+    # libkpathsea headers (xstat.h, expand.h, fn.h, ...) behind
+    # `#ifdef MAKE_KPSE_DLL /* libkpathsea internal only */`. The
+    # kpathsea sources need those internals to compile (xstat.c can't see
+    # struct stat otherwise), so we keep MAKE_KPSE_DLL in local_defines
+    # (kpathsea-only) and pair it with NO_KPSE_DLL via `defines` on MSVC
+    # so KPSEDLL collapses to empty for both kpathsea and its consumers
+    # — neutralizing dllexport/dllimport in static-link mode.
+    # HAVE_MEMCPY guards c-memstr.h's fallback to bcopy.
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "HAVE_MEMCPY=1",
+        "MAKE_KPSE_DLL",
+    ] + select({
+        "@platforms//os:windows": ["WIN32"],
+        "//conditions:default": [],
+    }),
+    defines = select({
+        "@rules_cc//cc/compiler:clang-cl": ["NO_KPSE_DLL"],
+        "@rules_cc//cc/compiler:msvc-cl": ["NO_KPSE_DLL"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = ".",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "kpsewhich",
+    srcs = ["kpsewhich.c"],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//visibility:public"],
+    deps = [":kpathsea"],
+)
+
+cc_binary(
+    name = "kpsestat",
+    srcs = ["kpsestat.c"],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//visibility:public"],
+    deps = [":kpathsea"],
+)
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+genrule(
+    name = "kpsewhich_version",
+    outs = ["kpsewhich_version.txt"],
+    cmd = "$(execpath :kpsewhich) --version > $@",
+    tools = [":kpsewhich"],
+)
+
+genrule(
+    name = "kpsestat_version",
+    outs = ["kpsestat_version.txt"],
+    cmd = "$(execpath :kpsestat) --version > $@",
+    tools = [":kpsestat"],
+)
+
+sh_texlive_test(
+    name = "kpsestat_test",
+    bin = ":kpsestat",
+    data = glob(
+        ["tests/**"],
+        exclude = ["tests/kpsestat.test"],
+    ),
+    main = "tests/kpsestat.test",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+sh_texlive_test(
+    name = "kpsewhich_test",
+    bin = ":kpsewhich",
+    data = glob(
+        ["tests/**"],
+        exclude = ["tests/kpsewhich.test"],
+    ) + ["texmf.cnf"],
+    main = "tests/kpsewhich.test",
+    # kpsewhich.test expects $srcdir to be the package root (where texmf.cnf
+    # lives), not the directory containing the .test script. Pre-set srcdir
+    # so the wrapper does not override.
+    tags = ["manual"],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)

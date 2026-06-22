@@ -1,0 +1,227 @@
+"""web2c bootstrap tools - tangle, ctangle, web2c, fixwrites, splitup."""
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load(
+    "//bazel:texlive.bzl",
+    "FLEX_MSVC_DEFINES",
+    "TEXLIVE_COPTS",
+    "ctangle_cweb",
+    "tangle_web",
+    "web2c_convert",
+)
+
+# Define files and the coerce.h tail consumed by TeX-engine pipelines in
+# the parent package.
+exports_files([
+    "common.defines",
+    "texmf.defines",
+    "mfmp.defines",
+    "coerce.h",
+])
+
+# =============================================================================
+# Step 1: Bootstrap tools from pre-distributed sources
+# =============================================================================
+
+# tangleboot: Pascal bootstrap converted to C via web2c pipeline.
+web2c_convert(
+    name = "tangleboot_c",
+    src = "//texk/web2c:tangleboot.pin",
+    outs = [
+        "tangleboot.c",
+        "tangleboot.h",
+    ],
+    defines = ["common.defines"],
+    program = "tangleboot",
+)
+
+cc_binary(
+    name = "tangleboot",
+    srcs = [":tangleboot_c"],
+    copts = TEXLIVE_COPTS,
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [
+        "//texk/kpathsea",
+        "//texk/web2c:web2c_lib",
+    ],
+)
+
+# ctangleboot: built from pre-distributed .cin files (C bootstrap).
+copy_file(
+    name = "copy_ctangleboot_c",
+    src = "//texk/web2c:ctangleboot.cin",
+    out = "ctangleboot.c",
+)
+
+copy_file(
+    name = "copy_cwebboot_c",
+    src = "//texk/web2c:cwebboot.cin",
+    out = "cwebboot.c",
+)
+
+cc_binary(
+    name = "ctangleboot",
+    srcs = [
+        ":copy_ctangleboot_c",
+        ":copy_cwebboot_c",
+    ],
+    copts = TEXLIVE_COPTS,
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [
+        "//texk/kpathsea",
+        "//texk/web2c:w2c_config",
+        "//texk/web2c:web2c_lib",
+    ],
+)
+
+# web2c tool: Pascal-to-C converter (from pre-generated parser/lexer).
+cc_binary(
+    name = "web2c_tool",
+    srcs = [
+        "coerce.h",
+        "kps.c",
+        "main.c",
+        "web2c.h",
+        "web2c-lexer.c",
+        "web2c-parser.c",
+        "web2c-parser.h",
+    ],
+    copts = TEXLIVE_COPTS,
+    local_defines = ["HAVE_CONFIG_H"] + FLEX_MSVC_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        "//texk/kpathsea",
+        "//texk/web2c:w2c_config",
+    ],
+)
+
+# fixwrites: post-processes web2c output.
+cc_binary(
+    name = "fixwrites",
+    srcs = ["fixwrites.c"],
+    copts = TEXLIVE_COPTS,
+    visibility = ["//visibility:public"],
+    deps = ["//texk/web2c:w2c_config"],
+)
+
+# splitup: splits large generated C files.
+cc_binary(
+    name = "splitup",
+    srcs = ["splitup.c"],
+    copts = TEXLIVE_COPTS,
+    visibility = ["//visibility:public"],
+    deps = ["//texk/web2c:w2c_config"],
+)
+
+# makecpool: generates string pool files.
+cc_binary(
+    name = "makecpool",
+    srcs = ["makecpool.c"],
+    copts = TEXLIVE_COPTS,
+    visibility = ["//visibility:public"],
+)
+
+# tie: combines a master WEB source with multiple change files. The upstream
+# tie.c hard-codes max_file_index=9, which is too low for engines like
+# pdftex/luatex that stack 18+ change files. tie-w2c.ch lifts that to 32,
+# so we re-tangle tie.w with the change file rather than using the
+# pre-distributed tie.c.
+ctangle_cweb(
+    name = "tie_c_gen",
+    out = "tie.c",
+    ch = "//texk/web2c:tiedir/tie-w2c.ch",
+    w_file = "//texk/web2c:tiedir/tie.w",
+)
+
+cc_binary(
+    name = "tie",
+    srcs = [":tie_c_gen"],
+    copts = TEXLIVE_COPTS,
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//texk/kpathsea",
+        "//texk/web2c:web2c_lib",
+    ],
+)
+
+# =============================================================================
+# Step 2: Build real tangle from tangle.web
+# =============================================================================
+
+tangle_web(
+    name = "tangle_p",
+    ch = "//texk/web2c:tangle.ch",
+    tangle_tool = ":tangleboot",
+    web = "//texk/web2c:tangle.web",
+)
+
+web2c_convert(
+    name = "tangle_c_gen",
+    src = ":tangle_p",
+    outs = [
+        "tangle.c",
+        "tangle.h",
+    ],
+    defines = ["common.defines"],
+    program = "tangle",
+)
+
+cc_binary(
+    name = "tangle",
+    srcs = [":tangle_c_gen"],
+    copts = TEXLIVE_COPTS,
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//texk/web2c:__subpackages__"],
+    deps = [
+        "//texk/kpathsea",
+        "//texk/web2c:web2c_lib",
+    ],
+)
+
+# =============================================================================
+# Step 3: Build real ctangle from CWEB sources
+# =============================================================================
+
+# Bootstrap: use ctangleboot (not the ctangle_cweb rule, which depends on
+# the final ctangle binary we're building here).
+ctangle_cweb(
+    name = "ctangle_c_gen",
+    out = "ctangle_gen.c",
+    ch = "//texk/web2c:cwebdir/ctang-w2c.ch",
+    ctangle_tool = ":ctangleboot",
+    extra_srcs = [
+        "//texk/web2c:cwebdir/comm-w2c.h",
+        "//texk/web2c:cwebdir/iso_types.w",
+    ],
+    w_file = "//texk/web2c:cwebdir/ctangle.w",
+)
+
+ctangle_cweb(
+    name = "cweb_c_gen",
+    out = "cweb_gen.c",
+    ch = "//texk/web2c:cwebdir/comm-w2c.ch",
+    ctangle_tool = ":ctangleboot",
+    extra_srcs = [
+        "//texk/web2c:cwebdir/comm-w2c.h",
+        "//texk/web2c:cwebdir/iso_types.w",
+    ],
+    w_file = "//texk/web2c:cwebdir/common.w",
+)
+
+cc_binary(
+    name = "ctangle",
+    srcs = [
+        ":ctangle_c_gen",
+        ":cweb_c_gen",
+    ],
+    copts = TEXLIVE_COPTS,
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//texk/web2c:__subpackages__"],
+    deps = [
+        "//texk/kpathsea",
+        "//texk/web2c:w2c_config",
+        "//texk/web2c:web2c_lib",
+    ],
+)
