@@ -1,0 +1,384 @@
+# BUILD.bazel overlay for nanomsg 1.2.2
+#
+# This file translates the nanomsg CMake build to Bazel.
+# The CMake build uses configure-time feature detection; here we map
+# those checks to platform-based select() statements.
+#
+# Platform mapping:
+#   Linux  → epoll poller, eventfd signaling
+#   macOS  → kqueue poller, pipe signaling
+#   Windows → IOCP (winsock), winsock signaling
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Public headers installed to include/nanomsg/ by CMake
+_PUBLIC_HDRS = [
+    "src/nn.h",
+    "src/inproc.h",
+    "src/ipc.h",
+    "src/tcp.h",
+    "src/ws.h",
+    "src/pair.h",
+    "src/pubsub.h",
+    "src/reqrep.h",
+    "src/pipeline.h",
+    "src/survey.h",
+    "src/bus.h",
+]
+
+# Internal headers (not installed but needed for compilation)
+_INTERNAL_HDRS = [
+    "src/protocol.h",
+    "src/transport.h",
+]
+
+# Core source files (platform-independent)
+_CORE_SRCS = [
+    "src/core/ep.h",
+    "src/core/ep.c",
+    "src/core/global.h",
+    "src/core/global.c",
+    "src/core/pipe.c",
+    "src/core/poll.c",
+    "src/core/sock.h",
+    "src/core/sock.c",
+    "src/core/sockbase.c",
+    "src/core/symbol.c",
+]
+
+# AIO (async I/O) - platform-independent parts
+_AIO_SRCS = [
+    "src/aio/ctx.h",
+    "src/aio/ctx.c",
+    "src/aio/fsm.h",
+    "src/aio/fsm.c",
+    "src/aio/pool.h",
+    "src/aio/pool.c",
+    "src/aio/timer.h",
+    "src/aio/timer.c",
+    "src/aio/timerset.h",
+    "src/aio/timerset.c",
+    "src/aio/usock.h",
+    "src/aio/usock.c",
+    "src/aio/worker.h",
+    "src/aio/worker.c",
+]
+
+# Utilities - platform-independent parts
+_UTILS_SRCS = [
+    "src/utils/alloc.h",
+    "src/utils/alloc.c",
+    "src/utils/atomic.h",
+    "src/utils/atomic.c",
+    "src/utils/attr.h",
+    "src/utils/chunk.h",
+    "src/utils/chunk.c",
+    "src/utils/chunkref.h",
+    "src/utils/chunkref.c",
+    "src/utils/clock.h",
+    "src/utils/clock.c",
+    "src/utils/closefd.h",
+    "src/utils/closefd.c",
+    "src/utils/cont.h",
+    "src/utils/efd.h",
+    "src/utils/efd.c",
+    "src/utils/err.h",
+    "src/utils/err.c",
+    "src/utils/fast.h",
+    "src/utils/fd.h",
+    "src/utils/hash.h",
+    "src/utils/hash.c",
+    "src/utils/list.h",
+    "src/utils/list.c",
+    "src/utils/msg.h",
+    "src/utils/msg.c",
+    "src/utils/condvar.h",
+    "src/utils/condvar.c",
+    "src/utils/mutex.h",
+    "src/utils/mutex.c",
+    "src/utils/once.h",
+    "src/utils/once.c",
+    "src/utils/queue.h",
+    "src/utils/queue.c",
+    "src/utils/random.h",
+    "src/utils/random.c",
+    "src/utils/sem.h",
+    "src/utils/sem.c",
+    "src/utils/sleep.h",
+    "src/utils/sleep.c",
+    "src/utils/strcasecmp.c",
+    "src/utils/strcasecmp.h",
+    "src/utils/strcasestr.c",
+    "src/utils/strcasestr.h",
+    "src/utils/strncasecmp.c",
+    "src/utils/strncasecmp.h",
+    "src/utils/thread.h",
+    "src/utils/thread.c",
+    "src/utils/wire.h",
+    "src/utils/wire.c",
+]
+
+# Devices
+_DEVICE_SRCS = [
+    "src/devices/device.h",
+    "src/devices/device.c",
+]
+
+# Protocol utilities
+_PROTOCOL_UTILS_SRCS = [
+    "src/protocols/utils/dist.h",
+    "src/protocols/utils/dist.c",
+    "src/protocols/utils/excl.h",
+    "src/protocols/utils/excl.c",
+    "src/protocols/utils/fq.h",
+    "src/protocols/utils/fq.c",
+    "src/protocols/utils/lb.h",
+    "src/protocols/utils/lb.c",
+    "src/protocols/utils/priolist.h",
+    "src/protocols/utils/priolist.c",
+]
+
+# Protocol implementations
+_PROTOCOL_SRCS = [
+    "src/protocols/bus/bus.c",
+    "src/protocols/bus/xbus.h",
+    "src/protocols/bus/xbus.c",
+    "src/protocols/pipeline/push.c",
+    "src/protocols/pipeline/pull.c",
+    "src/protocols/pipeline/xpull.h",
+    "src/protocols/pipeline/xpull.c",
+    "src/protocols/pipeline/xpush.h",
+    "src/protocols/pipeline/xpush.c",
+    "src/protocols/pair/pair.c",
+    "src/protocols/pair/xpair.h",
+    "src/protocols/pair/xpair.c",
+    "src/protocols/pubsub/pub.c",
+    "src/protocols/pubsub/sub.c",
+    "src/protocols/pubsub/trie.h",
+    "src/protocols/pubsub/trie.c",
+    "src/protocols/pubsub/xpub.h",
+    "src/protocols/pubsub/xpub.c",
+    "src/protocols/pubsub/xsub.h",
+    "src/protocols/pubsub/xsub.c",
+    "src/protocols/reqrep/req.h",
+    "src/protocols/reqrep/req.c",
+    "src/protocols/reqrep/rep.h",
+    "src/protocols/reqrep/rep.c",
+    "src/protocols/reqrep/task.h",
+    "src/protocols/reqrep/task.c",
+    "src/protocols/reqrep/xrep.h",
+    "src/protocols/reqrep/xrep.c",
+    "src/protocols/reqrep/xreq.h",
+    "src/protocols/reqrep/xreq.c",
+    "src/protocols/survey/respondent.c",
+    "src/protocols/survey/surveyor.c",
+    "src/protocols/survey/xrespondent.h",
+    "src/protocols/survey/xrespondent.c",
+    "src/protocols/survey/xsurveyor.h",
+    "src/protocols/survey/xsurveyor.c",
+]
+
+# Transport utilities
+_TRANSPORT_UTILS_SRCS = [
+    "src/transports/utils/backoff.h",
+    "src/transports/utils/backoff.c",
+    "src/transports/utils/dns.h",
+    "src/transports/utils/dns.c",
+    "src/transports/utils/dns_getaddrinfo.h",
+    "src/transports/utils/dns_getaddrinfo.inc",
+    "src/transports/utils/dns_getaddrinfo_a.h",
+    "src/transports/utils/dns_getaddrinfo_a.inc",
+    "src/transports/utils/iface.h",
+    "src/transports/utils/iface.c",
+    "src/transports/utils/literal.h",
+    "src/transports/utils/literal.c",
+    "src/transports/utils/port.h",
+    "src/transports/utils/port.c",
+    "src/transports/utils/streamhdr.h",
+    "src/transports/utils/streamhdr.c",
+    "src/transports/utils/base64.h",
+    "src/transports/utils/base64.c",
+]
+
+# Transport implementations
+_TRANSPORT_SRCS = [
+    "src/transports/inproc/binproc.h",
+    "src/transports/inproc/binproc.c",
+    "src/transports/inproc/cinproc.h",
+    "src/transports/inproc/cinproc.c",
+    "src/transports/inproc/inproc.c",
+    "src/transports/inproc/ins.h",
+    "src/transports/inproc/ins.c",
+    "src/transports/inproc/msgqueue.h",
+    "src/transports/inproc/msgqueue.c",
+    "src/transports/inproc/sinproc.h",
+    "src/transports/inproc/sinproc.c",
+    "src/transports/ipc/aipc.h",
+    "src/transports/ipc/aipc.c",
+    "src/transports/ipc/bipc.h",
+    "src/transports/ipc/bipc.c",
+    "src/transports/ipc/cipc.h",
+    "src/transports/ipc/cipc.c",
+    "src/transports/ipc/ipc.c",
+    "src/transports/ipc/sipc.h",
+    "src/transports/ipc/sipc.c",
+    "src/transports/tcp/atcp.h",
+    "src/transports/tcp/atcp.c",
+    "src/transports/tcp/btcp.h",
+    "src/transports/tcp/btcp.c",
+    "src/transports/tcp/ctcp.h",
+    "src/transports/tcp/ctcp.c",
+    "src/transports/tcp/stcp.h",
+    "src/transports/tcp/stcp.c",
+    "src/transports/tcp/tcp.c",
+    "src/transports/ws/aws.h",
+    "src/transports/ws/aws.c",
+    "src/transports/ws/bws.h",
+    "src/transports/ws/bws.c",
+    "src/transports/ws/cws.h",
+    "src/transports/ws/cws.c",
+    "src/transports/ws/sws.h",
+    "src/transports/ws/sws.c",
+    "src/transports/ws/ws.c",
+    "src/transports/ws/ws_handshake.h",
+    "src/transports/ws/ws_handshake.c",
+    "src/transports/ws/sha1.h",
+    "src/transports/ws/sha1.c",
+]
+
+# POSIX-specific sources (Linux + macOS)
+_POSIX_SRCS = [
+    "src/aio/usock_posix.h",
+    "src/aio/usock_posix.inc",
+    "src/aio/worker_posix.h",
+    "src/aio/worker_posix.inc",
+    "src/utils/thread_posix.h",
+    "src/utils/thread_posix.inc",
+]
+
+# Windows-specific sources
+_WIN_SRCS = [
+    "src/aio/usock_win.h",
+    "src/aio/usock_win.inc",
+    "src/aio/worker_win.h",
+    "src/aio/worker_win.inc",
+    "src/utils/thread_win.h",
+    "src/utils/thread_win.inc",
+    "src/utils/win.h",
+]
+
+# Poller: epoll (Linux)
+_POLLER_EPOLL_SRCS = [
+    "src/aio/poller.h",
+    "src/aio/poller.c",
+    "src/aio/poller_epoll.h",
+    "src/aio/poller_epoll.inc",
+]
+
+# Poller: kqueue (macOS)
+_POLLER_KQUEUE_SRCS = [
+    "src/aio/poller.h",
+    "src/aio/poller.c",
+    "src/aio/poller_kqueue.h",
+    "src/aio/poller_kqueue.inc",
+]
+
+# Event fd: eventfd (Linux)
+_EFD_EVENTFD_SRCS = [
+    "src/utils/efd_eventfd.h",
+    "src/utils/efd_eventfd.inc",
+]
+
+# Event fd: pipe (macOS)
+_EFD_PIPE_SRCS = [
+    "src/utils/efd_pipe.h",
+    "src/utils/efd_pipe.inc",
+]
+
+# Event fd: winsock (Windows)
+_EFD_WIN_SRCS = [
+    "src/utils/efd_win.h",
+    "src/utils/efd_win.inc",
+]
+
+cc_library(
+    name = "nanomsg",
+    srcs = _CORE_SRCS +
+           _AIO_SRCS +
+           _UTILS_SRCS +
+           _DEVICE_SRCS +
+           _PROTOCOL_UTILS_SRCS +
+           _PROTOCOL_SRCS +
+           _TRANSPORT_UTILS_SRCS +
+           _TRANSPORT_SRCS +
+           _INTERNAL_HDRS +
+           _PUBLIC_HDRS +
+           select({
+               "@platforms//os:linux": _POSIX_SRCS + _POLLER_EPOLL_SRCS + _EFD_EVENTFD_SRCS,
+               "@platforms//os:macos": _POSIX_SRCS + _POLLER_KQUEUE_SRCS + _EFD_PIPE_SRCS,
+               "@platforms//os:windows": _WIN_SRCS + _EFD_WIN_SRCS,
+           }),
+    hdrs = _PUBLIC_HDRS,
+    copts = ["-Isrc"],
+    defines = ["NN_STATIC_LIB"],
+    include_prefix = "nanomsg",
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:ws2_32.lib",
+            "-DEFAULTLIB:mswsock.lib",
+            "-DEFAULTLIB:advapi32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        "@platforms//os:linux": [
+            "NN_HAVE_GCC_ATOMIC_BUILTINS",
+            "NN_HAVE_LINUX",
+            "NN_HAVE_SOCKETPAIR",
+            "NN_HAVE_SEMAPHORE",
+            "NN_HAVE_PIPE",
+            "NN_HAVE_PIPE2",
+            "NN_HAVE_EVENTFD",
+            "NN_HAVE_EPOLL",
+            "NN_HAVE_POLL",
+            "NN_HAVE_ACCEPT4",
+            "NN_HAVE_CLOCK_MONOTONIC",
+            "NN_HAVE_CLOCK_GETTIME",
+            "NN_HAVE_MSG_CONTROL",
+            "NN_HAVE_UNIX_SOCKETS",
+            "NN_USE_EPOLL",
+            "NN_USE_EVENTFD",
+            "_GNU_SOURCE",
+            "_REENTRANT",
+            "_THREAD_SAFE",
+            "_POSIX_PTHREAD_SEMANTICS",
+        ],
+        "@platforms//os:macos": [
+            "NN_HAVE_GCC_ATOMIC_BUILTINS",
+            "NN_HAVE_OSX",
+            "NN_HAVE_SOCKETPAIR",
+            "NN_HAVE_PIPE",
+            "NN_HAVE_KQUEUE",
+            "NN_HAVE_POLL",
+            "NN_HAVE_CLOCK_MONOTONIC",
+            "NN_HAVE_CLOCK_GETTIME",
+            "NN_HAVE_MSG_CONTROL",
+            "NN_HAVE_UNIX_SOCKETS",
+            "NN_USE_KQUEUE",
+            "NN_USE_PIPE",
+            "_GNU_SOURCE",
+            "_REENTRANT",
+            "_THREAD_SAFE",
+            "_POSIX_PTHREAD_SEMANTICS",
+        ],
+        "@platforms//os:windows": [
+            "NN_HAVE_WINDOWS",
+            "NN_HAVE_CONDVAR",
+            "_CRT_SECURE_NO_WARNINGS",
+            "_WIN32_WINNT=0x0600",
+            "NN_USE_WINSOCK",
+        ],
+    }),
+    strip_include_prefix = "src",
+    visibility = ["//visibility:public"],
+)

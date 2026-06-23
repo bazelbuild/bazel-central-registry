@@ -55,7 +55,14 @@ py_binary(
         ":slsa",
         ":verify_stable_archives",
         requirement("requests"),
+        requirement("zstandard"),
     ],
+)
+
+py_test(
+    name = "bcr_validation_test",
+    srcs = ["bcr_validation_test.py"],
+    deps = [":bcr_validation"],
 )
 
 py_library(
@@ -170,6 +177,17 @@ sh_test(
     name = "update_integrity_test",
     srcs = ["update_integrity_test.sh"],
     data = [":update_integrity"],
+)
+
+py_test(
+    name = "registry_test",
+    size = "small",
+    srcs = [
+        "registry_test.py",
+    ],
+    deps = [
+        "registry",
+    ],
 )
 
 py_test(

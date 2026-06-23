@@ -1,0 +1,114 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//:gen_test_targets.bzl", "gen_test_targets")
+
+expand_template(
+    name = "config_h",
+    out = "src/lib/libdwarf/config.h",
+    # Enable features assuming we are compiling for a modern posix system.
+    substitutions = {
+        "#cmakedefine AC_APPLE_UNIVERSAL_BUILD 1": "",
+        "#cmakedefine CRAY_STACKSEG_END 1": "",
+        "#cmakedefine HAVE_DLFCN_H 1": "#define HAVE_DLFCN_H 1",
+        "#cmakedefine HAVE_FCNTL_H 1": "#define HAVE_FCNTL_H 1",
+        "#cmakedefine WORDS_BIGENDIAN 1": "",
+        "#cmakedefine HAVE_STDINT_H 1": "#define HAVE_STDINT_H 1",
+        "#cmakedefine HAVE_SYS_STAT_H 1": "#define HAVE_SYS_STAT_H 1",
+        "#cmakedefine HAVE_SYS_TYPES_H 1": "#define HAVE_SYS_TYPES_H 1",
+        "#cmakedefine HAVE_FULL_MMAP 1": "#define HAVE_FULL_MMAP 1",
+        "#cmakedefine uintptr_t  ${uintptr_t}": "",
+        "#cmakedefine intptr_t  ${intptr_t}": "",
+        "#cmakedefine HAVE_UNISTD_H 1": "#define HAVE_UNISTD_H 1",
+        "#cmakedefine HAVE_ZLIB 1": "#define HAVE_ZLIB 1",
+        "#cmakedefine HAVE_ZLIB_H 1": "#define HAVE_ZLIB_H 1",
+        "#cmakedefine HAVE_ZSTD 1": "#define HAVE_ZSTD 1",
+        "#cmakedefine HAVE_ZSTD_H 1": "#define HAVE_ZSTD_H 1",
+        "#cmakedefine LT_OBJDIR 1": "",
+        # PACKAGE_VERSION needs to be defined for the code to compile, but I
+        # don't really want to put the actual version in here since people are
+        # going to forget to update it, so just set it to empty string.
+        "#define PACKAGE_VERSION \"@PROJECT_VERSION@\"": "#define PACKAGE_VERSION \"\"",
+        "#define PACKAGE_BUGREPORT \"@PACKAGE_BUGREPORT@\"": "",
+        "#define PACKAGE_NAME \"@PROJECT_NAME@\"": "",
+        "#define PACKAGE_STRING \"@PACKAGE_STRING@\"": "",
+        "#cmakedefine PACKAGE_TARNAME": "",
+        "#define PACKAGE_URL \"@PROJECT_HOMEPAGE_URL@\"": "",
+        "#cmakedefine STACK_DIRECTION": "",
+        "#cmakedefine STDC_HEADERS 1": "#define STDC_HEADERS 1",
+        "#cmakedefine PACKAGE_VERSION ${PACKAGE_VERSION}": "",
+        # Must be substituted after all defines with a PACKAGE_* prefix,
+        # otherwise it will replace part of those defines.
+        "#cmakedefine PACKAGE": "",
+        "#cmakedefine HAVE_INTTYPES_H 1": "#define HAVE_INTTYPES_H 1",
+        "#cmakedefine HAVE_STDDEF_H 1": "#define HAVE_STDDEF_H 1",
+        "#cmakedefine HAVE_STDAFX_H 1": "#define HAVE_STDAFX_H 1",
+    } | select({
+        "@platforms//os:macos": {"#cmakedefine HAVE_MALLOC_H 1": ""},
+        "//conditions:default": {"#cmakedefine HAVE_MALLOC_H 1": "#define HAVE_MALLOC_H 1"},
+    }),
+    template = "cmake/config.h.in",
+)
+
+cc_library(
+    name = "dwarf",
+    srcs = [":config_h"] + glob(
+        [
+            "src/lib/libdwarf/*.c",
+            "src/lib/libdwarfp/*.c",
+        ],
+    ),
+    hdrs = glob(
+        [
+            "src/lib/libdwarf/*.h",
+            "src/lib/libdwarfp/*.h",
+        ],
+    ),
+    includes = [
+        "src/lib",
+        "src/lib/libdwarf",
+        "src/lib/libdwarfp",
+    ],
+    deps = [
+        "@zlib",
+        "@zstd",
+    ],
+)
+
+alias(
+    name = "libdwarf",
+    actual = ":dwarf",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "dwarfdump",
+    # Testonly for now as this only exists for the tests to run. Ideally we also
+    # have a cc_binary for dwarfdump, since it's a binary, but we can add that
+    # if somebody actually needs it.
+    testonly = True,
+    srcs = glob(["src/bin/dwarfdump/*.c"]),
+    hdrs = glob(
+        [
+            "src/bin/dwarfdump/*.h",
+            "src/bin/dwarfdump/*.c",
+        ],
+    ),
+    includes = ["src/bin/dwarfdump"],
+    deps = [":dwarf"],
+)
+
+# Generates a good chunk of the C tests, which should be good enough to verify
+# this has been Bazelified correctly. There are some Python tests and some tests
+# that don't start with test_* that are not run.
+gen_test_targets(
+    name = "gen_dwarf_test_targets",
+    cc_srcs = glob(
+        ["test/test_*.c"],
+        exclude = [
+            # These tests require an env var to be set to the root of this lib.
+            # Probably not worth getting it to work.
+            "test/test_errmsglist.c",
+            "test/test_lname.c",
+        ],
+    ),
+)
