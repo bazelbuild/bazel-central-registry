@@ -105,7 +105,6 @@ CONFIG_EXTRA: list[str] = [
     "msmpeg4dec",
     "msmpeg4enc",
     "mss34dsp",
-    "network",
     "pixblockdsp",
     "pixelutils",
     "qpeldsp",
