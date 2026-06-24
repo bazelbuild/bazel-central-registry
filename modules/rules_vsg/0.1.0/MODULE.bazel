@@ -1,0 +1,53 @@
+"""rules_vsg"""
+
+module(
+    name = "rules_vsg",
+    version = "0.1.0",
+    bazel_compatibility = [">=7.5.0"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_vhdl", version = "0.1.2")
+bazel_dep(name = "rules_venv", version = "0.17.0")
+
+###############################################################################
+## Dev-only configuration
+##
+## Everything below exists ONLY so this repo's own tests and examples can run.
+## Downstream consumers of `rules_vsg` get NO auto-registered toolchain; they
+## must supply their own `vsg` py_library and register a `vsg_toolchain`. See
+## the README for a copy-paste recipe (recommended pip integration:
+## https://github.com/periareon/req-compile).
+###############################################################################
+
+bazel_dep(name = "rules_req_compile", version = "1.1.2", dev_dependency = True)
+bazel_dep(name = "rules_rust_mdbook", version = "0.69.0", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True, repo_name = "io_bazel_stardoc")
+
+requirements = use_extension(
+    "@rules_req_compile//extensions:python.bzl",
+    "requirements",
+    dev_dependency = True,
+)
+requirements.parse(
+    name = "vsg_pip_deps",
+    requirements_locks = {
+        "//tools/requirements:requirements_linux_aarch64.txt": "//tools/requirements:linux_aarch64",
+        "//tools/requirements:requirements_linux_x86_64.txt": "//tools/requirements:linux_x86_64",
+        "//tools/requirements:requirements_macos_aarch64.txt": "//tools/requirements:macos_aarch64",
+        "//tools/requirements:requirements_windows_x86_64.txt": "//tools/requirements:windows_x86_64",
+    },
+)
+use_repo(requirements, "vsg_pip_deps")
+
+# NOTE: this registration is intentionally enabled only after the lockfile at
+# `tools/requirements/requirements_linux_x86_64.txt` has been populated via
+# `bazel run //tools/requirements:requirements.linux_x86_64.update`. The
+# toolchain target references `@vsg_pip_deps//vsg`, which only exists once the
+# lockfile lists `vsg`.
+register_toolchains(
+    "//tools/toolchains:vsg_toolchain",
+    dev_dependency = True,
+)
