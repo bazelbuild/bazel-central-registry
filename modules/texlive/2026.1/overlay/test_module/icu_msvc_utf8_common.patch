@@ -1,0 +1,56 @@
+Two MSVC-only fixes for icu4c/source/common:
+
+1. /utf-8 copts on `:platform` and `:uchar` — their sources contain
+   UTF-8 char literals (fullwidth, currency, etc.) that MSVC misreads
+   as multi-byte char constants (C2015 "too many characters in
+   constant") without /utf-8. MinGW / POSIX clang/gcc handle the
+   source encoding natively.
+
+2. `defines = ["U_STATIC_IMPLEMENTATION"]` on `:headers` — without
+   it, icu's headers expand to `__declspec(dllimport)` for every
+   icu symbol on Windows. Static lib links then fail with LNK4217 /
+   LNK1120 "imported but not defined" warnings because the .lib
+   exports plain symbols, not import-thunks. Propagated to all
+   consumers via `defines` (transitively through the `:headers` dep).
+
+Paired with icu_msvc_utf8_i18n.patch (separate file because bazel's
+libgit2 patcher mangles multi-file unified diffs).
+
+--- a/icu4c/source/common/BUILD.bazel
++++ b/icu4c/source/common/BUILD.bazel
+@@ -39,6 +39,11 @@
+     local_defines = [
+         "U_COMMON_IMPLEMENTATION",
+     ],
++    defines = select({
++        "@rules_cc//cc/compiler:clang-cl": ["U_STATIC_IMPLEMENTATION"],
++        "@rules_cc//cc/compiler:msvc-cl": ["U_STATIC_IMPLEMENTATION"],
++        "//conditions:default": [],
++    }),
+ )
+
+ cc_library(
+@@ -47,6 +52,11 @@
+         "*.h",
+         "*.cpp",
+     ]),
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     deps = [
+         ":headers",
+         # omit other deps b/c they are sys symbols
+@@ -721,6 +731,11 @@
+         "uchar.cpp",
+         "uchar_props_data.h",
+     ],
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     includes = ["."],
+     deps = [
+         ":headers",
