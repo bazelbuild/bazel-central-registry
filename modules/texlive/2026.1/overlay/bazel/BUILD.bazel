@@ -39,6 +39,32 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# Shim header to neutralise GCC-only attribute syntax for MSVC. TeX Live
+# sources sprinkle `__attribute__((format(printf, ...)))`,
+# `__attribute__((noreturn))`, etc. cl.exe doesn't know `__attribute__`
+# at all; this defines it as a no-op so the prototypes parse. Force-
+# included via `MSVC_SHIM_COPTS` (see //bazel:texlive.bzl).
+write_file(
+    name = "msvc_shim_h",
+    out = "msvc_shim.h",
+    content = [
+        "#ifndef TL_MSVC_SHIM_H",
+        "#define TL_MSVC_SHIM_H",
+        "#if !defined(__GNUC__) && !defined(__clang__)",
+        "#define __attribute__(x)",
+        "#endif",
+        "#endif",
+        "",
+    ],
+)
+
+cc_library(
+    name = "msvc_shim",
+    hdrs = [":msvc_shim_h"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
 # Awk one-liner used by the `kpathsea_paths_h` rule's strip step to
 # remove %-comments and trim whitespace from cnf lines. Lives in a file
 # (rather than passed inline on the command line) because Windows

@@ -116,8 +116,12 @@ static void restore_quiet(int saved_stdout, int saved_stderr, int rc,
         std::ifstream e(quiet_err, std::ios::binary);
         if (e) std::cerr << e.rdbuf();
     }
-    fs::remove(quiet_out);
-    fs::remove(quiet_err);
+    // Non-throwing overload: removal can race with antivirus/indexer
+    // locks on Windows; an uncaught filesystem_error would propagate
+    // out of main() and surface as STATUS_STACK_BUFFER_OVERRUN.
+    std::error_code rm_ec;
+    fs::remove(quiet_out, rm_ec);
+    fs::remove(quiet_err, rm_ec);
 }
 
 int main(int argc, char* argv[]) {
@@ -362,7 +366,10 @@ int main(int argc, char* argv[]) {
 
 #ifdef _WIN32
     int rc = _spawnvp(_P_WAIT, exec_argv[0], exec_argv.data());
-    if (!cat_tmp.empty()) fs::remove(cat_tmp);
+    if (!cat_tmp.empty()) {
+        std::error_code rm_ec;
+        fs::remove(cat_tmp, rm_ec);
+    }
     if (quiet) restore_quiet(saved_stdout, saved_stderr, rc, quiet_out, quiet_err);
     return rc;
 #else

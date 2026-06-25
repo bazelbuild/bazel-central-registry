@@ -41,6 +41,17 @@ TEXLIVE_LOCAL_DEFINES = ["HAVE_CONFIG_H"] + select({
     "//conditions:default": [],
 })
 
+# Force-include //bazel:msvc_shim.h on MSVC compiles to neutralise
+# GCC-only `__attribute__((...))` syntax that cl.exe can't parse. The
+# shim defines `__attribute__(x)` as empty when neither __GNUC__ nor
+# __clang__ is set. Empty on other compilers — they handle the
+# attributes natively.
+MSVC_ATTRIBUTE_SHIM_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/FImsvc_shim.h"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/FImsvc_shim.h"],
+    "//conditions:default": [],
+})
+
 # Flex-generated scanners hard-include <unistd.h>; -DYY_NO_UNISTD_H is
 # flex's documented escape for systems without it (MSVC). MinGW ships
 # <unistd.h> so the escape only fires for cl.exe / clang-cl.
@@ -618,11 +629,17 @@ def _combine_changes_impl(ctx):
     # WEBINPUTS lets tie look for the master web and `.ch0`/`.ch` files
     # without requiring callers to pass absolute paths. We list the
     # directories of all inputs so any include-resolution inside tie works.
+    # kpathsea's ENV_SEP is ';' on Windows and ':' elsewhere — picking
+    # the wrong one collapses the whole list into one bogus path.
     web_dirs = depset(
         [ctx.file.web.dirname] +
         [f.dirname for f in ctx.files.changes],
     )
-    extra_env = {"WEBINPUTS": ".:" + ":".join(web_dirs.to_list())}
+    is_windows = ctx.target_platform_has_constraint(
+        ctx.attr._windows_os[platform_common.ConstraintValueInfo],
+    )
+    sep = ";" if is_windows else ":"
+    extra_env = {"WEBINPUTS": "." + sep + sep.join(web_dirs.to_list())}
     args = _wrapper_args(ctx, env = _texlive_env(extra_env), quiet = True)
     args.add("--")
     args.add(ctx.executable._tie)
@@ -672,6 +689,10 @@ TeX engine before tangling.
             default = Label("//texk/web2c/web2c:tie"),
             executable = True,
             cfg = "exec",
+        ),
+        "_windows_os": attr.label(
+            default = Label("@platforms//os:windows"),
+            providers = [platform_common.ConstraintValueInfo],
         ),
     },
 )

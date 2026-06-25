@@ -1,0 +1,54 @@
+MSVC build fixes for icu4c/source/common — minimal additions on top
+of icu BCR.1's existing patch:
+
+* :headers — propagate `U_STATIC_IMPLEMENTATION` to consumers via
+  `defines` on MSVC. Without it, icu's public headers emit
+  `__declspec(dllimport)` references that the static-link build
+  cannot satisfy (LNK4217 / LNK1120). GCC/clang/MinGW unaffected.
+
+* :platform — `/utf-8` copts on MSVC. Several globbed sources
+  contain UTF-8 char literals (e.g. static_unicode_sets currency
+  symbols) that MSVC misreads as multi-byte char constants (C2015)
+  without the flag.
+
+* :uchar — `/utf-8` copts on MSVC. uchar.cpp's fullwidth-letter
+  literals (u'ａ' etc.) hit the same C2015.
+
+--- icu4c/source/common/BUILD.bazel
++++ icu4c/source/common/BUILD.bazel
+@@ -39,6 +39,11 @@
+     local_defines = [
+         "U_COMMON_IMPLEMENTATION",
+     ],
++    defines = select({
++        "@rules_cc//cc/compiler:clang-cl": ["U_STATIC_IMPLEMENTATION"],
++        "@rules_cc//cc/compiler:msvc-cl": ["U_STATIC_IMPLEMENTATION"],
++        "//conditions:default": [],
++    }),
+ )
+ 
+ cc_library(
+@@ -47,6 +52,11 @@
+         "*.h",
+         "*.cpp",
+     ]),
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     deps = [
+         ":headers",
+         # omit other deps b/c they are sys symbols
+@@ -721,6 +731,11 @@
+         "uchar.cpp",
+         "uchar_props_data.h",
+     ],
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     includes = ["."],
+     deps = [
+         ":headers",

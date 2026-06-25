@@ -8,6 +8,7 @@ load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
 load(
     "//bazel:texlive.bzl",
     "MATH_LINKOPTS",
+    "MSVC_ATTRIBUTE_SHIM_COPTS",
     "TEXLIVE_COPTS",
     "TEXLIVE_LOCAL_DEFINES",
     "combine_changes",
@@ -416,8 +417,10 @@ cc_library(
     hdrs = glob(["pdftexdir/*.h"]) + glob(["synctexdir/*.h"]),
     # `macnames.c` references NULL without including any header. Upstream
     # picks it up via the autoconf-generated config.h chain; we force
-    # stdlib.h to avoid patching the source.
-    copts = TEXLIVE_COPTS + force_include_copts("stdlib.h"),
+    # stdlib.h to avoid patching the source. The MSVC shim neutralises
+    # __attribute__((format(printf, ...))) etc. in pdftex-common.h.
+    copts = TEXLIVE_COPTS + force_include_copts("stdlib.h") +
+            MSVC_ATTRIBUTE_SHIM_COPTS,
     # pdftexdir/ptexlib.h does `#include "pdftexd.h"` and `pdftexd.h` is
     # generated into texk/web2c/. Surface that dir on the include path so
     # those quote-includes resolve. synctex headers live in synctexdir/.
@@ -441,10 +444,20 @@ cc_library(
         "lib/texmfmp.c",
         "pdftexdir/macnames.c",
     ],
+    # pdftexdir/utils.c uses POSIX <regex.h> (REG_EXTENDED, regcomp,
+    # regexec — driving `\pdfmatch`). MSVC ships no POSIX regex and
+    # we don't vendor a shim. MinGW gets it via msys2's libc, so the
+    # gate is on cl.exe / clang-cl rather than os:windows.
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     deps = [
         ":md5",
         ":web2c_lib",
         "//:xpdf",
+        "//bazel:msvc_shim",
         "//texk/kpathsea",
         "@libpng//:png",
         "@zlib",
@@ -465,6 +478,12 @@ cc_binary(
         "__SyncTeX__",
     ],
     tags = ["manual"],
+    # Inherits MSVC-incompatibility from libpdftex (POSIX <regex.h>).
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
     visibility = ["//visibility:public"],
     deps = [":libpdftex"],
 )
