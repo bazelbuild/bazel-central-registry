@@ -15,35 +15,42 @@
 module(
     name = "zenoh-c",
     version = "1.9.0",
-    bazel_compatibility = [">=8.0.0"],
+    bazel_compatibility = [">=7.2.1"],
 )
 
-bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_cc", version = "0.2.16")
-bazel_dep(name = "rules_rs", version = "0.0.58")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "rules_rs", version = "0.0.93")
+bazel_dep(name = "llvm", version = "0.8.9")
 
-# rules_rs vendors its own (patched) rules_rust. Source @rules_rust from that
-# facade so the crate universe and the rust rules share a single rules_rust
-# instance (CrateInfo providers and toolchain types must match across both).
+osx = use_extension("@llvm//extensions:osx.bzl", "osx")
+osx.frameworks(
+    names = [
+        "CoreFoundation",
+        "Foundation",
+        "IOKit",
+        "Kernel",
+        "OSLog",
+        "Security",
+        "SystemConfiguration",
+    ],
+)
+use_repo(osx, "macos_sdk")
 
-rules_rust = use_extension("@rules_rs//rs/experimental:rules_rust.bzl", "rules_rust")
-use_repo(rules_rust, "rules_rust")
-
-# The crate universe and the rust rules are built with rules_rs's rules_rust, so
-# they need a toolchain registered for that toolchain type. rules_rs provides
-# hermetic toolchains for it via its experimental toolchains extension.
-
-toolchains = use_extension("@rules_rs//rs/experimental/toolchains:module_extension.bzl", "toolchains")
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
 toolchains.toolchain(
     edition = "2021",
     version = "1.93.0",
 )
 use_repo(toolchains, "default_rust_toolchains")
 
-register_toolchains("@default_rust_toolchains//:all")
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
 
-# Form the crate universe with rules_rs, which reads the committed Cargo.lock
-# directly (no on-the-fly regeneration), keeping the resolution deterministic.
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    "@llvm//toolchain:all",
+)
 
 crate = use_extension(
     "@rules_rs//rs:extensions.bzl",
@@ -59,7 +66,6 @@ crate.from_cargo(
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     ],
-    use_experimental_platforms = True,
 )
 crate.annotation(
     crate = "cbindgen",
