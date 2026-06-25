@@ -39,6 +39,7 @@
 #include <fcntl.h>
 #include <io.h>
 #include <process.h>
+#include <sys/stat.h>
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -75,6 +76,20 @@ static void set_env(const std::string& key, const std::string& value) {
 #else
     setenv(key.c_str(), value.c_str(), 1);
 #endif
+}
+
+/// Per-process unique path in the system temp dir. `tag` distinguishes
+/// concurrent uses inside one process (cat / out / err). Including the
+/// PID keeps parallel Bazel actions from clobbering each other — they
+/// all otherwise share `C:\temp` on Windows.
+static fs::path temp_path(const char* tag) {
+#ifdef _WIN32
+    int pid = _getpid();
+#else
+    int pid = getpid();
+#endif
+    return fs::temp_directory_path() /
+           ("pw_" + std::string(tag) + "_" + std::to_string(pid) + ".tmp");
 }
 
 /// Tear down a `--quiet` capture: restore the saved stdout/stderr fds,
@@ -252,7 +267,7 @@ int main(int argc, char* argv[]) {
         dup2(pipefd[0], STDIN_FILENO);
         close(pipefd[0]);
 #else
-        cat_tmp = fs::temp_directory_path() / "pw_cat.tmp";
+        cat_tmp = temp_path("cat");
         {
             std::ofstream out(cat_tmp, std::ios::binary);
             for (const std::string& f : cat_files) {
@@ -260,23 +275,42 @@ int main(int argc, char* argv[]) {
                 out << in.rdbuf();
             }
         }
-        FILE* fin = freopen(cat_tmp.string().c_str(), "rb", stdin);
-        if (!fin) {
-            std::cerr << "process_wrapper: freopen stdin: "
-                      << std::strerror(errno) << "\n";
+        // freopen(stdin) is a CRT-level redirect; _spawnvp inherits the
+        // child's stdin from the OS-level handle table (fd 0), which
+        // freopen may or may not update reliably depending on CRT
+        // version. _dup2 onto _fileno(stdin) updates the fd table
+        // directly, so the child always sees our redirected handle.
+        int fd = _open(cat_tmp.string().c_str(), _O_RDONLY | _O_BINARY);
+        if (fd < 0 || _dup2(fd, _fileno(stdin)) != 0) {
+            std::cerr << "process_wrapper: redirect stdin from "
+                      << cat_tmp << ": " << std::strerror(errno) << "\n";
             return 1;
         }
+        _close(fd);
 #endif
     }
 
-    // Redirect stdout to file.
+    // Redirect stdout to file. See the --cat path above for why _dup2
+    // is preferred over freopen on Windows.
     if (!stdout_file.empty()) {
+#ifdef _WIN32
+        int fd = _open(stdout_file.c_str(),
+                       _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
+                       _S_IREAD | _S_IWRITE);
+        if (fd < 0 || _dup2(fd, _fileno(stdout)) != 0) {
+            std::cerr << "process_wrapper: redirect stdout to "
+                      << stdout_file << ": " << std::strerror(errno) << "\n";
+            return 1;
+        }
+        _close(fd);
+#else
         FILE* fout = freopen(stdout_file.c_str(), "w", stdout);
         if (!fout) {
             std::cerr << "process_wrapper: freopen stdout " << stdout_file
                       << ": " << std::strerror(errno) << "\n";
             return 1;
         }
+#endif
     }
 
     // Build argv for exec.
@@ -293,21 +327,37 @@ int main(int argc, char* argv[]) {
     fs::path quiet_out, quiet_err;
     int saved_stdout = -1, saved_stderr = -1;
     if (quiet) {
-        quiet_out = fs::temp_directory_path() / "pw_out.tmp";
-        quiet_err = fs::temp_directory_path() / "pw_err.tmp";
+        quiet_out = temp_path("out");
+        quiet_err = temp_path("err");
 #ifdef _WIN32
         saved_stdout = _dup(_fileno(stdout));
         saved_stderr = _dup(_fileno(stderr));
+        // _dup2 over freopen — same reason as the --cat path.
+        int fout = _open(quiet_out.string().c_str(),
+                         _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
+                         _S_IREAD | _S_IWRITE);
+        int ferr = _open(quiet_err.string().c_str(),
+                         _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
+                         _S_IREAD | _S_IWRITE);
+        if (fout < 0 || ferr < 0 ||
+            _dup2(fout, _fileno(stdout)) != 0 ||
+            _dup2(ferr, _fileno(stderr)) != 0) {
+            std::cerr << "process_wrapper: redirect for --quiet: "
+                      << std::strerror(errno) << "\n";
+            return 1;
+        }
+        _close(fout);
+        _close(ferr);
 #else
         saved_stdout = dup(STDOUT_FILENO);
         saved_stderr = dup(STDERR_FILENO);
-#endif
         if (!freopen(quiet_out.string().c_str(), "w", stdout) ||
             !freopen(quiet_err.string().c_str(), "w", stderr)) {
             std::cerr << "process_wrapper: freopen for --quiet: "
                       << std::strerror(errno) << "\n";
             return 1;
         }
+#endif
     }
 
 #ifdef _WIN32
