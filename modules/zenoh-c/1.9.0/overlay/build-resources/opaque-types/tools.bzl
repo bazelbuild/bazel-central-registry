@@ -44,7 +44,7 @@ def _record_rust_impl(ctx):
 
     # Build rustc args safely (avoid manual quoting)
     args = ctx.actions.args()
-    args.add(srcs[0].path)
+    args.add(srcs[0])
     args.add_all(["--crate-type", "rlib"])
     args.add_all(["--crate-name", ctx.label.name.replace("-", "_")])
     args.add_all(["-o", "lib{}.rlib".format(ctx.label.name.replace("-", "_"))])
