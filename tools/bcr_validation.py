@@ -568,7 +568,8 @@ class BcrValidator:
             self.report(BcrValidationResult.FAILED, f"{module_file} must not be a symlink.")
 
         # Apply patch files if there are any, also verify their integrity values
-        source_root = output_dir.joinpath(source["strip_prefix"] if "strip_prefix" in source else "")
+        # NOTE: Reuse the already-validated source_root from line 549 rather than
+        # re-deriving from untrusted strip_prefix to maintain the validation invariant.
         if "patches" in source:
             for patch_name, expected_integrity in source["patches"].items():
                 patch_file = self.registry.get_patch_file_path(module_name, version, patch_name)
@@ -598,11 +599,15 @@ class BcrValidator:
                     )
                 overlay_dst = source_root / overlay_file
                 try:
-                    overlay_dst.resolve().relative_to(source_root.resolve())
+                    # Anchor containment check to the extraction root (output_dir),
+                    # NOT the attacker-influenced source_root, to prevent overlay
+                    # files from escaping the extraction directory via ../ paths
+                    # relative to source_root. See #8583/#8584.
+                    overlay_dst.resolve().relative_to(output_dir.resolve())
                 except ValueError as e:
                     self.report(
                         BcrValidationResult.FAILED,
-                        f"The overlay file path `{overlay_file}` must point inside the source archive.\n {e}",
+                        f"The overlay file path `{overlay_file}` must point inside the extraction directory.\n {e}",
                     )
                     continue
                 try:
@@ -921,10 +926,7 @@ class BcrValidator:
         if source_uri not in gh_source_uris:
             self.report(
                 BcrValidationResult.FAILED,
-                (
-                    f"{module_name}@{version}: Expected source URI {source_uri}, "
-                    f"but got {', '.join(gh_source_uris)}."
-                ),
+                (f"{module_name}@{version}: Expected source URI {source_uri}, but got {', '.join(gh_source_uris)}."),
             )
             return
 
