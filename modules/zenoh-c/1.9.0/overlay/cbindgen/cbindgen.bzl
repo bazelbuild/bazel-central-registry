@@ -113,22 +113,14 @@ def _rust_cbindgen_library_impl(ctx):
     )
 
     rust_toolchain = ctx.toolchains["@rules_rust//rust:toolchain"]
-    
-    # In newer rules_rust, exec_triple and target_triple are structs
-    # with a .str field containing the actual triple string
-    exec_triple = rust_toolchain.exec_triple.str if hasattr(rust_toolchain.exec_triple, 'str') else str(rust_toolchain.exec_triple)
-    target_triple = rust_toolchain.target_triple.str if hasattr(rust_toolchain.target_triple, 'str') else str(rust_toolchain.target_triple)
-    
+
     env = {
         "CARGO": rust_toolchain.cargo.path,
-        "HOST": exec_triple,
+        "HOST": rust_toolchain.exec_triple.str,
         "RUSTC": rust_toolchain.rustc.path,
-        "TARGET": target_triple,
+        "TARGET": rust_toolchain.target_triple.str,
     }
 
-    # Use all_files from the toolchain which contains all necessary files
-    # This is more reliable than trying to access individual components
-    # which may have different APIs across rules_rust versions
     tools = rust_toolchain.all_files
 
     ctx.actions.run(
