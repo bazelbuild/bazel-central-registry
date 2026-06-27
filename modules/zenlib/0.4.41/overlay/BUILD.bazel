@@ -1,0 +1,113 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The compiled artifact is libzen (libzen.a/.so), hence the target name :zen. This alias matches the module
+# name so the `@zenlib` shorthand (i.e. `@zenlib//:zenlib`) resolves, per BCR convention.
+alias(
+    name = "zenlib",
+    actual = ":zen",
+    visibility = ["//visibility:public"],
+)
+
+# HAVE_GMTIME_R / HAVE_LOCALTIME_R select ZenLib's reentrant time path; without them it falls back to non-reentrant
+# gmtime()/localtime(). Presence is a target libc property, declared per-OS (opt-in) below.
+_POSIX_REENTRANT_TIME = [
+    "HAVE_GMTIME_R",
+    "HAVE_LOCALTIME_R",
+]
+
+# srcs mirror libzen_la_SOURCES (Makefile.am) exactly: 23 units. HTTP_Client.cpp and PreComp.cpp are in the tree
+# but not part of libzen — omit them here too.
+cc_library(
+    name = "zen",
+    srcs = [
+        "Source/ZenLib/Conf.cpp",
+        "Source/ZenLib/CriticalSection.cpp",
+        "Source/ZenLib/Dir.cpp",
+        "Source/ZenLib/File.cpp",
+        "Source/ZenLib/FileName.cpp",
+        "Source/ZenLib/Format/Html/Html_Handler.cpp",
+        "Source/ZenLib/Format/Html/Html_Request.cpp",
+        "Source/ZenLib/Format/Http/Http_Cookies.cpp",
+        "Source/ZenLib/Format/Http/Http_Handler.cpp",
+        "Source/ZenLib/Format/Http/Http_Request.cpp",
+        "Source/ZenLib/Format/Http/Http_Utils.cpp",
+        "Source/ZenLib/InfoMap.cpp",
+        "Source/ZenLib/MemoryDebug.cpp",
+        "Source/ZenLib/OS_Utils.cpp",
+        "Source/ZenLib/Thread.cpp",
+        "Source/ZenLib/Translation.cpp",
+        "Source/ZenLib/Utils.cpp",
+        "Source/ZenLib/Ztring.cpp",
+        "Source/ZenLib/ZtringList.cpp",
+        "Source/ZenLib/ZtringListList.cpp",
+        "Source/ZenLib/ZtringListListF.cpp",
+        "Source/ZenLib/int128s.cpp",
+        "Source/ZenLib/int128u.cpp",
+    ],
+    # Public headers mirror CMake's install set (29) — the libzen source headers, excluding the
+    # uncompiled HTTP_Client subsystem and the orphaned MemoryUtils.h (in the tree, included by nothing).
+    hdrs = [
+        "Source/ZenLib/BitStream.h",
+        "Source/ZenLib/BitStream_Fast.h",
+        "Source/ZenLib/BitStream_LE.h",
+        "Source/ZenLib/Conf.h",
+        "Source/ZenLib/Conf_Internal.h",
+        "Source/ZenLib/CriticalSection.h",
+        "Source/ZenLib/Dir.h",
+        "Source/ZenLib/File.h",
+        "Source/ZenLib/FileName.h",
+        "Source/ZenLib/Format/Html/Html_Handler.h",
+        "Source/ZenLib/Format/Html/Html_Request.h",
+        "Source/ZenLib/Format/Http/Http_Cookies.h",
+        "Source/ZenLib/Format/Http/Http_Handler.h",
+        "Source/ZenLib/Format/Http/Http_Request.h",
+        "Source/ZenLib/Format/Http/Http_Utils.h",
+        "Source/ZenLib/InfoMap.h",
+        "Source/ZenLib/MemoryDebug.h",
+        "Source/ZenLib/OS_Utils.h",
+        "Source/ZenLib/PreComp.h",
+        "Source/ZenLib/Thread.h",
+        "Source/ZenLib/Trace.h",
+        "Source/ZenLib/Translation.h",
+        "Source/ZenLib/Utils.h",
+        "Source/ZenLib/Ztring.h",
+        "Source/ZenLib/ZtringList.h",
+        "Source/ZenLib/ZtringListList.h",
+        "Source/ZenLib/ZtringListListF.h",
+        "Source/ZenLib/int128s.h",
+        "Source/ZenLib/int128u.h",
+    ],
+    copts = ["-std=c++11"],  # AM_CXXFLAGS
+    # Public-ABI define: UNICODE picks the wide Ztring representation consumers must compile against, so it propagates
+    # (not local_defines). CMake declares UNICODE _UNICODE PUBLIC; _UNICODE alone is redundant (Conf.h derives it).
+    defines = [
+        "UNICODE",
+        "_UNICODE",
+    ],
+    # ZenLib uses POSIX threads; -lpthread is needed only where pthread is a standalone library (Linux). macOS folds it
+    # into libSystem and Windows uses Win32 threads, so neither needs a flag; no other system library is required.
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    # 64-bit off_t ABI, set unconditionally per configure.ac's enable_large_files (no probe). Inert for ZenLib —
+    # I/O uses <fstream>/Win32, never raw off_t, but every libc honors or ignores it. Build-internal, so local.
+    local_defines = [
+        "_LARGE_FILES",
+        "_FILE_OFFSET_BITS=64",
+    ] + select(
+        {
+            "@platforms//os:emscripten": _POSIX_REENTRANT_TIME,
+            "@platforms//os:linux": _POSIX_REENTRANT_TIME,
+            "@platforms//os:macos": _POSIX_REENTRANT_TIME,
+            "@platforms//os:wasi": _POSIX_REENTRANT_TIME,
+            # The Windows CRT has gmtime_s, not gmtime_r — record the absence, don't default it.
+            "@platforms//os:windows": [],
+        },
+        no_match_error = "zen: no declared libc reentrant-time capability for this target OS. Add an " +
+                         "@platforms//os arm: _POSIX_REENTRANT_TIME if the libc provides gmtime_r/localtime_r, otherwise [].",
+    ),
+    # Sources include "ZenLib/Ztring.h"; strip Source/ to expose that path (AM_CPPFLAGS -I../../../Source).
+    strip_include_prefix = "Source",
+    visibility = ["//visibility:public"],
+)
