@@ -43,28 +43,28 @@ def _record_rust_impl(ctx):
     srcs = ctx.files.srcs
 
     # Build rustc args safely (avoid manual quoting)
+    crate_name = ctx.label.name.replace("-", "_")
     args = ctx.actions.args()
     args.add(srcs[0])
-    args.add_all(["--crate-type", "rlib"])
-    args.add_all(["--crate-name", ctx.label.name.replace("-", "_")])
-    args.add_all(["-o", "lib{}.rlib".format(ctx.label.name.replace("-", "_"))])
-    args.add_all(["--edition", str(ctx.attr.edition)])
-    args.add_all(["--target", rust_tc.target_triple.str])
+    args.add("rlib", format = "--crate-type=%s")
+    args.add(crate_name, format = "--crate-name=%s")
+    args.add("-o")
+    args.add(crate_name, format = "lib%s.rlib")
+    args.add(ctx.attr.edition, format = "--edition=%s")
+    args.add(rust_tc.target_triple.str, format = "--target=%s")
 
     # The toolchain ships rustc and the target std library in separate trees, so
     # rustc cannot locate `std` from its own location. Point it at the
     # toolchain-generated sysroot (which contains the target's rust-std).
     args.add(rust_tc.sysroot, format = "--sysroot=%s")
 
-    for feat in ctx.attr.crate_features:
-        args.add_all(["--cfg", 'feature="{}"'.format(feat)])
+    args.add_all(ctx.attr.crate_features, before_each = "--cfg", format_each = 'feature="%s"')
 
     for name, out in direct_dep_crates.items():
         args.add("--extern")
-        args.add("{}={}".format(name, out.path))
+        args.add(out, format = "{}=%s".format(name))
 
-    for path in sorted(search_paths.keys()):
-        args.add("-Ldependency={}".format(path))
+    args.add_all(sorted(search_paths.keys()), format_each = "-Ldependency=%s")
 
     # Wrapper script that captures output to output_log and never fails the action
     wrapper = ctx.actions.declare_file(ctx.label.name + "_rustc_with_log.sh")

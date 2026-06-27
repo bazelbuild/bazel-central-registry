@@ -93,10 +93,8 @@ def _rust_cbindgen_library_impl(ctx):
     )
 
     args = ctx.actions.args()
-    args.add("--config")
-    args.add(ctx.outputs.config)
-    args.add("--output")
-    args.add(output_header)
+    args.add(ctx.outputs.config, format = "--config=%s")
+    args.add(output_header, format = "--output=%s")
     args.add(rust_lib[CargoManifestInfo].toml.dirname)
 
     # The crate's own sources come from its crate info (works for rust_library
