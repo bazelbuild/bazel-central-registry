@@ -14,6 +14,26 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Validate comment command
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          # Security: validate that the comment matches only known safe @bazel-io commands
+          # before invoking the token-bearing action. Defense-in-depth in case new
+          # command types are added to the upstream action without workflow review.
+          STRIPPED="${COMMENT_BODY#@bazel-io }"
+          VALID=false
+          for cmd in "skip_check unstable_url" "skip_check compatibility_level" "skip_check incompatible_flags" "abandon"; do
+            if [ "$STRIPPED" = "$cmd" ]; then
+              VALID=true
+              break
+            fi
+          done
+          if [ "$VALID" = "false" ]; then
+            echo "Unknown or unrecognized @bazel-io command: '$STRIPPED' — skipping."
+            exit 1
+          fi
+
       - name: Handle @bazel-io commands
         uses: bazelbuild/continuous-integration/actions/bcr-pr-reviewer@3d8663cb5406076255c6865af23cb85d6eff5c35
         with:
