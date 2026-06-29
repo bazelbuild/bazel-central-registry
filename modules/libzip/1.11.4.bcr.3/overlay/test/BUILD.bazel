@@ -1,0 +1,48 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+
+package(
+    default_applicable_licenses = ["//:license"],
+    default_visibility = ["//visibility:private"],
+)
+
+# Generate the expected zip_err_str.c for use by the test immediately below.
+genrule(
+    name = "generate_zip_error_strings",
+    testonly = True,
+    srcs = [
+        "//:cmake/GenerateZipErrorStrings.cmake",
+        "//:lib/zip.h",
+        "//:lib/zipint.h",
+    ],
+    outs = ["zip_err_str.c"],
+    cmd = " ".join([
+        "export ORIGINAL_EXECROOT=$$(pwd)",
+        "&&",
+        "cd $(RULEDIR)",
+        "&&",
+        "cmake",
+        "-DPROJECT_SOURCE_DIR={}/{}".format(
+            "$${ORIGINAL_EXECROOT}",
+            "$$(dirname $$(dirname $(execpath //:lib/zip.h)))",
+        ),
+        "-P",
+        "{}/{}".format(
+            "$${ORIGINAL_EXECROOT}",
+            "$(execpath //:cmake/GenerateZipErrorStrings.cmake)",
+        ),
+    ]),
+)
+
+# Test that the committed file is up-to-date.
+diff_test(
+    name = "zip_err_str_test",
+    file1 = "//:gen/zip_err_str.c",
+    file2 = ":zip_err_str.c",
+)
+
+test_suite(
+    name = "verify_generated_code",
+    tests = [
+        ":zip_err_str_test",
+    ],
+)
