@@ -1,0 +1,90 @@
+"""ptexenc - Japanese TeX encoding library."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("//bazel:texlive.bzl", "force_include_copts")
+
+autoconf_hdr(
+    name = "c_auto_h",
+    out = "ptexenc/c-auto.h",
+    template = "c-auto.in",
+    deps = ["//:configure"],
+)
+
+cc_library(
+    name = "ptexenc",
+    srcs = [
+        "kanjicnv.c",
+        "ptexenc.c",
+        "unicode.c",
+        "unicode-jp.c",
+    ],
+    hdrs = [
+        "jisx0208.h",
+        "ptexenc/kanjicnv.h",
+        "ptexenc/ptexenc.h",
+        "ptexenc/unicode.h",
+        "ptexenc/unicode-jp.h",
+        "tex8benc.h",
+    ] + [":c_auto_h"],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    include_prefix = "ptexenc",
+    includes = ["."],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "KPATHSEA",
+        "PTEXENC",
+    ],
+    # NO_PTENC_DLL forces PTENCDLL to expand to nothing so MSVC consumers
+    # stop emitting __declspec(dllimport) for ptexenc symbols (static
+    # linking — we don't ship a ptexenc.dll). Mirrors NO_KPSE_DLL in
+    # //texk/kpathsea.
+    defines = select({
+        "@rules_cc//cc/compiler:clang-cl": ["NO_PTENC_DLL"],
+        "@rules_cc//cc/compiler:msvc-cl": ["NO_PTENC_DLL"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = ".",
+    visibility = ["//visibility:public"],
+    deps = ["//texk/kpathsea"],
+)
+
+cc_binary(
+    name = "ptekf",
+    srcs = ["ptekf.c"],
+    # TL_VERSION comes from a force-included header instead of a -D
+    # copt because Bazel/cl.exe response-file quoting eats whitespace
+    # in string-valued defines.
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }) + force_include_copts("tl_strings.h"),
+    # WIN32 must be set for ptekf's `#if defined(_WIN32)` branch to
+    # reach the kpathsea_instance fields declared under `#if defined
+    # (WIN32)` in kpathsea/types.h (File_system_codepage,
+    # Is_cp932_system, etc.). texk_program callers get this from
+    # TEXLIVE_LOCAL_DEFINES; ptekf is a plain cc_binary so we set it
+    # here directly.
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        "@platforms//os:windows": ["WIN32"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ptexenc",
+        "//bazel:tl_strings",
+    ],
+)
+
+genrule(
+    name = "ptekf_version",
+    outs = ["ptekf_version.txt"],
+    cmd = "$(execpath :ptekf) --version > $@",
+    tools = [":ptekf"],
+)

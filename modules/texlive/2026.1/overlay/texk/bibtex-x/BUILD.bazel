@@ -1,0 +1,44 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+# IMPLEMENTATION + BANNER values contain whitespace; passing them via
+# -D copts triggers Bazel/cl.exe response-file quoting bugs. Emit them
+# as a force-includable header so the quotes are just plain C source.
+write_file(
+    name = "bibtex8_strings_h",
+    out = "bibtex8_strings.h",
+    content = [
+        "#ifndef BIBTEX8_STRINGS_H",
+        "#define BIBTEX8_STRINGS_H",
+        '#define IMPLEMENTATION "C99 (8 bit)"',
+        '#define BANNER "This is 8-bit Big BibTeX"',
+        "#endif",
+        "",
+    ],
+)
+
+cc_library(
+    name = "bibtex8_strings",
+    hdrs = [":bibtex8_strings_h"],
+    includes = ["."],
+)
+
+texk_program(
+    name = "bibtex8",
+    srcs = glob(["*.c"]),
+    hdrs = glob(["*.h"]),
+    copts = force_include_copts("bibtex8_strings.h"),
+    # Without SUPPORT_8BIT, bibtex8 ships a crippled 7-bit build. Upstream
+    # bibtex-x/Makefile.am unconditionally sets this for the bibtex8 binary.
+    local_defines = [
+        "SUPPORT_8BIT",
+        "VERSION=\\\"3.71\\\"",
+        "EXT_VERSION=\\\"3.71\\\"",
+    ],
+    deps = [":bibtex8_strings"],
+)
+
+# bibtexu uses ICU's ustdio.h (icuio) which has no upstream Bazel target.
+# TODO: Add an icuio cc_library overlay to the ICU module, or build icuio
+# from TeX Live's bundled ICU source. For now, bibtexu is excluded.
