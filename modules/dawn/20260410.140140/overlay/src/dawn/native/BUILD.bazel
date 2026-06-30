@@ -1,0 +1,464 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "objc_library")
+load("//generator:dawn_generator.bzl", "dawn_json_generator")
+load("//src/dawn:build_defs.bzl", "DAWN_APPLE_METAL_LINKOPTS", "DAWN_COPTS", "DAWN_INTERNAL_INCLUDES")
+
+VULKAN_SOURCES_COMMON_SRCS = glob(
+    ["vulkan/*.cpp"],
+    exclude = ["vulkan/VulkanBackend.cpp"],
+) + [
+    "utils/RenderDoc.cpp",
+    "utils/RenderDoc.h",
+    "vulkan/external_memory/MemoryService.cpp",
+    "vulkan/external_memory/MemoryServiceImplementation.cpp",
+    "vulkan/external_semaphore/SemaphoreService.cpp",
+    "vulkan/external_semaphore/SemaphoreServiceImplementation.cpp",
+]
+
+VULKAN_ANDROID_SRCS = [
+    "AHBFunctions.cpp",
+    "vulkan/external_memory/MemoryServiceImplementationAHardwareBuffer.cpp",
+    "vulkan/external_semaphore/SemaphoreServiceImplementationFD.cpp",
+]
+
+VULKAN_LINUX_SRCS = [
+    "vulkan/external_memory/MemoryServiceImplementationDmaBuf.cpp",
+    "vulkan/external_memory/MemoryServiceImplementationOpaqueFD.cpp",
+    "vulkan/external_semaphore/SemaphoreServiceImplementationFD.cpp",
+]
+
+dawn_json_generator(
+    name = "utils_gen",
+    outputs = [
+        "src/dawn/native/ChainUtils_autogen.h",
+        "src/dawn/native/ChainUtils_autogen.cpp",
+        "src/dawn/native/Features_autogen.h",
+        "src/dawn/native/Features_autogen.inl",
+        "src/dawn/native/ObjectType_autogen.cpp",
+        "src/dawn/native/ObjectType_autogen.h",
+        "src/dawn/native/ProcTable.cpp",
+        "src/dawn/native/ValidationUtils_autogen.cpp",
+        "src/dawn/native/ValidationUtils_autogen.h",
+        "src/dawn/native/dawn_platform_autogen.h",
+        "src/dawn/native/webgpu_StreamImpl_autogen.cpp",
+        "src/dawn/native/webgpu_absl_format_autogen.cpp",
+        "src/dawn/native/webgpu_absl_format_autogen.h",
+        "src/dawn/native/wgpu_structs_autogen.cpp",
+        "src/dawn/native/wgpu_structs_autogen.h",
+    ],
+    target = "native_utils",
+    visibility = ["//:dawn_internal"],
+)
+
+dawn_json_generator(
+    name = "webgpu_dawn_native_proc_gen",
+    outputs = ["src/dawn/native/webgpu_dawn_native_proc.cpp"],
+    target = "webgpu_dawn_native_proc",
+    visibility = ["//:dawn_internal"],
+)
+
+cc_library(
+    name = "generated_native_utils",
+    srcs = [
+        ":ChainUtils_autogen.cpp",
+        ":ObjectType_autogen.cpp",
+        ":ProcTable.cpp",
+        ":ValidationUtils_autogen.cpp",
+        ":webgpu_StreamImpl_autogen.cpp",
+        ":webgpu_absl_format_autogen.cpp",
+        ":wgpu_structs_autogen.cpp",
+    ],
+    hdrs = [
+        ":ChainUtils_autogen.h",
+        ":Features_autogen.h",
+        ":Features_autogen.inl",
+        ":ObjectType_autogen.h",
+        ":ValidationUtils_autogen.h",
+        ":dawn_platform_autogen.h",
+        ":webgpu_absl_format_autogen.h",
+        ":wgpu_structs_autogen.h",
+    ] + glob([
+        "*.h",
+        "*.inl",
+        "stream/*.h",
+    ]),
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//:dawn_internal"],
+    deps = [
+        ":headers",
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/dawn/platform",
+        "//src/dawn/utils:system_utils",
+    ],
+)
+
+cc_library(
+    name = "generated_native_proc",
+    srcs = [":webgpu_dawn_native_proc.cpp"],
+    visibility = ["//:dawn_internal"],
+    deps = ["//include/dawn:cpp_headers"],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = [
+        "//include/dawn:native/D3D11Backend.h",
+        "//include/dawn:native/D3D12Backend.h",
+        "//include/dawn:native/D3DBackend.h",
+        "//include/dawn:native/DawnNative.h",
+        "//include/dawn:native/MetalBackend.h",
+        "//include/dawn:native/NullBackend.h",
+        "//include/dawn:native/OpenGLBackend.h",
+        "//include/dawn:native/VulkanBackend.h",
+        "//include/dawn:native/WebGPUBackend.h",
+        "//include/dawn:native/dawn_native_export.h",
+    ],
+    visibility = ["//:dawn_internal"],
+    deps = ["//include/dawn:cpp_headers"],
+)
+
+cc_library(
+    name = "sources",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = [
+            "AHBFunctions.cpp",
+            "DawnNative.cpp",
+            "SpirvValidation.cpp",
+            "X11Functions.cpp",
+        ],
+    ) + glob([
+        "*.h",
+        "*.inl",
+        "stream/*.cpp",
+        "stream/*.h",
+        "metal/*.h",
+        "vulkan/*.h",
+        "vulkan/external_memory/*.h",
+        "vulkan/external_semaphore/*.h",
+        "utils/WGPUHelpers.cpp",
+        "utils/WGPUHelpers.h",
+    ]) + select({
+        "@platforms//os:android": VULKAN_SOURCES_COMMON_SRCS + VULKAN_ANDROID_SRCS,
+        "@platforms//os:linux": VULKAN_SOURCES_COMMON_SRCS + VULKAN_LINUX_SRCS,
+        "//conditions:default": [],
+    }),
+    copts = DAWN_COPTS + select({
+        "@platforms//os:android": ["-DDAWN_ENABLE_RENDERDOC"],
+        "@platforms//os:linux": ["-DDAWN_ENABLE_RENDERDOC"],
+        "//conditions:default": [],
+    }),
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//:dawn_internal"],
+    deps = [
+        ":generated_native_utils",
+        ":headers",
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/dawn/platform",
+        "//src/dawn/utils:system_utils",
+        "//src/tint/api",
+        "//src/tint/api/common",
+        "//src/tint/lang/wgsl",
+    ] + select({
+        "@platforms//os:android": [
+            "//src/tint/lang/spirv/reader",
+            "//src/tint/lang/spirv/writer",
+            "//third_party/renderdoc:headers",
+            "@vulkan_headers",
+            "@vulkan_utility_libraries//:vulkan_utility_headers",
+        ],
+        "@platforms//os:linux": [
+            "//src/tint/lang/spirv/reader",
+            "//src/tint/lang/spirv/writer",
+            "//third_party/renderdoc:headers",
+            "@vulkan_headers",
+            "@vulkan_utility_libraries//:vulkan_utility_headers",
+        ],
+        "@platforms//os:macos": [
+            ":metal_sources",
+            "//src/tint/lang/msl",
+        ],
+        "@platforms//os:ios": [
+            ":metal_sources",
+            "//src/tint/lang/msl",
+        ],
+        "@platforms//os:windows": [
+            ":d3d12_sources",
+            "//src/tint/lang/hlsl/writer",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+objc_library(
+    name = "metal_sources",
+    srcs = glob(["metal/*.mm"]) + ["Surface_metal.mm"],
+    hdrs = glob(["metal/*.h"]) + [
+        "utils/WGPUHelpers.h",
+    ],
+    copts = DAWN_COPTS + ["-fno-objc-arc"],
+    includes = DAWN_INTERNAL_INCLUDES,
+    sdk_frameworks = select({
+        "@platforms//os:ios": [
+            "Foundation",
+            "IOSurface",
+            "Metal",
+            "QuartzCore",
+        ],
+        "//conditions:default": [
+            "Cocoa",
+            "IOKit",
+            "IOSurface",
+            "Metal",
+            "QuartzCore",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":generated_native_utils",
+        ":headers",
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/dawn/platform",
+        "//src/dawn/utils:system_utils",
+        "//src/tint/api",
+        "//src/tint/api/common",
+        "//src/tint/lang/msl",
+        "//src/tint/lang/wgsl",
+    ],
+)
+
+cc_library(
+    name = "vulkan_sources",
+    srcs = glob(
+        ["vulkan/*.cpp"],
+        exclude = ["vulkan/VulkanBackend.cpp"],
+    ) + [
+        "utils/RenderDoc.cpp",
+        "vulkan/external_memory/MemoryService.cpp",
+        "vulkan/external_memory/MemoryServiceImplementation.cpp",
+        "vulkan/external_semaphore/SemaphoreService.cpp",
+        "vulkan/external_semaphore/SemaphoreServiceImplementation.cpp",
+    ] + select({
+        "@platforms//os:android": VULKAN_ANDROID_SRCS,
+        "@platforms//os:linux": VULKAN_LINUX_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "utils/RenderDoc.h",
+        "utils/WGPUHelpers.h",
+    ] + select({
+        "@platforms//os:android": ["AHBFunctions.h"],
+        "//conditions:default": [],
+    }) + glob([
+        "vulkan/*.h",
+        "vulkan/external_memory/*.h",
+        "vulkan/external_semaphore/*.h",
+    ]),
+    copts = DAWN_COPTS + [
+        "-DDAWN_ENABLE_RENDERDOC",
+    ],
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":generated_native_utils",
+        ":headers",
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/dawn/platform",
+        "//src/dawn/utils:system_utils",
+        "//src/tint/api",
+        "//src/tint/api/common",
+        "//src/tint/lang/spirv/reader",
+        "//src/tint/lang/spirv/writer",
+        "//src/tint/lang/wgsl",
+        "//third_party/renderdoc:headers",
+        "@vulkan_headers",
+        "@vulkan_utility_libraries//:vulkan_utility_headers",
+    ],
+)
+
+cc_library(
+    name = "d3d_sources",
+    srcs = glob([
+        "d3d/*.cpp",
+        "d3d/*.h",
+    ]) + ["d3d12/d3d12_platform.h"],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":generated_native_utils",
+        ":headers",
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/dawn/platform",
+        "//src/dawn/utils:system_utils",
+        "//src/tint/api",
+        "//src/tint/api/common",
+        "//src/tint/lang/hlsl/writer",
+        "//src/tint/lang/wgsl",
+    ],
+)
+
+cc_library(
+    name = "d3d12_sources",
+    srcs = glob(
+        ["d3d12/*.cpp"],
+        exclude = ["d3d12/D3D12Backend.cpp"],
+    ) + [
+        "utils/RenderDoc.cpp",
+    ] + glob(["d3d12/*.h"]),
+    hdrs = [
+        "utils/RenderDoc.h",
+    ],
+    copts = DAWN_COPTS + [
+        "-DDAWN_ENABLE_RENDERDOC",
+    ],
+    includes = DAWN_INTERNAL_INCLUDES,
+    linkopts = [
+        "dxgi.lib",
+        "dxguid.lib",
+        "onecore.lib",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":d3d_sources",
+        ":generated_native_utils",
+        ":headers",
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/dawn/platform",
+        "//src/dawn/utils:system_utils",
+        "//src/tint/api",
+        "//src/tint/api/common",
+        "//src/tint/lang/hlsl/writer",
+        "//src/tint/lang/wgsl",
+        "//third_party/renderdoc:headers",
+    ],
+)
+
+cc_library(
+    name = "native",
+    srcs = ["DawnNative.cpp"],
+    hdrs = ["//include/dawn:native/DawnNative.h"],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//:dawn_internal"],
+    deps = [
+        ":headers",
+        ":sources",
+        "//include/tint:headers",
+        "//src/dawn/common",
+    ] + select({
+        "@platforms//os:android": [":vulkan_backend"],
+        "@platforms//os:linux": [":vulkan_backend"],
+        "@platforms//os:macos": [":metal_backend"],
+        "@platforms//os:ios": [":metal_backend"],
+        "@platforms//os:windows": [":d3d12_backend"],
+        "//conditions:default": [],
+    }),
+)
+
+objc_library(
+    name = "metal_backend",
+    srcs = ["metal/MetalBackend.mm"],
+    copts = DAWN_COPTS + ["-fno-objc-arc"],
+    includes = DAWN_INTERNAL_INCLUDES,
+    sdk_frameworks = select({
+        "@platforms//os:ios": [
+            "Foundation",
+            "IOSurface",
+            "Metal",
+            "QuartzCore",
+        ],
+        "//conditions:default": [
+            "Cocoa",
+            "IOKit",
+            "IOSurface",
+            "Metal",
+            "QuartzCore",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":headers",
+        ":sources",
+        "//include/tint:headers",
+        "//src/dawn/common",
+    ],
+)
+
+cc_library(
+    name = "vulkan_backend",
+    srcs = ["vulkan/VulkanBackend.cpp"],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":headers",
+        ":sources",
+        "//include/tint:headers",
+        "//src/dawn/common",
+        "@vulkan_headers",
+        "@vulkan_utility_libraries//:vulkan_utility_headers",
+    ],
+)
+
+cc_library(
+    name = "d3d12_backend",
+    srcs = ["d3d12/D3D12Backend.cpp"],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":d3d12_sources",
+        ":headers",
+        ":sources",
+        "//include/tint:headers",
+        "//src/dawn/common",
+    ],
+)
+
+cc_library(
+    name = "webgpu_dawn",
+    srcs = [":webgpu_dawn_native_proc.cpp"],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":native",
+    ],
+)
+
+cc_binary(
+    name = "webgpu_dawn_smoke",
+    srcs = ["webgpu_dawn_smoke.cc"],
+    target_compatible_with = select({
+        "@platforms//os:android": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:dawn_internal"],
+    deps = [":webgpu_dawn"],
+)

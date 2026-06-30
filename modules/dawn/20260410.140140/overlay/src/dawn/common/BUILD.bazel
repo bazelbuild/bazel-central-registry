@@ -1,0 +1,106 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "objc_library")
+load("//generator:dawn_generator.bzl", "dawn_python_generator")
+load("//src/dawn:build_defs.bzl", "DAWN_ANDROID_COMMON_LINKOPTS", "DAWN_APPLE_COMMON_LINKOPTS", "DAWN_COPTS", "DAWN_INTERNAL_INCLUDES", "DAWN_LINUX_COMMON_LINKOPTS")
+
+dawn_python_generator(
+    name = "dawn_version_gen",
+    args = [
+        "--dawn-dir",
+        "$$(dirname $(location //:WORKSPACE.bazel))",
+    ],
+    extra_inputs = ["//:WORKSPACE.bazel"],
+    outputs = ["src/dawn/common/Version_autogen.h"],
+    script = "//generator:dawn_version_generator_bin",
+    visibility = ["//:dawn_internal"],
+)
+
+dawn_python_generator(
+    name = "dawn_gpu_info_gen",
+    args = [
+        "--gpu-info-json",
+        "$(location //src/dawn:gpu_info.json)",
+    ],
+    extra_inputs = ["//src/dawn:gpu_info.json"],
+    outputs = [
+        "src/dawn/common/GPUInfo_autogen.h",
+        "src/dawn/common/GPUInfo_autogen.cpp",
+    ],
+    script = "//generator:dawn_gpu_info_generator_bin",
+    visibility = ["//:dawn_internal"],
+)
+
+cc_library(
+    name = "version_generated_headers",
+    hdrs = [":dawn_version_gen"],
+    visibility = ["//:dawn_internal"],
+)
+
+cc_library(
+    name = "gpu_info_generated",
+    srcs = [
+        ":GPUInfo_autogen.cpp",
+    ],
+    hdrs = [
+        ":GPUInfo_autogen.h",
+    ],
+    visibility = ["//:dawn_internal"],
+    deps = ["//include/dawn:cpp_headers"],
+)
+
+cc_library(
+    name = "common",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = [
+            "GPUInfo_autogen.cpp",
+            "IOSurfaceUtils.cpp",
+            "WindowsUtils.cpp",
+        ],
+    ) + [":GPUInfo_autogen.cpp"] + select({
+        "@platforms//os:macos": ["IOSurfaceUtils.cpp"],
+        "@platforms//os:ios": ["IOSurfaceUtils.cpp"],
+        "@platforms//os:windows": ["WindowsUtils.cpp"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(["*.h"]) + [
+        ":GPUInfo_autogen.h",
+        ":Version_autogen.h",
+    ],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    linkopts = select({
+        "@platforms//os:android": DAWN_ANDROID_COMMON_LINKOPTS,
+        "@platforms//os:linux": DAWN_LINUX_COMMON_LINKOPTS,
+        "@platforms//os:macos": DAWN_APPLE_COMMON_LINKOPTS,
+        "@platforms//os:ios": DAWN_APPLE_COMMON_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    visibility = ["//:dawn_internal"],
+    deps = [
+        "//:abseil",
+        "//include/dawn:cpp_headers",
+        "//include/webgpu:headers",
+        "//src/dawn/partition_alloc:raw_ptr",
+        "//src/utils",
+    ] + select({
+        "@platforms//os:macos": [":common_macos"],
+        "@platforms//os:android": ["@vulkan_headers"],
+        "@platforms//os:linux": ["@vulkan_headers"],
+        "//conditions:default": [],
+    }),
+)
+
+objc_library(
+    name = "common_macos",
+    srcs = ["SystemUtils_mac.mm"],
+    hdrs = glob(["*.h"]),
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    sdk_frameworks = ["Foundation"],
+    visibility = ["//:dawn_internal"],
+    deps = [
+        "//include/dawn:cpp_headers",
+        "//include/webgpu:headers",
+        "//src/utils",
+    ],
+)

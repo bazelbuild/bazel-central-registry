@@ -1,0 +1,74 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "objc_library")
+load("//src/dawn:build_defs.bzl", "DAWN_APPLE_SYSTEM_UTILS_LINKOPTS", "DAWN_COPTS", "DAWN_INTERNAL_INCLUDES")
+load("//generator:dawn_generator.bzl", "dawn_json_generator")
+
+dawn_json_generator(
+    name = "dawn_utils_gen",
+    target = "dawn_utils",
+    outputs = [
+        "src/dawn/utils/ComboLimits.h",
+        "src/dawn/utils/ComboLimits.cpp",
+    ],
+    visibility = ["//:dawn_internal"],
+)
+
+cc_library(
+    name = "generated_utils",
+    srcs = [
+        ":ComboLimits.cpp",
+    ],
+    hdrs = [
+        ":ComboLimits.h",
+    ],
+    deps = ["//include/dawn:cpp_headers"],
+    visibility = ["//:dawn_internal"],
+)
+
+cc_library(
+    name = "system_utils",
+    srcs = [
+        "CommandLineParser.cpp",
+        "EmptyDebugLogger.cpp",
+        "SystemHandle.cpp",
+        "SystemUtils.cpp",
+    ] + select({
+        "@platforms//os:macos": ["OSXTimer.cpp"],
+        "@platforms//os:windows": ["WindowsTimer.cpp"],
+        "//conditions:default": ["PosixTimer.cpp"],
+    }),
+    hdrs = [
+        "CommandLineParser.h",
+        "ObjCUtils.h",
+        "PlatformDebugLogger.h",
+        "SystemHandle.h",
+        "SystemUtils.h",
+        "Timer.h",
+    ],
+    copts = DAWN_COPTS,
+    includes = DAWN_INTERNAL_INCLUDES,
+    linkopts = select({
+        "@platforms//os:macos": DAWN_APPLE_SYSTEM_UTILS_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//:abseil",
+        "//src/dawn/common:common",
+    ] + select({
+        "@platforms//os:macos": [":system_utils_macos"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:dawn_internal"],
+)
+
+objc_library(
+    name = "system_utils_macos",
+    srcs = ["ObjCUtils.mm"],
+    hdrs = ["ObjCUtils.h"],
+    copts = DAWN_COPTS + ["-fno-objc-arc"],
+    includes = DAWN_INTERNAL_INCLUDES,
+    sdk_frameworks = ["QuartzCore"],
+    deps = [
+        "//src/dawn/common:common",
+    ],
+    visibility = ["//:dawn_internal"],
+)
