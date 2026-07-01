@@ -1,0 +1,179 @@
+module(
+    name = "toolchains_llvm_bootstrapped",
+    version = "0.3.1",
+    bazel_compatibility = [">=7.4.0"],
+    compatibility_level = 0,
+)
+
+bazel_dep(name = "bazel_lib", version = "3.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "bazel_features", version = "1.34.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "with_cfg.bzl", version = "0.12.0")
+bazel_dep(name = "tar.bzl", version = "0.6.0")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+LLVM_VERSION = "21.1.4"
+
+LLVM_TOOLCHAIN_MINIMAL_SHA256 = {
+    "darwin-arm64": "419f4d4b9893ac2658a41665e2adbcbb3147cfc8c010f8811097a04f586d33fe",
+    "linux-amd64-musl": "e1fdddcd40f654941aac1acb59f0dcc54f15c0be3c0dd9d487ce8d66c0cef00d",
+    "linux-arm64-musl": "9ebac95e671f4abeacc1f85b77e6882fc9307210543b0f4440182bf61c70145b",
+}
+
+[
+    http_archive(
+        name = "llvm-toolchain-minimal-{llvm_version}-{target}".format(
+            llvm_version = LLVM_VERSION,
+            target = target.replace("-musl", ""),
+        ),
+        build_file = "//toolchain/llvm:BUILD.llvm_release.tpl",
+        sha256 = sha256,
+        urls = ["https://github.com/cerisier/toolchains_llvm_bootstrapped/releases/download/llvm-{llvm_version}/llvm-toolchain-minimal-{llvm_version}-{target}.tar.zst".format(
+            llvm_version = LLVM_VERSION,
+            target = target,
+        )],
+    )
+    for (target, sha256) in LLVM_TOOLCHAIN_MINIMAL_SHA256.items()
+]
+
+# Register the bootstrap toolchains since they are a prerequisite to all other toolchains.
+register_toolchains(
+    "//toolchain/stage2:all",
+)
+
+LLVM_TOOLCHAIN_EXTRAS_SHA256 = {
+    "darwin-arm64": "5f21cff510da9a5fd6444f4239383c220246193bbc17d48ffe7d2583476d6a25",
+    "linux-amd64-musl": "7296ab64eaea3276260d4db934d9986e6b8ec01effb89fb35cf87c02f93ea027",
+    "linux-arm64-musl": "b886c1bc2c48a214b2a1076f14968f2e36fd9bfc926975f09515f287bbd9b734",
+}
+
+[
+    http_archive(
+        name = "static-extras-toolchain-artifacts-{target}".format(target = target.replace("-musl", "")),
+        build_file = "//bootstrap/extras:BUILD.extras.tpl",
+        sha256 = sha256,
+        urls = ["https://github.com/cerisier/toolchains_llvm_bootstrapped/releases/download/bootstrap%2Fextras%2F20250505/toolchain-extra-prebuilts-20250505-{target}.tar.zst".format(target = target)],
+    )
+    for (target, sha256) in LLVM_TOOLCHAIN_EXTRAS_SHA256.items()
+]
+
+LLVM_RELEASE_ASSETS_SHA256 = {
+    "compiler-rt": "84fed7aa95bfac348642a753d332afd303a0847b1fe1e76acf13fe98f8760d5f",
+    "libcxx": "5d0af8cc8a387074bdac8587bbf3421addfcdf5b7cc05af9e3fbc9f5961e5a7e",
+    "libcxxabi": "df0005d6f2238ed6d0c236cf02271de4e08719d0fe1f63454037734af527ad87",
+    "libunwind": "fc3ca27e1094b5fd4b7c1879e83705d89e9a2632b9a43426eb96c0536ace5345",
+}
+
+[
+    http_archive(
+        name = name,
+        build_file = "//third_party/llvm-project/20.x/{name}:BUILD.tpl".format(name = name),
+        patch_args = ["-p1"],
+        patches = ["//third_party/llvm-project/20.x/libcxx:lgamma_r.patch"] if name == "libcxx" else [],
+        sha256 = sha256,
+        strip_prefix = "{name}-{llvm_version}.src".format(
+            name = name,
+            llvm_version = LLVM_VERSION,
+        ),
+        urls = ["https://github.com/llvm/llvm-project/releases/download/llvmorg-{llvm_version}/{name}-{llvm_version}.src.tar.xz".format(
+            name = name,
+            llvm_version = LLVM_VERSION,
+        )],
+    )
+    for (name, sha256) in LLVM_RELEASE_ASSETS_SHA256.items()
+]
+
+musl = use_extension("//runtimes/musl/extension:musl.bzl", "musl")
+use_repo(musl, "musl_libc")
+
+http_pkg_archive = use_repo_rule("//:http_pkg_archive.bzl", "http_pkg_archive")
+
+http_pkg_archive(
+    name = "macosx15.4.sdk",
+    build_file = "//third_party/macosx.sdk:BUILD.MacOSX15.4.sdk.tpl",
+    sha256 = "ba3453d62b3d2babf67f3a4a44e8073d6555c85f114856f4390a1f53bd76e24a",
+    strip_files = [
+        "Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk/System/Library/Frameworks/Ruby.framework/Versions/Current/Headers/ruby",
+    ],
+    strip_prefix = "Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk",
+    # urls = ["https://swcdn.apple.com/content/downloads/10/32/082-12052-A_AHPGDY76PT/1a419zaf3vh8o9t3c0usblyr8eystpnsh5/CLTools_macOSNMOS_SDK.pkg"],
+    urls = ["https://swcdn.apple.com/content/downloads/52/01/082-41241-A_0747ZN8FHV/dectd075r63pppkkzsb75qk61s0lfee22j/CLTools_macOSNMOS_SDK.pkg"],
+)
+
+glibc = use_extension("//runtimes/glibc/extension:glibc.bzl", "glibc")
+
+# https://cerisier.github.io/glibc-headers/index.json
+glibc.index(file = "//runtimes/glibc/extension:glibc_headers_index.json")
+use_repo(glibc, "glibc")
+
+kernel_headers = use_extension("//kernel/extension:kernel_headers.bzl", "kernel_headers")
+
+# https://cerisier.github.io/kernel-headers/index.json
+kernel_headers.index(file = "//kernel/extension:kernel_headers_index.json")
+use_repo(kernel_headers, "kernel_headers")
+
+## DEV DEPENDENCIES
+GLIBC_STUBS_GENERATOR_COMMIT = "33276300351d5a3cbedd308f4d21669b8e8ef83d"
+
+bazel_dep(name = "glibc-stubs-generator", version = "2.0.1", dev_dependency = True)
+archive_override(
+    module_name = "glibc-stubs-generator",
+    integrity = "sha256-q7bwGW3nRigiGuXj/2kIZMi/LFCHZpVbMD/kRdllLCg=",
+    strip_prefix = "glibc-stubs-generator-{}".format(GLIBC_STUBS_GENERATOR_COMMIT),
+    urls = ["https://github.com/cerisier/glibc-stubs-generator/archive/{}.tar.gz".format(GLIBC_STUBS_GENERATOR_COMMIT)],
+)
+
+LIBSTDCXX_STUBS_GENERATOR_COMMIT = "ed896a140ef8466140c3bcfd066e710a80a41ebe"
+
+bazel_dep(name = "libstdcxx-stubs-generator", version = "0.0.1", dev_dependency = True)
+archive_override(
+    module_name = "libstdcxx-stubs-generator",
+    integrity = "sha256-OAZfeifniTQmKit60qHpZanOLLIJVyYEiMlpN5Q7Fjw=",
+    strip_prefix = "libstdcxx-stubs-generator-{}".format(LIBSTDCXX_STUBS_GENERATOR_COMMIT),
+    urls = ["https://github.com/cerisier/libstdcxx-stubs-generator/archive/{}.tar.gz".format(LIBSTDCXX_STUBS_GENERATOR_COMMIT)],
+)
+
+bazel_dep(name = "rules_python", version = "1.6.0")
+
+llvm_raw = use_extension("//:llvm_raw.bzl", "llvm_raw")
+use_repo(llvm_raw, "llvm-raw", "llvm_zlib", "llvm_zstd")
+
+llvm = use_extension("//:llvm.bzl", "llvm")
+llvm.configure(
+    targets = [
+        "AArch64",
+        "X86",
+    ],
+)
+use_repo(llvm, "llvm-project")
+
+# llvm_configure = use_repo_rule("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
+# llvm_configure(name = "llvm-project")
+
+## OVERRIDES PORTS FROM DEPENDENCIES
+
+RULES_ZIG_COMMIT = "b9739c615ce62b64ee595ac4bcd9ee7cc06b0422"  # branch=zml
+
+bazel_dep(name = "rules_zig", version = "0.12.2", dev_dependency = True)
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig", dev_dependency = True)
+zig.index(file = "//:zig_index.json")
+zig.toolchain(zig_version = "0.14.0")
+zig.mirrors(urls = [
+    "https://mirror.zml.ai/zig",
+])
+use_repo(zig, "zig_toolchains")
+
+register_toolchains(
+    "@rules_zig//zig/target:all",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "@zig_toolchains//:all",
+    dev_dependency = True,
+)

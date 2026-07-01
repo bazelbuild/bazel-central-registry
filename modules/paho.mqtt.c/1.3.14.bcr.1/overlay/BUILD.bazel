@@ -1,0 +1,101 @@
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary")
+
+cmake_configure_file(
+    name = "configure_version_info",
+    src = "src/VersionInfo.h.in",
+    out = "VersionInfo.h",
+    cmakelists = ["src/CMakeLists.txt"],
+    defines = [
+        "BUILD_TIMESTAMP=redacted",
+        "PROJECT_VERSION=" + module_version(),
+        "PROJECT_VERSION_MAJOR=" + module_version().split(".")[0],
+        "PROJECT_VERSION_MINOR=" + module_version().split(".")[1],
+        "PROJECT_VERSION_PATCH=" + module_version().split(".")[2],
+    ],
+)
+
+_COMMON_SRCS = ["VersionInfo.h"] + glob(
+    [
+        "src/*.c",
+        "src/*.h",
+    ],
+    exclude = [
+        "src/MQTTClient.c",
+        "src/MQTTAsync.c",
+        "src/MQTTAsyncUtils.c",
+        "src/MQTTVersion.c",
+        "src/MQTTAsync.h",
+        "src/MQTTAsyncUtils.h",
+    ],
+)
+
+_COMMON_HDRS = [
+    "src/MQTTClientPersistence.h",
+    "src/MQTTExportDeclarations.h",
+    "src/MQTTProperties.h",
+    "src/MQTTReasonCodes.h",
+    "src/MQTTSubscribeOpts.h",
+    "src/MQTTClient.h",
+]
+
+_LOCAL_DEFINES = [
+    "OPENSSL",
+    "PAHO_MQTT_EXPORTS=1",
+] + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["USE_LIBUUID"],
+})
+
+_DEPS = [
+    "@boringssl//:crypto",
+    "@boringssl//:ssl",
+] + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["@libuuid"],
+})
+
+cc_library(
+    name = "mqtt3cs",
+    srcs = _COMMON_SRCS + ["src/MQTTClient.c"],
+    hdrs = _COMMON_HDRS,
+    includes = ["src"],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = _DEPS,
+)
+
+cc_library(
+    name = "mqtt3as",
+    srcs = _COMMON_SRCS + [
+        "src/MQTTAsync.c",
+        "src/MQTTAsyncUtils.c",
+    ],
+    hdrs = _COMMON_HDRS + [
+        "src/MQTTAsync.h",
+        "src/MQTTAsyncUtils.h",
+    ],
+    includes = ["src"],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = _DEPS,
+)
+
+alias(
+    name = "paho.mqtt.c",
+    actual = ":mqtt3as",
+    visibility = ["//visibility:public"],
+)
+
+# TODO: this doesn't seem to work yet...
+cc_binary(
+    name = "MQTTVersion",
+    srcs = ["src/MQTTVersion.c"],
+    linkshared = True,
+    linkstatic = False,
+    local_defines = ["PAHO_MQTT_IMPORTS=1"],
+    deps = [
+        ":mqtt3as",
+        ":mqtt3cs",
+    ],
+)

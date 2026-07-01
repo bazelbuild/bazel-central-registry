@@ -1,0 +1,34 @@
+diff --git a/src/magic.c b/src/magic.c
+index def46fa3..4120b64d 100644
+--- a/src/magic.c
++++ b/src/magic.c
+@@ -185,6 +185,29 @@ get_default_magic(void)
+ 		free(default_magic);
+ 		default_magic = NULL;
+ 	}
++
++	// Limited runfiles lookup bootstrap.
++	char exe_path[PATH_MAX];
++#ifdef __linux__
++	ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path)-1);
++	if (len < 0) {
++		return MAGIC;
++	}
++	exe_path[len] = '\0';
++#elif defined(__APPLE__)
++	uint32_t size = sizeof(exe_path);
++	if (_NSGetExecutablePath(exe_path, &size) != 0) {
++		return MAGIC;
++	}
++#endif
++
++	// Build runfiles path and make sure it exists.
++	if (asprintf(&default_magic, "%s.runfiles/%s", exe_path, MAGIC) >= 0 && access(default_magic, R_OK) == 0) {
++		return default_magic;
++	}
++
++	default_magic = NULL;
++
+ 	if ((home = getenv("HOME")) == NULL)
+ 		return MAGIC;
+ 

@@ -1,0 +1,175 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+# ODE offers both BSD and GPL terms, only BSD is listed here.
+license(
+    name = "license",
+    package_name = "ode",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = ":LICENSE-BSD.TXT",
+)
+
+cc_library(
+    name = "ou",
+    srcs = glob(["ou/src/**/*.cpp"]),
+    hdrs = glob(["ou/include/**/*.h"]),
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Wno-class-memaccess",
+            "-Wno-unknown-warning-option",
+        ],
+    }),
+    defines = select({
+        "@platforms//os:macos": [
+            "_OU_TARGET_OS=_OU_TARGET_OS_MAC",
+            # Hardcoded value to match cmake setting
+            "MAC_OS_X_VERSION=1050"
+        ],
+        "@platforms//os:windows": [
+            "_OU_TARGET_OS=_OU_TARGET_OS_WINDOWS"
+        ],
+        "@platforms//os:linux": [
+            "_OU_TARGET_OS=_OU_TARGET_OS_GENUNIX"
+        ],
+        "//conditions:default": [
+        ],
+    }),
+
+    includes = ["ou/include"],
+)
+
+expand_template(
+    name = "config",
+    out = "config.h",
+    substitutions = {"#cmakedefine": "// #undef"},
+    template = "config.h.cmake.in",
+)
+
+expand_template(
+    name = "precision",
+    out = "include/ode/precision.h",
+    substitutions = {"@ODE_PRECISION@": "dDOUBLE"},
+    template = "include/ode/precision.h.in",
+)
+
+expand_template(
+    name = "version",
+    out = "include/ode/version.h",
+    substitutions = {"@ODE_VERSION@": "0.16.6"},
+    template = "include/ode/version.h.in",
+)
+
+expand_template(
+    name = "libccd_precision",
+    out = "libccd/src/ccd/precision.h",
+    substitutions = {"@CCD_PRECISION@": "CCD_DOUBLE"},
+    template = "libccd/src/ccd/precision.h.in",
+)
+
+internal_libccd_sources = glob(
+    include = [
+        "libccd/src/*.c",
+    ],
+) + ["libccd/src/ccd/precision.h"]
+
+internal_libccd_headers = glob(
+    include = [
+        "libccd/src/ccd/*.h",
+        "libccd/src/custom/ccdcustom/*.h",
+    ],
+)
+
+cc_library(
+    name = "libccd",
+    srcs = internal_libccd_sources,
+    hdrs = internal_libccd_headers + ["libccd/src/ccd/precision.h"],
+    includes = [
+        "libccd/src",
+        "libccd/src/custom",
+    ],
+)
+
+ode_sources = glob(
+    include = [
+        "ode/src/*.cpp",
+        "ode/src/*.h",
+        "ode/src/**/*.cpp",
+        "ode/src/**/*.h",
+        "OPCODE/*.cpp",
+        "OPCODE/*.h",
+        "OPCODE/**/*.cpp",
+        "OPCODE/**/*.h",
+    ],
+)
+
+ode_src_hdrs = glob(
+    include = [
+        "ode/src/*.h",
+        "ode/src/**/*.h",
+        "OPCODE/*.h",
+        "OPCODE/**/*.h",
+    ],
+)
+
+ode_headers = glob(
+    include = [
+        "include/**/*.h",
+    ],
+) + [
+    "include/ode/precision.h",
+    "include/ode/version.h"
+]
+
+cc_library(
+    name = "ode",
+    srcs = ode_sources + ["config.h"],
+    hdrs = ode_headers + ode_src_hdrs,
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Wno-class-memaccess",
+            "-Wno-implicit-const-int-float-conversion",
+            "-Wno-misleading-indentation",
+            "-Wno-overloaded-virtual",
+            "-Wno-undefined-bool-conversion",
+            "-Wno-unknown-warning-option",
+            "-Wno-unused-const-variable",
+            "-Wno-unused-function",
+            "-Wno-unused-value",
+            "-Wno-unused-variable",
+        ],
+    }),
+    defines = [
+        "dATOMICS_ENABLED",
+        "dIDEDOUBLE",
+        "dLIBCCD_ENABLED",
+        "dLIBCCD_INTERNAL",
+        "dLIBCCD_BOX_CYL",
+        "dLIBCCD_CAP_CYL",
+        "dLIBCCD_CYL_CYL",
+        "dLIBCCD_CONVEX_BOX",
+        "dLIBCCD_CONVEX_CAP",
+        "dLIBCCD_CONVEX_CONVEX",
+        "dLIBCCD_CONVEX_CYL",
+        "dLIBCCD_CONVEX_SPHERE",
+        "dNODEBUG",
+        "dOU_ENABLED",
+        "dTRIMESH_ENABLED",
+        "dTRIMESH_OPCODE",
+    ],
+    includes = [
+        "OPCODE",
+        "ode/src",
+        "include",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libccd",
+        ":ou",
+    ],
+)

@@ -1,0 +1,180 @@
+load("@bazel_skylib//lib:dicts.bzl", "dicts")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+package(default_applicable_licenses = ["//:license"])
+
+SKIP_BUILD_FAILURE = [
+    # bazel_dep(name = "pcre2", version = "10.43") doesn't have JIT support
+    "autoptr",
+    "regex",
+
+    # win32
+    "spawn-test-win32-gui",
+    "win32",
+    "gpoll",
+]
+
+SKIP_TEST_FAILURE = [
+    # platform-specific dynamic library loading
+    "constructor",
+
+    # asserts test data isn't a symlink
+    "fileutils",
+
+    # requires LD_PRELOAD
+    "gutils-user-database",
+
+    # Fails in BCR CI for unclear reasons, and not reproducible locally
+    "unix",
+
+    # Fails in BCR CI on macOS for unclear reasons, and not reproducible locally
+    "1bit-mutex",
+    "mutex",
+    "rwlock",
+]
+
+TEST_HELPER_SRCS = [
+    "assert-msg-test.c",
+    "constructor-helper.c",
+    "getpwuid-preload.c",
+    "messages-low-memory.c",
+    "path-test-subdir/spawn-test-helper.c",
+    "spawn-path-search-helper.c",
+    "spawn-test-helper.c",
+    "test-spawn-echo.c",
+    "test-spawn-sleep.c",
+    "testing-helper.c",
+]
+
+TEST_SRCS = glob(
+    ["*.c"],
+    exclude = TEST_HELPER_SRCS,
+)
+
+TEST_NAMES = [src.replace(".c", "") for src in TEST_SRCS]
+
+[cc_binary(
+    name = helper_name,
+    srcs = [helper_name + ".c"],
+    local_defines = [
+        "_GNU_SOURCE",
+        "G_LOG_DOMAIN='\"GLib\"'",
+    ],
+    deps = [
+        "//:config_h",
+        "//glib",
+    ],
+) for helper_name in [
+    "testing-helper",
+    "test-spawn-echo",
+    "test-spawn-sleep",
+    "spawn-test-helper",
+    "spawn-path-search-helper",
+    "path-test-subdir/spawn-test-helper",
+]]
+
+TEST_DATA = glob(
+    ["**/*"],
+    exclude = [
+        "**/*.c",
+        "**/*.h",
+        "BUILD.bazel",
+    ],
+)
+
+TEST_DATA_EXTRA = {
+    "keyfile": ["keyfile.c"],
+    "testing": [":testing-helper"],
+    "spawn-multithreaded": [
+        ":test-spawn-echo",
+        ":test-spawn-sleep",
+    ],
+    "spawn-singlethread": [":test-spawn-echo"],
+    "spawn-path-search": [
+        ":spawn-test-helper",
+        ":spawn-path-search-helper",
+        ":path-test-subdir/spawn-test-helper",
+    ],
+}
+
+constraint_setting(
+    name = "skip_reason",
+)
+
+constraint_value(
+    name = "skip_build_failure",
+    constraint_setting = ":skip_reason",
+)
+
+constraint_value(
+    name = "skip_test_failure",
+    constraint_setting = ":skip_reason",
+)
+
+TEST_PLATFORMS = {}
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        [":skip_build_failure"],
+    )
+    for test_name in SKIP_BUILD_FAILURE
+])
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        [":skip_test_failure"],
+    )
+    for test_name in SKIP_TEST_FAILURE
+])
+
+REPO = repo_name()
+
+G_TEST_SRCDIR = "../%s/glib/tests" % (REPO,) if REPO else "glib/tests"
+
+DEFAULT_TEST_ENV = {
+    "G_TEST_SRCDIR": G_TEST_SRCDIR,
+}
+
+TEST_ENV = {
+    "gdatetime": dicts.add(
+        DEFAULT_TEST_ENV,
+        {
+            # skip tests that expect to run from installed /usr prefix
+            "G_TEST_BUILDDIR": "dummy",
+        },
+    ),
+}
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+[cc_test(
+    name = test_name,
+    size = "small",
+    srcs = [test_name + ".c", "testutils.h"] + [
+        "//glib:all_hdrs",
+    ],
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+        "-I%s/glib/deprecated" % (INCLUDE_PREFIX,),
+    ],
+    data = TEST_DATA + TEST_DATA_EXTRA.get(test_name, []),
+    env = TEST_ENV.get(test_name, DEFAULT_TEST_ENV),
+    local_defines = [
+        "_GNU_SOURCE",
+        "G_LOG_DOMAIN='\"GLib\"'",
+    ],
+    target_compatible_with = TEST_PLATFORMS.get(test_name, []),
+    deps = [
+        "//:config_h",
+        "//glib",
+    ] + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["//glib:stub_intl"],
+    }),
+) for test_name in TEST_NAMES]

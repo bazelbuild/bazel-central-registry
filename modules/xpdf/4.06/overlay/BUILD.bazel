@@ -1,0 +1,304 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+
+# Convert the cmake-format aconf.h.in to autotools (#undef) format so that
+# autoconf_hdr can process it.
+expand_template(
+    name = "aconf_h_in",
+    out = "aconf_autotools.h.in",
+    substitutions = {
+        "#cmakedefine BASE14_FONT_DIR \"@BASE14_FONT_DIR@\"": "#undef BASE14_FONT_DIR",
+        "#cmakedefine SYSTEM_XPDFRC \"@SYSTEM_XPDFRC@\"": "#undef SYSTEM_XPDFRC",
+        "#cmakedefine XPDFRC_DATADIR \"@XPDFRC_DATADIR@\"": "#undef XPDFRC_DATADIR",
+        "#cmakedefine01 ": "#undef ",
+    } | {
+        "#cmakedefine ": "#undef ",
+    },
+    template = "aconf.h.in",
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        # Function availability
+        checks.AC_CHECK_FUNC(
+            "mkstemp",
+            define = "HAVE_MKSTEMP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "mkstemps",
+            define = "HAVE_MKSTEMPS",
+        ),
+        checks.AC_CHECK_FUNC(
+            "popen",
+            define = "HAVE_POPEN",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fseeko",
+            define = "HAVE_FSEEKO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fseek64",
+            define = "HAVE_FSEEK64",
+        ),
+
+        # C++ standard library (always available with C++11)
+        checks.AC_DEFINE("HAVE_STD_SORT", 1),
+
+        # Windows-only
+        checks.AC_DEFINE("HAVE_FSEEKI64", 0),
+
+        # Feature flags
+        checks.AC_DEFINE("OPI_SUPPORT", 0),
+        checks.AC_DEFINE("MULTITHREADED", 1),
+        checks.AC_DEFINE("USE_EXCEPTIONS", 1),
+        checks.AC_DEFINE("USE_FIXEDPOINT", 0),
+        checks.AC_DEFINE("SPLASH_CMYK", 0),
+        checks.AC_DEFINE("SPLASH_DEVICEN", 0),
+        checks.AC_DEFINE("USE_XDG", 0),
+
+        # Library availability
+        checks.AC_DEFINE("HAVE_FREETYPE_H", 1),
+        checks.AC_DEFINE("HAVE_SPLASH", 1),
+        checks.AC_DEFINE("HAVE_DTYPE4_H", 0),
+        checks.AC_DEFINE("HAVE_PAPER_H", 0),
+        checks.AC_DEFINE("HAVE_FONTCONFIG", 0),
+        checks.AC_DEFINE("HAVE_LCMS", 0),
+        checks.AC_DEFINE("EVAL_MODE", 0),
+        checks.AC_DEFINE("BUILDING_XPDFREADER", 0),
+    ],
+)
+
+autoconf_hdr(
+    name = "gen_aconf_h",
+    out = "aconf.h",
+    template = ":aconf_h_in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "aconf",
+    hdrs = ["aconf.h"],
+    includes = ["."],
+)
+
+# -- goo (utility library) ---------------------------------------------------
+
+cc_library(
+    name = "goo",
+    srcs = [
+        "goo/FixedPoint.cc",
+        "goo/GHash.cc",
+        "goo/GList.cc",
+        "goo/GString.cc",
+        "goo/Trace.cc",
+        "goo/gfile.cc",
+        "goo/gmem.cc",
+        "goo/gmempp.cc",
+        "goo/parseargs.c",
+    ],
+    hdrs = glob(["goo/*.h"]),
+    includes = ["goo"],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    deps = [":aconf"],
+)
+
+# -- fofi (font file library) ------------------------------------------------
+
+cc_library(
+    name = "fofi",
+    srcs = [
+        "fofi/FoFiBase.cc",
+        "fofi/FoFiEncodings.cc",
+        "fofi/FoFiIdentifier.cc",
+        "fofi/FoFiTrueType.cc",
+        "fofi/FoFiType1.cc",
+        "fofi/FoFiType1C.cc",
+    ],
+    hdrs = glob(["fofi/*.h"]),
+    includes = ["fofi"],
+    deps = [
+        ":aconf",
+        ":goo",
+    ],
+)
+
+# -- splash (rasterization library) ------------------------------------------
+
+cc_library(
+    name = "splash",
+    srcs = [
+        "splash/Splash.cc",
+        "splash/SplashBitmap.cc",
+        "splash/SplashClip.cc",
+        "splash/SplashFTFont.cc",
+        "splash/SplashFTFontEngine.cc",
+        "splash/SplashFTFontFile.cc",
+        "splash/SplashFont.cc",
+        "splash/SplashFontEngine.cc",
+        "splash/SplashFontFile.cc",
+        "splash/SplashFontFileID.cc",
+        "splash/SplashPath.cc",
+        "splash/SplashPattern.cc",
+        "splash/SplashScreen.cc",
+        "splash/SplashState.cc",
+        "splash/SplashXPath.cc",
+        "splash/SplashXPathScanner.cc",
+    ],
+    hdrs = glob(["splash/*.h"]),
+    includes = ["splash"],
+    deps = [
+        ":aconf",
+        ":fofi",
+        ":goo",
+        "@freetype",
+    ],
+)
+
+# -- xpdf (core PDF library + output devices) --------------------------------
+
+_XPDF_CORE_SRCS = [
+    "xpdf/AcroForm.cc",
+    "xpdf/Annot.cc",
+    "xpdf/Array.cc",
+    "xpdf/BuiltinFont.cc",
+    "xpdf/BuiltinFontTables.cc",
+    "xpdf/Catalog.cc",
+    "xpdf/CharCodeToUnicode.cc",
+    "xpdf/CMap.cc",
+    "xpdf/Decrypt.cc",
+    "xpdf/Dict.cc",
+    "xpdf/Error.cc",
+    "xpdf/FontEncodingTables.cc",
+    "xpdf/Function.cc",
+    "xpdf/Gfx.cc",
+    "xpdf/GfxFont.cc",
+    "xpdf/GfxState.cc",
+    "xpdf/GlobalParams.cc",
+    "xpdf/JArithmeticDecoder.cc",
+    "xpdf/JBIG2Stream.cc",
+    "xpdf/JPXStream.cc",
+    "xpdf/Lexer.cc",
+    "xpdf/Link.cc",
+    "xpdf/LocalParams.cc",
+    "xpdf/NameToCharCode.cc",
+    "xpdf/Object.cc",
+    "xpdf/OptionalContent.cc",
+    "xpdf/Outline.cc",
+    "xpdf/OutputDev.cc",
+    "xpdf/Page.cc",
+    "xpdf/Parser.cc",
+    "xpdf/PDF417Barcode.cc",
+    "xpdf/PDFDoc.cc",
+    "xpdf/PDFDocEncoding.cc",
+    "xpdf/PSTokenizer.cc",
+    "xpdf/SecurityHandler.cc",
+    "xpdf/Stream.cc",
+    "xpdf/TextString.cc",
+    "xpdf/UnicodeMap.cc",
+    "xpdf/UnicodeRemapping.cc",
+    "xpdf/UnicodeTypeTable.cc",
+    "xpdf/UTF8.cc",
+    "xpdf/XFAScanner.cc",
+    "xpdf/XRef.cc",
+    "xpdf/Zoox.cc",
+]
+
+_XPDF_OUTPUT_SRCS = [
+    "xpdf/HTMLGen.cc",
+    "xpdf/ImageOutputDev.cc",
+    "xpdf/PreScanOutputDev.cc",
+    "xpdf/PSOutputDev.cc",
+    "xpdf/ShadingImage.cc",
+    "xpdf/SplashOutputDev.cc",
+    "xpdf/TextOutputDev.cc",
+    "xpdf/WebFont.cc",
+]
+
+cc_library(
+    name = "xpdf",
+    srcs = _XPDF_CORE_SRCS + _XPDF_OUTPUT_SRCS,
+    hdrs = glob(["xpdf/*.h"]),
+    includes = ["xpdf"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":aconf",
+        ":fofi",
+        ":goo",
+        ":splash",
+        "@libpng",
+    ],
+)
+
+# -- Command-line tools -------------------------------------------------------
+
+cc_binary(
+    name = "pdfdetach",
+    srcs = ["xpdf/pdfdetach.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdffonts",
+    srcs = ["xpdf/pdffonts.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdfimages",
+    srcs = ["xpdf/pdfimages.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdfinfo",
+    srcs = ["xpdf/pdfinfo.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdftohtml",
+    srcs = ["xpdf/pdftohtml.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdftopng",
+    srcs = ["xpdf/pdftopng.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdftoppm",
+    srcs = ["xpdf/pdftoppm.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdftops",
+    srcs = ["xpdf/pdftops.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)
+
+cc_binary(
+    name = "pdftotext",
+    srcs = ["xpdf/pdftotext.cc"],
+    visibility = ["//visibility:public"],
+    deps = [":xpdf"],
+)

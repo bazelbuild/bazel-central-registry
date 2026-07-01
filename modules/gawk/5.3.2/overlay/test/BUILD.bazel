@@ -1,0 +1,100 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+write_file(
+    name = "wrapper",
+    out = "wrapper.sh",
+    content = [
+        "#!/bin/sh",
+        "REALEXEC=$(realpath $1)",
+        "export GAWK=$(realpath $2)",
+        "export AWK=$(realpath $2)",
+        "cd test",
+        "$REALEXEC",
+    ],
+    is_executable = True,
+)
+
+SHELL_WRAPPED_TESTS = [
+    test.replace(".sh", "")
+    for test in glob(["*.sh"])
+]
+
+[
+    sh_test(
+        name = test,
+        srcs = ["wrapper.sh"],
+        args = [
+            "$(rootpath {}.sh)".format(test),
+            "$(rootpath //:gawk)",
+        ],
+        data = glob(
+            include = [test + ".awk"],
+            allow_empty = True,
+        ) + [
+            ":{}.sh".format(test),
+            "//:gawk",
+        ],
+    )
+    for test in SHELL_WRAPPED_TESTS
+    if test not in [
+        # TODO: These tests are not configured correctly.
+        "jarebug",
+    ]
+]
+
+ALL_AWKS = [awk.replace(".awk", "") for awk in glob(["*.awk"])]
+
+AWKS = ALL_AWKS[:10]
+
+IN = [inn.replace(".in", "") for inn in glob(["*.in"])]
+
+OK = [ok.replace(".ok", "") for ok in glob(["*.ok"])]
+
+AWK_TESTS = [
+    awk
+    for awk in AWKS
+    # exclude shell wrapped tests
+    if awk not in SHELL_WRAPPED_TESTS
+]
+
+[
+    genrule(
+        name = awk + "_gen",
+        srcs = glob(
+            include = [
+                awk + ".ok",
+                awk + ".in",
+            ],
+            allow_empty = True,
+        ) + [
+            awk + ".awk",
+            "//:gawk",
+        ],
+        outs = [awk + "_gen.out"],
+        cmd = """
+$(execpath  //:gawk) -f $(execpath {AWK}.awk) < {IN} > $@ || echo "EXIT CODE: $$?" >> $@
+        """.format(
+            AWK = awk,
+            IN = "/dev/null" if awk not in IN else "$(execpath {}.in)".format(awk),
+        ),
+    )
+    for awk in AWK_TESTS
+]
+
+[
+    diff_test(
+        name = awk + "_diff_test",
+        file1 = awk + "_gen.out",
+        file2 = awk + ".ok",
+    )
+    for awk in AWK_TESTS
+    if awk in OK and awk not in [
+        # TODO: These tests are not configured correctly.
+        "aadelete2",
+        "apiterm",
+        "ar2fn_elnew",
+        "ar2fn_elnew_sc",
+    ]
+]

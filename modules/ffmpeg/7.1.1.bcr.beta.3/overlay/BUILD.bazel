@@ -1,0 +1,1590 @@
+"""FFmpeg Bazel build."""
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
+load(":component_config.bzl", "ffmpeg_component_gen", "ffmpeg_config_asm")
+load(":component_defs.bzl", "CONFIG_EXTRA_REGISTRY", "PROFILE_EVERYTHING")
+load(":component_flags.bzl", "cc_variant_binary", "cc_variant_library", "component_select_srcs")
+load(
+    ":component_srcs.bzl",
+    "ALL_SHARED_GROUP_DEFINITIONS",
+    "AVCODEC_AARCH64_EXCLUSIVE_SRCS",
+    "AVCODEC_AARCH64_SHARED_SRCS",
+    "AVCODEC_EXCLUSIVE_SRCS",
+    "AVCODEC_EXTRA_EXCLUSIVE_SRCS",
+    "AVCODEC_EXTRA_SHARED_SRCS",
+    "AVCODEC_EXTRA_SRCS",
+    "AVCODEC_SHARED_SRCS",
+    "AVCODEC_X86_ASM_EXCLUSIVE_SRCS",
+    "AVCODEC_X86_ASM_SHARED_SRCS",
+    "AVCODEC_X86_COMPONENT_SRCS",
+    "AVCODEC_X86_EXCLUSIVE_SRCS",
+    "AVCODEC_X86_SHARED_SRCS",
+    "AVDEVICE_EXCLUSIVE_SRCS",
+    "AVDEVICE_SHARED_SRCS",
+    "AVFILTER_AARCH64_COMPONENT_SRCS",
+    "AVFILTER_AARCH64_EXCLUSIVE_SRCS",
+    "AVFILTER_EXCLUSIVE_SRCS",
+    "AVFILTER_EXTRA_SRCS",
+    "AVFILTER_SHARED_SRCS",
+    "AVFILTER_X86_ASM_EXCLUSIVE_SRCS",
+    "AVFILTER_X86_ASM_SHARED_SRCS",
+    "AVFILTER_X86_COMPONENT_SRCS",
+    "AVFILTER_X86_EXCLUSIVE_SRCS",
+    "AVFILTER_X86_SHARED_SRCS",
+    "AVFORMAT_EXCLUSIVE_SRCS",
+    "AVFORMAT_EXTRA_EXCLUSIVE_SRCS",
+    "AVFORMAT_EXTRA_SHARED_SRCS",
+    "AVFORMAT_EXTRA_SRCS",
+    "AVFORMAT_SHARED_SRCS",
+)
+load(":ffmpeg_config_checks.bzl", "AVCONFIG_CHECKS", "FFMPEG_CONFIG_CHECKS")
+
+# Public libavutil headers (from Makefile HEADERS + generated built headers).
+_AVUTIL_PUBLIC_HDRS = [
+    "libavutil/adler32.h",
+    "libavutil/aes.h",
+    "libavutil/aes_ctr.h",
+    "libavutil/ambient_viewing_environment.h",
+    "libavutil/attributes.h",
+    "libavutil/audio_fifo.h",
+    "libavutil/avassert.h",
+    "libavutil/avstring.h",
+    "libavutil/avutil.h",
+    "libavutil/base64.h",
+    "libavutil/blowfish.h",
+    "libavutil/bprint.h",
+    "libavutil/bswap.h",
+    "libavutil/buffer.h",
+    "libavutil/camellia.h",
+    "libavutil/cast5.h",
+    "libavutil/channel_layout.h",
+    "libavutil/common.h",
+    "libavutil/cpu.h",
+    "libavutil/crc.h",
+    "libavutil/csp.h",
+    "libavutil/des.h",
+    "libavutil/detection_bbox.h",
+    "libavutil/dict.h",
+    "libavutil/display.h",
+    "libavutil/dovi_meta.h",
+    "libavutil/downmix_info.h",
+    "libavutil/encryption_info.h",
+    "libavutil/error.h",
+    "libavutil/eval.h",
+    "libavutil/executor.h",
+    "libavutil/fifo.h",
+    "libavutil/file.h",
+    "libavutil/film_grain_params.h",
+    "libavutil/frame.h",
+    "libavutil/hash.h",
+    "libavutil/hdr_dynamic_metadata.h",
+    "libavutil/hdr_dynamic_vivid_metadata.h",
+    "libavutil/hmac.h",
+    "libavutil/hwcontext.h",
+    "libavutil/hwcontext_cuda.h",
+    "libavutil/hwcontext_d3d11va.h",
+    "libavutil/hwcontext_d3d12va.h",
+    "libavutil/hwcontext_drm.h",
+    "libavutil/hwcontext_dxva2.h",
+    "libavutil/hwcontext_mediacodec.h",
+    "libavutil/hwcontext_opencl.h",
+    "libavutil/hwcontext_qsv.h",
+    "libavutil/hwcontext_vaapi.h",
+    "libavutil/hwcontext_vdpau.h",
+    "libavutil/hwcontext_videotoolbox.h",
+    "libavutil/hwcontext_vulkan.h",
+    "libavutil/iamf.h",
+    "libavutil/imgutils.h",
+    "libavutil/intfloat.h",
+    "libavutil/intreadwrite.h",
+    "libavutil/lfg.h",
+    "libavutil/log.h",
+    "libavutil/lzo.h",
+    "libavutil/macros.h",
+    "libavutil/mastering_display_metadata.h",
+    "libavutil/mathematics.h",
+    "libavutil/md5.h",
+    "libavutil/mem.h",
+    "libavutil/motion_vector.h",
+    "libavutil/murmur3.h",
+    "libavutil/opt.h",
+    "libavutil/parseutils.h",
+    "libavutil/pixdesc.h",
+    "libavutil/pixelutils.h",
+    "libavutil/pixfmt.h",
+    "libavutil/random_seed.h",
+    "libavutil/rational.h",
+    "libavutil/rc4.h",
+    "libavutil/replaygain.h",
+    "libavutil/ripemd.h",
+    "libavutil/samplefmt.h",
+    "libavutil/sha.h",
+    "libavutil/sha512.h",
+    "libavutil/spherical.h",
+    "libavutil/stereo3d.h",
+    "libavutil/tea.h",
+    "libavutil/threadmessage.h",
+    "libavutil/time.h",
+    "libavutil/timecode.h",
+    "libavutil/timestamp.h",
+    "libavutil/tree.h",
+    "libavutil/twofish.h",
+    "libavutil/tx.h",
+    "libavutil/uuid.h",
+    "libavutil/version.h",
+    "libavutil/video_enc_params.h",
+    "libavutil/video_hint.h",
+    "libavutil/xtea.h",
+]
+
+# Per-component bool_flags — all default to False (user-controlled).
+# Use with_defaults/ targets for platform-appropriate defaults,
+# or enable individually: bazel build //:ffmpeg --//:enable_aac_decoder=True
+[
+    bool_flag(
+        name = "enable_{}".format(comp),
+        build_setting_default = False,
+        visibility = ["//visibility:public"],
+    )
+    for comp in PROFILE_EVERYTHING
+]
+
+# Per-component config_settings for use in select().
+[
+    config_setting(
+        name = "enable_{}_is_true".format(comp),
+        flag_values = {"//:enable_{}".format(comp): "True"},
+        visibility = ["//visibility:public"],
+    )
+    for comp in PROFILE_EVERYTHING
+]
+
+# Per-CONFIG_EXTRA bool_flags — internal subsystem components resolved
+# from user-facing component dependencies (e.g. h264dsp, mpegvideo).
+[
+    bool_flag(
+        name = "enable_{}".format(comp),
+        build_setting_default = False,
+        visibility = ["//visibility:public"],
+    )
+    for comp in CONFIG_EXTRA_REGISTRY
+]
+
+[
+    config_setting(
+        name = "enable_{}_is_true".format(comp),
+        flag_values = {"//:enable_{}".format(comp): "True"},
+        visibility = ["//visibility:public"],
+    )
+    for comp in CONFIG_EXTRA_REGISTRY
+]
+
+# Shared-source config_setting_groups (match if any listed component is enabled).
+[
+    selects.config_setting_group(
+        name = group_id,
+        match_any = ["//:enable_{}_is_true".format(c) for c in components],
+        visibility = ["//visibility:public"],
+    )
+    for group_id, components in ALL_SHARED_GROUP_DEFINITIONS
+]
+
+# Architecture-gated filegroups for conditional component sources.
+# These mirror the original Makefile structure where x86/Makefile and
+# aarch64/Makefile are only included on their respective architectures.
+# Component gating (CONFIG_*) is handled by component_select_srcs inside
+# each filegroup. Architecture gating is structural: each filegroup is
+# only referenced in the matching CPU select() branch.
+#
+# Each filegroup includes a generated stub file so that rules_cc's
+# extension check passes even when all component selects resolve to [].
+
+write_file(
+    name = "_gen_arch_stub",
+    out = "_arch_stub.c",
+    content = [
+        "/* Stub so filegroup targets always produce at least one C source",
+        " * when component_select_srcs resolves to [] (bare targets). */",
+    ],
+)
+
+write_file(
+    name = "_gen_nasm_stub",
+    out = "_nasm_stub.asm",
+    content = [
+        "; Stub so nasm_library targets always produce at least one object",
+        "; when component_select_srcs resolves to [] (bare targets).",
+    ],
+)
+
+filegroup(
+    name = "_avcodec_x86_component_srcs",
+    srcs = [":_gen_arch_stub"] + component_select_srcs(AVCODEC_X86_EXCLUSIVE_SRCS, AVCODEC_X86_SHARED_SRCS),
+)
+
+filegroup(
+    name = "_avcodec_aarch64_component_srcs",
+    srcs = [":_gen_arch_stub"] + component_select_srcs(AVCODEC_AARCH64_EXCLUSIVE_SRCS, AVCODEC_AARCH64_SHARED_SRCS),
+)
+
+filegroup(
+    name = "_avfilter_x86_component_srcs",
+    srcs = [":_gen_arch_stub"] + component_select_srcs(AVFILTER_X86_EXCLUSIVE_SRCS, AVFILTER_X86_SHARED_SRCS),
+)
+
+filegroup(
+    name = "_avfilter_aarch64_component_srcs",
+    srcs = [":_gen_arch_stub"] + component_select_srcs(AVFILTER_AARCH64_EXCLUSIVE_SRCS, []),
+)
+
+# Library-level bool_flags for TLS/crypto backends (mirrors --enable-openssl etc.
+# from configure). These are in CONFIG_LIST but not PROFILE_EVERYTHING.
+_LIBRARY_FLAGS = {
+    "gmp": False,
+    "mbedtls": False,
+    "openssl": True,
+}
+
+[
+    bool_flag(
+        name = "enable_{}".format(lib),
+        build_setting_default = default,
+        visibility = ["//visibility:public"],
+    )
+    for lib, default in _LIBRARY_FLAGS.items()
+]
+
+[
+    config_setting(
+        name = "enable_{}_is_true".format(lib),
+        flag_values = {"//:enable_{}".format(lib): "True"},
+        visibility = ["//visibility:public"],
+    )
+    for lib in _LIBRARY_FLAGS
+]
+
+# config.h - generated via autoconf checks mirroring the original configure script
+autoconf(
+    name = "ffmpeg_config_checks",
+    checks = FFMPEG_CONFIG_CHECKS,
+)
+
+autoconf_hdr(
+    name = "gen_config_h",
+    out = "config.h",
+    mode = "all",
+    template = ":config.h.in",
+    deps = [":ffmpeg_config_checks"],
+)
+
+# libavutil/avconfig.h - AV_HAVE_* flags detected at build time
+autoconf(
+    name = "avconfig_checks",
+    checks = AVCONFIG_CHECKS,
+)
+
+autoconf_hdr(
+    name = "gen_avconfig_h",
+    out = "libavutil/avconfig.h",
+    mode = "defines",
+    template = "libavutil/avconfig.h.in",
+    deps = [":avconfig_checks"],
+)
+
+# libavutil/ffversion.h - version string from MODULE.bazel via package_info
+package_info(
+    name = "ffmpeg_package_info",
+    module_bazel = "//:MODULE.bazel",
+)
+
+autoconf_hdr(
+    name = "gen_ffversion_h",
+    out = "libavutil/ffversion.h",
+    mode = "defines",
+    template = "libavutil/ffversion.h.in",
+    deps = [":ffmpeg_package_info"],
+)
+
+# config.asm - NASM-format config derived from config.h for x86 assembly.
+ffmpeg_config_asm(
+    name = "gen_config_asm",
+    out = "config.asm",
+    template = ":gen_config_h",
+)
+
+# NASM copts shared by all x86 assembly targets
+_NASM_COPTS = ["-DPIC"] + select({
+    "@platforms//os:macos": ["-DPREFIX"],
+    "//conditions:default": [],
+})
+
+_NASM_COMMON_HDRS = [
+    "libavutil/x86/x86inc.asm",
+    "libavutil/x86/x86util.asm",
+]
+
+nasm_library(
+    name = "avutil_x86_asm",
+    srcs = glob(
+        ["libavutil/x86/*.asm"],
+        exclude = [
+            "libavutil/x86/x86inc.asm",
+            "libavutil/x86/x86util.asm",
+        ],
+    ),
+    hdrs = _NASM_COMMON_HDRS,
+    copts = _NASM_COPTS,
+    includes = ["."],
+    preincs = [":gen_config_asm"],
+    tags = ["manual"],
+)
+
+nasm_library(
+    name = "avcodec_x86_asm",
+    srcs = [":_gen_nasm_stub"] + component_select_srcs(AVCODEC_X86_ASM_EXCLUSIVE_SRCS, AVCODEC_X86_ASM_SHARED_SRCS),
+    hdrs = _NASM_COMMON_HDRS + glob(["libavcodec/x86/*_template.asm"]),
+    copts = _NASM_COPTS,
+    includes = ["."],
+    preincs = [":gen_config_asm"],
+    tags = ["manual"],
+)
+
+nasm_library(
+    name = "avfilter_x86_asm",
+    srcs = [":_gen_nasm_stub"] + component_select_srcs(AVFILTER_X86_ASM_EXCLUSIVE_SRCS, AVFILTER_X86_ASM_SHARED_SRCS),
+    hdrs = _NASM_COMMON_HDRS,
+    copts = _NASM_COPTS,
+    includes = ["."],
+    preincs = [":gen_config_asm"],
+    tags = ["manual"],
+)
+
+nasm_library(
+    name = "swscale_x86_asm",
+    srcs = glob(["libswscale/x86/*.asm"]),
+    hdrs = _NASM_COMMON_HDRS,
+    copts = _NASM_COPTS,
+    includes = ["."],
+    preincs = [":gen_config_asm"],
+    tags = ["manual"],
+)
+
+nasm_library(
+    name = "swresample_x86_asm",
+    srcs = glob(["libswresample/x86/*.asm"]),
+    hdrs = _NASM_COMMON_HDRS,
+    copts = _NASM_COPTS,
+    includes = ["."],
+    preincs = [":gen_config_asm"],
+    tags = ["manual"],
+)
+
+# config_components.h, config_extra.h, and *_list.c - generated from resolved
+# component dependencies. Each output is individually addressable as a label.
+ffmpeg_component_gen(
+    name = "gen_components",
+    outs = [
+        "config_components.h",
+        "config_extra.h",
+        "libavcodec/bsf_list.c",
+        "libavcodec/codec_list.c",
+        "libavcodec/parser_list.c",
+        "libavdevice/indev_list.c",
+        "libavdevice/outdev_list.c",
+        "libavfilter/filter_list.c",
+        "libavformat/demuxer_list.c",
+        "libavformat/muxer_list.c",
+        "libavformat/protocol_list.c",
+    ],
+)
+
+# Internal config headers — consumed via implementation_deps by FFmpeg library
+# targets so that config.h, config_components.h, and config_extra.h
+# are NOT propagated to external consumers (avoids header collisions).
+cc_library(
+    name = "config_internal",
+    hdrs = [
+        ":config_components.h",
+        ":config_extra.h",
+        ":gen_config_h",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+# Private headers for each library — consumed via implementation_deps so
+# they are available during the library's own compilation but NOT
+# propagated to external consumers.
+
+cc_library(
+    name = "avutil_private_hdrs",
+    hdrs = glob(
+        [
+            "libavutil/*.h",
+            "libavutil/*/*.h",
+            "compat/*.h",
+        ],
+        exclude = _AVUTIL_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_AVCODEC_PUBLIC_HDRS = [
+    "libavcodec/ac3_parser.h",
+    "libavcodec/adts_parser.h",
+    "libavcodec/avcodec.h",
+    "libavcodec/avdct.h",
+    "libavcodec/avfft.h",
+    "libavcodec/bsf.h",
+    "libavcodec/codec.h",
+    "libavcodec/codec_desc.h",
+    "libavcodec/codec_id.h",
+    "libavcodec/codec_par.h",
+    "libavcodec/d3d11va.h",
+    "libavcodec/defs.h",
+    "libavcodec/dirac.h",
+    "libavcodec/dv_profile.h",
+    "libavcodec/dxva2.h",
+    "libavcodec/jni.h",
+    "libavcodec/mediacodec.h",
+    "libavcodec/packet.h",
+    "libavcodec/qsv.h",
+    "libavcodec/vdpau.h",
+    "libavcodec/version.h",
+    "libavcodec/version_major.h",
+    "libavcodec/videotoolbox.h",
+    "libavcodec/vorbis_parser.h",
+]
+
+cc_library(
+    name = "avcodec_private_hdrs",
+    hdrs = glob(
+        [
+            "libavcodec/*.h",
+            "libavcodec/**/*.h",
+        ],
+        exclude = _AVCODEC_PUBLIC_HDRS + ["libavcodec/*.h"],
+    ) + glob(
+        ["libavcodec/*.h"],
+        exclude = _AVCODEC_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_AVFORMAT_PUBLIC_HDRS = [
+    "libavformat/avformat.h",
+    "libavformat/avio.h",
+    "libavformat/version.h",
+    "libavformat/version_major.h",
+]
+
+cc_library(
+    name = "avformat_private_hdrs",
+    hdrs = glob(
+        ["libavformat/*.h"],
+        exclude = _AVFORMAT_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_AVFILTER_PUBLIC_HDRS = [
+    "libavfilter/avfilter.h",
+    "libavfilter/buffersink.h",
+    "libavfilter/buffersrc.h",
+    "libavfilter/version.h",
+    "libavfilter/version_major.h",
+]
+
+cc_library(
+    name = "avfilter_private_hdrs",
+    hdrs = glob(
+        [
+            "libavfilter/*.h",
+            "libavfilter/*/*.h",
+        ],
+        exclude = _AVFILTER_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_SWRESAMPLE_PUBLIC_HDRS = [
+    "libswresample/swresample.h",
+    "libswresample/version.h",
+    "libswresample/version_major.h",
+]
+
+cc_library(
+    name = "swresample_private_hdrs",
+    hdrs = glob(
+        ["libswresample/*.h"],
+        exclude = _SWRESAMPLE_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_SWSCALE_PUBLIC_HDRS = [
+    "libswscale/swscale.h",
+    "libswscale/version.h",
+    "libswscale/version_major.h",
+]
+
+cc_library(
+    name = "swscale_private_hdrs",
+    hdrs = glob(
+        ["libswscale/*.h"],
+        exclude = _SWSCALE_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_POSTPROC_PUBLIC_HDRS = [
+    "libpostproc/postprocess.h",
+    "libpostproc/version.h",
+    "libpostproc/version_major.h",
+]
+
+cc_library(
+    name = "postproc_private_hdrs",
+    hdrs = glob(
+        ["libpostproc/*.h"],
+        exclude = _POSTPROC_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+_AVDEVICE_PUBLIC_HDRS = [
+    "libavdevice/avdevice.h",
+    "libavdevice/version.h",
+    "libavdevice/version_major.h",
+]
+
+cc_library(
+    name = "avdevice_private_hdrs",
+    hdrs = glob(
+        ["libavdevice/*.h"],
+        exclude = _AVDEVICE_PUBLIC_HDRS,
+    ),
+    visibility = ["//:__subpackages__"],
+    deps = [":config_internal"],
+)
+
+# Common copts shared by all FFmpeg C targets
+_FFMPEG_BASE_COPTS = [
+    "-DPIC",
+    "-D_ISOC11_SOURCE",
+    "-D_FILE_OFFSET_BITS=64",
+    "-D_LARGEFILE_SOURCE",
+] + select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/w",
+        "/std:c17",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/std:c17",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=c17",
+        "-Wno-error=implicit-function-declaration",
+    ],
+}) + select({
+    "@platforms//os:linux": [
+        "-D_POSIX_C_SOURCE=200112",
+        "-D_XOPEN_SOURCE=600",
+    ],
+    "@platforms//os:macos": ["-D_DARWIN_C_SOURCE"],
+    "//conditions:default": [],
+})
+
+# Library copts: includes HAVE_AV_CONFIG_H (matches ffbuild/library.mak)
+_FFMPEG_COPTS = ["-DHAVE_AV_CONFIG_H"] + _FFMPEG_BASE_COPTS
+
+# fftools copts: no HAVE_AV_CONFIG_H (matches original Makefile behavior)
+_FFTOOLS_COPTS = _FFMPEG_BASE_COPTS
+
+# libavutil - base library
+_AVUTIL_SRCS = [
+    "libavutil/adler32.c",
+    "libavutil/aes.c",
+    "libavutil/aes_ctr.c",
+    "libavutil/ambient_viewing_environment.c",
+    "libavutil/audio_fifo.c",
+    "libavutil/avstring.c",
+    "libavutil/avsscanf.c",
+    "libavutil/base64.c",
+    "libavutil/blowfish.c",
+    "libavutil/bprint.c",
+    "libavutil/buffer.c",
+    "libavutil/cast5.c",
+    "libavutil/camellia.c",
+    "libavutil/channel_layout.c",
+    "libavutil/cpu.c",
+    "libavutil/crc.c",
+    "libavutil/csp.c",
+    "libavutil/des.c",
+    "libavutil/detection_bbox.c",
+    "libavutil/dict.c",
+    "libavutil/display.c",
+    "libavutil/dovi_meta.c",
+    "libavutil/downmix_info.c",
+    "libavutil/encryption_info.c",
+    "libavutil/error.c",
+    "libavutil/eval.c",
+    "libavutil/executor.c",
+    "libavutil/fifo.c",
+    "libavutil/file.c",
+    "libavutil/file_open.c",
+    "libavutil/float_dsp.c",
+    "libavutil/fixed_dsp.c",
+    "libavutil/frame.c",
+    "libavutil/hash.c",
+    "libavutil/hdr_dynamic_metadata.c",
+    "libavutil/hdr_dynamic_vivid_metadata.c",
+    "libavutil/hmac.c",
+    "libavutil/hwcontext.c",
+    "libavutil/hwcontext_stub.c",
+    "libavutil/iamf.c",
+    "libavutil/imgutils.c",
+    "libavutil/integer.c",
+    "libavutil/intmath.c",
+    "libavutil/lfg.c",
+    "libavutil/lls.c",
+    "libavutil/log.c",
+    "libavutil/log2_tab.c",
+    "libavutil/lzo.c",
+    "libavutil/mastering_display_metadata.c",
+    "libavutil/mathematics.c",
+    "libavutil/md5.c",
+    "libavutil/mem.c",
+    "libavutil/murmur3.c",
+    "libavutil/opt.c",
+    "libavutil/parseutils.c",
+    "libavutil/pixdesc.c",
+    "libavutil/pixelutils.c",
+    "libavutil/random_seed.c",
+    "libavutil/rational.c",
+    "libavutil/rc4.c",
+    "libavutil/reverse.c",
+    "libavutil/ripemd.c",
+    "libavutil/samplefmt.c",
+    "libavutil/sha.c",
+    "libavutil/sha512.c",
+    "libavutil/slicethread.c",
+    "libavutil/spherical.c",
+    "libavutil/stereo3d.c",
+    "libavutil/threadmessage.c",
+    "libavutil/time.c",
+    "libavutil/timecode.c",
+    "libavutil/timestamp.c",
+    "libavutil/tree.c",
+    "libavutil/twofish.c",
+    "libavutil/utils.c",
+    "libavutil/xga_font_data.c",
+    "libavutil/xtea.c",
+    "libavutil/tea.c",
+    "libavutil/tx.c",
+    "libavutil/tx_float.c",
+    "libavutil/tx_double.c",
+    "libavutil/tx_int32.c",
+    "libavutil/uuid.c",
+    "libavutil/version.c",
+    "libavutil/video_enc_params.c",
+    "libavutil/video_hint.c",
+    "libavutil/film_grain_params.c",
+] + select({
+    "@platforms//os:macos": ["libavutil/hwcontext_videotoolbox.c"],
+    "//conditions:default": [],
+})
+
+_AVUTIL_AARCH64_SRCS = [
+    "libavutil/aarch64/cpu.c",
+    "libavutil/aarch64/float_dsp_init.c",
+    "libavutil/aarch64/tx_float_init.c",
+    "libavutil/aarch64/float_dsp_neon.S",
+    "libavutil/aarch64/tx_float_neon.S",
+]
+
+_AVUTIL_X86_SRCS = [
+    "libavutil/x86/cpu.c",
+    "libavutil/x86/fixed_dsp_init.c",
+    "libavutil/x86/float_dsp_init.c",
+    "libavutil/x86/imgutils_init.c",
+    "libavutil/x86/lls_init.c",
+    "libavutil/x86/tx_float_init.c",
+]
+
+cc_variant_library(
+    name = "avutil",
+    srcs = _AVUTIL_SRCS + select({
+        "@platforms//cpu:aarch64": _AVUTIL_AARCH64_SRCS,
+        "//conditions:default": _AVUTIL_X86_SRCS + [":avutil_x86_asm"],
+    }),
+    hdrs = [
+        ":gen_avconfig_h",
+        ":gen_ffversion_h",
+    ] + _AVUTIL_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avutil_private_hdrs",
+    ],
+    includes = ["."],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-Wl,-Bsymbolic",
+            "-lpthread",
+            "-lm",
+        ],
+        "@platforms//os:macos": [
+            "-framework CoreFoundation",
+            "-framework CoreMedia",
+            "-framework CoreVideo",
+            "-framework VideoToolbox",
+            "-framework AudioToolbox",
+            "-framework Security",
+            "-framework AppKit",
+            "-framework CoreImage",
+            "-framework AVFoundation",
+        ],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "libavutil/tx_template.c",
+        "libavcodec/defs.h",
+        "libavcodec/get_bits.h",
+        "libavcodec/mathops.h",
+        "libavcodec/put_bits.h",
+        "libavcodec/vlc.h",
+    ] + glob(["libavcodec/*/mathops.h"]) + select({
+        "@platforms//cpu:aarch64": ["libavutil/aarch64/asm.S"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# libswresample - depends on avutil
+_SWRESAMPLE_SRCS = [
+    "libswresample/audioconvert.c",
+    "libswresample/dither.c",
+    "libswresample/log2_tab.c",
+    "libswresample/options.c",
+    "libswresample/rematrix.c",
+    "libswresample/resample.c",
+    "libswresample/resample_dsp.c",
+    "libswresample/swresample.c",
+    "libswresample/swresample_frame.c",
+    "libswresample/version.c",
+]
+
+_SWRESAMPLE_AARCH64_SRCS = [
+    "libswresample/aarch64/audio_convert_init.c",
+    "libswresample/aarch64/resample_init.c",
+    "libswresample/aarch64/audio_convert_neon.S",
+    "libswresample/aarch64/resample.S",
+]
+
+_SWRESAMPLE_X86_SRCS = [
+    "libswresample/x86/audio_convert_init.c",
+    "libswresample/x86/resample_init.c",
+    "libswresample/x86/rematrix_init.c",
+]
+
+cc_variant_library(
+    name = "swresample",
+    srcs = _SWRESAMPLE_SRCS + select({
+        "@platforms//cpu:aarch64": _SWRESAMPLE_AARCH64_SRCS,
+        "//conditions:default": _SWRESAMPLE_X86_SRCS + [":swresample_x86_asm"],
+    }),
+    hdrs = _SWRESAMPLE_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avutil_private_hdrs",
+        ":swresample_private_hdrs",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "libavutil/log2_tab.c",
+        "libswresample/dither_template.c",
+        "libswresample/noise_shaping_data.c",
+        "libswresample/rematrix_template.c",
+        "libswresample/resample_template.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":avutil"],
+)
+
+# libswscale - depends on avutil
+_SWSCALE_SRCS = [
+    "libswscale/alphablend.c",
+    "libswscale/gamma.c",
+    "libswscale/half2float.c",
+    "libswscale/hscale.c",
+    "libswscale/hscale_fast_bilinear.c",
+    "libswscale/input.c",
+    "libswscale/options.c",
+    "libswscale/output.c",
+    "libswscale/rgb2rgb.c",
+    "libswscale/slice.c",
+    "libswscale/log2_tab.c",
+    "libswscale/swscale.c",
+    "libswscale/swscale_unscaled.c",
+    "libswscale/utils.c",
+    "libswscale/version.c",
+    "libswscale/vscale.c",
+    "libswscale/yuv2rgb.c",
+]
+
+_SWSCALE_AARCH64_SRCS = [
+    "libswscale/aarch64/rgb2rgb.c",
+    "libswscale/aarch64/swscale.c",
+    "libswscale/aarch64/swscale_unscaled.c",
+    "libswscale/aarch64/hscale.S",
+    "libswscale/aarch64/input.S",
+    "libswscale/aarch64/output.S",
+    "libswscale/aarch64/range_convert_neon.S",
+    "libswscale/aarch64/rgb2rgb_neon.S",
+    "libswscale/aarch64/swscale_unscaled_neon.S",
+    "libswscale/aarch64/yuv2rgb_neon.S",
+]
+
+_SWSCALE_X86_SRCS = [
+    "libswscale/x86/rgb2rgb.c",
+    "libswscale/x86/hscale_fast_bilinear_simd.c",
+    "libswscale/x86/swscale.c",
+    "libswscale/x86/yuv2rgb.c",
+]
+
+cc_variant_library(
+    name = "swscale",
+    srcs = _SWSCALE_SRCS + select({
+        "@platforms//cpu:aarch64": _SWSCALE_AARCH64_SRCS,
+        "//conditions:default": _SWSCALE_X86_SRCS + [":swscale_x86_asm"],
+    }),
+    hdrs = _SWSCALE_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avutil_private_hdrs",
+        ":swscale_private_hdrs",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "libavutil/half2float.c",
+        "libavutil/log2_tab.c",
+        "libswscale/bayer_template.c",
+        "libswscale/rgb2rgb_template.c",
+    ] + select({
+        "@platforms//cpu:aarch64": ["libavutil/aarch64/asm.S"],
+        "//conditions:default": ["libswscale/x86/swscale_template.c"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":avutil"],
+)
+
+# libavcodec - depends on avutil
+_AVCODEC_BASE_SRCS = [
+    "libavcodec/ac3_parser.c",
+    "libavcodec/adts_parser.c",
+    "libavcodec/allcodecs.c",
+    "libavcodec/avcodec.c",
+    "libavcodec/avdct.c",
+    "libavcodec/avfft.c",
+    "libavcodec/packet.c",
+    "libavcodec/bitstream.c",
+    "libavcodec/bitstream_filters.c",
+    "libavcodec/bsf.c",
+    "libavcodec/codec_desc.c",
+    "libavcodec/codec_par.c",
+    "libavcodec/d3d11va.c",
+    "libavcodec/decode.c",
+    "libavcodec/dirac.c",
+    "libavcodec/dv_profile.c",
+    "libavcodec/encode.c",
+    "libavcodec/get_buffer.c",
+    "libavcodec/imgconvert.c",
+    "libavcodec/jni.c",
+    "libavcodec/lcevcdec.c",
+    "libavcodec/mathtables.c",
+    "libavcodec/mediacodec.c",
+    "libavcodec/mpeg12framerate.c",
+    "libavcodec/options.c",
+    "libavcodec/parser.c",
+    "libavcodec/parsers.c",
+    "libavcodec/profiles.c",
+    "libavcodec/qsv_api.c",
+    "libavcodec/raw.c",
+    "libavcodec/refstruct.c",
+    "libavcodec/threadprogress.c",
+    "libavcodec/utils.c",
+    "libavcodec/version.c",
+    "libavcodec/vlc.c",
+    "libavcodec/vorbis_parser.c",
+    "libavcodec/xiph.c",
+    "libavcodec/pthread.c",
+    "libavcodec/pthread_slice.c",
+    "libavcodec/pthread_frame.c",
+]
+
+_AVCODEC_AARCH64_SRCS = []
+
+_AVCODEC_X86_SRCS = [
+    "libavcodec/x86/constants.c",
+]
+
+selects.config_setting_group(
+    name = "avcodec_aom_is_used",
+    match_any = [
+        "//:enable_libaom_av1_decoder_is_true",
+        "//:enable_libaom_av1_encoder_is_true",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avcodec_opus_is_used",
+    match_any = [
+        "//:enable_libopus_decoder_is_true",
+        "//:enable_libopus_encoder_is_true",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avcodec_webp_is_used",
+    match_any = [
+        "//:enable_libwebp_anim_encoder_is_true",
+        "//:enable_libwebp_encoder_is_true",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avcodec_snappy_is_used",
+    match_any = [
+        "//:enable_hap_decoder_is_true",
+        "//:enable_hap_encoder_is_true",
+    ],
+)
+
+cc_variant_library(
+    name = "avcodec",
+    srcs = _AVCODEC_BASE_SRCS + AVCODEC_EXTRA_SRCS +
+           component_select_srcs(AVCODEC_EXCLUSIVE_SRCS, AVCODEC_SHARED_SRCS) +
+           component_select_srcs(AVCODEC_EXTRA_EXCLUSIVE_SRCS, AVCODEC_EXTRA_SHARED_SRCS) +
+           select({
+               "@platforms//cpu:aarch64": _AVCODEC_AARCH64_SRCS + [":_avcodec_aarch64_component_srcs"],
+               "//conditions:default": _AVCODEC_X86_SRCS + AVCODEC_X86_COMPONENT_SRCS + [
+                   ":_avcodec_x86_component_srcs",
+                   ":avcodec_x86_asm",
+               ],
+           }),
+    hdrs = _AVCODEC_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avcodec_private_hdrs",
+        ":avutil_private_hdrs",
+    ],
+    includes = ["libavcodec"],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = glob(
+        ["libavcodec/**/*.c"],
+        exclude = [
+            "libavcodec/tests/**",
+            "libavcodec/*_list.c",
+        ],
+    ) + glob([
+        "libavfilter/*.h",
+        "libavformat/*.h",
+        "libswresample/*.h",
+    ]) + [
+        ":libavcodec/bsf_list.c",
+        ":libavcodec/codec_list.c",
+        ":libavcodec/parser_list.c",
+        "libavutil/file_open.c",
+        "libavutil/float2half.c",
+        "libavutil/half2float.c",
+        "libavutil/log2_tab.c",
+        "libavutil/reverse.c",
+        "libavutil/vulkan.c",
+    ] + select({
+        "@platforms//cpu:aarch64": [
+            "libavutil/aarch64/asm.S",
+            "libavcodec/aarch64/neon.S",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":avutil",
+        "@zlib",
+    ] + select({
+        "//:enable_libx264_encoder_is_true": ["@x264"],
+        "//conditions:default": [],
+    }) + select({
+        "//:enable_libx265_encoder_is_true": ["@x265"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_aom_is_used": ["@aom"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_opus_is_used": ["@opus"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_webp_is_used": ["@libwebp"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_snappy_is_used": ["@snappy"],
+        "//conditions:default": [],
+    }),
+)
+
+# libavformat - depends on avcodec, avutil
+_AVFORMAT_SRCS = [
+    "libavformat/allformats.c",
+    "libavformat/avformat.c",
+    "libavformat/avio.c",
+    "libavformat/aviobuf.c",
+    "libavformat/demux.c",
+    "libavformat/demux_utils.c",
+    "libavformat/dump.c",
+    "libavformat/dv.c",
+    "libavformat/format.c",
+    "libavformat/id3v1.c",
+    "libavformat/id3v2.c",
+    "libavformat/isom_tags.c",
+    "libavformat/metadata.c",
+    "libavformat/mux.c",
+    "libavformat/mux_utils.c",
+    "libavformat/options.c",
+    "libavformat/os_support.c",
+    "libavformat/protocols.c",
+    "libavformat/riff.c",
+    "libavformat/sdp.c",
+    "libavformat/seek.c",
+    "libavformat/url.c",
+    "libavformat/utils.c",
+    "libavformat/version.c",
+    "libavformat/network.c",
+]
+
+selects.config_setting_group(
+    name = "avformat_xml2_is_used",
+    match_any = [
+        "//:enable_dash_demuxer_is_true",
+        "//:enable_imf_demuxer_is_true",
+    ],
+)
+
+cc_variant_library(
+    name = "avformat",
+    srcs = _AVFORMAT_SRCS + AVFORMAT_EXTRA_SRCS +
+           component_select_srcs(AVFORMAT_EXCLUSIVE_SRCS, AVFORMAT_SHARED_SRCS) +
+           component_select_srcs(AVFORMAT_EXTRA_EXCLUSIVE_SRCS, AVFORMAT_EXTRA_SHARED_SRCS),
+    hdrs = _AVFORMAT_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avcodec_private_hdrs",
+        ":avformat_private_hdrs",
+        ":avutil_private_hdrs",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        ":libavformat/demuxer_list.c",
+        ":libavformat/muxer_list.c",
+        ":libavformat/protocol_list.c",
+    ] + glob(
+        ["libavformat/**/*.c"],
+        exclude = [
+            "libavformat/*_list.c",
+        ],
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":avcodec",
+        ":avutil",
+        "@bzip2//:bz2",
+        "@zlib",
+    ] + select({
+        "//:enable_openssl_is_true": ["@openssl"],
+        "//conditions:default": [],
+    }) + select({
+        "//:enable_mbedtls_is_true": ["@mbedtls"],
+        "//conditions:default": [],
+    }) + select({
+        "//:enable_gmp_is_true": ["@gmp"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avformat_xml2_is_used": ["@libxml2"],
+        "//conditions:default": [],
+    }) + select({
+        "//:enable_libzmq_protocol_is_true": ["@libzmq"],
+        "//conditions:default": [],
+    }),
+)
+
+# libavfilter - depends on avformat, avcodec, avutil
+_AVFILTER_SRCS = [
+    "libavfilter/allfilters.c",
+    "libavfilter/audio.c",
+    "libavfilter/avfilter.c",
+    "libavfilter/avfiltergraph.c",
+    "libavfilter/buffersink.c",
+    "libavfilter/buffersrc.c",
+    "libavfilter/colorspace.c",
+    "libavfilter/ccfifo.c",
+    "libavfilter/drawutils.c",
+    "libavfilter/formats.c",
+    "libavfilter/framepool.c",
+    "libavfilter/framequeue.c",
+    "libavfilter/graphdump.c",
+    "libavfilter/graphparser.c",
+    "libavfilter/version.c",
+    "libavfilter/video.c",
+    "libavfilter/pthread.c",
+]
+
+selects.config_setting_group(
+    name = "avfilter_zmq_is_used",
+    match_any = [
+        "//:enable_azmq_filter_is_true",
+        "//:enable_zmq_filter_is_true",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avfilter_coreimage_is_used",
+    match_any = [
+        "//:enable_coreimage_filter_is_true",
+        "//:enable_coreimagesrc_filter_is_true",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avfilter_coreimage_on_macos",
+    match_all = [
+        "//:avfilter_coreimage_is_used",
+        "@platforms//os:macos",
+    ],
+)
+
+objc_library(
+    name = "avfilter_coreimage_objc",
+    srcs = [
+        "libavfilter/vf_coreimage.m",
+        ":config_components.h",
+        ":config_extra.h",
+        ":gen_config_h",
+        ":gen_ffversion_h",
+    ],
+    hdrs = _AVFILTER_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS + ["-fno-objc-arc"],
+    includes = ["libavfilter"],
+    tags = ["manual"],
+    deps = [
+        ":avfilter_private_hdrs",
+        ":avutil",
+    ],
+)
+
+cc_variant_library(
+    name = "avfilter",
+    srcs = _AVFILTER_SRCS + AVFILTER_EXTRA_SRCS +
+           component_select_srcs(AVFILTER_EXCLUSIVE_SRCS, AVFILTER_SHARED_SRCS) +
+           select({
+               "@platforms//cpu:aarch64": AVFILTER_AARCH64_COMPONENT_SRCS + [
+                   ":_avfilter_aarch64_component_srcs",
+               ],
+               "//conditions:default": AVFILTER_X86_COMPONENT_SRCS + [
+                   ":_avfilter_x86_component_srcs",
+                   ":avfilter_x86_asm",
+               ],
+           }),
+    hdrs = _AVFILTER_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avcodec_private_hdrs",
+        ":avfilter_private_hdrs",
+        ":avformat_private_hdrs",
+        ":avutil_private_hdrs",
+        ":config_internal",
+        ":swresample_private_hdrs",
+        ":swscale_private_hdrs",
+    ] + select({
+        "//:avfilter_coreimage_on_macos": [":avfilter_coreimage_objc"],
+        "//conditions:default": [],
+    }),
+    includes = ["libavfilter"],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        ":libavfilter/filter_list.c",
+    ] + glob(
+        ["libavfilter/**/*.c"],
+        exclude = [
+            "libavfilter/tests/**",
+            "libavfilter/*_list.c",
+        ],
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":avcodec",
+        ":avformat",
+        ":avutil",
+        ":swresample",
+        ":swscale",
+    ] + select({
+        "//:enable_drawtext_filter_is_true": [
+            "@freetype",
+            "@harfbuzz",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//:avfilter_zmq_is_used": ["@libzmq"],
+        "//conditions:default": [],
+    }) + select({
+        "//:enable_ocv_filter_is_true": ["@opencv"],
+        "//conditions:default": [],
+    }),
+)
+
+# libpostproc - depends on avutil
+cc_variant_library(
+    name = "postproc",
+    srcs = [
+        "libpostproc/postprocess.c",
+        "libpostproc/version.c",
+    ],
+    hdrs = _POSTPROC_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avutil_private_hdrs",
+        ":postproc_private_hdrs",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "libpostproc/postprocess_altivec_template.c",
+        "libpostproc/postprocess_template.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":avutil"],
+)
+
+# libavdevice - depends on avformat, avcodec, avutil
+_AVDEVICE_SRCS = [
+    "libavdevice/alldevices.c",
+    "libavdevice/avdevice.c",
+    "libavdevice/utils.c",
+    "libavdevice/version.c",
+]
+
+selects.config_setting_group(
+    name = "avdevice_alsa_is_requested",
+    match_any = [
+        "//:enable_alsa_indev_is_true",
+        "//:enable_alsa_outdev_is_true",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avdevice_alsa_is_used",
+    match_all = [
+        "//:avdevice_alsa_is_requested",
+        "@platforms//os:linux",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avdevice_xcb_is_used",
+    match_all = [
+        "//:enable_xcbgrab_indev_is_true",
+        "@platforms//os:linux",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avdevice_audiotoolbox_is_used",
+    match_all = [
+        "//:enable_audiotoolbox_outdev_is_true",
+        "@platforms//os:macos",
+    ],
+)
+
+selects.config_setting_group(
+    name = "avdevice_avfoundation_is_used",
+    match_all = [
+        "//:enable_avfoundation_indev_is_true",
+        "@platforms//os:macos",
+    ],
+)
+
+objc_library(
+    name = "avdevice_audiotoolbox_objc",
+    srcs = [
+        "libavdevice/audiotoolbox.m",
+        ":config_components.h",
+        ":config_extra.h",
+        ":gen_config_h",
+        ":gen_ffversion_h",
+    ],
+    hdrs = _AVDEVICE_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS + ["-fno-objc-arc"],
+    tags = ["manual"],
+    deps = [
+        ":avdevice_private_hdrs",
+        ":avformat",
+        ":avutil",
+    ],
+)
+
+objc_library(
+    name = "avdevice_avfoundation_objc",
+    srcs = [
+        "libavdevice/avfoundation.m",
+        ":config_components.h",
+        ":config_extra.h",
+        ":gen_config_h",
+        ":gen_ffversion_h",
+    ],
+    hdrs = _AVDEVICE_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS + ["-fno-objc-arc"],
+    tags = ["manual"],
+    deps = [
+        ":avdevice_private_hdrs",
+        ":avformat",
+        ":avutil",
+    ],
+)
+
+cc_variant_library(
+    name = "avdevice",
+    srcs = _AVDEVICE_SRCS + component_select_srcs(
+        AVDEVICE_EXCLUSIVE_SRCS,
+        AVDEVICE_SHARED_SRCS,
+    ),
+    hdrs = _AVDEVICE_PUBLIC_HDRS,
+    copts = _FFMPEG_COPTS,
+    implementation_deps = [
+        ":avcodec_private_hdrs",
+        ":avdevice_private_hdrs",
+        ":avformat_private_hdrs",
+        ":avutil_private_hdrs",
+    ] + select({
+        "//:avdevice_audiotoolbox_is_used": [":avdevice_audiotoolbox_objc"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avdevice_avfoundation_is_used": [":avdevice_avfoundation_objc"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-Bsymbolic"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        ":libavdevice/indev_list.c",
+        ":libavdevice/outdev_list.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":avcodec",
+        ":avformat",
+        ":avutil",
+    ] + select({
+        "//:avdevice_alsa_is_used": ["@alsa_lib"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avdevice_xcb_is_used": ["@libxcb"],
+        "//conditions:default": [],
+    }),
+)
+
+# Test-only headers — expose specific private headers for internal tests
+# without leaking config_internal to the test target directly.
+cc_library(
+    name = "avutil_test_hdrs",
+    testonly = True,
+    hdrs = [
+        "libavutil/integer.h",
+        "libavutil/timer.h",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":avutil_private_hdrs",
+        ":config_internal",
+    ],
+)
+
+cc_library(
+    name = "avcodec_test_hdrs",
+    testonly = True,
+    hdrs = [
+        "libavcodec/bitstream.h",
+        "libavcodec/put_bits.h",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":avcodec_private_hdrs",
+        ":avutil_private_hdrs",
+        ":config_internal",
+    ],
+)
+
+cc_library(
+    name = "avfilter_test_hdrs",
+    testonly = True,
+    hdrs = ["libavfilter/drawutils.h"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":avfilter_private_hdrs",
+        ":avutil_private_hdrs",
+        ":config_internal",
+    ],
+)
+
+# stdbit compat - for compilers without C23 stdbit.h (e.g. macOS)
+cc_library(
+    name = "stdbit_compat",
+    hdrs = ["compat/stdbit/stdbit.h"],
+    includes = ["compat/stdbit"],
+    visibility = ["//visibility:private"],
+)
+
+# fftools headers - needed for ffmpeg/ffprobe
+cc_library(
+    name = "fftools_headers",
+    hdrs = glob(["fftools/*.h"]),
+    includes = ["fftools"],
+    visibility = ["//visibility:private"],
+)
+
+# ffmpeg - depends on avcodec, avdevice, avfilter, avformat, avutil
+cc_variant_binary(
+    name = "ffmpeg",
+    srcs = [
+        "fftools/cmdutils.c",
+        "fftools/ffmpeg.c",
+        "fftools/ffmpeg_dec.c",
+        "fftools/ffmpeg_demux.c",
+        "fftools/ffmpeg_enc.c",
+        "fftools/ffmpeg_filter.c",
+        "fftools/ffmpeg_hw.c",
+        "fftools/ffmpeg_mux.c",
+        "fftools/ffmpeg_mux_init.c",
+        "fftools/ffmpeg_opt.c",
+        "fftools/ffmpeg_sched.c",
+        "fftools/objpool.c",
+        "fftools/opt_common.c",
+        "fftools/sync_queue.c",
+        "fftools/thread_queue.c",
+    ],
+    copts = _FFTOOLS_COPTS,
+    linkopts = ["-lpthread"] + select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-ldl",
+            "-lrt",
+        ],
+        "@platforms//os:macos": [
+            "-liconv",
+            "-framework CoreFoundation",
+            "-framework CoreMedia",
+            "-framework CoreVideo",
+            "-framework VideoToolbox",
+            "-framework AudioToolbox",
+            "-framework Security",
+            "-framework AppKit",
+            "-framework CoreImage",
+            "-framework AVFoundation",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":avcodec",
+        ":avdevice",
+        ":avfilter",
+        ":avformat",
+        ":avutil",
+        ":avutil_private_hdrs",
+        ":config_internal",
+        ":fftools_headers",
+        ":postproc",
+        ":stdbit_compat",
+        ":swresample",
+        ":swscale",
+        "@zlib",
+    ],
+)
+
+# ffprobe - depends on avcodec, avformat, avutil
+cc_variant_binary(
+    name = "ffprobe",
+    srcs = [
+        "fftools/cmdutils.c",
+        "fftools/ffprobe.c",
+        "fftools/opt_common.c",
+    ],
+    copts = _FFTOOLS_COPTS,
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-ldl",
+            "-lrt",
+            "-lpthread",
+        ],
+        "@platforms//os:macos": [
+            "-liconv",
+            "-framework CoreFoundation",
+            "-framework CoreMedia",
+            "-framework CoreVideo",
+            "-framework VideoToolbox",
+            "-framework AudioToolbox",
+            "-framework Security",
+            "-framework AppKit",
+            "-framework CoreImage",
+            "-framework AVFoundation",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":avcodec",
+        ":avdevice",
+        ":avfilter",
+        ":avformat",
+        ":avutil",
+        ":avutil_private_hdrs",
+        ":config_internal",
+        ":fftools_headers",
+        ":postproc",
+        ":swresample",
+        ":swscale",
+        "@zlib",
+    ],
+)

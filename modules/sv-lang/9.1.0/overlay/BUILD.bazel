@@ -1,0 +1,484 @@
+
+
+load("@aspect_bazel_lib//lib:run_binary.bzl", "run_binary")
+load("@pybind11_bazel//:build_defs.bzl", "pybind_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+
+package(default_visibility = ["//visibility:private"])
+
+
+# Slang version is major.minor.micro
+# We strip away any sub-version numbers after the first 3 (e.g. remove a potential `.bcr.1`)
+[
+    SLANG_VERSION_MAJOR,
+    SLANG_VERSION_MINOR,
+    SLANG_VERSION_MICRO,
+] = module_version().split(".")[:3]
+SLANG_VERSION = "{}.{}.{}".format(SLANG_VERSION_MAJOR, SLANG_VERSION_MINOR, SLANG_VERSION_MICRO)
+
+# The source repo has a top level directory "external" which is reserved by Bazel.
+# To hack around this, we don't use `strip_prefix` in sources/json so that the
+# "external" directory is not at the top level.
+# The downside of this is we need to prepend `SOURCES_PREFIX` to all paths here
+SOURCES_PREFIX = "slang-{}.{}".format(SLANG_VERSION_MAJOR, SLANG_VERSION_MINOR)
+
+
+
+# Python dependencies for the code generation scripts
+py_binary(
+    name = "diagnostic_gen",
+    srcs = [SOURCES_PREFIX + "/scripts/diagnostic_gen.py"],
+)
+
+py_binary(
+    name = "syntax_gen",
+    srcs = [SOURCES_PREFIX + "/scripts/syntax_gen.py"],
+)
+
+py_binary(
+    name = "grammar_gen",
+    srcs = [SOURCES_PREFIX + "/scripts/grammar_gen.py"],
+)
+
+# Run diagnostic generation
+run_binary(
+    name = "generate_diagnostics",
+    srcs = [
+        SOURCES_PREFIX + "/scripts/diagnostics.txt",
+        SOURCES_PREFIX + "/scripts/warning_docs.txt",
+    ] + glob([SOURCES_PREFIX + "/include/slang/analysis/*"]),
+    outs = [
+        "generated/DiagCode.cpp",
+        "generated/slang/diagnostics/AllDiags.h",
+        "generated/slang/diagnostics/AnalysisDiags.h",
+        "generated/slang/diagnostics/CompilationDiags.h",
+        "generated/slang/diagnostics/ConstEvalDiags.h",
+        "generated/slang/diagnostics/DeclarationsDiags.h",
+        "generated/slang/diagnostics/ExpressionsDiags.h",
+        "generated/slang/diagnostics/GeneralDiags.h",
+        "generated/slang/diagnostics/LexerDiags.h",
+        "generated/slang/diagnostics/LookupDiags.h",
+        "generated/slang/diagnostics/MetaDiags.h",
+        "generated/slang/diagnostics/NumericDiags.h",
+        "generated/slang/diagnostics/ParserDiags.h",
+        "generated/slang/diagnostics/PreprocessorDiags.h",
+        "generated/slang/diagnostics/StatementsDiags.h",
+        "generated/slang/diagnostics/SysFuncsDiags.h",
+        "generated/slang/diagnostics/TypesDiags.h",
+    ],
+    args = [
+        "--diagnostics=$(location {}/scripts/diagnostics.txt)".format(SOURCES_PREFIX),
+        "--outDir=$(RULEDIR)/generated/",
+        "--srcDir={}/scripts/diagnostics/".format(SOURCES_PREFIX),
+        "--incDir={}/include/slang/analysis/".format(SOURCES_PREFIX),
+    ],
+    tool = ":diagnostic_gen",
+)
+
+# Run syntax generation
+run_binary(
+    name = "generate_syntax",
+    srcs = [
+        SOURCES_PREFIX + "/scripts/syntax.txt",
+        SOURCES_PREFIX + "/scripts/systemnames.txt",
+        SOURCES_PREFIX + "/scripts/tokenkinds.txt",
+        SOURCES_PREFIX + "/scripts/triviakinds.txt",
+    ],
+    outs = [
+        "generated/AllSyntax.cpp",
+        "generated/KnownSystemName.cpp",
+        "generated/SyntaxClone.cpp",
+        "generated/TokenKind.cpp",
+        "generated/slang/parsing/KnownSystemName.h",
+        "generated/slang/parsing/TokenKind.h",
+        "generated/slang/syntax/AllSyntax.h",
+        "generated/slang/syntax/SyntaxFwd.h",
+        "generated/slang/syntax/SyntaxKind.h",
+    ],
+    args = [
+        "--syntax=$(location {}/scripts/syntax.txt)".format(SOURCES_PREFIX),
+        "--dir=$(RULEDIR)/generated/",
+    ],
+    tool = ":syntax_gen",
+)
+
+# Run syntax generation for the python bindings
+run_binary(
+    name = "generate_syntax_python",
+    srcs = [
+        SOURCES_PREFIX + "/scripts/syntax.txt",
+    ],
+    outs = [
+        "generated/pyslang/PySyntaxBindings0.cpp",
+        "generated/pyslang/PySyntaxBindings1.cpp",
+        "generated/pyslang/PySyntaxBindings2.cpp",
+        "generated/pyslang/PySyntaxBindings3.cpp",
+    ],
+    args = [
+        "--syntax=$(location {}/scripts/syntax.txt)".format(SOURCES_PREFIX),
+        "--dir=$(RULEDIR)/generated/pyslang/",
+        "--python-bindings",
+    ],
+    tool = ":syntax_gen",
+)
+
+# List of generated header files for the slang library
+filegroup(
+    name = "slang_lib_generated_headers",
+    srcs = [
+        "generated/slang/diagnostics/AllDiags.h",
+        "generated/slang/diagnostics/AnalysisDiags.h",
+        "generated/slang/diagnostics/CompilationDiags.h",
+        "generated/slang/diagnostics/ConstEvalDiags.h",
+        "generated/slang/diagnostics/DeclarationsDiags.h",
+        "generated/slang/diagnostics/ExpressionsDiags.h",
+        "generated/slang/diagnostics/GeneralDiags.h",
+        "generated/slang/diagnostics/LexerDiags.h",
+        "generated/slang/diagnostics/LookupDiags.h",
+        "generated/slang/diagnostics/MetaDiags.h",
+        "generated/slang/diagnostics/NumericDiags.h",
+        "generated/slang/diagnostics/ParserDiags.h",
+        "generated/slang/diagnostics/PreprocessorDiags.h",
+        "generated/slang/diagnostics/StatementsDiags.h",
+        "generated/slang/diagnostics/SysFuncsDiags.h",
+        "generated/slang/diagnostics/TypesDiags.h",
+        "generated/slang/parsing/KnownSystemName.h",
+        "generated/slang/parsing/TokenKind.h",
+        "generated/slang/syntax/AllSyntax.h",
+        "generated/slang/syntax/SyntaxFwd.h",
+        "generated/slang/syntax/SyntaxKind.h",
+    ],
+)
+
+filegroup(
+    name = "slang_lib_external_headers",
+    srcs = glob([
+        SOURCES_PREFIX + "/external/**/*.h",
+        SOURCES_PREFIX + "/external/**/*.hpp",
+    ]),
+)
+
+filegroup(
+    name = "slang_lib_internal_include_headers",
+    srcs = glob([
+        SOURCES_PREFIX + "/include/**/*.h",
+    ]),
+)
+
+filegroup(
+    name = "slang_lib_internal_source_headers",
+    srcs = glob([
+        SOURCES_PREFIX + "/source/**/*.h",
+    ]),
+)
+
+filegroup(
+    name = "slang_ast_sources",
+    srcs = glob([
+        SOURCES_PREFIX + "/source/ast/**/*.cpp",
+        SOURCES_PREFIX + "/source/ast/**/*.h",
+    ]),
+)
+
+filegroup(
+    # Collect all the headers together for the main library
+    name = "slang_lib_headers",
+    srcs = [
+        ":slang_lib_external_headers",
+        ":slang_lib_generated_headers",
+        ":slang_lib_internal_include_headers",
+        ":slang_lib_internal_source_headers",
+    ],
+)
+
+cc_library(
+    name = "libsvlang",
+    srcs = [
+        "generated/AllSyntax.cpp",
+        "generated/DiagCode.cpp",
+        "generated/KnownSystemName.cpp",
+        "generated/SyntaxClone.cpp",
+        "generated/TokenKind.cpp",
+        SOURCES_PREFIX + "/source/analysis/AbstractFlowAnalysis.cpp",
+        SOURCES_PREFIX + "/source/analysis/AnalysisManager.cpp",
+        SOURCES_PREFIX + "/source/analysis/AnalyzedAssertion.cpp",
+        SOURCES_PREFIX + "/source/analysis/AnalyzedProcedure.cpp",
+        SOURCES_PREFIX + "/source/analysis/CaseDecisionDag.cpp",
+        SOURCES_PREFIX + "/source/analysis/ClockInference.cpp",
+        SOURCES_PREFIX + "/source/analysis/DataFlowAnalysis.cpp",
+        SOURCES_PREFIX + "/source/analysis/DriverTracker.cpp",
+        SOURCES_PREFIX + "/source/analysis/ValueDriver.cpp",
+        SOURCES_PREFIX + "/source/diagnostics/DiagnosticClient.cpp",
+        SOURCES_PREFIX + "/source/diagnostics/DiagnosticEngine.cpp",
+        SOURCES_PREFIX + "/source/diagnostics/Diagnostics.cpp",
+        SOURCES_PREFIX + "/source/diagnostics/JsonDiagnosticClient.cpp",
+        SOURCES_PREFIX + "/source/diagnostics/TextDiagnosticClient.cpp",
+        SOURCES_PREFIX + "/source/driver/Driver.cpp",
+        SOURCES_PREFIX + "/source/driver/SourceLoader.cpp",
+        SOURCES_PREFIX + "/source/numeric/ConstantValue.cpp",
+        SOURCES_PREFIX + "/source/numeric/SVInt.cpp",
+        SOURCES_PREFIX + "/source/numeric/Time.cpp",
+        SOURCES_PREFIX + "/source/parsing/Lexer.cpp",
+        SOURCES_PREFIX + "/source/parsing/LexerFacts.cpp",
+        SOURCES_PREFIX + "/source/parsing/NumberParser.cpp",
+        SOURCES_PREFIX + "/source/parsing/Parser.cpp",
+        SOURCES_PREFIX + "/source/parsing/ParserBase.cpp",
+        SOURCES_PREFIX + "/source/parsing/ParserMetadata.cpp",
+        SOURCES_PREFIX + "/source/parsing/Parser_expressions.cpp",
+        SOURCES_PREFIX + "/source/parsing/Parser_members.cpp",
+        SOURCES_PREFIX + "/source/parsing/Parser_statements.cpp",
+        SOURCES_PREFIX + "/source/parsing/Preprocessor.cpp",
+        SOURCES_PREFIX + "/source/parsing/Preprocessor_macros.cpp",
+        SOURCES_PREFIX + "/source/parsing/Preprocessor_pragmas.cpp",
+        SOURCES_PREFIX + "/source/parsing/Token.cpp",
+        SOURCES_PREFIX + "/source/syntax/SyntaxFacts.cpp",
+        SOURCES_PREFIX + "/source/syntax/SyntaxNode.cpp",
+        SOURCES_PREFIX + "/source/syntax/SyntaxPrinter.cpp",
+        SOURCES_PREFIX + "/source/syntax/SyntaxTree.cpp",
+        SOURCES_PREFIX + "/source/syntax/SyntaxVisitor.cpp",
+        SOURCES_PREFIX + "/source/text/CharInfo.cpp",
+        SOURCES_PREFIX + "/source/text/Glob.cpp",
+        SOURCES_PREFIX + "/source/text/Json.cpp",
+        SOURCES_PREFIX + "/source/text/SourceLocation.cpp",
+        SOURCES_PREFIX + "/source/text/SourceManager.cpp",
+        SOURCES_PREFIX + "/source/util/BumpAllocator.cpp",
+        SOURCES_PREFIX + "/source/util/CommandLine.cpp",
+        SOURCES_PREFIX + "/source/util/IntervalMap.cpp",
+        SOURCES_PREFIX + "/source/util/OS.cpp",
+        SOURCES_PREFIX + "/source/util/SmallVector.cpp",
+        SOURCES_PREFIX + "/source/util/String.cpp",
+        SOURCES_PREFIX + "/source/util/TimeTrace.cpp",
+        SOURCES_PREFIX + "/source/util/Util.cpp",
+        ":slang_ast_sources",
+        ":slang_lib_headers",
+        "//private/slang/version_info:VersionInfo.cpp",
+    ],
+    hdrs = [":slang_lib_internal_include_headers"],
+    copts = [
+        "-std=c++20",
+        "-fvisibility=hidden",
+        "-fvisibility-inlines-hidden",
+        "-fPIC",  # Position-independent code required for python bindings
+    ],
+    includes = [
+        "generated",
+        SOURCES_PREFIX + "/external",
+        SOURCES_PREFIX + "/include",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//private/slang/export_headers:slang_export_headers",
+        "@boost.unordered",
+        "@fmt",
+    ],
+    alwayslink = True,
+)
+
+# Slang driver - the main slang binary
+cc_binary(
+    name = "slang",
+    srcs = [
+        SOURCES_PREFIX + "/tools/driver/slang_main.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+# Slang-tidy linting tool
+
+cc_library(
+    name = "slang_tidy_lib",
+    srcs = [
+        SOURCES_PREFIX + "/tools/tidy/src/ASTHelperVisitors.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/TidyConfig.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/TidyConfigParser.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/AlwaysCombNamed.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/AlwaysCombNonBlocking.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/AlwaysFFBlocking.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/EnforceModuleInstantiationPrefix.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/EnforcePortPrefix.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/EnforcePortSuffix.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/GenerateNamed.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/NoDotStarInPortConnection.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/NoDotVarInPortConnection.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/NoImplicitPortNameInPortConnection.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/NoLegacyGenerate.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/NoOldAlwaysSyntax.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/style/OnlyANSIPortDecl.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/AlwaysFFAssignmentOutsideConditional.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/CastSignedIndex.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/NoLatchesOnDesign.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/OnlyAssignedOnReset.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/RegisterHasNoReset.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/UndrivenRange.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/UnusedSensitiveSignal.cpp",
+        SOURCES_PREFIX + "/tools/tidy/src/synthesis/XilinxDoNotCareValues.cpp",
+    ],
+    hdrs = glob([
+        SOURCES_PREFIX + "/tools/tidy/include/**/*.h",
+    ]),
+    copts = [
+        "-std=c++20",
+    ],
+    includes = [
+        SOURCES_PREFIX + "/tools/tidy/include",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libsvlang",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "slang-tidy",
+    srcs = [
+        SOURCES_PREFIX + "/tools/tidy/src/tidy.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":slang_tidy_lib",
+    ],
+)
+
+cc_binary(
+    name = "slang-hier",
+    srcs = [
+        SOURCES_PREFIX + "/tools/hier/hier.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+cc_library(
+    name = "slang_reflect_lib",
+    srcs = [
+        SOURCES_PREFIX + "/tools/reflect/src/SvEnum.cpp",
+        SOURCES_PREFIX + "/tools/reflect/src/SvLocalParam.cpp",
+        SOURCES_PREFIX + "/tools/reflect/src/SvStruct.cpp",
+        SOURCES_PREFIX + "/tools/reflect/src/SvType.cpp",
+        SOURCES_PREFIX + "/tools/reflect/src/SvTypeReflector.cpp",
+        SOURCES_PREFIX + "/tools/reflect/src/SvUnion.cpp",
+    ],
+    hdrs = glob([SOURCES_PREFIX + "/tools/reflect/include/**/*.h"]),
+    copts = [
+        "-std=c++20",
+    ],
+    includes = [SOURCES_PREFIX + "/tools/reflect/include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libsvlang",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "slang-reflect",
+    srcs = [
+        SOURCES_PREFIX + "/tools/reflect/src/reflect.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":slang_reflect_lib",
+    ],
+)
+
+cc_binary(
+    name = "rewriter",
+    srcs = [
+        SOURCES_PREFIX + "/tools/rewriter/rewriter.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+# TODO: run threadtest as a test if multithreading is ever enabled
+cc_binary(
+    name = "slang-threadtest",
+    srcs = [
+        SOURCES_PREFIX + "/tools/threadtest/threadtest.cpp",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fsanitize=thread",
+    ],
+    linkopts = [
+        "-fsanitize=thread",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libsvlang",
+    ],
+)
+
+# Add python bindings
+pybind_library(
+    name = "pyslang_bindings_lib",
+    srcs = [
+        SOURCES_PREFIX + "/bindings/python/AnalysisBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/ASTBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/CompBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/ExpressionBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/NumericBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/pyslang.cpp",
+        SOURCES_PREFIX + "/bindings/python/StatementBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/SymbolBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/SyntaxBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/TypeBindings.cpp",
+        SOURCES_PREFIX + "/bindings/python/UtilBindings.cpp",
+        # Generated
+        "generated/pyslang/PySyntaxBindings0.cpp",
+        "generated/pyslang/PySyntaxBindings1.cpp",
+        "generated/pyslang/PySyntaxBindings2.cpp",
+        "generated/pyslang/PySyntaxBindings3.cpp",
+    ],
+    hdrs = [
+        SOURCES_PREFIX + "/bindings/python/PyVisitors.h",
+        SOURCES_PREFIX + "/bindings/python/pyslang.h",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fPIC",
+    ],
+    defines = [
+        "VERSION_INFO={}".format(SLANG_VERSION),
+    ],
+    includes = [
+        SOURCES_PREFIX + "/bindings/python",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [":libsvlang"],
+)
+
+# Export sources to use in pyslang
+filegroup(
+    name = "pyslang_bindings_srcs",
+    srcs = [
+        SOURCES_PREFIX + "/bindings/python/pyslang.cpp",
+        SOURCES_PREFIX + "/bindings/python/pyslang.h",
+    ],
+    visibility = ["//:__subpackages__"],
+)

@@ -1,0 +1,121 @@
+--- BUILD.bazel
++++ BUILD.bazel
+@@ -1,6 +1,9 @@
+ load("@buildifier_prebuilt//:rules.bzl", "buildifier", "buildifier_test")
+-load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header", "gz_export_header")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
++load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header", "gz_export_header", "gz_include_header")
+ load("@rules_license//rules:license.bzl", "license")
++load("@rules_python//python:py_binary.bzl", "py_binary")
+
+ package(
+     default_applicable_licenses = [":license"],
+@@ -41,6 +44,19 @@ gz_configure_header(
+     package_xml = "package.xml",
+ )
+
++public_headers_no_gen = glob(
++    ["include/sdf/*.hh"],
++    exclude = ["include/sdf/sdf.hh"],
++)
++
++gz_include_header(
++    name = "Include",
++    out = "include/sdformat.hh",
++    hdrs = public_headers_no_gen + [
++        "include/sdf/config.hh",
++    ],
++)
++
+ py_binary(
+     name = "embed_sdf",
+     srcs = ["sdf/embedSdf.py"],
+@@ -93,18 +109,13 @@ cc_library(
+             "src/*_TEST.cc",
+         ],
+     ) + ["EmbeddedSdf.cc"],
+-    hdrs = glob(
+-        include = [
+-            "include/sdf/*.hh",
+-        ],
+-        exclude = [
+-            # Bazel does not generate top-level includes, so exclude the redirect
+-            "include/sdf/sdf.hh",
+-        ],
+-    ),
+-    data = [
+-        "sdf",
++    hdrs = public_headers_no_gen + [
++        "include/sdf/config.hh",
++        "include/sdf/sdf.hh",
++        "include/sdf/sdf_config.h",
++        "include/sdformat.hh",
+     ],
++    data = glob(["sdf/**"]),
+     defines = [
+         "CMAKE_INSTALL_RELATIVE_DATAROOTDIR=\\\"\\\"",
+         'SDF_SHARE_PATH=\\".\\"',
+@@ -116,7 +127,6 @@ cc_library(
+     ],
+     visibility = ["//visibility:public"],
+     deps = [
+-        ":Config",
+         ":Export",
+         ":urdf_parser",
+         "@gz-math",
+@@ -147,12 +157,20 @@ test_sources = glob(
+     cc_test(
+         name = src.replace("/", "_").replace(".cc", "").replace("src_", ""),
+         srcs = [src],
++        copts = [
++            # Some tests are for private headers
++            "-Wno-private-header",
++        ],
+         deps = [
+             ":sdformat",
+             "//test:test_utils",
+             "@googletest//:gtest",
+             "@googletest//:gtest_main",
++            "@gz-math",
++            "@gz-utils//:Environment",
+             "@gz-utils//:ExtraTestMacros",
++            "@gz-utils//:SuppressWarning",
++            "@tinyxml2",
+         ],
+     )
+     for src in test_sources
+@@ -177,6 +195,7 @@ cc_test(
+         "//test:test_utils",
+         "@googletest//:gtest",
+         "@googletest//:gtest_main",
++        "@tinyxml2",
+     ],
+ )
+
+@@ -191,7 +210,6 @@ cc_test(
+         "//test:sdf",
+     ],
+     deps = [
+-        ":Config",
+         ":sdformat",
+         "//test:test_utils",
+         "@googletest//:gtest",
+@@ -243,7 +261,6 @@ cc_test(
+         "//test:sdf",
+     ],
+     deps = [
+-        ":Config",
+         ":sdformat",
+         "//test:test_utils",
+         "@googletest//:gtest",
+
+--- test/BUILD.bazel
++++ test/BUILD.bazel
+@@ -1,4 +1,6 @@
+ load("@buildifier_prebuilt//:rules.bzl", "buildifier", "buildifier_test")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
+ load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header")
+
+ package(

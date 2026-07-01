@@ -1,0 +1,312 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..60e3a76
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,93 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
++CJSON_COPTS = select({
++    "@bazel_tools//src/conditions:darwin": [
++        "-std=c89",  # Standards compliance
++        "-Wc++-compat",  # C++ compatibility
++        "-fvisibility=hidden",  # Symbol visibility
++    ],
++    "@bazel_tools//src/conditions:linux": [
++        "-std=c89",  # Standards compliance
++        "-Wc++-compat",  # C++ compatibility
++        "-fstack-protector-strong",  # Security (GCC/Clang on Linux supports this)
++        "-fvisibility=hidden",  # Symbol visibility
++    ],
++    "@bazel_tools//src/conditions:windows": [
++        "/Za",  # Equivalent to -std=c89 (enforce ANSI C)
++        "/W3",  # Moderate warning level (instead of -Wc++-compat)
++        "/GS",  # Stack protection (equivalent to -fstack-protect-strong)
++    ],
++    "//conditions:default": [  # Used for baremetal
++        "-std=c89",  # Standards compliance
++        "-Wc++-compat",  # C++ compatibility
++    ],
++})
++
++genrule(
++    name = "copy_header",
++    srcs = ["cJSON.h"],
++    outs = ["include/cJSON.h"],
++    cmd = "cp $(SRCS) $(@)",
++)
++
++cc_library(
++    name = "cjson",
++    srcs = ["cJSON.c"],
++    hdrs = select({
++        # Windows requires to have header at root directory
++        "@bazel_tools//src/conditions:windows": ["cJSON.h", "include/cJSON.h"],
++        "//conditions:default": ["include/cJSON.h"],
++    }),
++    deps = [":copy_header"],
++    includes = ["include"],
++    copts = CJSON_COPTS + [
++        "-DCJSON_EXPORT_SYMBOLS",
++        "-DCJSON_API_VISIBILITY",
++    ],
++    linkopts = select({
++        "@bazel_tools//src/conditions:windows": [],
++        "//conditions:default": ["-lm"],  # Link math library on non-Windows
++    }),
++    visibility = ["//visibility:public"],
++)
++
++cc_library(
++    name = "cjson_utils",
++    srcs = ["cJSON_Utils.c"],
++    hdrs = ["cJSON_Utils.h"],
++    copts = CJSON_COPTS + [
++        "-DCJSON_EXPORT_SYMBOLS",
++        "-DCJSON_API_VISIBILITY",
++    ],
++    visibility = ["//visibility:public"],
++    deps = [":cjson"],
++)
++
++cc_library(
++    name = "cjson_tests",  # Some tests directly include the .c file
++    hdrs = ["cJSON.c"],
++    visibility = ["//tests:__pkg__"],
++)
++
++cc_test(
++    name = "cjson_test",
++    size = "small",
++    srcs = ["test.c"],
++    copts = CJSON_COPTS + select({
++        "@platforms//os:windows": [],
++        "//conditions:default": [
++            "-fno-sanitize=float-divide-by-zero",
++        ],
++    }),
++    deps = [":cjson"],
++)
++
++test_suite(
++    name = "all_tests",
++    tests = [
++        ":cjson_test",
++        "//tests:json_patch_tests",
++        "//tests:parse_examples",
++        "//tests:unity_tests",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..06f600d
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,14 @@
++"""
++Module: cjson
++Purpose: Provides the cjson library compileable as a Bazel target. Includes general and unity tests through Bazel
++Note: cjson_utils target is also available
++"""
++
++module(
++    name = "cjson",
++    version = "1.7.19-0.20240923110858-12c4bf1986c2.bcr.3",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "rules_cc", version = "0.1.1")
++bazel_dep(name = "platforms", version = "0.0.11")
+diff --git a/tests/BUILD.bazel b/tests/BUILD.bazel
+new file mode 100644
+index 0000000..baed64d
+--- /dev/null
++++ b/tests/BUILD.bazel
+@@ -0,0 +1,70 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++load(":tools.bzl", "test_set")
++
++DEPS = [
++    "//:cjson",
++    "//:cjson_tests",
++    "//:cjson_utils",
++    "//tests/unity",
++    "//tests/unity:unity-examples",
++] + select({
++    "@platforms//os:windows": [":unity-win"],
++    "//conditions:default": [],
++})
++
++DATA = [
++    ":patch-test_inputs",
++    ":test_inputs",
++]
++
++HDRS = glob(["*.h"])
++
++cc_library(
++    name = "unity-win",
++    srcs = ["unity_setup.c"],
++)
++
++filegroup(
++    name = "test_inputs",
++    srcs = glob(["inputs/*"]),
++    visibility = ["//tests:__pkg__"],
++)
++
++filegroup(
++    name = "patch-test_inputs",
++    srcs = glob(["json-patch-tests/*.json"]),
++    visibility = ["//tests:__pkg__"],
++)
++
++test_suite(
++    name = "unity_tests",
++    tests = test_set(
++        srcs = HDRS,
++        data = DATA,
++        test_files = glob(
++            ["*.c"],
++            exclude = [
++                "unity_setup.c",
++                "parse_examples.c",
++                "json_patch_tests.c",
++            ],
++        ),
++        deps = DEPS,
++    ),
++)
++
++cc_test(
++    name = "parse_examples",
++    srcs = HDRS + ["parse_examples.c"],
++    copts = ['-DTEST_DIR_PATH=\\"tests/inputs/\\"'],
++    data = DATA,
++    deps = DEPS,
++)
++
++cc_test(
++    name = "json_patch_tests",
++    srcs = HDRS + ["json_patch_tests.c"],
++    copts = ['-DTEST_DIR_PATH=\\"tests/json-patch-tests/\\"'],
++    data = DATA,
++    deps = DEPS,
++)
+diff --git a/tests/json_patch_tests.c b/tests/json_patch_tests.c
+index 7c3d6ae..731da6e 100644
+--- a/tests/json_patch_tests.c
++++ b/tests/json_patch_tests.c
+@@ -31,0 +32,4 @@
++#ifndef TEST_DIR_PATH
++#define TEST_DIR_PATH "json-patch-tests/"
++#endif
++
+@@ -185 +189 @@ static void cjson_utils_should_pass_json_patch_test_tests(void)
+-    cJSON *tests = parse_test_file("json-patch-tests/tests.json");
++    cJSON *tests = parse_test_file(TEST_DIR_PATH "tests.json");
+@@ -202 +206 @@ static void cjson_utils_should_pass_json_patch_test_spec_tests(void)
+-    cJSON *tests = parse_test_file("json-patch-tests/spec_tests.json");
++    cJSON *tests = parse_test_file(TEST_DIR_PATH "spec_tests.json");
+@@ -219 +223 @@ static void cjson_utils_should_pass_json_patch_test_cjson_utils_tests(void)
+-    cJSON *tests = parse_test_file("json-patch-tests/cjson-utils-tests.json");
++    cJSON *tests = parse_test_file(TEST_DIR_PATH "cjson-utils-tests.json");
+diff --git a/tests/parse_examples.c b/tests/parse_examples.c
+index d35d6cf..1e12e89 100644
+--- a/tests/parse_examples.c
++++ b/tests/parse_examples.c
+@@ -60,0 +61 @@ static void do_test(const char *test_name)
++#ifndef TEST_DIR_PATH
+@@ -61,0 +63 @@ static void do_test(const char *test_name)
++#endif
+@@ -139 +141,6 @@ static void file_test6_should_not_be_parsed(void)
+-    test6 = read_file("inputs/test6");
++    char *test_path = NULL;
++    const char * test_name = "test6";
++    test_path = (char*)malloc(sizeof(TEST_DIR_PATH) + strlen(test_name));
++    TEST_ASSERT_NOT_NULL_MESSAGE(test_path, "Failed to allocate test_path buffer.");
++    sprintf(test_path, TEST_DIR_PATH"%s", test_name);
++    test6 = read_file(test_path);
+diff --git a/tests/tools.bzl b/tests/tools.bzl
+new file mode 100644
+index 0000000..6098b6c
+--- /dev/null
++++ b/tests/tools.bzl
+@@ -0,0 +1,44 @@
++"""Tool for generating C++ test targets efficiently using Bazel rules.
++"""
++
++load("@rules_cc//cc:defs.bzl", "cc_test")
++
++def test_set(
++        test_files = None,
++        size = "small",
++        srcs = [],
++        file_extensions = ".c",
++        **kwargs):
++    """Creates C++ test targets from a list of test files.
++
++    Args:
++        test_files: List of test file paths to process. Defaults to None.
++        size: Test size parameter for cc_test rule. Defaults to "small".
++        srcs: Additional source files to include in all tests. Defaults to empty list.
++        file_extensions: Expected extension of test files. Defaults to ".cpp".
++        **kwargs: Additional arguments to pass to cc_test rule.
++
++    Returns:
++        List of test target names (e.g., [":test1", ":test2"]).
++
++    Note:
++        Only files ending with the specified file_extensions are processed.
++        Each test target is created with the filename (without extension) as its name.
++    """
++    test_targets = []
++
++    # Process positive tests
++    for file in test_files:
++        if not file.endswith(file_extensions):
++            continue
++        name = file[:-len(file_extensions)]
++        target = ":" + name
++        cc_test(
++            name = name,
++            size = size,
++            srcs = srcs + [file],
++            **kwargs
++        )
++        test_targets.append(target)
++
++    return test_targets
+diff --git a/tests/unity/BUILD.bazel b/tests/unity/BUILD.bazel
+new file mode 100644
+index 0000000..e8c4d59
+--- /dev/null
++++ b/tests/unity/BUILD.bazel
+@@ -0,0 +1,27 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++cc_library(
++    name = "unity",
++    srcs = glob(["src/*.c"]),
++    hdrs = glob(["src/*.h"]),
++    copts = select({
++        "@platforms//os:windows": [
++            "/wd4100",  # Disable warning C4100: unreferenced formal parameter (similar to -Wno-error)
++            "/wd4065",  # Disable warning C4065: switch statement contains default but no case (similar to -Wno-switch-enum)
++        ],
++        "//conditions:default": [
++            "-fvisibility=default",
++            "-fno-sanitize=float-divide-by-zero",
++            "-Wno-switch-enum",
++        ],
++    }),
++    includes = ["src"],
++    visibility = ["//tests:__pkg__"],
++    deps = [":unity-examples"],
++)
++
++cc_library(
++    name = "unity-examples",
++    hdrs = ["examples/unity_config.h"],
++    visibility = ["//tests:__pkg__"],
++)

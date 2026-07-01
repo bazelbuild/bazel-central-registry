@@ -1,0 +1,1004 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+###############################################################################
+# Feature flags
+###############################################################################
+
+bool_flag(
+    name = "with_ctrl_shell",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "ctrl_shell_enabled",
+    flag_values = {":with_ctrl_shell": "True"},
+)
+
+bool_flag(
+    name = "with_srv",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "srv_enabled",
+    flag_values = {":with_srv": "True"},
+)
+
+bool_flag(
+    name = "with_http_api",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "http_api_enabled",
+    flag_values = {":with_http_api": "True"},
+)
+
+bool_flag(
+    name = "with_systemd",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "systemd_enabled",
+    flag_values = {":with_systemd": "True"},
+)
+
+bool_flag(
+    name = "with_dlt",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "dlt_enabled",
+    flag_values = {":with_dlt": "True"},
+)
+
+bool_flag(
+    name = "with_argon2",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "argon2_enabled",
+    flag_values = {":with_argon2": "True"},
+)
+
+###############################################################################
+# Common build settings
+###############################################################################
+
+COMMON_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+    ],
+    "//conditions:default": [
+        "-std=gnu99",
+        "-w",
+    ],
+})
+
+COMMON_DEFINES = [
+    "CMAKE",
+    'VERSION=\\"2.1.2\\"',
+    "WITH_TLS",
+    "WITH_TLS_PSK",
+    "OPENSSL_API_COMPAT=0x10100000L",
+    "WITH_SOCKS",
+    "WITH_MEMORY_TRACKING",
+] + select({
+    "@platforms//os:windows": [
+        "_CRT_SECURE_NO_WARNINGS",
+        "_CRT_NONSTDC_NO_DEPRECATE",
+    ],
+    "//conditions:default": [
+        "WITH_UNIX_SOCKETS",
+    ],
+})
+
+BROKER_DEFINES = COMMON_DEFINES + [
+    "WITH_BROKER",
+    "WITH_BRIDGE",
+    "WITH_PERSISTENCE",
+    "WITH_SYS_TREE",
+    "WITH_CONTROL",
+    "WITH_WEBSOCKETS=WS_IS_BUILTIN",
+] + select({
+    "@platforms//os:linux": ["WITH_EPOLL"],
+    "@platforms//os:macos": ["WITH_KQUEUE"],
+    "//conditions:default": [],
+}) + select({
+    ":http_api_enabled": ["WITH_HTTP_API"],
+    "//conditions:default": [],
+}) + select({
+    ":systemd_enabled": ["WITH_SYSTEMD"],
+    "//conditions:default": [],
+}) + select({
+    ":dlt_enabled": ["WITH_DLT"],
+    "//conditions:default": [],
+})
+
+COMMON_INCLUDES = [
+    "common",
+    "deps",
+    "include",
+    "lib",
+    "libcommon",
+    "src",
+]
+
+PLUGIN_LINKOPTS = select({
+    "@platforms//os:macos": [
+        "-undefined",
+        "dynamic_lookup",
+    ],
+    "//conditions:default": [],
+})
+
+# Example plugin names (used by broker runfiles and example plugin targets)
+EXAMPLE_PLUGINS = {
+    "mosquitto_add_properties": "plugins/examples/add-properties/mosquitto_add_properties.c",
+    "mosquitto_auth_by_env": "plugins/examples/auth-by-env/mosquitto_auth_by_env.c",
+    "mosquitto_auth_by_ip": "plugins/examples/auth-by-ip/mosquitto_auth_by_ip.c",
+    "mosquitto_client_lifetime_stats": "plugins/examples/client-lifetime-stats/mosquitto_client_lifetime_stats.c",
+    "mosquitto_client_properties": "plugins/examples/client-properties/mosquitto_client_properties.c",
+    "mosquitto_connection_state": "plugins/examples/connection-state/mosquitto_connection_state.c",
+    "mosquitto_delayed_auth": "plugins/examples/delayed-auth/mosquitto_delayed_auth.c",
+    "mosquitto_deny_protocol_version": "plugins/examples/deny-protocol-version/mosquitto_deny_protocol_version.c",
+    "mosquitto_force_retain": "plugins/examples/force-retain/mosquitto_force_retain.c",
+    "mosquitto_limit_subscription_qos": "plugins/examples/limit-subscription-qos/mosquitto_limit_subscription_qos.c",
+    "mosquitto_message_timestamp": "plugins/examples/message-timestamp/mosquitto_message_timestamp.c",
+    "mosquitto_payload_ban": "plugins/examples/payload-ban/mosquitto_payload_ban.c",
+    "mosquitto_payload_modification": "plugins/examples/payload-modification/mosquitto_payload_modification.c",
+    "mosquitto_payload_size_stats": "plugins/examples/payload-size-stats/mosquitto_payload_size_stats.c",
+    "mosquitto_plugin_event_stats": "plugins/examples/plugin-event-stats/mosquitto_plugin_event_stats.c",
+    "mosquitto_print_ip_on_publish": "plugins/examples/print-ip-on-publish/mosquitto_print_ip_on_publish.c",
+    "mosquitto_tick_interval": "plugins/examples/tick-interval/mosquitto_tick_interval.c",
+    "mosquitto_topic_hierarchy_flatten": "plugins/examples/topic-hierarchy-flatten/mosquitto_topic_hierarchy_flatten.c",
+    "mosquitto_topic_jail": "plugins/examples/topic-jail/mosquitto_topic_jail.c",
+    "mosquitto_topic_modification": "plugins/examples/topic-modification/mosquitto_topic_modification.c",
+    "mosquitto_wildcard_temp": "plugins/examples/wildcard-temp/mosquitto_wildcard_temp.c",
+}
+
+###############################################################################
+# config_header
+###############################################################################
+
+copy_file(
+    name = "config_header_gen",
+    src = "config.h",
+    out = "config_inc/config.h",
+)
+
+cc_library(
+    name = "config_header",
+    hdrs = ["config_inc/config.h"],
+    includes = ["config_inc"],
+    visibility = ["//:__subpackages__"],
+)
+
+###############################################################################
+# cjson compatibility
+#
+# BCR cjson exposes <cJSON.h> but mosquitto expects <cjson/cJSON.h>.
+# Copy the upstream header into a cjson/ subdirectory.
+###############################################################################
+
+write_file(
+    name = "gen_cjson_compat",
+    out = "cjson_compat_inc/cjson/cJSON.h",
+    content = [
+        "#include <cJSON.h>",
+        "",
+    ],
+)
+
+cc_library(
+    name = "cjson_compat",
+    hdrs = ["cjson_compat_inc/cjson/cJSON.h"],
+    includes = ["cjson_compat_inc"],
+    visibility = ["//:__subpackages__"],
+    deps = ["@cjson"],
+)
+
+###############################################################################
+# Stub targets for non-BCR optional dependencies
+#
+# These always fail to build with a message directing users to provide the
+# real library or disable the feature.
+###############################################################################
+
+cc_library(
+    name = "libsystemd",
+    # No upstream Bazel module for libsystemd.
+    # Required only for systemd notify support on Linux.
+    target_compatible_with = ["@platforms//:incompatible"],
+)
+
+cc_library(
+    name = "libdlt",
+    # No upstream Bazel module for automotive-dlt.
+    # Required only for DLT logging (WITH_DLT).
+    target_compatible_with = ["@platforms//:incompatible"],
+)
+
+cc_library(
+    name = "libargon2",
+    # No upstream Bazel module for argon2.
+    # Required only for Argon2 password hashing support.
+    target_compatible_with = ["@platforms//:incompatible"],
+)
+
+###############################################################################
+# Bundled dependencies (uthash, utlist, picohttpparser)
+###############################################################################
+
+cc_library(
+    name = "bundled_deps",
+    hdrs = [
+        "deps/uthash.h",
+        "deps/utlist.h",
+    ],
+    includes = ["deps"],
+    visibility = ["//:__subpackages__"],
+)
+
+cc_library(
+    name = "picohttpparser",
+    srcs = ["deps/picohttpparser/picohttpparser.c"],
+    hdrs = ["deps/picohttpparser/picohttpparser.h"],
+    includes = ["deps/picohttpparser"],
+)
+
+###############################################################################
+# mosquitto_common -- shared utility library (libcommon/)
+###############################################################################
+
+cc_library(
+    name = "mosquitto_common",
+    srcs = glob(["libcommon/*.c"]),
+    hdrs = glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+        "libcommon/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = [
+        "include",
+        "libcommon",
+    ],
+    local_defines = COMMON_DEFINES + select({
+        ":argon2_enabled": ["WITH_ARGON2"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":bundled_deps",
+        ":cjson_compat",
+        ":config_header",
+        "@openssl//:ssl",
+    ] + select({
+        ":argon2_enabled": [":libargon2"],
+        "//conditions:default": [],
+    }),
+)
+
+###############################################################################
+# libmosquitto -- MQTT client library (lib/)
+###############################################################################
+
+cc_library(
+    name = "mosquitto",
+    srcs = glob(
+        [
+            "lib/*.c",
+            "lib/*.h",
+        ],
+    ),
+    hdrs = glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = [
+        "common",
+        "include",
+        "lib",
+        "libcommon",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:ws2_32.lib",
+        ],
+        "//conditions:default": [
+            "-lpthread",
+        ],
+    }),
+    local_defines = COMMON_DEFINES + [
+        "WITH_WEBSOCKETS=WS_IS_BUILTIN",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["WITH_THREADING"],
+    }) + select({
+        ":srv_enabled": ["WITH_SRV"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":bundled_deps",
+        ":cjson_compat",
+        ":config_header",
+        ":mosquitto_common",
+        ":picohttpparser",
+        "@openssl//:ssl",
+    ] + select({
+        ":srv_enabled": ["@c-ares//:ares"],
+        "//conditions:default": [],
+    }),
+)
+
+###############################################################################
+# mosquitto_broker -- MQTT broker executable (src/)
+#
+# The broker recompiles select lib/ sources with WITH_BROKER defined rather
+# than linking against libmosquitto.
+###############################################################################
+
+BROKER_LIB_SRCS = [
+    "lib/alias_mosq.c",
+    "lib/handle_ping.c",
+    "lib/handle_pubackcomp.c",
+    "lib/handle_pubrec.c",
+    "lib/handle_pubrel.c",
+    "lib/handle_suback.c",
+    "lib/handle_unsuback.c",
+    "lib/net_mosq.c",
+    "lib/net_mosq_ocsp.c",
+    "lib/net_ws.c",
+    "lib/packet_datatypes.c",
+    "lib/packet_mosq.c",
+    "lib/property_mosq.c",
+    "lib/send_connect.c",
+    "lib/send_disconnect.c",
+    "lib/send_mosq.c",
+    "lib/send_publish.c",
+    "lib/send_subscribe.c",
+    "lib/send_unsubscribe.c",
+    "lib/tls_mosq.c",
+    "lib/util_mosq.c",
+    "lib/will_mosq.c",
+]
+
+cc_binary(
+    name = "mosquitto_broker",
+    srcs = glob([
+        "src/*.c",
+        "src/*.h",
+        "lib/*.h",
+        "common/*.h",
+    ]) + BROKER_LIB_SRCS + [
+        "common/json_help.c",
+        "include/mosquitto_broker.h",
+        "plugins/acl-file/acl_check.c",
+        "plugins/acl-file/acl_parse.c",
+        "plugins/password-file/password_check.c",
+        "plugins/password-file/password_parse.c",
+    ],
+    copts = COMMON_COPTS,
+    data = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            ":mosquitto_acl_file",
+            ":mosquitto_dynamic_security",
+            ":mosquitto_password_file",
+            ":mosquitto_persist_sqlite",
+            ":mosquitto_sparkplug_aware",
+        ] + [":" + name for name in EXAMPLE_PLUGINS],
+    }),
+    includes = COMMON_INCLUDES,
+    linkopts = select({
+        "@platforms//os:windows": ["-DEFAULTLIB:ws2_32.lib"],
+        "//conditions:default": [
+            "-ldl",
+            "-lm",
+            "-lpthread",
+        ],
+    }),
+    local_defines = BROKER_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bundled_deps",
+        ":cjson_compat",
+        ":config_header",
+        ":mosquitto_common",
+        ":picohttpparser",
+        "@openssl//:ssl",
+    ] + select({
+        ":http_api_enabled": ["@libmicrohttpd"],
+        "//conditions:default": [],
+    }) + select({
+        ":systemd_enabled": [":libsystemd"],
+        "//conditions:default": [],
+    }) + select({
+        ":dlt_enabled": [":libdlt"],
+        "//conditions:default": [],
+    }),
+)
+
+###############################################################################
+# Client tools
+###############################################################################
+
+CLIENT_SHARED_SRCS = glob(["client/*.h"]) + [
+    "client/client_props.c",
+    "client/client_shared.c",
+]
+
+CLIENT_COPTS = COMMON_COPTS
+
+CLIENT_DEFINES = COMMON_DEFINES + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["WITH_THREADING"],
+}) + select({
+    ":srv_enabled": ["WITH_SRV"],
+    "//conditions:default": [],
+})
+
+CLIENT_DEPS = [
+    ":cjson_compat",
+    ":config_header",
+    ":mosquitto",
+    ":mosquitto_common",
+    "@openssl//:ssl",
+]
+
+CLIENT_LINKOPTS = select({
+    "@platforms//os:windows": ["-DEFAULTLIB:ws2_32.lib"],
+    "//conditions:default": [],
+})
+
+cc_binary(
+    name = "mosquitto_pub",
+    srcs = CLIENT_SHARED_SRCS + [
+        "client/pub_client.c",
+        "client/pub_shared.c",
+    ],
+    copts = CLIENT_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = CLIENT_LINKOPTS,
+    local_defines = CLIENT_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = CLIENT_DEPS,
+)
+
+cc_binary(
+    name = "mosquitto_sub",
+    srcs = CLIENT_SHARED_SRCS + [
+        "client/sub_client.c",
+        "client/sub_client_output.c",
+    ],
+    copts = CLIENT_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = CLIENT_LINKOPTS,
+    local_defines = CLIENT_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = CLIENT_DEPS,
+)
+
+cc_binary(
+    name = "mosquitto_rr",
+    srcs = CLIENT_SHARED_SRCS + [
+        "client/pub_shared.c",
+        "client/rr_client.c",
+        "client/sub_client_output.c",
+    ],
+    copts = CLIENT_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = CLIENT_LINKOPTS,
+    local_defines = CLIENT_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = CLIENT_DEPS,
+)
+
+###############################################################################
+# Apps
+###############################################################################
+
+cc_binary(
+    name = "mosquitto_passwd",
+    srcs = [
+        "apps/mosquitto_passwd/get_password.c",
+        "apps/mosquitto_passwd/get_password.h",
+        "apps/mosquitto_passwd/mosquitto_passwd.c",
+    ],
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    local_defines = COMMON_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config_header",
+        ":mosquitto_common",
+        "@openssl//:ssl",
+    ],
+)
+
+cc_binary(
+    name = "mosquitto_ctrl",
+    srcs = glob(["apps/mosquitto_ctrl/*.h"]) + [
+        "apps/mosquitto_ctrl/broker.c",
+        "apps/mosquitto_ctrl/client.c",
+        "apps/mosquitto_ctrl/dynsec.c",
+        "apps/mosquitto_ctrl/dynsec_client.c",
+        "apps/mosquitto_ctrl/dynsec_group.c",
+        "apps/mosquitto_ctrl/dynsec_role.c",
+        "apps/mosquitto_ctrl/mosquitto_ctrl.c",
+        "apps/mosquitto_ctrl/options.c",
+        "apps/mosquitto_passwd/get_password.c",
+        "apps/mosquitto_passwd/get_password.h",
+        "common/json_help.c",
+        "common/json_help.h",
+        "common/lib_load.h",
+        "plugins/dynamic-security/dynamic_security.h",
+    ] + select({
+        ":ctrl_shell_enabled": [
+            "//:ctrl_shell_io_srcs",
+            "//:ctrl_shell_srcs",
+        ],
+        "//conditions:default": [],
+    }),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES + [
+        "apps/mosquitto_ctrl",
+        "apps/mosquitto_passwd",
+        "plugins/common",
+        "plugins/dynamic-security",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": ["-DEFAULTLIB:ws2_32.lib"],
+        "//conditions:default": [
+            "-ldl",
+            "-lpthread",
+        ],
+    }),
+    local_defines = COMMON_DEFINES + select({
+        ":ctrl_shell_enabled": [
+            "WITH_CTRL_SHELL",
+            "WITH_READLINE",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bundled_deps",
+        ":cjson_compat",
+        ":config_header",
+        ":mosquitto",
+        ":mosquitto_common",
+        "@openssl//:ssl",
+    ] + select({
+        ":ctrl_shell_enabled": ["@readline"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "mosquitto_db_dump",
+    srcs = [
+        "apps/db_dump/db_dump.c",
+        "apps/db_dump/db_dump.h",
+        "apps/db_dump/json.c",
+        "apps/db_dump/print.c",
+        "apps/db_dump/stubs.c",
+        "common/json_help.c",
+        "common/json_help.h",
+        "lib/packet_datatypes.c",
+        "lib/property_mosq.c",
+        "src/persist_read.c",
+        "src/persist_read_v234.c",
+        "src/persist_read_v5.c",
+        "src/topic_tok.c",
+    ] + glob([
+        "lib/*.h",
+        "src/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    local_defines = COMMON_DEFINES + [
+        "WITH_BROKER",
+        "WITH_PERSISTENCE",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bundled_deps",
+        ":cjson_compat",
+        ":config_header",
+        ":mosquitto_common",
+        "@openssl//:ssl",
+    ],
+)
+
+cc_binary(
+    name = "mosquitto_signal",
+    srcs = [
+        "apps/mosquitto_signal/mosquitto_signal.c",
+        "apps/mosquitto_signal/mosquitto_signal.h",
+    ] + select({
+        "@platforms//os:windows": ["apps/mosquitto_signal/signal_windows.c"],
+        "//conditions:default": ["apps/mosquitto_signal/signal_unix.c"],
+    }),
+    copts = COMMON_COPTS,
+    includes = [
+        "include",
+        "lib",
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":config_header"],
+)
+
+###############################################################################
+# Production plugins -- shared libraries loaded by the broker at runtime
+###############################################################################
+
+# acl-file (sources also compiled into broker, standalone plugin for dynamic loading)
+cc_binary(
+    name = "mosquitto_acl_file",
+    srcs = [
+        "plugins/acl-file/acl_check.c",
+        "plugins/acl-file/acl_parse.c",
+        "plugins/acl-file/plugin.c",
+    ] + glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+        "src/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = PLUGIN_LINKOPTS,
+    linkshared = True,
+    local_defines = COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config_header",
+        ":mosquitto_common",
+    ],
+)
+
+# password-file
+cc_binary(
+    name = "mosquitto_password_file",
+    srcs = [
+        "plugins/password-file/password_check.c",
+        "plugins/password-file/password_parse.c",
+        "plugins/password-file/plugin.c",
+    ] + glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+        "src/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = PLUGIN_LINKOPTS,
+    linkshared = True,
+    local_defines = COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config_header",
+        ":mosquitto_common",
+    ],
+)
+
+# dynamic-security
+cc_binary(
+    name = "mosquitto_dynamic_security",
+    srcs = glob([
+        "plugins/dynamic-security/*.c",
+        "plugins/dynamic-security/*.h",
+    ]) + [
+        "common/json_help.c",
+        "common/json_help.h",
+    ] + glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+        "lib/*.h",
+        "src/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = PLUGIN_LINKOPTS,
+    linkshared = True,
+    local_defines = COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cjson_compat",
+        ":config_header",
+        ":mosquitto_common",
+        "@openssl//:ssl",
+    ] + select({
+        ":argon2_enabled": [":libargon2"],
+        "//conditions:default": [],
+    }),
+)
+
+# sparkplug-aware
+cc_binary(
+    name = "mosquitto_sparkplug_aware",
+    srcs = glob([
+        "plugins/sparkplug-aware/*.c",
+        "plugins/sparkplug-aware/*.h",
+    ]) + glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = PLUGIN_LINKOPTS,
+    linkshared = True,
+    local_defines = COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cjson_compat",
+        ":config_header",
+        "@openssl//:ssl",
+    ],
+)
+
+# persist-sqlite
+cc_binary(
+    name = "mosquitto_persist_sqlite",
+    srcs = glob([
+        "plugins/persist-sqlite/*.c",
+        "plugins/persist-sqlite/*.h",
+    ]) + [
+        "common/json_help.c",
+        "common/json_help.h",
+    ] + glob([
+        "include/*.h",
+        "include/mosquitto/*.h",
+    ]),
+    copts = COMMON_COPTS,
+    includes = COMMON_INCLUDES,
+    linkopts = PLUGIN_LINKOPTS,
+    linkshared = True,
+    local_defines = COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cjson_compat",
+        ":config_header",
+        ":mosquitto_common",
+        "@sqlite3",
+    ],
+)
+
+# Example plugins -- each is a single .c file
+EXAMPLE_PLUGIN_HDRS = glob([
+    "include/*.h",
+    "include/mosquitto/*.h",
+])
+
+[
+    cc_binary(
+        name = name,
+        srcs = [src] + EXAMPLE_PLUGIN_HDRS,
+        copts = COMMON_COPTS,
+        includes = COMMON_INCLUDES,
+        linkopts = PLUGIN_LINKOPTS,
+        linkshared = True,
+        local_defines = COMMON_DEFINES,
+        target_compatible_with = select({
+            "@platforms//os:windows": ["@platforms//:incompatible"],
+            "//conditions:default": [],
+        }),
+        visibility = ["//visibility:public"],
+        deps = [
+            ":bundled_deps",
+            ":config_header",
+            ":mosquitto_common",
+            "@openssl//:ssl",
+        ],
+    )
+    for name, src in EXAMPLE_PLUGINS.items()
+]
+
+###############################################################################
+# Internal headers exposed for test compilation.
+#
+# Unit tests compile source files with custom defines, so they need access to
+# internal headers without linking the production libraries.
+###############################################################################
+
+cc_library(
+    name = "test_support_hdrs",
+    hdrs = glob([
+        "lib/*.h",
+        "src/*.h",
+        "common/*.h",
+        "libcommon/*.h",
+        "include/*.h",
+        "include/mosquitto/*.h",
+        "apps/mosquitto_ctrl/*.h",
+    ]) + [
+        "deps/uthash.h",
+        "deps/utlist.h",
+    ],
+    includes = [
+        "apps/mosquitto_ctrl",
+        "common",
+        "deps",
+        "include",
+        "lib",
+        "libcommon",
+        "src",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+###############################################################################
+# Filegroups -- source files compiled by //test targets with custom defines
+###############################################################################
+
+filegroup(
+    name = "lib_packet_srcs",
+    srcs = [
+        "lib/packet_datatypes.c",
+        "lib/packet_mosq.c",
+        "lib/property_mosq.c",
+        "lib/util_mosq.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "lib_data_util_srcs",
+    srcs = [
+        "lib/packet_datatypes.c",
+        "lib/property_mosq.c",
+        "lib/util_mosq.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "lib_data_srcs",
+    srcs = [
+        "lib/packet_datatypes.c",
+        "lib/property_mosq.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "broker_core_test_srcs",
+    srcs = [
+        "src/database.c",
+        "src/topic_tok.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "broker_persist_read_srcs",
+    srcs = [
+        "src/persist_read.c",
+        "src/persist_read_v234.c",
+        "src/persist_read_v5.c",
+        "src/retain.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "broker_persist_write_srcs",
+    srcs = [
+        "src/persist_write.c",
+        "src/persist_write_v5.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "broker_subs_src",
+    srcs = ["src/subs.c"],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "broker_bridge_src",
+    srcs = ["src/bridge_topic.c"],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "broker_keepalive_src",
+    srcs = ["src/keepalive.c"],
+    visibility = ["//:__subpackages__"],
+)
+
+# .c files that are #include'd by unit tests rather than compiled separately
+cc_library(
+    name = "test_textual_srcs",
+    textual_hdrs = [
+        "lib/tls_mosq.c",
+        "src/keepalive.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+write_file(
+    name = "editline_compat_gen",
+    out = "editline_compat/editline/readline.h",
+    content = [
+        "#ifndef EDITLINE_COMPAT_H",
+        "#define EDITLINE_COMPAT_H",
+        "#include <readline/readline.h>",
+        "#ifdef __cplusplus",
+        "extern \"C\" {",
+        "#endif",
+        "extern int add_history(const char *);",
+        "extern void clear_history(void);",
+        "#ifdef __cplusplus",
+        "}",
+        "#endif",
+        "#endif",
+    ],
+)
+
+cc_library(
+    name = "editline_compat",
+    hdrs = ["editline_compat/editline/readline.h"],
+    includes = ["editline_compat"],
+    visibility = ["//:__subpackages__"],
+    deps = ["@readline"],
+)
+
+filegroup(
+    name = "common_json_srcs",
+    srcs = ["common/json_help.c"],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "ctrl_shell_srcs",
+    srcs = [
+        "apps/mosquitto_ctrl/ctrl_shell.c",
+        "apps/mosquitto_ctrl/ctrl_shell.h",
+        "apps/mosquitto_ctrl/ctrl_shell_broker.c",
+        "apps/mosquitto_ctrl/ctrl_shell_client.c",
+        "apps/mosquitto_ctrl/ctrl_shell_completion_tree.c",
+        "apps/mosquitto_ctrl/ctrl_shell_dynsec.c",
+        "apps/mosquitto_ctrl/ctrl_shell_post_connect.c",
+        "apps/mosquitto_ctrl/ctrl_shell_pre_connect.c",
+        "apps/mosquitto_ctrl/ctrl_shell_printf.c",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "ctrl_shell_io_srcs",
+    srcs = ["apps/mosquitto_ctrl/ctrl_shell_io.c"],
+    visibility = ["//:__subpackages__"],
+)

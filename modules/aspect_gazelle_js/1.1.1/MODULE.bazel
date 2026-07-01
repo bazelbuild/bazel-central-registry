@@ -1,0 +1,72 @@
+module(
+    name = "aspect_gazelle_js",
+    version = "1.1.1",
+)
+
+bazel_dep(name = "bazel_lib", version = "3.0.0")
+bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "rules_rs", version = "0.0.83")
+bazel_dep(name = "gazelle", version = "0.51.3")  # must match go.mod
+bazel_dep(name = "with_cfg.bzl", version = "0.14.6")
+
+# Go modules
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(go_deps, "com_github_aspect_build_aspect_gazelle_common", "com_github_bazelbuild_buildtools", "com_github_emirpasic_gods_v2", "com_github_goexlib_jsonc", "com_github_masterminds_semver_v3", "in_gopkg_yaml_v3")
+
+# Rust toolchain + crates for the oxc-based JS/TS parser (//crates/js-parser),
+# linked into the parser go_library via cgo. Kept non-dev so the toolchain and
+# vendored crates resolve when this module is consumed by another root module
+# (e.g. //runner builds @aspect_gazelle_js//parser transitively).
+rust_toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
+rust_toolchains.toolchain(
+    edition = "2021",
+    version = "1.96.0",
+)
+use_repo(rust_toolchains, "default_rust_toolchains")
+
+register_toolchains("@default_rust_toolchains//:all")
+
+rust_crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+rust_crate.from_cargo(
+    name = "aspect_js_parser_crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+    ],
+)
+use_repo(rust_crate, "aspect_js_parser_crates")
+
+# Hermetic LLVM C/C++ toolchain used to build the Rust static library and link
+# it via cgo. Registered non-dev so consumers of this module (e.g. //runner)
+# inherit both the LLVM and Rust toolchain registrations and need only set the
+# build flags from tools/rust.bazelrc — no toolchain wiring in their MODULE.
+bazel_dep(name = "llvm", version = "0.8.3")
+
+register_toolchains("@llvm//toolchain:all")
+
+####### Dev dependencies ########
+
+# Used for generating code via nodejs
+bazel_dep(name = "aspect_rules_js", version = "3.0.3", dev_dependency = True)
+
+# Go SDK version which can only be defined in a root MODULE
+go_sdk2 = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk2.nogo(nogo = "@aspect_gazelle//tools/nogo")
+go_sdk2.from_file(
+    name = "go_sdk",
+    go_mod = "//:go.mod",
+)
+
+# The repo root module, used only for the shared @aspect_gazelle//tools/nogo.
+bazel_dep(name = "aspect_gazelle", version = "0.0.0", dev_dependency = True)
+local_path_override(
+    module_name = "aspect_gazelle",
+    path = "../..",
+)

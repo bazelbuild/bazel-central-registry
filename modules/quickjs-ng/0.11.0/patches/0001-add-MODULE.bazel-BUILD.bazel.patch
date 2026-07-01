@@ -1,0 +1,272 @@
+From 645fb604a6450d12645d63bb7522754b57ace1ee Mon Sep 17 00:00:00 2001
+From: caesar <caesar@kekxv.com>
+Date: Mon, 22 Dec 2025 22:54:23 +0800
+Subject: [PATCH] add: MODULE.bazel BUILD.bazel
+
+---
+ BUILD.bazel  | 222 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ MODULE.bazel |   9 +++
+ quickjs.c    |   2 +-
+ 3 files changed, 232 insertions(+), 1 deletion(-)
+ create mode 100644 BUILD.bazel
+ create mode 100644 MODULE.bazel
+
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..5ac821e
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,222 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++# Common compiler flags
++COPTS_COMMON = [
++    "-Wall",
++    "-Wextra",
++    "-Wno-implicit-fallthrough",
++    "-Wno-sign-compare",
++    "-Wno-missing-field-initializers",
++    "-Wno-unused-parameter",
++    "-Wno-unused-but-set-variable",
++    "-Wno-unused-result",
++    "-Wno-array-bounds",
++    "-funsigned-char",
++]
++
++# Windows/MSVC specific flags
++COPTS_MSVC = [
++    "/wd4018",  # -Wno-sign-conversion
++    "/wd4061",  # -Wno-implicit-fallthrough
++    "/wd4100",  # -Wno-unused-parameter
++    "/wd4200",  # -Wno-zero-length-array
++    "/wd4242",  # -Wno-shorten-64-to-32
++    "/wd4244",  # -Wno-shorten-64-to-32
++    "/wd4245",  # -Wno-sign-compare
++    "/wd4267",  # -Wno-shorten-64-to-32
++    "/wd4388",  # -Wno-sign-compare
++    "/wd4389",  # -Wno-sign-compare
++    "/wd4456",  # Hides previous local declaration
++    "/wd4457",  # Hides function parameter
++    "/wd4710",  # Function not inlined
++    "/wd4711",  # Function was inlined
++    "/wd4820",  # Padding added after construct
++    "/wd4996",  # -Wdeprecated-declarations
++    "/wd5045",  # Spectre mitigation
++    "/experimental:c11atomics",
++    "/std:c11",
++]
++
++# Common defines
++DEFINES_COMMON = [
++    "_GNU_SOURCE",
++]
++
++# Windows defines
++DEFINES_WINDOWS = [
++    "WIN32_LEAN_AND_MEAN",
++    "_WIN32_WINNT=0x0601",
++]
++
++# Core QuickJS Library
++cc_library(
++    name = "quickjs",
++    srcs = [
++        "cutils.c",
++        "dtoa.c",
++        "libregexp.c",
++        "libunicode.c",
++        "quickjs.c",
++        "quickjs-libc.c",
++    ],
++    hdrs = [
++        "builtin-array-fromasync.h",
++        "cutils.h",
++        "dtoa.h",
++        "libregexp.h",
++        "libregexp-opcode.h",
++        "libunicode.h",
++        "libunicode-table.h",
++        "list.h",
++        "quickjs.h",
++        "quickjs-atom.h",
++        "quickjs-c-atomics.h",
++        "quickjs-libc.h",
++        "quickjs-opcode.h",
++    ],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    defines = DEFINES_COMMON + select({
++        "@platforms//os:windows": DEFINES_WINDOWS,
++        "//conditions:default": [],
++    }),
++    linkopts = select({
++        "@platforms//os:windows": [],
++        "@platforms//os:linux": [
++            "-lm",
++            "-lpthread",
++            "-ldl",
++            "-latomic",
++        ],
++        "//conditions:default": [
++            "-lm",
++            "-lpthread",
++            "-ldl",
++        ],
++    }),
++)
++
++alias(
++    name = "quickjs-ng",
++    actual = ":quickjs",
++)
++
++# QuickJS Bytecode Compiler
++cc_binary(
++    name = "qjsc",
++    srcs = ["qjsc.c"],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++# QuickJS CLI (Repl)
++cc_binary(
++    name = "qjs",
++    srcs = [
++        "gen/repl.c",
++        "gen/standalone.c",
++        "qjs.c",
++    ],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++# Test262 Runner
++cc_binary(
++    name = "run-test262",
++    srcs = ["run-test262.c"],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++# API Test
++cc_binary(
++    name = "api-test",
++    srcs = ["api-test.c"],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++# Unicode Generator (Standalone, does not link libqjs)
++cc_binary(
++    name = "unicode_gen",
++    srcs = [
++        "cutils.c",
++        "cutils.h",
++        "libunicode.c",
++        "libunicode.h",
++        "libunicode-table.h",
++        "unicode_gen.c",
++        "unicode_gen_def.h",
++    ],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    defines = DEFINES_COMMON + select({
++        "@platforms//os:windows": DEFINES_WINDOWS,
++        "//conditions:default": [],
++    }),
++)
++
++# Function Source Generator
++cc_binary(
++    name = "function_source",
++    srcs = ["gen/function_source.c"],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++# Examples
++
++cc_binary(
++    name = "hello",
++    srcs = ["gen/hello.c"],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++cc_binary(
++    name = "hello_module",
++    srcs = ["gen/hello_module.c"],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
++
++cc_binary(
++    name = "test_fib",
++    srcs = [
++        "examples/fib.c",
++        "gen/test_fib.c",
++    ],
++    copts = select({
++        "@platforms//os:windows": COPTS_MSVC,
++        "//conditions:default": COPTS_COMMON,
++    }),
++    deps = [":quickjs"],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..1a5a4b5
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,9 @@
++module(
++    name = "quickjs-ng",
++    version = "0.11.0",
++    bazel_compatibility = [">=7.2.1"],
++)
++
++bazel_dep(name = "platforms", version = "1.0.0")
++bazel_dep(name = "bazel_skylib", version = "1.8.2")
++bazel_dep(name = "rules_cc", version = "0.2.14")
+diff --git a/quickjs.c b/quickjs.c
+index 62f4381..f771bd7 100644
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -40,7 +40,7 @@
+ #include <intrin.h>
+ #endif
+ #include <time.h>
+-#include <fenv.h>
++//#include <fenv.h>
+ #include <math.h>
+ 
+ #include "cutils.h"
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,1075 @@
+"""BUILD file for Yosys Open SYnthesis Suite"""
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load(":yosys_utils.bzl", "yosys_bison", "yosys_flex")
+
+VERSION = "0.57"
+
+# Common compiler options
+COMMON_COPTS = [
+    "-w",
+    "-ggdb",
+    "-fPIC",
+]
+
+COMMON_CXXOPTS = [
+    "-std=c++17",
+    "-w",
+    "-ggdb",
+    "-fPIC",
+]
+
+COMMON_DEFINES = [
+    "_YOSYS_",
+    "YOSYS_ENABLE_READLINE",
+    "YOSYS_ENABLE_PLUGINS",
+    "YOSYS_ENABLE_GLOB",
+    "YOSYS_ENABLE_ZLIB",
+    "YOSYS_ENABLE_TCL",
+    "YOSYS_ENABLE_ABC",
+    "YOSYS_ENABLE_COVER",
+    "YOSYS_VER=\\\"{}\\\"".format(VERSION),
+    "YOSYS_MAJOR={}".format(VERSION.split(".")[0]),
+    "YOSYS_MINOR={}".format(VERSION.split(".")[1]),
+    "YOSYS_COMMIT={}".format(VERSION),
+] + select({
+    "@platforms//os:macos": ["_DARWIN_C_SOURCE"],
+    "//conditions:default": [],
+})
+
+# Version information
+write_file(
+    name = "version_gen",
+    out = "kernel/version.cc",
+    content = [
+        "namespace Yosys {",
+        "extern const char *yosys_version_str;",
+        "const char *yosys_version_str=\"Yosys {} (git sha1 UNKNOWN, Bazel)\";".format(VERSION),
+        "}",
+    ],
+)
+
+yosys_bison(
+    name = "verilog_parser_gen",
+    srcs = ["frontends/verilog/verilog_parser.y"],
+    outs = [
+        "frontends/verilog/verilog_parser.tab.cc",
+        "frontends/verilog/verilog_parser.tab.hh",
+    ],
+    args = [
+        "-o",
+        "$(execpath frontends/verilog/verilog_parser.tab.cc)",
+        "-d",
+        "-r",
+        "all",
+        "-b",
+        "verilog_parser",
+        "$(execpath frontends/verilog/verilog_parser.y)",
+    ],
+    bison = "@bison",
+)
+
+# Direct outputs from genrule - no need for complex processing
+
+yosys_flex(
+    name = "verilog_lexer_gen",
+    srcs = ["frontends/verilog/verilog_lexer.l"],
+    outs = ["frontends/verilog/verilog_lexer.cc"],
+    args = [
+        "-o",
+        "$(execpath frontends/verilog/verilog_lexer.cc)",
+        "$(execpath frontends/verilog/verilog_lexer.l)",
+    ],
+    flex = "@flex",
+)
+
+py_binary(
+    name = "callhelp",
+    srcs = ["techlibs/common/cellhelp.py"],
+    main = "techlibs/common/cellhelp.py",
+)
+
+GEN_KERNEL_INC_SRCS = {
+    "techlibs/common/simcells_help.inc": "techlibs/common/simcells.v",
+    "techlibs/common/simlib_help.inc": "techlibs/common/simlib.v",
+}
+
+[
+    genrule(
+        name = out.replace(".inc", "_inc"),
+        srcs = [src],
+        outs = [out],
+        cmd = "$(execpath :callhelp) $(execpath {}) > $@".format(src),
+        cmd_bat = "$(execpath :callhelp) $(execpath {}) > $@".format(src),
+        tools = [":callhelp"],
+    )
+    for (out, src) in GEN_KERNEL_INC_SRCS.items()
+]
+
+# Core kernel library
+cc_library(
+    name = "kernel",
+    srcs = [
+        "kernel/binding.cc",
+        "kernel/calc.cc",
+        "kernel/cellaigs.cc",
+        "kernel/celledges.cc",
+        "kernel/cost.cc",
+        "kernel/drivertools.cc",
+        "kernel/ff.cc",
+        "kernel/ffmerge.cc",
+        "kernel/fmt.cc",
+        "kernel/functional.cc",
+        "kernel/gzip.cc",
+        "kernel/io.cc",
+        "kernel/json.cc",
+        "kernel/log.cc",
+        "kernel/log_help.cc",
+        "kernel/mem.cc",
+        "kernel/qcsat.cc",
+        "kernel/register.cc",
+        "kernel/rtlil.cc",
+        "kernel/satgen.cc",
+        "kernel/scopeinfo.cc",
+        "kernel/sexpr.cc",
+        "kernel/tclapi.cc",
+        "kernel/yosys.cc",
+        "kernel/yw.cc",
+        ":version_gen",
+    ],
+    hdrs = [
+        "kernel/binding.h",
+        "kernel/bitpattern.h",
+        "kernel/cellaigs.h",
+        "kernel/celledges.h",
+        "kernel/celltypes.h",
+        "kernel/compute_graph.h",
+        "kernel/consteval.h",
+        "kernel/constids.inc",
+        "kernel/cost.h",
+        "kernel/drivertools.h",
+        "kernel/ff.h",
+        "kernel/ffinit.h",
+        "kernel/ffmerge.h",
+        "kernel/fmt.h",
+        "kernel/fstdata.h",
+        "kernel/functional.h",
+        "kernel/gzip.h",
+        "kernel/hashlib.h",
+        "kernel/io.h",
+        "kernel/json.h",
+        "kernel/log.h",
+        "kernel/log_help.h",
+        "kernel/macc.h",
+        "kernel/mem.h",
+        "kernel/modtools.h",
+        "kernel/qcsat.h",
+        "kernel/register.h",
+        "kernel/rtlil.h",
+        "kernel/satgen.h",
+        "kernel/scopeinfo.h",
+        "kernel/sexpr.h",
+        "kernel/sigtools.h",
+        "kernel/timinginfo.h",
+        "kernel/topo_scc.h",
+        "kernel/utils.h",
+        "kernel/yosys.h",
+        "kernel/yosys_common.h",
+        "kernel/yw.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    defines = COMMON_DEFINES,
+    includes = [
+        ".",
+        "backends",
+        "frontends",
+        "passes",
+        "techlibs",
+    ],
+    local_defines = [
+        "YOSYS_SRC='\"../\"'",
+    ],
+    textual_hdrs = glob(
+        include = ["techlibs/**/*.inc"],
+    ) + GEN_KERNEL_INC_SRCS.keys() + [
+        "backends/rtlil/rtlil_backend.h",
+        "frontends/verilog/preproc.h",
+        "frontends/verilog/verilog_frontend.h",
+        "frontends/verilog/verilog_location.h",
+        "frontends/ast/ast.h",
+    ],
+    deps = [
+        ":bigint",
+        ":ezsat",
+        ":json11",
+        ":sha1",
+        "@abc",
+        "@libffi",
+        "@readline",
+        "@tcl_lang//:tcl",
+        "@zlib",
+    ],
+)
+
+# BigInt library
+cc_library(
+    name = "bigint",
+    srcs = [
+        "libs/bigint/BigInteger.cc",
+        "libs/bigint/BigIntegerAlgorithms.cc",
+        "libs/bigint/BigIntegerUtils.cc",
+        "libs/bigint/BigUnsigned.cc",
+        "libs/bigint/BigUnsignedInABase.cc",
+    ],
+    hdrs = [
+        "libs/bigint/BigInteger.hh",
+        "libs/bigint/BigIntegerAlgorithms.hh",
+        "libs/bigint/BigIntegerLibrary.hh",
+        "libs/bigint/BigIntegerUtils.hh",
+        "libs/bigint/BigUnsigned.hh",
+        "libs/bigint/BigUnsignedInABase.hh",
+        "libs/bigint/NumberlikeArray.hh",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        "libs/bigint",
+    ],
+    local_defines = COMMON_DEFINES,
+)
+
+# EZSAT library
+cc_library(
+    name = "ezsat",
+    srcs = [
+        "libs/ezsat/ezminisat.cc",
+        "libs/ezsat/ezsat.cc",
+    ],
+    hdrs = [
+        "libs/ezsat/ezminisat.h",
+        "libs/ezsat/ezsat.h",
+    ],
+    conlyopts = COMMON_COPTS + [
+        "-Wno-nonportable-include-path",
+    ],
+    cxxopts = COMMON_CXXOPTS + [
+        "-Wno-nonportable-include-path",
+    ],
+    includes = [
+        "libs/ezsat",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":minisat"],
+)
+
+# MiniSAT library
+cc_library(
+    name = "minisat",
+    srcs = [
+        "libs/minisat/Options.cc",
+        "libs/minisat/SimpSolver.cc",
+        "libs/minisat/Solver.cc",
+        "libs/minisat/System.cc",
+    ],
+    hdrs = [
+        "libs/minisat/Alg.h",
+        "libs/minisat/Alloc.h",
+        "libs/minisat/Dimacs.h",
+        "libs/minisat/Heap.h",
+        "libs/minisat/IntMap.h",
+        "libs/minisat/IntTypes.h",
+        "libs/minisat/Map.h",
+        "libs/minisat/Options.h",
+        "libs/minisat/ParseUtils.h",
+        "libs/minisat/Queue.h",
+        "libs/minisat/Rnd.h",
+        "libs/minisat/SimpSolver.h",
+        "libs/minisat/Solver.h",
+        "libs/minisat/SolverTypes.h",
+        "libs/minisat/Sort.h",
+        "libs/minisat/System.h",
+        "libs/minisat/Vec.h",
+        "libs/minisat/XAlloc.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "libs/minisat",
+    ],
+    local_defines = COMMON_DEFINES,
+)
+
+# JSON11 library
+cc_library(
+    name = "json11",
+    srcs = [
+        "libs/json11/json11.cpp",
+    ],
+    hdrs = [
+        "libs/json11/json11.hpp",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "libs/json11",
+    ],
+)
+
+# SHA1 library
+cc_library(
+    name = "sha1",
+    srcs = [
+        "libs/sha1/sha1.cpp",
+    ],
+    hdrs = [
+        "libs/sha1/sha1.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "libs/sha1",
+    ],
+)
+
+# FST library (for waveform data)
+cc_library(
+    name = "fst",
+    srcs = [
+        "libs/fst/fastlz.cc",
+        "libs/fst/fstapi.cc",
+        "libs/fst/lz4.cc",
+    ],
+    hdrs = [
+        "libs/fst/fastlz.h",
+        "libs/fst/fst_win_unistd.h",
+        "libs/fst/fstapi.h",
+        "libs/fst/lz4.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "libs/fst",
+    ],
+    deps = ["@zlib"],
+)
+
+# Subcircuit library
+cc_library(
+    name = "subcircuit",
+    srcs = [
+        "libs/subcircuit/subcircuit.cc",
+    ],
+    hdrs = [
+        "libs/subcircuit/subcircuit.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "libs/subcircuit",
+    ],
+    deps = [":kernel"],
+)
+
+# Frontend libraries
+cc_library(
+    name = "frontend_verific",
+    srcs = [
+        "frontends/verific/verific.cc",
+        "frontends/verific/verificsva.cc",
+    ],
+    hdrs = [
+        "frontends/verific/verific.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/verific",
+    ],
+    deps = [":kernel"],
+)
+
+cc_library(
+    name = "frontend_verilog",
+    srcs = [
+        "frontends/verilog/const2ast.cc",
+        "frontends/verilog/preproc.cc",
+        "frontends/verilog/verilog_error.cc",
+        "frontends/verilog/verilog_frontend.cc",
+        ":frontends/verilog/verilog_lexer.cc",
+        ":frontends/verilog/verilog_parser.tab.cc",
+    ],
+    hdrs = [
+        "frontends/verilog/preproc.h",
+        "frontends/verilog/verilog_error.h",
+        "frontends/verilog/verilog_frontend.h",
+        "frontends/verilog/verilog_lexer.h",
+        "frontends/verilog/verilog_location.h",
+        ":frontends/verilog/verilog_parser.tab.hh",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "backends",
+        "frontends/ast",
+        "frontends/verilog",
+        "passes",
+        "techlibs",
+    ],
+    local_defines = COMMON_DEFINES + ["YYMAXDEPTH=10000000"],
+    deps = [
+        ":frontend_ast",
+        ":kernel",
+        "@flex//:flex_lexer_hdrs",
+    ],
+    alwayslink = True,
+)
+
+yosys_bison(
+    name = "rtlil_parser_gen",
+    srcs = ["frontends/rtlil/rtlil_parser.y"],
+    outs = [
+        "frontends/rtlil/rtlil_parser.tab.cc",
+        "frontends/rtlil/rtlil_parser.tab.hh",
+    ],
+    args = [
+        "-o",
+        "$(execpath frontends/rtlil/rtlil_parser.tab.cc)",
+        "-d",
+        "-r",
+        "all",
+        "-b",
+        "rtlil_parser",
+        "$(execpath frontends/rtlil/rtlil_parser.y)",
+    ],
+    bison = "@bison",
+)
+
+yosys_flex(
+    name = "rtlil_lexer_gen",
+    srcs = ["frontends/rtlil/rtlil_lexer.l"],
+    outs = ["frontends/rtlil/rtlil_lexer.cc"],
+    args = [
+        "-o",
+        "$(execpath frontends/rtlil/rtlil_lexer.cc)",
+        "$(execpath frontends/rtlil/rtlil_lexer.l)",
+    ],
+    flex = "@flex",
+)
+
+cc_library(
+    name = "frontend_rtlil",
+    srcs = [
+        "frontends/rtlil/rtlil_frontend.cc",
+        ":frontends/rtlil/rtlil_lexer.cc",
+        ":frontends/rtlil/rtlil_parser.tab.cc",
+    ],
+    hdrs = [
+        "frontends/rtlil/rtlil_frontend.h",
+        ":frontends/rtlil/rtlil_parser.tab.hh",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/rtlil",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":frontend_verilog",
+        ":kernel",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "frontend_ast",
+    srcs = [
+        "frontends/ast/ast.cc",
+        "frontends/ast/ast_binding.cc",
+        "frontends/ast/dpicall.cc",
+        "frontends/ast/genrtlil.cc",
+        "frontends/ast/simplify.cc",
+    ],
+    hdrs = [
+        "frontends/ast/ast.h",
+        "frontends/ast/ast_binding.h",
+        "frontends/verilog/verilog_location.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/ast",
+    ],
+    local_defines = COMMON_DEFINES + select({
+        "@platforms//os:macos": ["_DARWIN_C_SOURCE"],
+        "//conditions:default": [],
+    }),
+    deps = [":kernel"],
+)
+
+cc_library(
+    name = "frontend_blif",
+    srcs = [
+        "frontends/blif/blifparse.cc",
+    ],
+    hdrs = [
+        "frontends/blif/blifparse.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/blif",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":backend_rtlil",
+        ":kernel",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "frontend_aiger",
+    srcs = [
+        "frontends/aiger/aigerparse.cc",
+    ],
+    hdrs = [
+        "frontends/aiger/aigerparse.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/aiger",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":kernel",
+    ],
+)
+
+cc_library(
+    name = "frontend_aiger2",
+    srcs = [
+        "frontends/aiger2/xaiger.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/aiger2",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":kernel",
+    ],
+)
+
+cc_library(
+    name = "frontend_json",
+    srcs = [
+        "frontends/json/jsonparse.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/json",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":kernel",
+    ],
+)
+
+cc_library(
+    name = "frontend_liberty",
+    srcs = [
+        "frontends/liberty/liberty.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/liberty",
+        "passes/techmap",
+    ],
+    local_defines = COMMON_DEFINES,
+    textual_hdrs = [
+        "passes/techmap/libparse.h",
+    ],
+    deps = [
+        ":kernel",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "frontend_rpc",
+    srcs = [
+        "frontends/rpc/rpc_frontend.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/rpc",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":kernel",
+    ],
+)
+
+# Pass libraries
+cc_library(
+    name = "pass_hierarchy",
+    srcs = [
+        "passes/hierarchy/flatten.cc",
+        "passes/hierarchy/hierarchy.cc",
+        "passes/hierarchy/keep_hierarchy.cc",
+        "passes/hierarchy/submod.cc",
+        "passes/hierarchy/uniquify.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "frontends/verific",
+        "passes/hierarchy",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":frontend_verific",
+        ":kernel",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "pass_cmds",
+    srcs = [
+        "passes/cmds/abstract.cc",
+        "passes/cmds/add.cc",
+        "passes/cmds/autoname.cc",
+        "passes/cmds/blackbox.cc",
+        "passes/cmds/box_derive.cc",
+        "passes/cmds/bugpoint.cc",
+        "passes/cmds/check.cc",
+        "passes/cmds/chformal.cc",
+        "passes/cmds/chtype.cc",
+        "passes/cmds/clean_zerowidth.cc",
+        "passes/cmds/connect.cc",
+        "passes/cmds/connwrappers.cc",
+        "passes/cmds/copy.cc",
+        "passes/cmds/cover.cc",
+        "passes/cmds/delete.cc",
+        "passes/cmds/design.cc",
+        "passes/cmds/dft_tag.cc",
+        "passes/cmds/edgetypes.cc",
+        "passes/cmds/example_dt.cc",
+        "passes/cmds/exec.cc",
+        "passes/cmds/future.cc",
+        "passes/cmds/glift.cc",
+        "passes/cmds/internal_stats.cc",
+        "passes/cmds/linecoverage.cc",
+        "passes/cmds/logcmd.cc",
+        "passes/cmds/logger.cc",
+        "passes/cmds/ltp.cc",
+        "passes/cmds/plugin.cc",
+        "passes/cmds/portarcs.cc",
+        "passes/cmds/portlist.cc",
+        "passes/cmds/printattrs.cc",
+        "passes/cmds/rename.cc",
+        "passes/cmds/scatter.cc",
+        "passes/cmds/scc.cc",
+        "passes/cmds/scratchpad.cc",
+        "passes/cmds/select.cc",
+        "passes/cmds/setattr.cc",
+        "passes/cmds/setenv.cc",
+        "passes/cmds/setundef.cc",
+        "passes/cmds/show.cc",
+        "passes/cmds/splice.cc",
+        "passes/cmds/splitcells.cc",
+        "passes/cmds/splitnets.cc",
+        "passes/cmds/sta.cc",
+        "passes/cmds/stat.cc",
+        "passes/cmds/tee.cc",
+        "passes/cmds/test_select.cc",
+        "passes/cmds/timeest.cc",
+        "passes/cmds/torder.cc",
+        "passes/cmds/trace.cc",
+        "passes/cmds/viz.cc",
+        "passes/cmds/wrapcell.cc",
+        "passes/cmds/write_file.cc",
+        "passes/cmds/xprop.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "backends",
+        "frontends",
+        "passes",
+        "passes/cmds",
+        "techlibs",
+    ],
+    local_defines = COMMON_DEFINES,
+    textual_hdrs = [
+        "frontends/verilog/verilog_lexer.h",
+        "passes/techmap/libparse.h",
+    ],
+    deps = [
+        ":backend_rtlil",
+        ":backend_verilog",
+        ":kernel",
+    ],
+    alwayslink = True,
+)
+
+py_binary(
+    name = "pmgen",
+    srcs = ["passes/pmgen/pmgen.py"],
+    main = "passes/pmgen/pmgen.py",
+)
+
+filegroup(
+    name = "peepopt_pattern",
+    srcs = [
+        "passes/opt/peepopt_formal_clockgateff.pmg",
+        "passes/opt/peepopt_muldiv.pmg",
+        "passes/opt/peepopt_muldiv_c.pmg",
+        "passes/opt/peepopt_shiftadd.pmg",
+        "passes/opt/peepopt_shiftmul_left.pmg",
+        "passes/opt/peepopt_shiftmul_right.pmg",
+    ],
+)
+
+genrule(
+    name = "peepopt_pm_h",
+    srcs = [":peepopt_pattern"],
+    outs = ["passes/opt/peepopt_pm.h"],
+    cmd = "$(execpath :pmgen) -o $@ -p peepopt $(execpaths :peepopt_pattern)",
+    cmd_bat = "$(execpath :pmgen) -o $@ -p peepopt $(execpaths :peepopt_pattern)",
+    tools = [":pmgen"],
+)
+
+cc_library(
+    name = "pass_opt",
+    srcs = [
+        "passes/opt/muxpack.cc",
+        "passes/opt/opt.cc",
+        "passes/opt/opt_clean.cc",
+        "passes/opt/opt_demorgan.cc",
+        "passes/opt/opt_dff.cc",
+        "passes/opt/opt_expr.cc",
+        "passes/opt/opt_ffinv.cc",
+        "passes/opt/opt_hier.cc",
+        "passes/opt/opt_lut.cc",
+        "passes/opt/opt_lut_ins.cc",
+        "passes/opt/opt_mem.cc",
+        "passes/opt/opt_mem_feedback.cc",
+        "passes/opt/opt_mem_priority.cc",
+        "passes/opt/opt_mem_widen.cc",
+        "passes/opt/opt_merge.cc",
+        "passes/opt/opt_muxtree.cc",
+        "passes/opt/opt_reduce.cc",
+        "passes/opt/opt_share.cc",
+        "passes/opt/peepopt.cc",
+        "passes/opt/pmux2shiftx.cc",
+        "passes/opt/rmports.cc",
+        "passes/opt/share.cc",
+        "passes/opt/wreduce.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "passes/opt",
+    ],
+    local_defines = COMMON_DEFINES,
+    textual_hdrs = [
+        "passes/opt/peepopt_pm.h",
+        "passes/techmap/simplemap.h",
+    ],
+    deps = [":kernel"],
+    alwayslink = True,
+)
+
+# Pass proc library
+cc_library(
+    name = "pass_proc",
+    srcs = [
+        "passes/proc/proc.cc",
+        "passes/proc/proc_arst.cc",
+        "passes/proc/proc_clean.cc",
+        "passes/proc/proc_dff.cc",
+        "passes/proc/proc_dlatch.cc",
+        "passes/proc/proc_init.cc",
+        "passes/proc/proc_memwr.cc",
+        "passes/proc/proc_mux.cc",
+        "passes/proc/proc_prune.cc",
+        "passes/proc/proc_rmdead.cc",
+        "passes/proc/proc_rom.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "passes/proc",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":kernel"],
+    alwayslink = True,
+)
+
+# Pass fsm library
+cc_library(
+    name = "pass_fsm",
+    srcs = [
+        "passes/fsm/fsm.cc",
+        "passes/fsm/fsm_detect.cc",
+        "passes/fsm/fsm_expand.cc",
+        "passes/fsm/fsm_export.cc",
+        "passes/fsm/fsm_extract.cc",
+        "passes/fsm/fsm_info.cc",
+        "passes/fsm/fsm_map.cc",
+        "passes/fsm/fsm_opt.cc",
+        "passes/fsm/fsm_recode.cc",
+    ],
+    hdrs = [
+        "passes/fsm/fsmdata.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "passes/fsm",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":kernel"],
+    alwayslink = True,
+)
+
+# Pass memory library
+cc_library(
+    name = "pass_memory",
+    srcs = [
+        "passes/memory/memlib.cc",
+        "passes/memory/memory.cc",
+        "passes/memory/memory_bmux2rom.cc",
+        "passes/memory/memory_bram.cc",
+        "passes/memory/memory_collect.cc",
+        "passes/memory/memory_dff.cc",
+        "passes/memory/memory_libmap.cc",
+        "passes/memory/memory_map.cc",
+        "passes/memory/memory_memx.cc",
+        "passes/memory/memory_narrow.cc",
+        "passes/memory/memory_nordff.cc",
+        "passes/memory/memory_share.cc",
+        "passes/memory/memory_unpack.cc",
+    ],
+    hdrs = [
+        "passes/memory/memlib.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "passes/memory",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":kernel"],
+    alwayslink = True,
+)
+
+# Pass techmap library
+cc_library(
+    name = "pass_techmap",
+    srcs = [
+        "passes/techmap/abc.cc",
+        "passes/techmap/abc9.cc",
+        "passes/techmap/abc9_exe.cc",
+        "passes/techmap/abc9_ops.cc",
+        "passes/techmap/abc_new.cc",
+        "passes/techmap/aigmap.cc",
+        "passes/techmap/alumacc.cc",
+        "passes/techmap/attrmap.cc",
+        "passes/techmap/attrmvcp.cc",
+        "passes/techmap/bmuxmap.cc",
+        "passes/techmap/booth.cc",
+        "passes/techmap/bufnorm.cc",
+        "passes/techmap/bwmuxmap.cc",
+        "passes/techmap/cellmatch.cc",
+        "passes/techmap/clkbufmap.cc",
+        "passes/techmap/clockgate.cc",
+        "passes/techmap/constmap.cc",
+        "passes/techmap/deminout.cc",
+        "passes/techmap/demuxmap.cc",
+        "passes/techmap/dffinit.cc",
+        "passes/techmap/dfflegalize.cc",
+        "passes/techmap/dfflibmap.cc",
+        "passes/techmap/dffunmap.cc",
+        "passes/techmap/extract.cc",
+        "passes/techmap/extract_counter.cc",
+        "passes/techmap/extract_fa.cc",
+        "passes/techmap/extract_reduce.cc",
+        "passes/techmap/extractinv.cc",
+        "passes/techmap/flowmap.cc",
+        "passes/techmap/hilomap.cc",
+        "passes/techmap/insbuf.cc",
+        "passes/techmap/iopadmap.cc",
+        "passes/techmap/libcache.cc",
+        "passes/techmap/libparse.cc",
+        "passes/techmap/lut2mux.cc",
+        "passes/techmap/maccmap.cc",
+        "passes/techmap/muxcover.cc",
+        "passes/techmap/nlutmap.cc",
+        "passes/techmap/pmuxtree.cc",
+        "passes/techmap/shregmap.cc",
+        "passes/techmap/simplemap.cc",
+        "passes/techmap/techmap.cc",
+        "passes/techmap/tribuf.cc",
+        "passes/techmap/zinit.cc",
+    ],
+    hdrs = [
+        "passes/techmap/libparse.h",
+        "passes/techmap/simplemap.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "passes/techmap",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [
+        ":frontend_blif",
+        ":kernel",
+        ":subcircuit",
+    ],
+    alwayslink = True,
+)
+
+# Backend libraries
+cc_library(
+    name = "backend_verilog",
+    srcs = [
+        "backends/verilog/verilog_backend.cc",
+    ],
+    hdrs = [
+        "backends/verilog/verilog_backend.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "backends/verilog",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":kernel"],
+)
+
+cc_library(
+    name = "backend_rtlil",
+    srcs = [
+        "backends/rtlil/rtlil_backend.cc",
+    ],
+    hdrs = [
+        "backends/rtlil/rtlil_backend.h",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "backends/rtlil",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":kernel"],
+    alwayslink = True,
+)
+
+# Techlib libraries
+cc_library(
+    name = "techlib_common",
+    srcs = [
+        "techlibs/common/prep.cc",
+        "techlibs/common/synth.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    includes = [
+        ".",
+        "techlibs/common",
+    ],
+    local_defines = COMMON_DEFINES,
+    deps = [":kernel"],
+    alwayslink = True,
+)
+
+# Main yosys binary
+cc_binary(
+    name = "yosys",
+    srcs = [
+        "kernel/driver.cc",
+    ],
+    conlyopts = COMMON_COPTS,
+    cxxopts = COMMON_CXXOPTS,
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-ldl",
+            "-rdynamic",
+        ],
+        "@platforms//os:macos": ["-rdynamic"],
+        "@platforms//os:windows": [],
+        "//conditions:default": [],
+    }),
+    local_defines = COMMON_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":backend_rtlil",
+        ":backend_verilog",
+        ":bigint",
+        ":frontend_aiger",
+        ":frontend_aiger2",
+        ":frontend_ast",
+        ":frontend_blif",
+        ":frontend_json",
+        ":frontend_liberty",
+        ":frontend_rpc",
+        ":frontend_rtlil",
+        ":frontend_verific",
+        ":frontend_verilog",
+        ":json11",
+        ":kernel",
+        ":pass_cmds",
+        ":pass_fsm",
+        ":pass_hierarchy",
+        ":pass_memory",
+        ":pass_opt",
+        ":pass_proc",
+        ":pass_techmap",
+        ":sha1",
+        ":subcircuit",
+        ":techlib_common",
+        "@abc",
+        "@cxxopts",
+        "@libffi",
+        "@readline",
+        "@tcl_lang//:tcl",
+        "@zlib",
+    ],
+)

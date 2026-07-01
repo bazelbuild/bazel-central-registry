@@ -1,0 +1,106 @@
+diff --git test/unit/main.cpp test/unit/main.cpp
+index d53e4236..b6981989 100644
+--- test/unit/main.cpp
++++ test/unit/main.cpp
+@@ -27,10 +27,101 @@
+  ****************************************************************************/
+ 
+ #include <locale>
++#include <memory>
++#include <string.h>
++
++#include <filesystem>
++#include <iostream>
++#include <string>
++#include <vector>
+ 
+ #include "gtest_include.h"
++#include "rules_cc/cc/runfiles/runfiles.h"
++
++namespace fs = std::filesystem;
++using rules_cc::cc::runfiles::Runfiles;
++
++namespace {
++
++bool maybeSetupProjEnvironment(int *argc, char ***argv) {
++    std::string proj_ini_rloc;
++    std::string source_data_marker_rloc;
++
++    auto parseArg = [](const char *prefix, const std::string &arg,
++                       std::string *value) {
++        if (arg.rfind(prefix, 0) != 0) {
++            return false;
++        }
++        *value = arg.substr(strlen(prefix));
++        return true;
++    };
++
++    static std::vector<char *> filtered_argv;
++    filtered_argv.clear();
++    filtered_argv.reserve(static_cast<size_t>(*argc) + 1);
++    filtered_argv.push_back((*argv)[0]);
++    for (int i = 1; i < *argc; ++i) {
++        const std::string arg((*argv)[i]);
++        if (!parseArg("--proj-test-proj-ini=", arg, &proj_ini_rloc) &&
++            !parseArg("--proj-test-source-data-marker=", arg,
++                      &source_data_marker_rloc)) {
++            filtered_argv.push_back((*argv)[i]);
++        }
++    }
++    filtered_argv.push_back(nullptr);
++    *argc = static_cast<int>(filtered_argv.size()) - 1;
++    *argv = filtered_argv.data();
++
++    if (proj_ini_rloc.empty()) {
++        return true;
++    }
++
++    std::string error;
++    std::unique_ptr<Runfiles> runfiles(Runfiles::CreateForTest(&error));
++    if (!runfiles) {
++        std::cerr << error << std::endl;
++        return false;
++    }
++
++    const auto proj_ini = fs::path(runfiles->Rlocation(proj_ini_rloc));
++    if (proj_ini.empty()) {
++        std::cerr << "failed to resolve proj.ini" << std::endl;
++        return false;
++    }
++
++    const auto proj_data = proj_ini.parent_path();
++    if (setenv("PROJ_DATA", proj_data.c_str(), 1) != 0 ||
++        setenv("PROJ_LIB", proj_data.c_str(), 1) != 0 ||
++        setenv("PROJ_SKIP_READ_USER_WRITABLE_DIRECTORY", "YES", 1) != 0) {
++        std::cerr << "failed to set PROJ runtime environment" << std::endl;
++        return false;
++    }
++
++    if (!source_data_marker_rloc.empty()) {
++        const auto source_data_marker =
++            fs::path(runfiles->Rlocation(source_data_marker_rloc));
++        if (source_data_marker.empty()) {
++            std::cerr << "failed to resolve PROJ source data marker" << std::endl;
++            return false;
++        }
++        if (setenv("PROJ_SOURCE_DATA",
++                   source_data_marker.parent_path().parent_path().c_str(), 1) !=
++            0) {
++            std::cerr << "failed to set PROJ_SOURCE_DATA" << std::endl;
++            return false;
++        }
++    }
++
++    return true;
++}
++
++}  // namespace
+ 
+ GTEST_API_ int main(int argc, char **argv) {
++    if (!maybeSetupProjEnvironment(&argc, &argv)) {
++        return 1;
++    }
++
+     // Use a potentially non-C locale to make sure we are robust
+     setlocale(LC_ALL, "");
+ 

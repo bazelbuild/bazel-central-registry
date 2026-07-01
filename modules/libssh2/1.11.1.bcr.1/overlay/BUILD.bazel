@@ -1,0 +1,314 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+string_flag(
+    name = "crypto_backend",
+    build_setting_default = "openssl",
+    values = [
+        "openssl",
+        "mbedtls",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "use_zlib",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "crypto_backend_openssl",
+    flag_values = {":crypto_backend": "openssl"},
+)
+
+config_setting(
+    name = "crypto_backend_mbedtls",
+    flag_values = {":crypto_backend": "mbedtls"},
+)
+
+config_setting(
+    name = "use_zlib_enabled",
+    flag_values = {":use_zlib": "True"},
+)
+
+package_info(
+    name = "package",
+    module_bazel = "MODULE.bazel",
+)
+
+# Header and function checks from configure.ac / CMakeLists.txt
+autoconf(
+    name = "configure_ac",
+    checks = macros.AC_CHECK_HEADERS([
+        "unistd.h",
+        "inttypes.h",
+        "sys/select.h",
+        "sys/uio.h",
+        "sys/socket.h",
+        "sys/ioctl.h",
+        "sys/time.h",
+        "sys/un.h",
+        "arpa/inet.h",
+        "netinet/in.h",
+        "windows.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        "gettimeofday",
+        "strtoll",
+        "snprintf",
+        "explicit_bzero",
+        "explicit_memset",
+        "memset_s",
+        "poll",
+        "select",
+    ]) + [
+
+        # Non-blocking socket support (cmake/CheckNonblockingSocketSupport.cmake)
+        # O_NONBLOCK: POSIX non-blocking via fcntl, excluding SunOS 4 / AIX 3 / BeOS
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_have_o_nonblock",
+            code = """\
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+#if defined(sun) || defined(__sun__) || defined(__SUNPRO_C) || defined(__SUNPRO_CC)
+# if defined(__SVR4) || defined(__srv4__)
+#  define PLATFORM_SOLARIS
+# else
+#  define PLATFORM_SUNOS4
+# endif
+#endif
+#if (defined(_AIX) || defined(__xlC__)) && !defined(_AIX41)
+# define PLATFORM_AIX_V3
+#endif
+
+#if defined(PLATFORM_SUNOS4) || defined(PLATFORM_AIX_V3) || defined(__BEOS__)
+#error "O_NONBLOCK does not work on this platform"
+#endif
+
+int main(void)
+{
+    int socket = 0;
+    (void)fcntl(socket, F_SETFL, O_NONBLOCK);
+    return 0;
+}
+""",
+            define = "HAVE_O_NONBLOCK",
+        ),
+
+        # FIONBIO: old-style unix ioctl non-blocking (fallback when O_NONBLOCK unavailable)
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_have_fionbio",
+            code = """\
+#include <unistd.h>
+#include <stropts.h>
+
+int main(void)
+{
+    int socket = 0;
+    int flags = 0;
+    (void)ioctl(socket, FIONBIO, &flags);
+    return 0;
+}
+""",
+            define = "HAVE_FIONBIO",
+            requires = ["!HAVE_O_NONBLOCK"],
+        ),
+
+        # IoctlSocket: Amiga-style non-blocking (fallback when FIONBIO unavailable)
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_have_ioctlsocket_case",
+            code = """\
+#include <sys/ioctl.h>
+
+int main(void)
+{
+    int socket = 0;
+    (void)IoctlSocket(socket, FIONBIO, (long)1);
+    return 0;
+}
+""",
+            define = "HAVE_IOCTLSOCKET_CASE",
+            requires = [
+                "!HAVE_O_NONBLOCK",
+                "!HAVE_FIONBIO",
+            ],
+        ),
+
+        # SO_NONBLOCK: BeOS-style non-blocking (last fallback)
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_have_so_nonblock",
+            code = """\
+#include <socket.h>
+
+int main(void)
+{
+    long b = 1;
+    int socket = 0;
+    (void)setsockopt(socket, SOL_SOCKET, SO_NONBLOCK, &b, sizeof(b));
+    return 0;
+}
+""",
+            define = "HAVE_SO_NONBLOCK",
+            requires = [
+                "!HAVE_O_NONBLOCK",
+                "!HAVE_FIONBIO",
+                "!HAVE_IOCTLSOCKET_CASE",
+            ],
+        ),
+    ],
+    deps = [":package"],
+)
+
+# Generate libssh2_config.h from the autotools template
+autoconf_hdr(
+    name = "gen_libssh2_config_h",
+    out = "src/libssh2_config.h",
+    template = "src/libssh2_config.h.in",
+    deps = [":configure_ac"],
+)
+
+LIBSSH2_SRCS = [
+    "src/agent.c",
+    "src/bcrypt_pbkdf.c",
+    "src/channel.c",
+    "src/comp.c",
+    "src/chacha.c",
+    "src/cipher-chachapoly.c",
+    "src/crypt.c",
+    "src/crypto.c",
+    "src/global.c",
+    "src/hostkey.c",
+    "src/keepalive.c",
+    "src/kex.c",
+    "src/knownhost.c",
+    "src/mac.c",
+    "src/misc.c",
+    "src/packet.c",
+    "src/pem.c",
+    "src/poly1305.c",
+    "src/publickey.c",
+    "src/scp.c",
+    "src/session.c",
+    "src/sftp.c",
+    "src/transport.c",
+    "src/userauth.c",
+    "src/userauth_kbd_packet.c",
+    "src/version.c",
+]
+
+LIBSSH2_INTERNAL_HDRS = [
+    "src/chacha.h",
+    "src/channel.h",
+    "src/cipher-chachapoly.h",
+    "src/comp.h",
+    "src/crypto.h",
+    "src/crypto_config.h",
+    "src/libgcrypt.h",
+    "src/libssh2_priv.h",
+    "src/libssh2_setup.h",
+    "src/mac.h",
+    "src/mbedtls.h",
+    "src/misc.h",
+    "src/openssl.h",
+    "src/os400qc3.h",
+    "src/packet.h",
+    "src/poly1305.h",
+    "src/session.h",
+    "src/sftp.h",
+    "src/transport.h",
+    "src/userauth.h",
+    "src/userauth_kbd_packet.h",
+    "src/wincng.h",
+]
+
+# These .c files are #include'd by other translation units, not compiled
+# directly: crypto.c includes the backend, bcrypt_pbkdf.c includes blowfish.c,
+# and agent.c includes agent_win.c.
+LIBSSH2_TEXTUAL_SRCS = [
+    "src/agent_win.c",
+    "src/blowfish.c",
+    "src/libgcrypt.c",
+    "src/mbedtls.c",
+    "src/openssl.c",
+    "src/os400qc3.c",
+    "src/wincng.c",
+]
+
+DEFINES = [
+    "HAVE_CONFIG_H",
+] + select({
+    ":crypto_backend_mbedtls": ["LIBSSH2_MBEDTLS"],
+    ":crypto_backend_openssl": ["LIBSSH2_OPENSSL"],
+    "//conditions:default": [],
+}) + select({
+    ":use_zlib_enabled": ["LIBSSH2_HAVE_ZLIB"],
+    "//conditions:default": [],
+})
+
+[
+    cc_library(
+        name = name,
+        testonly = kwargs.get("testonly", None),
+        srcs = LIBSSH2_SRCS + LIBSSH2_INTERNAL_HDRS + [
+            ":gen_libssh2_config_h",
+        ],
+        hdrs = glob(["include/*.h"]),
+        includes = [
+            "include",
+            "src",
+        ],
+        linkopts = select({
+            "@platforms//os:windows": [
+                "-DEFAULTLIB:ws2_32.lib",
+                "-DEFAULTLIB:bcrypt.lib",
+                "-DEFAULTLIB:crypt32.lib",
+                "-DEFAULTLIB:advapi32.lib",
+                "-DEFAULTLIB:user32.lib",
+            ],
+            "//conditions:default": [],
+        }),
+        local_defines = DEFINES,
+        textual_hdrs = LIBSSH2_TEXTUAL_SRCS,
+        visibility = kwargs.get("visibility", None),
+        deps = select({
+            ":crypto_backend_mbedtls": ["@mbedtls"],
+            ":crypto_backend_openssl": ["@openssl//:crypto"],
+            "//conditions:default": [],
+        }) + select({
+            ":use_zlib_enabled": ["@zlib"],
+            "//conditions:default": [],
+        }),
+    )
+    for name, kwargs in {
+        "ssh2": {
+            "visibility": ["//visibility:public"],
+        },
+        "ssh2_testonly": {
+            "testonly": True,
+        },
+    }.items()
+]
+
+alias(
+    name = "libssh2",
+    actual = ":ssh2",
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "test_simple",
+    srcs = ["tests/test_simple.c"],
+    defines = DEFINES,
+    includes = [
+        "include",
+        "src",
+    ],
+    deps = [":ssh2_testonly"],
+)

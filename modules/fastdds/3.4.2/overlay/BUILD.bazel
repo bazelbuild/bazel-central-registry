@@ -1,0 +1,108 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+UPSTREAM_VERSION_MAJOR = UPSTREAM_VERSION.split(".")[0]
+
+UPSTREAM_VERSION_MINOR = UPSTREAM_VERSION.split(".")[1]
+
+UPSTREAM_VERSION_PATCH = UPSTREAM_VERSION.split(".")[2]
+
+UPSTREAM_VERSION_TWEAK = "0"
+
+cmake_configure_file(
+    name = "configure_file",
+    src = "include/fastdds/config.hpp.in",
+    out = "include/fastdds/config.hpp",
+    defines = [
+        "FASTDDS_IS_BIG_ENDIAN_TARGET=0",
+        "FASTDDS_STATISTICS=1",
+        "HAVE_CXX17=1",
+        "HAVE_SECURITY=1",
+        "HAVE_STRICT_REALTIME=0",
+        "HAVE_SQLITE3=1",
+        "ENABLE_OLD_LOG_MACROS_=1",
+        "HAVE_LOG_NO_ERROR=1",
+        "HAVE_LOG_NO_INFO=1",
+        "HAVE_LOG_NO_WARNING=1",
+        "TLS_FOUND=1",
+        "PROJECT_VERSION={}".format(UPSTREAM_VERSION),
+        "PROJECT_VERSION_MAJOR={}".format(UPSTREAM_VERSION_MAJOR),
+        "PROJECT_VERSION_MINOR={}".format(UPSTREAM_VERSION_MINOR),
+        "PROJECT_VERSION_PATCH={}".format(UPSTREAM_VERSION_PATCH),
+        "PROJECT_VERSION_TWEAK={}".format(UPSTREAM_VERSION_TWEAK),
+    ],
+    undefines = [
+        "HAVE_CXX20",
+        "HAVE_CXX14",
+        "HAVE_CXX1Y",
+        "HAVE_CXX11",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "fastdds",
+    srcs = glob(
+        [
+            "src/cpp/**/*.h",
+            "src/cpp/**/*.hpp",
+            "src/cpp/**/*.ipp",
+            "src/cpp/**/*.cpp",
+            "src/cpp/**/*.cxx",
+        ],
+    ),
+    hdrs = [":configure_file"] + glob([
+        "include/**/*.hpp",
+        "thirdparty/boost/include/**/*.h",
+        "thirdparty/boost/include/**/*.hpp",
+        "thirdparty/boost/include/**/*.ipp",
+        "thirdparty/taocpp-pegtl/**/*.hpp",
+    ]) + [
+        "thirdparty/filewatch/FileWatch.hpp",
+    ],
+    copts = select({
+        "@platforms//os:windows": ["/U_WINSOCKAPI_"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "include",
+        "src/cpp",
+        "src/cpp/utils",
+        "thirdparty/boost/include",
+        "thirdparty/filewatch",
+        "thirdparty/taocpp-pegtl",
+        "thirdparty/taocpp-pegtl/pegtl",
+        "thirdparty/taocpp-pegtl/pegtl/contrib",
+        "thirdparty/taocpp-pegtl/pegtl/internal",
+    ],
+    local_defines = select({
+        "@platforms//os:windows": ["WIN32_LEAN_AND_MEAN"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@asio",
+        "@fastcdr",
+        "@foonathan_memory",
+        "@nlohmann_json//:singleheader-json",
+        "@openssl",
+        "@sqlite3",
+        "@tinyxml2",
+    ],
+)

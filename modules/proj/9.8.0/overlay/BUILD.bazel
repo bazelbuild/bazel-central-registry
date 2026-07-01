@@ -1,0 +1,342 @@
+# Derived from the local Bazelization in ../PROJ and pinned to the released
+# PROJ 9.8.0 archive for use as a BCR overlay.
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+PROJ_VERSION = "9.8.0"
+
+exports_files(
+    [
+        "data/proj.ini",
+        "data/tests/egm96_15_uncompressed_truncated.tif",
+        "data/tests/nkgrf03vel_realigned_extract.tif",
+        "data/tests/nkgrf03vel_realigned_extract_tiled_256x256.tif",
+        "data/tests/simple_model_degree_3d.json",
+        "data/tests/test_3d_grid_projected.tif",
+        "data/tests/test_hgrid.tif",
+        "data/tests/test_hgrid_with_subgrid.tif",
+        "data/tests/test_hgrid_with_two_level_of_subgrids_no_grid_name.tif",
+        "data/tests/test_nodata.gtx",
+        "data/tests/test_vgrid_int16.tif",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+PROJ_DICTIONARY = [
+    "data/world",
+    "data/other.extra",
+    "data/nad27",
+    "data/GL27",
+    "data/nad83",
+    "data/nad.lst",
+    "data/CH",
+    "data/ITRF2000",
+    "data/ITRF2008",
+    "data/ITRF2014",
+    "data/ITRF2020",
+]
+
+PROJ_DB_SQL_FILES = [
+    "data/sql/begin.sql",
+    "data/sql/proj_db_table_defs.sql",
+    "data/sql/customizations_early.sql",
+    "data/sql/metadata.sql",
+    "data/sql/unit_of_measure.sql",
+    "data/sql/extent.sql",
+    "data/sql/scope.sql",
+    "data/sql/coordinate_system.sql",
+    "data/sql/axis.sql",
+    "data/sql/ellipsoid.sql",
+    "data/sql/prime_meridian.sql",
+    "data/sql/geodetic_datum.sql",
+    "data/sql/geodetic_datum_ensemble_member.sql",
+    "data/sql/vertical_datum.sql",
+    "data/sql/vertical_datum_ensemble_member.sql",
+    "data/sql/engineering_datum.sql",
+    "data/sql/conversion.sql",
+    "data/sql/geodetic_crs.sql",
+    "data/sql/projected_crs.sql",
+    "data/sql/vertical_crs.sql",
+    "data/sql/compound_crs.sql",
+    "data/sql/engineering_crs.sql",
+    "data/sql/helmert_transformation.sql",
+    "data/sql/grid_transformation.sql",
+    "data/sql/grid_transformation_custom.sql",
+    "data/sql/other_transformation.sql",
+    "data/sql/other_transformation_custom.sql",
+    "data/sql/concatenated_operation.sql",
+    "data/sql/concatenated_operation_step.sql",
+    "data/sql/alias_name.sql",
+    "data/sql/alias_name_old_epsg.sql",
+    "data/sql/supersession.sql",
+    "data/sql/deprecation.sql",
+    "data/sql/esri.sql",
+    "data/sql/ignf.sql",
+    "data/sql/nkg.sql",
+    "data/sql/iau.sql",
+    "data/sql/nrcan.sql",
+    "data/sql/transformations_czechia.sql",
+    "data/sql/grid_alternatives.sql",
+    "data/sql/grid_alternatives_generated_noaa.sql",
+    "data/sql/nadcon5_concatenated_operations.sql",
+    "data/sql/wgs84_realizations_concatenated_operations.sql",
+    "data/sql/customizations.sql",
+    "data/sql/nkg_post_customizations.sql",
+    "data/sql/commit.sql",
+    "data/sql/consistency_checks_triggers.sql",
+    "data/sql/conversion_triggers.sql",
+    "data/sql/conversion_triggers_hand_written.sql",
+    "data/sql/analyze_vacuum.sql",
+]
+
+PROJ_LIBRARY_SRCS = glob(
+    [
+        "src/*.c",
+        "src/*.cpp",
+        "src/conversions/*.cpp",
+        "src/iso19111/*.cpp",
+        "src/iso19111/operation/*.cpp",
+        "src/projections/*.cpp",
+        "src/transformations/*.cpp",
+    ],
+    exclude = [
+        "src/embedded_resources.c",
+        "src/memvfs.c",
+    ],
+) + [
+    "src/apps/projinfo_lib.cpp",
+]
+
+PROJ_LIBRARY_HDRS = glob(
+    [
+        "include/**/*.hpp",
+        "src/**/*.h",
+        "src/**/*.hpp",
+    ],
+) + [
+    ":proj_config_h",
+]
+
+cmake_configure_file(
+    name = "proj_config_h",
+    src = "cmake/proj_config.cmake.in",
+    out = "src/proj_config.h",
+    defines = [
+        "HAVE_LIBDL=1",
+        "HAVE_LOCALECONV=1",
+        "HAVE_STRERROR=1",
+    ],
+)
+
+genrule(
+    name = "proj_db",
+    srcs = PROJ_DB_SQL_FILES,
+    outs = ["proj.db"],
+    cmd = """
+tmp_sql="$(@D)/all.sql.in"
+rm -f "$$tmp_sql" "$@"
+cat \
+  $(location data/sql/begin.sql) \
+  $(location data/sql/proj_db_table_defs.sql) \
+  $(location data/sql/customizations_early.sql) \
+  $(location data/sql/metadata.sql) \
+  $(location data/sql/unit_of_measure.sql) \
+  $(location data/sql/extent.sql) \
+  $(location data/sql/scope.sql) \
+  $(location data/sql/coordinate_system.sql) \
+  $(location data/sql/axis.sql) \
+  $(location data/sql/ellipsoid.sql) \
+  $(location data/sql/prime_meridian.sql) \
+  $(location data/sql/geodetic_datum.sql) \
+  $(location data/sql/geodetic_datum_ensemble_member.sql) \
+  $(location data/sql/vertical_datum.sql) \
+  $(location data/sql/vertical_datum_ensemble_member.sql) \
+  $(location data/sql/engineering_datum.sql) \
+  $(location data/sql/conversion.sql) \
+  $(location data/sql/geodetic_crs.sql) \
+  $(location data/sql/projected_crs.sql) \
+  $(location data/sql/vertical_crs.sql) \
+  $(location data/sql/compound_crs.sql) \
+  $(location data/sql/engineering_crs.sql) \
+  $(location data/sql/helmert_transformation.sql) \
+  $(location data/sql/grid_transformation.sql) \
+  $(location data/sql/grid_transformation_custom.sql) \
+  $(location data/sql/other_transformation.sql) \
+  $(location data/sql/other_transformation_custom.sql) \
+  $(location data/sql/concatenated_operation.sql) \
+  $(location data/sql/concatenated_operation_step.sql) \
+  $(location data/sql/alias_name.sql) \
+  $(location data/sql/alias_name_old_epsg.sql) \
+  $(location data/sql/supersession.sql) \
+  $(location data/sql/deprecation.sql) \
+  $(location data/sql/esri.sql) \
+  $(location data/sql/ignf.sql) \
+  $(location data/sql/nkg.sql) \
+  $(location data/sql/iau.sql) \
+  $(location data/sql/nrcan.sql) \
+  $(location data/sql/transformations_czechia.sql) \
+  $(location data/sql/grid_alternatives.sql) \
+  $(location data/sql/grid_alternatives_generated_noaa.sql) \
+  $(location data/sql/nadcon5_concatenated_operations.sql) \
+  $(location data/sql/wgs84_realizations_concatenated_operations.sql) \
+  $(location data/sql/customizations.sql) \
+  $(location data/sql/nkg_post_customizations.sql) \
+  $(location data/sql/commit.sql) \
+  $(location data/sql/consistency_checks_triggers.sql) \
+  $(location data/sql/conversion_triggers.sql) \
+  $(location data/sql/conversion_triggers_hand_written.sql) \
+  $(location data/sql/analyze_vacuum.sql) > "$$tmp_sql"
+sed 's/$${PROJ_VERSION}/%s/g' "$$tmp_sql" | $(execpath @sqlite3//:shell) "$@"
+""" % PROJ_VERSION,
+    tools = ["@sqlite3//:shell"],
+    visibility = ["//visibility:public"],
+)
+
+copy_file(
+    name = "data_proj_db",
+    src = ":proj_db",
+    out = "data/proj.db",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "proj_runtime_data",
+    srcs = [
+        "data/proj.ini",
+        ":data_proj_db",
+    ] + PROJ_DICTIONARY + glob(
+        [
+            "data/*.json",
+        ],
+    ),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "proj",
+    srcs = PROJ_LIBRARY_SRCS,
+    hdrs = PROJ_LIBRARY_HDRS,
+    cxxopts = ["-std=c++17"],
+    defines = [
+        "PROJ_DLL=",
+    ],
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lm",
+            "-pthread",
+        ],
+        "//conditions:default": [
+            "-lm",
+        ],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "PROJ_HAS_PTHREADS",
+        "CURL_ENABLED",
+        "TIFF_ENABLED",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@curl",
+        "@libtiff//:tiff",
+        "@sqlite3",
+    ],
+)
+
+cc_binary(
+    name = "cct",
+    srcs = [
+        "src/apps/cct.cpp",
+        "src/apps/optargpm.h",
+        "src/apps/proj_strtod.cpp",
+        "src/apps/proj_strtod.h",
+    ],
+    data = [":proj_runtime_data"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)
+
+cc_binary(
+    name = "cs2cs",
+    srcs = [
+        "src/apps/cs2cs.cpp",
+        "src/apps/emess.cpp",
+        "src/apps/utils.cpp",
+    ],
+    data = [":proj_runtime_data"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)
+
+cc_binary(
+    name = "geod",
+    srcs = [
+        "src/apps/emess.cpp",
+        "src/apps/geod.cpp",
+        "src/apps/geod_interface.cpp",
+        "src/apps/geod_interface.h",
+        "src/apps/geod_set.cpp",
+        "src/apps/utils.cpp",
+    ],
+    data = [":proj_runtime_data"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)
+
+alias(
+    name = "invgeod",
+    actual = ":geod",
+)
+
+cc_binary(
+    name = "gie",
+    srcs = [
+        "src/apps/gie.cpp",
+        "src/apps/optargpm.h",
+        "src/apps/proj_strtod.cpp",
+        "src/apps/proj_strtod.h",
+    ],
+    data = [":proj_runtime_data"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)
+
+cc_binary(
+    name = "binproj",
+    srcs = [
+        "src/apps/emess.cpp",
+        "src/apps/proj.cpp",
+        "src/apps/utils.cpp",
+    ],
+    data = [":proj_runtime_data"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)
+
+alias(
+    name = "invproj",
+    actual = ":binproj",
+)
+
+cc_binary(
+    name = "projinfo",
+    srcs = ["src/apps/projinfo.cpp"],
+    data = [":proj_runtime_data"],
+    local_defines = ["CURL_ENABLED"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)
+
+cc_binary(
+    name = "projsync",
+    srcs = ["src/apps/projsync.cpp"],
+    data = [":proj_runtime_data"],
+    visibility = ["//visibility:public"],
+    deps = [":proj"],
+)

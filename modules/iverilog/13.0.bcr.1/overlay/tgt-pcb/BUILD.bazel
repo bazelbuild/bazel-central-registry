@@ -1,0 +1,87 @@
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:defs.bzl", "autoconf_hdr")
+load(
+    "//bazel:iverilog.bzl",
+    "CXX_STD",
+    "PICFLAG",
+    "SHARED_LINKOPTS",
+    "WARNING_COPTS",
+)
+
+exports_files([
+    "pcb.conf",
+    "pcb-s.conf",
+])
+
+autoconf_hdr(
+    name = "gen_pcb_config_h",
+    out = "pcb_config.h",
+    template = "pcb_config.h.in",
+    deps = ["//:autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":gen_pcb_config_h"],
+    includes = ["."],
+)
+
+bison(
+    name = "gen_fp_parse",
+    srcs = ["fp.y"],
+    outs = [
+        "fp.cc",
+        "fp.h",
+    ],
+    args = [
+        "--verbose",
+        "-t",
+        "-p",
+        "fp",
+        "--defines=$(execpath fp.h)",
+        "-o",
+        "$(execpath fp.cc)",
+        "$(execpath fp.y)",
+    ],
+)
+
+flex(
+    name = "gen_fp_lex",
+    srcs = ["fp.lex"],
+    outs = ["fp_lex.cc"],
+    args = [
+        "-o",
+        "$(execpath fp_lex.cc)",
+        "$(execpath fp.lex)",
+    ],
+)
+
+cc_binary(
+    name = "pcb_tgt",
+    srcs = [
+        "footprint.cc",
+        "fp_api.h",
+        "pcb.cc",
+        "pcb_priv.h",
+        "scope.cc",
+        "show_netlist.cc",
+        "show_pcb.cc",
+        ":gen_fp_lex",
+        ":gen_fp_parse",
+    ],
+    copts = CXX_STD + WARNING_COPTS + PICFLAG,
+    dynamic_deps = select({
+        "@platforms//os:windows": ["//:libivl"],
+        "//conditions:default": [],
+    }),
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        "//:ivl_headers",
+    ],
+)

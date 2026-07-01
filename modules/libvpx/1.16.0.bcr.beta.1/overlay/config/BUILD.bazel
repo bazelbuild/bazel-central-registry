@@ -1,0 +1,369 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":defs.bzl", "libvpx_rtcd_headers")
+load(
+    ":generators.bzl",
+    "config_output_dir",
+    "config_output_file",
+    "emit_config_family_targets",
+    "select_config_dirs",
+    "select_config_outputs",
+)
+load(":vpx_config.bzl", "vpx_config_asm", "vpx_config_header", "vpx_config_rtcd")
+load(":vpx_version.bzl", "vpx_version_header")
+
+package(default_visibility = ["//visibility:public"])
+
+# Linux Arm64 GCC in BCR CI lacks arm_neon_sve_bridge.h, so "auto" defaults to
+# SVE off there and on for other non-Windows Arm64 platforms.
+string_flag(
+    name = "with_sve",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        "false",
+        "true",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "sve_auto",
+    flag_values = {":with_sve": "auto"},
+)
+
+config_setting(
+    name = "sve_disabled",
+    flag_values = {":with_sve": "false"},
+)
+
+config_setting(
+    name = "sve_enabled",
+    flag_values = {":with_sve": "true"},
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "macos_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:macos",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64_sve_auto",
+    flag_values = {":with_sve": "auto"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64_sve_auto",
+    flag_values = {":with_sve": "auto"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64_sve_disabled",
+    flag_values = {":with_sve": "false"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+config_setting(
+    name = "windows_arm64_sve_enabled",
+    flag_values = {":with_sve": "true"},
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:windows",
+    ],
+)
+
+_ARM_FEATURES = {
+    "CONFIG_PIC": 0,
+    "CONFIG_RUNTIME_CPU_DETECT": 0,
+}
+
+_ARM64_FEATURES = {
+    "CONFIG_PIC": 0,
+}
+
+_ARM64_NO_SVE_FEATURES = {
+    "CONFIG_PIC": 0,
+    "HAVE_SVE": 0,
+}
+
+_ARM64_WINDOWS_CONFIG_OVERRIDES = {
+    "CONFIG_PIC": 0,
+    "HAVE_NEON_DOTPROD": 0,
+    "HAVE_NEON_I8MM": 0,
+    "HAVE_SVE": 0,
+}
+
+_X86_CONFIG_VARIANTS = {
+    "@platforms//os:windows": "windows",
+    "//conditions:default": "default",
+}
+
+_ARM64_CONFIG_VARIANTS = {
+    ":windows_arm64_sve_auto": "windows",
+    ":windows_arm64_sve_disabled": "windows",
+    ":windows_arm64_sve_enabled": "windows",
+    ":sve_disabled": "no_sve",
+    ":linux_arm64_sve_auto": "no_sve",
+    "//conditions:default": "default",
+}
+
+emit_config_family_targets(
+    family = "x86_64",
+    arch = "x86_64",
+    variants = [
+        {"name": "default"},
+        {
+            "name": "windows",
+            "windows": True,
+        },
+    ],
+)
+
+emit_config_family_targets(
+    family = "x86",
+    arch = "x86",
+    variants = [
+        {"name": "default"},
+        {
+            "name": "windows",
+            "windows": True,
+        },
+    ],
+)
+
+emit_config_family_targets(
+    family = "arm64",
+    arch = "arm64",
+    variants = [
+        {
+            "name": "default",
+            "features": _ARM64_FEATURES,
+        },
+        {
+            "name": "no_sve",
+            "emit_asm": False,
+            "features": _ARM64_NO_SVE_FEATURES,
+        },
+        {
+            "name": "windows",
+            "emit_asm": False,
+            "features": _ARM64_WINDOWS_CONFIG_OVERRIDES,
+            "windows": True,
+        },
+    ],
+)
+
+emit_config_family_targets(
+    family = "arm",
+    arch = "arm",
+    variants = [
+        {
+            "name": "default",
+            "features": _ARM_FEATURES,
+        },
+    ],
+)
+
+vpx_version_header(
+    name = "gen_vpx_version",
+    out = "generated/common/vpx_version.h",
+    version = "1.16.0",
+)
+
+libvpx_rtcd_headers(
+    name = "x86_64_rtcd",
+    arch = "x86_64",
+    config_file = ":x86_64_vpx_config_rtcd",
+    disable_avx512 = True,
+    out_dir = "rtcd/x86_64",
+)
+
+libvpx_rtcd_headers(
+    name = "x86_rtcd",
+    arch = "x86",
+    config_file = ":x86_vpx_config_rtcd",
+    disable_avx512 = True,
+    out_dir = "rtcd/x86",
+)
+
+libvpx_rtcd_headers(
+    name = "arm64_rtcd",
+    arch = "arm64",
+    config_file = ":arm64_vpx_config_rtcd",
+    disable_sve2 = True,
+    out_dir = "rtcd/arm64",
+)
+
+libvpx_rtcd_headers(
+    name = "arm64_rtcd_no_sve",
+    arch = "arm64",
+    config_file = config_output_file("arm64", "no_sve", "rtcd"),
+    disable_sve = True,
+    disable_sve2 = True,
+    out_dir = "rtcd/arm64_no_sve",
+)
+
+libvpx_rtcd_headers(
+    name = "arm_rtcd",
+    arch = "armv7",
+    config_file = ":arm_vpx_config_rtcd",
+    disable_neon_i8mm = True,
+    disable_sve = True,
+    disable_sve2 = True,
+    out_dir = "rtcd/arm",
+)
+
+filegroup(
+    name = "x86_64_vpx_config_asm",
+    srcs = select_config_outputs("x86_64", "asm", _X86_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "x86_64_vpx_config_h",
+    srcs = select_config_outputs("x86_64", "h", _X86_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "x86_64_vpx_config_rtcd",
+    srcs = select_config_outputs("x86_64", "rtcd", _X86_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "x86_vpx_config_asm",
+    srcs = select_config_outputs("x86", "asm", _X86_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "x86_vpx_config_h",
+    srcs = select_config_outputs("x86", "h", _X86_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "x86_vpx_config_rtcd",
+    srcs = select_config_outputs("x86", "rtcd", _X86_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "arm_vpx_config_asm",
+    srcs = [config_output_file("arm", "default", "asm")],
+)
+
+filegroup(
+    name = "arm_vpx_config_h",
+    srcs = [config_output_file("arm", "default", "h")],
+)
+
+filegroup(
+    name = "arm_vpx_config_rtcd",
+    srcs = [config_output_file("arm", "default", "rtcd")],
+)
+
+filegroup(
+    name = "arm64_vpx_config_asm",
+    srcs = [config_output_file("arm64", "default", "asm")],
+)
+
+filegroup(
+    name = "arm64_vpx_config_h",
+    srcs = select_config_outputs("arm64", "h", _ARM64_CONFIG_VARIANTS),
+)
+
+filegroup(
+    name = "arm64_vpx_config_rtcd",
+    srcs = select_config_outputs("arm64", "rtcd", _ARM64_CONFIG_VARIANTS),
+)
+
+cc_library(
+    name = "x86_64_config",
+    hdrs = [
+        "generated/common/vpx_version.h",
+        ":x86_64_vpx_config_h",
+        ":x86_64_rtcd",
+    ],
+    includes = [
+        "generated/common",
+        "rtcd/x86_64",
+    ] + select_config_dirs("x86_64", _X86_CONFIG_VARIANTS),
+)
+
+cc_library(
+    name = "x86_config",
+    hdrs = [
+        "generated/common/vpx_version.h",
+        ":x86_vpx_config_h",
+        ":x86_rtcd",
+    ],
+    includes = [
+        "generated/common",
+        "rtcd/x86",
+    ] + select_config_dirs("x86", _X86_CONFIG_VARIANTS),
+)
+
+cc_library(
+    name = "arm64_config",
+    hdrs = [
+        "generated/common/vpx_version.h",
+        ":arm64_vpx_config_h",
+    ] + select({
+        ":windows_arm64_sve_auto": [":arm64_rtcd"],
+        ":windows_arm64_sve_disabled": [":arm64_rtcd"],
+        ":windows_arm64_sve_enabled": [":arm64_rtcd"],
+        ":sve_disabled": [":arm64_rtcd_no_sve"],
+        ":linux_arm64_sve_auto": [":arm64_rtcd_no_sve"],
+        "//conditions:default": [":arm64_rtcd"],
+    }),
+    includes = ["generated/common"] +
+        select_config_dirs("arm64", _ARM64_CONFIG_VARIANTS) +
+        select({
+            ":windows_arm64_sve_auto": ["rtcd/arm64"],
+            ":windows_arm64_sve_disabled": ["rtcd/arm64"],
+            ":windows_arm64_sve_enabled": ["rtcd/arm64"],
+            ":sve_disabled": ["rtcd/arm64_no_sve"],
+            ":linux_arm64_sve_auto": ["rtcd/arm64_no_sve"],
+            "//conditions:default": ["rtcd/arm64"],
+        }),
+)
+
+cc_library(
+    name = "arm_config",
+    hdrs = [
+        "generated/common/vpx_version.h",
+        ":arm_vpx_config_h",
+        ":arm_rtcd",
+    ],
+    includes = [
+        "generated/common",
+        config_output_dir("arm", "default"),
+        "rtcd/arm",
+    ],
+)

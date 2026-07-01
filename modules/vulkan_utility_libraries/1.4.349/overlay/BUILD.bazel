@@ -1,0 +1,164 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(
+    default_visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "windows_clang_cl",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang-cl"},
+)
+
+config_setting(
+    name = "windows_msvc",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+)
+
+COMMON_WARNINGS = select({
+    ":windows_clang_cl": [],
+    ":windows_msvc": [],
+    "//conditions:default": [
+        "-Wpedantic",
+        "-Wunreachable-code",
+        "-Wunused-function",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wextra-semi",
+    ],
+})
+
+CLANG_WARNINGS = select({
+    "@bazel_tools//tools/cpp:clang": [
+        "-Wunreachable-code-return",
+        "-Wconversion",
+        "-Wimplicit-fallthrough",
+        "-Wstring-conversion",
+    ],
+    "//conditions:default": [],
+})
+
+WINDOWS_DEFINES = select({
+    "@platforms//os:windows": [
+        "NOMINMAX",
+        "WIN32_LEAN_AND_MEAN",
+        "VK_USE_PLATFORM_WIN32_KHR",
+    ],
+    "//conditions:default": [],
+})
+
+ANDROID_DEFINES = select({
+    "@platforms//os:android": ["VK_USE_PLATFORM_ANDROID_KHR"],
+    "//conditions:default": [],
+})
+
+APPLE_DEFINES = select({
+    "@platforms//os:ios": [
+        "VK_USE_PLATFORM_METAL_EXT",
+        "VK_USE_PLATFORM_IOS_MVK",
+    ],
+    "@platforms//os:macos": [
+        "VK_USE_PLATFORM_METAL_EXT",
+        "VK_USE_PLATFORM_MACOS_MVK",
+    ],
+    "//conditions:default": [],
+})
+
+CXX17_COPTS = select({
+    ":windows_clang_cl": ["/std:c++17"],
+    ":windows_msvc": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+_COMPILER_CONFIGURATION_COPTS = COMMON_WARNINGS + CLANG_WARNINGS + select({
+    ":windows_clang_cl": [
+        "/W4",
+        "/we5038",
+        "/wd4324",
+        "/permissive-",
+    ],
+    ":windows_msvc": [
+        "/W4",
+        "/we5038",
+        "/wd4324",
+        "/permissive-",
+    ],
+    "//conditions:default": [],
+})
+
+_COMPILER_CONFIGURATION_DEFINES = ["VK_ENABLE_BETA_EXTENSIONS"] + WINDOWS_DEFINES + ANDROID_DEFINES + APPLE_DEFINES
+
+WINDOWS_SYSTEM_LINKOPTS = select({
+    ":windows_clang_cl": ["Advapi32.lib"],
+    ":windows_msvc": ["Advapi32.lib"],
+    "//conditions:default": [],
+})
+
+cc_library(
+    name = "vulkan_utility_headers",
+    hdrs = [
+        "include/vulkan/vk_enum_string_helper.h",
+        "include/vulkan/utility/vk_concurrent_unordered_map.hpp",
+        "include/vulkan/utility/vk_dispatch_table.h",
+        "include/vulkan/utility/vk_format_utils.h",
+        "include/vulkan/utility/vk_safe_struct.hpp",
+        "include/vulkan/utility/vk_safe_struct_utils.hpp",
+        "include/vulkan/utility/vk_small_containers.hpp",
+        "include/vulkan/utility/vk_sparse_range_map.hpp",
+        "include/vulkan/utility/vk_struct_helper.hpp",
+    ],
+    includes = ["include"],
+    deps = ["@vulkan_headers//:vulkan_headers"],
+)
+
+cc_library(
+    name = "vulkan_compiler_configuration",
+    copts = _COMPILER_CONFIGURATION_COPTS,
+    defines = _COMPILER_CONFIGURATION_DEFINES,
+)
+
+cc_library(
+    name = "vulkan_layer_settings",
+    srcs = [
+        "src/layer/layer_settings_manager.cpp",
+        "src/layer/layer_settings_manager.hpp",
+        "src/layer/layer_settings_util.cpp",
+        "src/layer/layer_settings_util.hpp",
+        "src/layer/vk_layer_settings.cpp",
+        "src/layer/vk_layer_settings_helper.cpp",
+    ],
+    hdrs = [
+        "include/vulkan/layer/vk_layer_settings.h",
+        "include/vulkan/layer/vk_layer_settings.hpp",
+    ],
+    copts = CXX17_COPTS + _COMPILER_CONFIGURATION_COPTS,
+    defines = _COMPILER_CONFIGURATION_DEFINES,
+    includes = ["include"],
+    linkopts = WINDOWS_SYSTEM_LINKOPTS,
+    deps = ["@vulkan_headers//:vulkan_headers"],
+)
+
+cc_library(
+    name = "vulkan_safe_struct",
+    srcs = [
+        "src/vulkan/vk_safe_struct_core.cpp",
+        "src/vulkan/vk_safe_struct_ext.cpp",
+        "src/vulkan/vk_safe_struct_khr.cpp",
+        "src/vulkan/vk_safe_struct_manual.cpp",
+        "src/vulkan/vk_safe_struct_utils.cpp",
+        "src/vulkan/vk_safe_struct_vendor.cpp",
+    ],
+    hdrs = [
+        "include/vulkan/utility/vk_safe_struct.hpp",
+        "include/vulkan/utility/vk_safe_struct_utils.hpp",
+    ],
+    copts = CXX17_COPTS + _COMPILER_CONFIGURATION_COPTS,
+    defines = _COMPILER_CONFIGURATION_DEFINES,
+    includes = ["include"],
+    deps = [
+        ":vulkan_utility_headers",
+        "@vulkan_headers//:vulkan_headers",
+    ],
+)

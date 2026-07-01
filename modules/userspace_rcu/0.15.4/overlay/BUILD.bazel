@@ -1,0 +1,287 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# Generate config.h using write_file
+write_file(
+    name = "gen_config_h",
+    out = "include/urcu/config.h",
+    content = [
+        "/* Bazel configuration for userspace-rcu */",
+        "",
+        "#ifndef _URCU_CONFIG_H",
+        "#define _URCU_CONFIG_H",
+        "",
+        "/* Enable SMP support. With SMP support enabled, uniprocessors are also",
+        "   supported. With SMP support disabled, UP systems work fine, but the",
+        "   behavior of SMP systems is undefined. */",
+        "#define CONFIG_RCU_SMP 1",
+        "",
+        "/* TLS provided by the compiler. */",
+        "#define CONFIG_RCU_TLS __thread",
+        "",
+        "/* clock_gettime() is detected. */",
+        "#define CONFIG_RCU_HAVE_CLOCK_GETTIME 1",
+        "",
+        "/* Expose multi-flavor support */",
+        "#define CONFIG_RCU_HAVE_MULTIFLAVOR 1",
+        "",
+        "/* Use atomic builtins if available */",
+        "#if defined(__GNUC__) || defined(__clang__)",
+        "#define CONFIG_RCU_USE_ATOMIC_BUILTINS 1",
+        "#endif",
+        "",
+        "/* Debug options - disabled by default for performance */",
+        "/* #undef CONFIG_RCU_DEBUG */",
+        "/* #undef CONFIG_CDS_LFHT_ITER_DEBUG */",
+        "",
+        "/* Force membarrier - typically not needed */",
+        "/* #undef CONFIG_RCU_FORCE_SYS_MEMBARRIER */",
+        "",
+        "/* Legacy memory barriers - not needed for modern architectures */",
+        "/* #undef CONFIG_RCU_EMIT_LEGACY_MB */",
+        "",
+        "#endif /* _URCU_CONFIG_H */",
+        "",
+    ],
+)
+
+# Common defines for all libraries
+COMMON_DEFINES = [
+    "CONFIG_RCU_SMP=1",
+    "CONFIG_RCU_TLS=__thread",
+    "CONFIG_RCU_HAVE_CLOCK_GETTIME=1",
+    "CONFIG_RCU_HAVE_MULTIFLAVOR=1",
+] + select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "//conditions:default": [],
+})
+
+# Common sources used by multiple libraries
+COMPAT_SRCS = [
+    "src/compat_arch.c",
+    "src/compat_futex.c",
+]
+
+# RCU Lock-Free Hash Table sources
+RCULFHASH_SRCS = [
+    "src/rculfhash.c",
+    "src/rculfhash-mm-order.c",
+    "src/rculfhash-mm-chunk.c",
+    "src/rculfhash-mm-mmap.c",
+]
+
+# Common headers for internal use
+INTERNAL_HDRS = [
+    "src/urcu-die.h",
+    "src/urcu-wait.h",
+    "src/compat-getcpu.h",
+    "src/compat-smp.h",
+    "src/urcu-utils.h",
+    "src/rculfhash-internal.h",
+    "src/workqueue.h",
+    "src/urcu-call-rcu-impl.h",
+    "src/urcu-defer-impl.h",
+    "src/urcu-poll-impl.h",
+]
+
+# Collect all public headers
+PUBLIC_HDRS = glob(
+    include = ["include/urcu/**/*.h"],
+    exclude = ["include/urcu/config.h.in"],
+) + [
+    "include/urcu-qsbr.h",
+    "include/urcu-bp.h",
+    "include/urcu-call-rcu.h",
+    "include/urcu-defer.h",
+    "include/urcu-flavor.h",
+    "include/urcu.h",
+    "include/urcu-pointer.h",
+    ":gen_config_h",
+]
+
+# liburcu-common: wait-free queues and futex fallbacks
+cc_library(
+    name = "urcu-common",
+    srcs = [
+        "src/wfcqueue.c",
+        "src/wfqueue.c",
+        "src/wfstack.c",
+    ] + COMPAT_SRCS + INTERNAL_HDRS,
+    hdrs = PUBLIC_HDRS,
+    copts = ["-Wall"],
+    defines = COMMON_DEFINES,
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "test_hdrs",
+    testonly = True,
+    hdrs = [
+        "src/compat-getcpu.h",
+        "src/compat-smp.h",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [":urcu-common"],
+)
+
+# liburcu: RCU with memory barrier (default membarrier flavor)
+cc_library(
+    name = "urcu-memb",
+    srcs = [
+        "src/urcu.c",
+        "src/urcu-pointer.c",
+    ] + COMPAT_SRCS + INTERNAL_HDRS,
+    hdrs = PUBLIC_HDRS,
+    copts = ["-Wall"],
+    defines = COMMON_DEFINES + ["RCU_MEMBARRIER"],
+    includes = [
+        "include",
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":urcu-common"],
+)
+
+# liburcu-qsbr: Quiescent State Based RCU
+cc_library(
+    name = "urcu-qsbr",
+    srcs = [
+        "src/urcu-pointer.c",
+        "src/urcu-qsbr.c",
+    ] + COMPAT_SRCS + INTERNAL_HDRS,
+    hdrs = PUBLIC_HDRS,
+    copts = ["-Wall"],
+    defines = COMMON_DEFINES + ["RCU_QSBR"],
+    includes = [
+        "include",
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":urcu-common"],
+)
+
+# liburcu-mb: Memory Barrier RCU
+cc_library(
+    name = "urcu-mb",
+    srcs = [
+        "src/urcu.c",
+        "src/urcu-pointer.c",
+    ] + COMPAT_SRCS + INTERNAL_HDRS,
+    hdrs = PUBLIC_HDRS,
+    copts = ["-Wall"],
+    defines = COMMON_DEFINES + ["RCU_MB"],
+    includes = [
+        "include",
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":urcu-common"],
+)
+
+# liburcu-bp: Bulletproof RCU
+cc_library(
+    name = "urcu-bp",
+    srcs = [
+        "src/urcu-bp.c",
+        "src/urcu-pointer.c",
+    ] + COMPAT_SRCS + INTERNAL_HDRS,
+    hdrs = PUBLIC_HDRS,
+    copts = ["-Wall"],
+    defines = COMMON_DEFINES,
+    includes = [
+        "include",
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":urcu-common"],
+)
+
+# liburcu-cds: Concurrent data structures
+cc_library(
+    name = "urcu-cds",
+    srcs = [
+        "src/lfstack.c",
+        "src/rculfqueue.c",
+        "src/rculfstack.c",
+        "src/workqueue.c",
+    ] + RCULFHASH_SRCS + COMPAT_SRCS + INTERNAL_HDRS,
+    hdrs = PUBLIC_HDRS,
+    copts = ["-Wall"],
+    defines = COMMON_DEFINES,
+    includes = [
+        "include",
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":urcu-common"],
+)
+
+# Convenience aliases
+alias(
+    name = "userspace_rcu",
+    actual = ":urcu-memb",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "urcu",
+    actual = ":urcu-memb",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu",
+    actual = ":urcu-memb",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-urcu-memb",
+    actual = ":urcu",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-common",
+    actual = ":urcu-common",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-memb",
+    actual = ":urcu-memb",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-qsbr",
+    actual = ":urcu-qsbr",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-mb",
+    actual = ":urcu-mb",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-bp",
+    actual = ":urcu-bp",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburcu-cds",
+    actual = ":urcu-cds",
+    visibility = ["//visibility:public"],
+)

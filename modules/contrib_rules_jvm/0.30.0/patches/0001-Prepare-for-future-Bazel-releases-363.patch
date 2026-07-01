@@ -1,0 +1,252 @@
+From 98daf743ae3e21e0fb3e59455d3817ba6440ab02 Mon Sep 17 00:00:00 2001
+From: Simon Mavi Stewart <simon.m.stewart@gmail.com>
+Date: Sat, 30 Aug 2025 22:45:53 +0100
+Subject: [PATCH] Prepare for future Bazel releases (#363)
+
+This pins us to the latest stable 7.x release, and updates files to
+`load` previously built-in symbols directly from the rulesets.
+
+There are minimal version bumps in the module file to accommodate this
+and to remove any warnings about transitive bazel deps forcing newer
+versions.
+---
+ .bazelversion                      |  2 +-
+ MODULE.bazel                       | 16 +++++++++-------
+ java/BUILD.bazel                   |  1 +
+ java/private/BUILD.bazel           | 23 +++++++++++++++--------
+ java/private/checkstyle_config.bzl |  6 ++++--
+ java/private/library.bzl           |  9 ++++++---
+ java/private/pmd.bzl               |  1 +
+ java/private/pmd_ruleset.bzl       |  5 +++--
+ java/private/spotbugs.bzl          |  1 +
+ java/private/spotbugs_config.bzl   |  6 ++++--
+ tools/BUILD.bazel                  |  2 ++
+ 11 files changed, 47 insertions(+), 25 deletions(-)
+
+diff --git a/.bazelversion b/.bazelversion
+index 18bb418..e8be684 100644
+--- a/.bazelversion
++++ b/.bazelversion
+@@ -1 +1 @@
+-7.5.0
++7.6.1
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 16c0783..fa115b3 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -12,18 +12,20 @@ PROTOBUF_VERSION = "21.7"
+ PROTOBUF_JAVA_VERSION = "3.{}".format(PROTOBUF_VERSION)
+ 
+ bazel_dep(name = "apple_rules_lint", version = "0.4.0")
+-bazel_dep(name = "bazel_skylib", version = "1.7.1")
+-bazel_dep(name = "grpc-java", version = "1.69.0")
++bazel_dep(name = "bazel_skylib", version = "1.8.1")
++bazel_dep(name = "grpc-java", version = "1.71.0")
+ bazel_dep(name = "gazelle", version = "0.42.0", repo_name = "bazel_gazelle")
+ bazel_dep(name = "protobuf", version = "29.1", repo_name = "com_google_protobuf")
+-bazel_dep(name = "rules_cc", version = "0.0.16")
++bazel_dep(name = "rules_cc", version = "0.1.1")
+ bazel_dep(name = "rules_go", version = "0.52.0")
+-bazel_dep(name = "rules_java", version = "7.12.2")
++bazel_dep(name = "rules_java", version = "8.5.1")
+ bazel_dep(name = "rules_jvm_external", version = "6.7")
+ bazel_dep(name = "rules_proto", version = "7.0.2")
+ 
+-bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.7.1", dev_dependency = True)
+-bazel_dep(name = "stardoc", version = "0.7.1", dev_dependency = True, repo_name = "io_bazel_stardoc")
++bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.1", dev_dependency = True)
++bazel_dep(name = "rules_python", version = "1.5.4", dev_dependency = True)
++bazel_dep(name = "rules_shell", version = "0.6.0", dev_dependency = True)
++bazel_dep(name = "stardoc", version = "0.7.2", dev_dependency = True, repo_name = "io_bazel_stardoc")
+ 
+ linter = use_extension("@apple_rules_lint//lint:extensions.bzl", "linter")
+ linter.register(name = "java-checkstyle")
+diff --git a/java/BUILD.bazel b/java/BUILD.bazel
+index e446576..9e64e9b 100644
+--- a/java/BUILD.bazel
++++ b/java/BUILD.bazel
+@@ -82,5 +82,6 @@ bzl_library(
+         "//java/private:pmd_ruleset",
+         "//java/private:spotbugs",
+         "//java/private:spotbugs_config",
++        "@rules_java//java/private:proto_support",
+     ],
+ )
+diff --git a/java/private/BUILD.bazel b/java/private/BUILD.bazel
+index 37b93d4..1b9a765 100644
+--- a/java/private/BUILD.bazel
++++ b/java/private/BUILD.bazel
+@@ -88,28 +88,35 @@ bzl_library(
+     name = "checkstyle_config",
+     srcs = ["checkstyle_config.bzl"],
+     visibility = ["//java:__subpackages__"],
++    deps = [
++        "@rules_java//java:rules",
++    ],
+ )
+ 
+ bzl_library(
+-    name = "java_test_suite_shared_constants",
+-    srcs = ["java_test_suite_shared_constants.bzl"],
++    name = "pmd_ruleset",
++    srcs = ["pmd_ruleset.bzl"],
+     visibility = ["//java:__subpackages__"],
++    deps = ["@rules_java//java:rules"],
+ )
+ 
+ bzl_library(
+-    name = "package",
+-    srcs = ["package.bzl"],
++    name = "spotbugs_config",
++    srcs = ["spotbugs_config.bzl"],
+     visibility = ["//java:__subpackages__"],
++    deps = [
++        "@rules_java//java:rules",
++    ],
+ )
+ 
+ bzl_library(
+-    name = "pmd_ruleset",
+-    srcs = ["pmd_ruleset.bzl"],
++    name = "java_test_suite_shared_constants",
++    srcs = ["java_test_suite_shared_constants.bzl"],
+     visibility = ["//java:__subpackages__"],
+ )
+ 
+ bzl_library(
+-    name = "spotbugs_config",
+-    srcs = ["spotbugs_config.bzl"],
++    name = "package",
++    srcs = ["package.bzl"],
+     visibility = ["//java:__subpackages__"],
+ )
+diff --git a/java/private/checkstyle_config.bzl b/java/private/checkstyle_config.bzl
+index d4b8bef..b8d6096 100644
+--- a/java/private/checkstyle_config.bzl
++++ b/java/private/checkstyle_config.bzl
+@@ -1,3 +1,6 @@
++load("@rules_java//java:java_binary.bzl", "java_binary")
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
++
+ def checkstyle_binary(
+         name,
+         main_class = "com.puppycrawl.tools.checkstyle.Main",
+@@ -32,8 +35,7 @@ def checkstyle_binary(
+       runtime_deps: The deps required by checkstyle at runtime. May be omitted.
+       srcs: If you're compiling your own `checkstyle` binary, the sources to use.
+     """
+-
+-    native.java_binary(
++    java_binary(
+         name = name,
+         main_class = main_class,
+         srcs = srcs,
+diff --git a/java/private/library.bzl b/java/private/library.bzl
+index 4606a2a..850b5cf 100644
+--- a/java/private/library.bzl
++++ b/java/private/library.bzl
+@@ -1,5 +1,8 @@
+ load("@apple_rules_lint//lint:defs.bzl", "get_lint_config")
+ load("@bazel_tools//tools/build_defs/repo:utils.bzl", "maybe")
++load("@rules_java//java:java_binary.bzl", _java_binary = "java_binary")
++load("@rules_java//java:java_library.bzl", _java_library = "java_library")
++load("@rules_java//java:java_test.bzl", _java_test = "java_test")
+ load("@rules_jvm_external//:defs.bzl", _java_export = "java_export")
+ load("//java/private:checkstyle.bzl", "checkstyle_test")
+ load("//java/private:pmd.bzl", "pmd_test")
+@@ -57,17 +60,17 @@ def create_lint_tests(name, **kwargs):
+ def java_binary(name, **kwargs):
+     """Adds linting tests to Bazel's own `java_binary`"""
+     create_lint_tests(name, **kwargs)
+-    native.java_binary(name = name, **kwargs)
++    _java_binary(name = name, **kwargs)
+ 
+ def java_library(name, **kwargs):
+     """Adds linting tests to Bazel's own `java_library`"""
+     create_lint_tests(name, **kwargs)
+-    native.java_library(name = name, **kwargs)
++    _java_library(name = name, **kwargs)
+ 
+ def java_test(name, **kwargs):
+     """Adds linting tests to Bazel's own `java_test`"""
+     create_lint_tests(name, **kwargs)
+-    native.java_test(name = name, **kwargs)
++    _java_test(name = name, **kwargs)
+ 
+ def java_export(name, maven_coordinates, pom_template = None, deploy_env = None, visibility = None, **kwargs):
+     """Adds linting tests to `rules_jvm_external`'s `java_export`"""
+diff --git a/java/private/pmd.bzl b/java/private/pmd.bzl
+index 5e005a8..4cd6464 100644
+--- a/java/private/pmd.bzl
++++ b/java/private/pmd.bzl
+@@ -1,4 +1,5 @@
+ load("@apple_rules_lint//lint:defs.bzl", "LinterInfo")
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
+ load(":pmd_ruleset.bzl", "PmdInfo")
+ 
+ def _pmd_test_impl(ctx):
+diff --git a/java/private/pmd_ruleset.bzl b/java/private/pmd_ruleset.bzl
+index 676998e..2426991 100644
+--- a/java/private/pmd_ruleset.bzl
++++ b/java/private/pmd_ruleset.bzl
+@@ -1,3 +1,5 @@
++load("@rules_java//java:java_binary.bzl", "java_binary")
++
+ def pmd_binary(
+         name,
+         main_class = "net.sourceforge.pmd.cli.PmdCli",
+@@ -32,8 +34,7 @@ def pmd_binary(
+       runtime_deps: The deps required by PMD at runtime. May be omitted.
+       srcs: If you're compiling your own PMD binary, the sources to use.
+     """
+-
+-    native.java_binary(
++    java_binary(
+         name = name,
+         main_class = main_class,
+         srcs = srcs,
+diff --git a/java/private/spotbugs.bzl b/java/private/spotbugs.bzl
+index 120dde2..57391a6 100644
+--- a/java/private/spotbugs.bzl
++++ b/java/private/spotbugs.bzl
+@@ -1,4 +1,5 @@
+ load("@apple_rules_lint//lint:defs.bzl", "LinterInfo")
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
+ load(":spotbugs_config.bzl", "SpotBugsInfo")
+ 
+ """
+diff --git a/java/private/spotbugs_config.bzl b/java/private/spotbugs_config.bzl
+index 9666ce4..746303e 100644
+--- a/java/private/spotbugs_config.bzl
++++ b/java/private/spotbugs_config.bzl
+@@ -1,3 +1,6 @@
++load("@rules_java//java:java_binary.bzl", "java_binary")
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
++
+ def spotbugs_binary(
+         name,
+         main_class = "edu.umd.cs.findbugs.LaunchAppropriateUI",
+@@ -33,8 +36,7 @@ def spotbugs_binary(
+       runtime_deps: The deps required by spotbugs at runtime. May be omitted.
+       srcs: If you're compiling your own `spotbugs` binary, the sources to use.
+     """
+-
+-    native.java_binary(
++    java_binary(
+         name = name,
+         main_class = main_class,
+         srcs = srcs,
+diff --git a/tools/BUILD.bazel b/tools/BUILD.bazel
+index 7824adf..7e2bae7 100644
+--- a/tools/BUILD.bazel
++++ b/tools/BUILD.bazel
+@@ -1,4 +1,6 @@
+ load("@rules_java//java:defs.bzl", "java_binary")
++load("@rules_python//python:defs.bzl", "py_binary")
++load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+ load("//java/private:artifact.bzl", "artifact")
+ 
+ # gazelle:exclude tools.go
+-- 
+2.39.5 (Apple Git-154)
+

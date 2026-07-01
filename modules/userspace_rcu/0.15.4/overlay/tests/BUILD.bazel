@@ -1,0 +1,338 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Common test configuration
+COMMON_COPTS = [
+    "-Wall",
+    "-iquote",
+    "tests/unit",  # Allow C++ tests to find C test files with #include "..."
+    "-iquote",
+    "src",  # Access to internal headers with #include "..."
+]
+
+#
+# Test utilities and common libraries
+#
+
+# TAP (Test Anything Protocol) library
+cc_library(
+    name = "tap",
+    testonly = True,
+    srcs = ["utils/tap.c"],
+    hdrs = ["utils/tap.h"],
+    copts = ["-Wall"],  # Don't use COMMON_COPTS here to avoid circular issues
+    includes = ["utils"],
+)
+
+# Textual headers for C test files that are #included by C++ tests
+cc_library(
+    name = "test_sources_for_cxx",
+    testonly = True,
+    includes = ["unit"],
+    textual_hdrs = glob(["unit/*.c"]),
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+    ],
+)
+
+# Common test headers
+cc_library(
+    name = "common_headers",
+    testonly = True,
+    hdrs = [
+        "common/api.h",
+        "common/compat-rand.h",
+        "common/thread-id.h",
+    ],
+    includes = ["common"],
+)
+
+# Architecture tests
+cc_test(
+    name = "test_arch",
+    srcs = ["unit/test_arch.c"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+    ],
+)
+
+cc_test(
+    name = "test_arch_cxx",
+    srcs = ["unit/test_arch_cxx.cpp"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:test_hdrs",
+    ],
+)
+
+# CPU mask tests
+cc_test(
+    name = "test_get_max_cpuid_from_mask",
+    srcs = ["unit/test_get_max_cpuid_from_mask.c"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+    ],
+)
+
+cc_test(
+    name = "test_get_max_cpuid_from_mask_cxx",
+    srcs = ["unit/test_get_max_cpuid_from_mask_cxx.cpp"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+    ],
+)
+
+cc_test(
+    name = "test_get_possible_cpus_array_len",
+    srcs = ["unit/test_get_possible_cpus_array_len.c"],
+    copts = COMMON_COPTS,
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+    ],
+)
+
+cc_test(
+    name = "test_get_possible_cpus_array_len_cxx",
+    srcs = ["unit/test_get_possible_cpus_array_len_cxx.cpp"],
+    copts = COMMON_COPTS,
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+    ],
+)
+
+# Atomic operations tests
+cc_test(
+    name = "test_uatomic",
+    srcs = ["unit/test_uatomic.c"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+    ],
+)
+
+cc_test(
+    name = "test_uatomic_cxx",
+    srcs = ["unit/test_uatomic_cxx.cpp"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:test_hdrs",
+    ],
+)
+
+# Multi-flavor RCU tests - test all RCU flavors in one program
+cc_test(
+    name = "test_urcu_multiflavor",
+    srcs = [
+        "unit/test_urcu_multiflavor.c",
+        "unit/test_urcu_multiflavor.h",
+        "unit/test_urcu_multiflavor-bp.c",
+        "unit/test_urcu_multiflavor-mb.c",
+        "unit/test_urcu_multiflavor-memb.c",
+        "unit/test_urcu_multiflavor-qsbr.c",
+    ],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+cc_test(
+    name = "test_urcu_multiflavor_cxx",
+    srcs = [
+        "unit/test_urcu_multiflavor.h",
+        "unit/test_urcu_multiflavor-bp_cxx.cpp",
+        "unit/test_urcu_multiflavor-mb_cxx.cpp",
+        "unit/test_urcu_multiflavor-memb_cxx.cpp",
+        "unit/test_urcu_multiflavor-qsbr_cxx.cpp",
+        "unit/test_urcu_multiflavor_cxx.cpp",
+    ],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+# Multi-flavor single unit tests
+cc_test(
+    name = "test_urcu_multiflavor_single_unit",
+    srcs = ["unit/test_urcu_multiflavor_single_unit.c"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+cc_test(
+    name = "test_urcu_multiflavor_single_unit_cxx",
+    srcs = ["unit/test_urcu_multiflavor_single_unit_cxx.cpp"],
+    copts = COMMON_COPTS,
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+# Build test - tests that all headers compile and link correctly
+cc_test(
+    name = "test_build",
+    srcs = ["unit/test_build.c"],
+    copts = COMMON_COPTS,
+    local_defines = ["_LGPL_SOURCE"],
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+        "//:urcu-cds",
+    ],
+)
+
+cc_test(
+    name = "test_build_cxx",
+    srcs = ["unit/test_build_cxx.cpp"],
+    copts = COMMON_COPTS,
+    local_defines = ["_LGPL_SOURCE"],
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:test_hdrs",
+        "//:urcu-cds",
+    ],
+)
+
+# Dynamic link variants (testing dynamic linking behavior)
+cc_test(
+    name = "test_urcu_multiflavor_dynlink",
+    srcs = [
+        "unit/test_urcu_multiflavor.c",
+        "unit/test_urcu_multiflavor.h",
+        "unit/test_urcu_multiflavor-bp.c",
+        "unit/test_urcu_multiflavor-mb.c",
+        "unit/test_urcu_multiflavor-memb.c",
+        "unit/test_urcu_multiflavor-qsbr.c",
+    ],
+    copts = COMMON_COPTS,
+    local_defines = ["DYNAMIC_LINK_TEST"],
+    deps = [
+        ":tap",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+cc_test(
+    name = "test_urcu_multiflavor_dynlink_cxx",
+    srcs = [
+        "unit/test_urcu_multiflavor.h",
+        "unit/test_urcu_multiflavor-bp_cxx.cpp",
+        "unit/test_urcu_multiflavor-mb_cxx.cpp",
+        "unit/test_urcu_multiflavor-memb_cxx.cpp",
+        "unit/test_urcu_multiflavor-qsbr_cxx.cpp",
+        "unit/test_urcu_multiflavor_cxx.cpp",
+    ],
+    copts = COMMON_COPTS,
+    local_defines = ["DYNAMIC_LINK_TEST"],
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+cc_test(
+    name = "test_urcu_multiflavor_single_unit_dynlink",
+    srcs = ["unit/test_urcu_multiflavor_single_unit.c"],
+    copts = COMMON_COPTS,
+    local_defines = ["DYNAMIC_LINK_TEST"],
+    deps = [
+        ":tap",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+cc_test(
+    name = "test_urcu_multiflavor_single_unit_dynlink_cxx",
+    srcs = ["unit/test_urcu_multiflavor_single_unit_cxx.cpp"],
+    copts = COMMON_COPTS,
+    local_defines = ["DYNAMIC_LINK_TEST"],
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:urcu",
+        "//:urcu-bp",
+        "//:urcu-mb",
+        "//:urcu-qsbr",
+    ],
+)
+
+cc_test(
+    name = "test_build_dynlink",
+    srcs = ["unit/test_build.c"],
+    copts = COMMON_COPTS,
+    local_defines = ["DYNAMIC_LINK_TEST"],
+    deps = [
+        ":tap",
+        "//:test_hdrs",
+        "//:urcu",
+        "//:urcu-cds",
+    ],
+)
+
+cc_test(
+    name = "test_build_dynlink_cxx",
+    srcs = ["unit/test_build_cxx.cpp"],
+    copts = COMMON_COPTS,
+    local_defines = ["DYNAMIC_LINK_TEST"],
+    deps = [
+        ":tap",
+        ":test_sources_for_cxx",
+        "//:test_hdrs",
+        "//:urcu",
+        "//:urcu-cds",
+    ],
+)

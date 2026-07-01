@@ -1,0 +1,181 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@crates_zenoh_c//:defs.bzl", "all_crate_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_shared_library")
+load("//cbindgen:cbindgen.bzl", "rust_cbindgen_library")
+
+# Transform the opaque types from a .txt to a .rs file.
+
+rust_binary(
+    name = "bazel_generate_opaque_types",
+    srcs = ["bazel_generate_opaque_types.rs"],
+    edition = "2021",
+    deps = ["@crates_zenoh_c//:regex"],
+)
+
+genrule(
+    name = "generate_opaque_types",
+    srcs = [
+        "//build-resources/opaque-types:src/lib.rs",
+        "//build-resources/opaque-types:opaque_types",
+    ],
+    outs = ["src/opaque_types/mod.rs"],
+    cmd = "$(location :bazel_generate_opaque_types) $(SRCS) $@",
+    tools = [":bazel_generate_opaque_types"],
+)
+
+# Generate the rust library (name must match the [lib] in Cargo.toml)
+
+rust_shared_library(
+    name = "zenohc",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/opaque_types/mod.rs"],
+    ) + [
+        ":generate_opaque_types",
+    ],
+    crate_features = [
+        "auth_pubkey",
+        "auth_usrpwd",
+        "shared-memory",
+        "unstable",
+        "transport_compression",
+        "transport_multilink",
+        "transport_quic",
+        "transport_serial",
+        "transport_tcp",
+        "transport_tls",
+        "transport_udp",
+        "transport_unixsock-stream",
+        "transport_ws",
+        "transport_vsock",
+    ],
+    proc_macro_deps = all_crate_deps(
+        package_name = "zenoh-c",
+        proc_macro = True,
+    ),
+    deps = all_crate_deps(
+        package_name = "zenoh-c",
+        normal = True,
+    ),
+)
+
+# Run cbindgen
+
+rust_cbindgen_library(
+    name = "zenohc-cbindgen",
+    config = "cbindgen.toml",
+    header_name = "include/zenoh-gen-buggy.h",
+    lang = "c",
+    lib = ":zenohc",
+)
+
+cargo_build_script(
+    name = "build_script",
+    srcs = glob([
+        "build.rs",
+        "buildrs/**",
+    ]),
+    build_script_env = {
+        "BUGGY_GENERATION_PATH": "$(locations :zenohc-cbindgen)",
+        "OUT_DIR": ".",
+    },
+    crate_features = [
+        "auth_pubkey",
+        "auth_usrpwd",
+        "shared-memory",
+        "unstable",
+        "transport_compression",
+        "transport_multilink",
+        "transport_quic",
+        "transport_serial",
+        "transport_tcp",
+        "transport_tls",
+        "transport_udp",
+        "transport_unixsock-stream",
+        "transport_ws",
+        "transport_vsock",
+    ],
+    crate_root = "build.rs",
+    data = [":zenohc-cbindgen"] + glob([
+        "cbindgen.toml",
+        "Cargo.toml",
+        "include/zenoh.h",
+        "include/zenoh_memory.h",
+        "include/zenoh_constants.h",
+        "splitguide.yaml",
+        "version.txt",
+        "src/**",
+    ]),
+    proc_macro_deps = all_crate_deps(
+        package_name = "zenoh-c",
+        proc_macro = True,
+    ),
+    deps = all_crate_deps(
+        package_name = "zenoh-c",
+        build = True,
+    ),
+)
+
+filegroup(
+    name = "output_dir",
+    srcs = [":build_script"],
+    output_group = "out_dir",
+)
+
+[
+    genrule(
+        name = "extract_{}".format(file.replace("/", "_").replace(".", "_")),
+        srcs = [":output_dir"],
+        outs = [file],
+        cmd = "cp $(location :output_dir)/{} $@".format(file),
+    )
+    for file in [
+        "include/zenoh_commons.h",
+        "include/zenoh_concrete.h",
+        "include/zenoh_configure.h",
+        "include/zenoh_macros.h",
+        "include/zenoh_opaque.h",
+    ]
+]
+
+# Package up the rust library and c headers as a cc_library
+
+cc_library(
+    name = "zenoh-c",
+    srcs = [":zenohc"],
+    hdrs = [
+        "include/zenoh.h",
+        "include/zenoh_commons.h",
+        "include/zenoh_concrete.h",
+        "include/zenoh_configure.h",
+        "include/zenoh_constants.h",
+        "include/zenoh_macros.h",
+        "include/zenoh_memory.h",
+        "include/zenoh_opaque.h",
+    ],
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = ["ZENOHC_DYN_LIB"],
+    visibility = ["//visibility:public"],
+)

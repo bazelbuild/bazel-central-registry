@@ -1,0 +1,129 @@
+load("@protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+
+# ─── Proto generation from .in.proto templates ─────────────────────────────
+
+py_binary(
+    name = "gen_proto",
+    srcs = ["onnx/gen_proto.py"],
+    main = "onnx/gen_proto.py",
+    data = [
+        "onnx/onnx.in.proto",
+        "onnx/onnx-operators.in.proto",
+        "onnx/onnx-data.in.proto",
+    ],
+)
+
+genrule(
+    name = "gen_onnx_ml_proto",
+    outs = ["onnx/onnx-ml.proto"],
+    cmd = "$(location :gen_proto) -p onnx -o $(@D) onnx -m",
+    tools = [":gen_proto"],
+)
+
+genrule(
+    name = "gen_onnx_operators_ml_proto",
+    outs = ["onnx/onnx-operators-ml.proto"],
+    cmd = "$(location :gen_proto) -p onnx -o $(@D) onnx-operators -m",
+    tools = [":gen_proto"],
+)
+
+genrule(
+    name = "gen_onnx_data_proto",
+    outs = ["onnx/onnx-data.proto"],
+    cmd = "$(location :gen_proto) -p onnx -o $(@D) onnx-data -m",
+    tools = [":gen_proto"],
+)
+
+# ─── Protobuf definitions ──────────────────────────────────────────────────
+
+proto_library(
+    name = "onnx_proto",
+    srcs = [
+        ":onnx/onnx-ml.proto",
+        ":onnx/onnx-operators-ml.proto",
+        ":onnx/onnx-data.proto",
+    ],
+)
+
+cc_proto_library(
+    name = "onnx_proto_cc",
+    visibility = ["//visibility:public"],
+    deps = [":onnx_proto"],
+)
+
+cc_library(
+    name = "onnx_proto_headers",
+    hdrs = glob([
+        "onnx/*_pb.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":onnx_proto_cc",
+    ],
+)
+
+# ─── ONNX C++ library ──────────────────────────────────────────────────────
+
+cc_library(
+    name = "onnx",
+    srcs = glob(
+        [
+            "onnx/*.cc",
+            "onnx/common/*.cc",
+            "onnx/defs/*.cc",
+            "onnx/defs/controlflow/*.cc",
+            "onnx/defs/generator/*.cc",
+            "onnx/defs/logical/*.cc",
+            "onnx/defs/math/*.cc",
+            "onnx/defs/nn/*.cc",
+            "onnx/defs/object_detection/*.cc",
+            "onnx/defs/optional/*.cc",
+            "onnx/defs/quantization/*.cc",
+            "onnx/defs/reduction/*.cc",
+            "onnx/defs/rnn/*.cc",
+            "onnx/defs/sequence/*.cc",
+            "onnx/defs/tensor/*.cc",
+            "onnx/defs/traditionalml/*.cc",
+            "onnx/defs/training/*.cc",
+            "onnx/shape_inference/*.cc",
+            "onnx/inliner/*.cc",
+            "onnx/version_converter/*.cc",
+        ],
+        exclude = [
+            "onnx/*_test.cc",
+            "onnx/**/*_test.cc",
+            "onnx/cpp2py_export.cc",
+            "onnx/py_utils.cc",
+        ],
+    ),
+    hdrs = glob([
+        "onnx/*.h",
+        "onnx/common/*.h",
+        "onnx/defs/**/*.h",
+        "onnx/inliner/**/*.h",
+        "onnx/shape_inference/**/*.h",
+        "onnx/version_converter/**/*.h",
+    ]),
+    defines = [
+        "ONNX_ML=1",
+        "ONNX_NAMESPACE=onnx",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++20"],
+        "@platforms//os:macos": [
+            "-UDEBUG",  
+            "--std=c++20",
+        ],
+        "//conditions:default": [
+            "--std=c++20",
+        ],
+    }),
+    includes = ["onnx"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":onnx_proto_cc",
+    ],
+)

@@ -1,0 +1,201 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+bool_flag(
+    name = "simd",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "threads",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "loaders",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "THORVG_AVX_VECTOR_SUPPORT",
+    constraint_values = ["@platforms//cpu:x86_64"],
+    flag_values = {":simd": "True"},
+)
+
+config_setting(
+    name = "THORVG_NEON_VECTOR_SUPPORT",
+    constraint_values = ["@platforms//cpu:aarch64"],
+    flag_values = {":simd": "True"},
+)
+
+config_setting(
+    name = "threads_linux",
+    constraint_values = ["@platforms//os:linux"],
+    flag_values = {":threads": "True"},
+)
+
+config_setting(
+    name = "threads_windows",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {":threads": "True"},
+)
+
+config_setting(
+    name = "threads_macos",
+    constraint_values = ["@platforms//os:macos"],
+    flag_values = {":threads": "True"},
+)
+
+config_setting(
+    name = "THORVG_THREAD_SUPPORT",
+    flag_values = {":threads": "True"},
+)
+
+cc_library(
+    name = "thorvg",
+    srcs = glob([
+        "src/common/*.cpp",
+        "src/common/*.h",
+        "src/renderer/*.cpp",
+        "src/renderer/*.h",
+        "src/renderer/sw_engine/*.cpp",
+        "src/renderer/sw_engine/*.h",
+        "src/loaders/svg/*.cpp",
+        "src/loaders/svg/*.h",
+        "src/loaders/lottie/*.cpp",
+        "src/loaders/lottie/*.h",
+        "src/loaders/lottie/rapidjson/*.h",
+        "src/loaders/lottie/rapidjson/internal/*.h",
+        "src/loaders/lottie/rapidjson/error/*.h",
+        "src/loaders/png/*.cpp",
+        "src/loaders/png/*.h",
+        "src/loaders/jpg/*.cpp",
+        "src/loaders/jpg/*.h",
+        "src/loaders/webp/*.cpp",
+        "src/loaders/webp/*.h",
+        "src/loaders/webp/dec/*.cpp",
+        "src/loaders/webp/dec/*.h",
+        "src/loaders/webp/dsp/*.cpp",
+        "src/loaders/webp/dsp/*.h",
+        "src/loaders/webp/utils/*.cpp",
+        "src/loaders/webp/utils/*.h",
+        "src/loaders/webp/webp/*.h",
+        "src/loaders/ttf/*.cpp",
+        "src/loaders/ttf/*.h",
+        "src/loaders/raw/*.cpp",
+        "src/loaders/raw/*.h",
+        "src/savers/gif/*.cpp",
+        "src/savers/gif/*.h",
+        "src/bindings/capi/*.cpp",
+        "src/bindings/capi/*.h",
+    ]) + [":config_h"],
+    hdrs = [
+        "inc/thorvg.h",
+        "src/bindings/capi/thorvg_capi.h",
+        "src/loaders/lottie/thorvg_lottie.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": ["/std:c++14"],
+        "//conditions:default": [
+            "-std=c++14",
+            "-fno-exceptions",
+            "-fno-rtti",
+        ],
+    }) + select({
+        ":THORVG_AVX_VECTOR_SUPPORT": ["-mavx2"],
+        "//conditions:default": [],
+    }) + select({
+        ":threads_linux": ["-fopenmp"],
+        ":threads_windows": ["/openmp"],
+        ":threads_macos": [],
+        "//conditions:default": [],
+    }),
+    defines = [
+        "TVG_STATIC",
+        "THORVG_VERSION_STRING=\\\"1.0.1\\\"",
+        "THORVG_SW_RASTER_SUPPORT=1",
+        "THORVG_FILE_IO_SUPPORT=1",
+        "THORVG_SVG_LOADER_SUPPORT=1",
+        "THORVG_PNG_LOADER_SUPPORT=1",
+        "THORVG_JPG_LOADER_SUPPORT=1",
+        "THORVG_LOTTIE_LOADER_SUPPORT=1",
+        "THORVG_TTF_LOADER_SUPPORT=1",
+        "THORVG_WEBP_LOADER_SUPPORT=1",
+        "THORVG_GIF_SAVER_SUPPORT=1",
+        "THORVG_CAPI_BINDING_SUPPORT=1",
+    ] + select({
+        ":THORVG_THREAD_SUPPORT": ["THORVG_THREAD_SUPPORT=1"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [
+            "WIN32_LEAN_AND_MEAN",
+            "NOMINMAX",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":THORVG_AVX_VECTOR_SUPPORT": ["THORVG_AVX_VECTOR_SUPPORT=1"],
+        ":THORVG_NEON_VECTOR_SUPPORT": ["THORVG_NEON_VECTOR_SUPPORT=1"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "inc",
+        "src/bindings/capi",
+        "src/common",
+        "src/loaders",
+        "src/loaders/jpg",
+        "src/loaders/lottie",
+        "src/loaders/png",
+        "src/loaders/raw",
+        "src/loaders/svg",
+        "src/loaders/ttf",
+        "src/loaders/webp",
+        "src/loaders/webp/dec",
+        "src/loaders/webp/dsp",
+        "src/loaders/webp/utils",
+        "src/loaders/webp/webp",
+        "src/renderer",
+        "src/renderer/sw_engine",
+        "src/savers",
+        "src/savers/gif",
+    ],
+    linkopts = select({
+        ":threads_linux": [
+            "-lpthread",
+            "-lm",
+            "-lgomp",
+        ],
+        ":threads_macos": [
+            "-lpthread",
+            "-lm",
+        ],
+        ":threads_windows": [],
+        "//conditions:default": [
+            "-lpthread",
+            "-lm",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "config_h",
+    outs = ["config.h"],
+    cmd = "echo '' > $@",
+)
+
+cc_test(
+    name = "test_initializer",
+    srcs = [
+        "test/catch.hpp",
+        "test/testInitializer.cpp",
+        "test/testMain.cpp",
+    ],
+    copts = select({
+        "@platforms//os:windows": ["/std:c++14"],
+        "//conditions:default": ["-std=c++14"],
+    }),
+    includes = ["test"],
+    deps = [
+        ":thorvg",
+    ],
+)
