@@ -1,0 +1,120 @@
+# Copyright 2010-2026 Google LLC
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# We use a lot of macros to reduce the duplication between scip and scip_parallel.
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+PLATFORM_FLAGS = select({
+    "@platforms//os:linux": [
+        "-Wunknown-pragmas",
+        "-fexceptions",
+        "-DSYM=bliss",
+        "-DBLISS_VERSION=\\\"0.74\\\"",
+    ],
+    "@platforms//os:macos": [
+        "-Wunknown-pragmas",
+        "-fexceptions",
+        "-DSYM=bliss",
+        "-DBLISS_VERSION=\\\"0.74\\\"",
+    ],
+    "@platforms//os:windows": [
+        "/DSYM=none",
+        "/DSCIP_NO_SIGACTION",
+        "/DSCIP_NO_STRTOK_R",
+        "/utf-8"
+    ],
+    "//conditions:default": [],
+})
+
+PLATFORM_DEPS = select({
+    "@platforms//os:linux": ["@bliss"],
+    "@platforms//os:macos": ["@bliss"],
+    "@platforms//os:windows": [],
+    "//conditions:default": [],
+})
+
+BASE_SRCS = glob(
+    [
+        "src/*/*.c",
+        "src/*/*.cpp",
+    ],
+    exclude = [
+        "src/dejavu/dejavu.cpp",
+        "src/lpiexact/*",
+        "src/lpi/lpi_*.c",
+        "src/lpi/lpi_*.cpp",
+        "src/nauty/*",
+        "src/scip/*_xyz.c",
+        "src/scip/exprinterpret_*.c",
+        "src/scip/exprinterpret_*.cpp",
+        "src/scip/nlpi_conopt.c",
+        "src/scip/nlpi_filtersqp.c",
+        "src/scip/nlpi_ipopt.cpp",
+        "src/scip/nlpi_worhp.c",
+        "src/scip/reader_nl.cpp",
+        "src/scip/scipbuildflags.c",
+        "src/scip/sorttpl.c",
+        "src/symmetry/build_dejavu_graph.cpp",
+        "src/symmetry/compute_symmetry_*.cpp",
+        "src/symmetry/*nauty*",
+        "src/tpi/tpi_*.c",
+    ],
+) + [
+        "scipbuildflag.c",
+        "src/lpiexact/lpiexact_none.c",
+]
+
+BASE_HDRS = glob(
+    [
+        "src/*/*.h",
+        "src/*/*.hpp",
+    ],
+    exclude = ["src/scip/*_xyz.h"],
+) + [
+        "scip/config.h",
+        "scip/scip_export.h",
+        "src/scip/githash.c",
+        "src/scip/sorttpl.c",
+]
+
+BLISS_FILE = select({
+    "@platforms//os:linux": ["src/symmetry/compute_symmetry_bliss.cpp"],
+    "@platforms//os:macos": ["src/symmetry/compute_symmetry_bliss.cpp"],
+    "@platforms//os:windows": ["src/symmetry/compute_symmetry_none.cpp"],
+    "//conditions:default": ["src/symmetry/compute_symmetry_none.cpp"],
+})
+
+cc_library(
+    name = "scip",
+    srcs =  BASE_SRCS + BLISS_FILE + [
+        "src/lpi/lpi_spx.cpp",
+        "src/scip/exprinterpret_none.c",
+        "src/tpi/tpi_tnycthrd.c",
+    ],
+    hdrs = BASE_HDRS,
+    copts = PLATFORM_FLAGS,
+    includes = ["src"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@soplex",
+        "@zlib",
+    ] + PLATFORM_DEPS,
+)
+
+cc_binary(
+    name = "scip_interactive",
+    srcs = ["src/cppmain.cpp"],
+    deps = [":scip"],
+)
+
