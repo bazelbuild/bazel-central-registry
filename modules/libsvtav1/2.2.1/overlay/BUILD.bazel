@@ -1,0 +1,262 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
+
+package(default_visibility = ["//visibility:public"])
+
+genrule(
+    name = "eb_version_h",
+    srcs = ["Source/Lib/Codec/EbVersion.h.in"],
+    outs = ["Source/Lib/Codec/EbVersion.h"],
+    cmd = "sed 's/@PACKAGE_VERSION_STRING@/v2.2.1/g' $< > $@",
+)
+
+cc_library(
+    name = "libsvtav1_headers",
+    hdrs = glob([
+        "Source/API/*.h",
+        "Source/Lib/Codec/*.h",
+        "Source/Lib/C_DEFAULT/*.h",
+        "Source/Lib/Globals/*.h",
+        "Source/Lib/ASM_SSE2/*.h",
+        "Source/Lib/ASM_SSSE3/*.h",
+        "Source/Lib/ASM_SSE4_1/*.h",
+        "Source/Lib/ASM_AVX2/*.h",
+        "Source/Lib/ASM_AVX512/*.h",
+        "third_party/fastfeat/*.h",
+    ]) + [
+        ":eb_version_h",
+    ],
+    includes = [
+        "Source/API",
+        "Source/Lib/Codec",
+        "Source/Lib/C_DEFAULT",
+        "third_party/fastfeat",
+        "Source/Lib/Globals",
+        "Source/Lib/ASM_SSE2",
+        "Source/Lib/ASM_SSSE3",
+        "Source/Lib/ASM_SSE4_1",
+        "Source/Lib/ASM_AVX2",
+        "Source/Lib/ASM_AVX512",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "safestringlib",
+    srcs = [
+        "third_party/safestringlib/ignore_handler_s.c",
+        "third_party/safestringlib/safe_str_constraint.c",
+        "third_party/safestringlib/strcpy_s.c",
+        "third_party/safestringlib/strncpy_s.c",
+        "third_party/safestringlib/strnlen_s.c",
+    ],
+    hdrs = [
+        "third_party/safestringlib/safe_lib.h",
+        "third_party/safestringlib/safe_lib_errno.h",
+        "third_party/safestringlib/safe_str_constraint.h",
+        "third_party/safestringlib/safe_str_lib.h",
+        "third_party/safestringlib/safe_types.h",
+        "third_party/safestringlib/safeclib_private.h",
+    ],
+    copts = [
+        "-DSAFECLIB_STR_NULL_SLACK=1",
+    ],
+    includes = [
+        "third_party/safestringlib",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+_NASM_HDRS = glob([
+    "Source/Lib/ASM_SSE2/*.asm",
+    "Source/Lib/ASM_SSSE3/*.asm",
+    "Source/Lib/ASM_AVX2/*.asm",
+])
+
+_ASM_SRCS = [
+    "Source/Lib/ASM_SSE2/aom_subpixel_8t_sse2.asm",
+    "Source/Lib/ASM_SSE2/highbd_intrapred_sse2_.asm",
+    "Source/Lib/ASM_SSE2/highbd_variance_impl_sse2.asm",
+    "Source/Lib/ASM_SSE2/intrapred_sse2.asm",
+    "Source/Lib/ASM_SSE2/picture_operators_sse2.asm",
+    "Source/Lib/ASM_SSE2/subpel_variance_sse2.asm",
+    "Source/Lib/ASM_SSE2/subtract_sse2.asm",
+    "Source/Lib/ASM_SSE2/x64RegisterUtil.asm",
+    "Source/Lib/ASM_SSSE3/aom_subpixel_bilinear_ssse3.asm",
+    "Source/Lib/ASM_SSSE3/aom_subpixel_8t_ssse3.asm",
+    "Source/Lib/ASM_SSSE3/subpel_variance_ssse3.asm",
+    "Source/Lib/ASM_AVX2/itx_avx2.asm",
+    "Source/Lib/ASM_AVX2/itx16_avx2.asm",
+    "Source/Lib/ASM_AVX2/mc_avx2.asm",
+    "Source/Lib/ASM_AVX2/mc16_avx2.asm",
+]
+
+nasm_library(
+    name = "libsvtav1_asm",
+    srcs = _ASM_SRCS,
+    hdrs = _NASM_HDRS,
+    copts = [
+        "-DUNIX64=1",
+    ],
+    includes = [
+        "Source/Lib/ASM_SSE2",
+        "Source/Lib/ASM_AVX2",
+    ],
+)
+
+cc_library(
+    name = "libsvtav1_asm_wrapper",
+    srcs = [
+        ":libsvtav1_asm",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libsvtav1_sse2",
+    srcs = glob(["Source/Lib/ASM_SSE2/*.c"]),
+    copts = [
+        "-msse2",
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libsvtav1_asm_wrapper",
+        ":libsvtav1_headers",
+    ],
+)
+
+cc_library(
+    name = "libsvtav1_ssse3",
+    srcs = glob(["Source/Lib/ASM_SSSE3/*.c"]),
+    copts = [
+        "-mssse3",
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libsvtav1_asm_wrapper",
+        ":libsvtav1_headers",
+    ],
+)
+
+cc_library(
+    name = "libsvtav1_sse4_1",
+    srcs = glob(["Source/Lib/ASM_SSE4_1/*.c"]),
+    copts = [
+        "-msse4.1",
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libsvtav1_asm_wrapper",
+        ":libsvtav1_headers",
+    ],
+)
+
+cc_library(
+    name = "libsvtav1_avx2",
+    srcs = glob(["Source/Lib/ASM_AVX2/*.c"]),
+    copts = [
+        "-mavx2",
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libsvtav1_asm_wrapper",
+        ":libsvtav1_headers",
+    ],
+)
+
+cc_library(
+    name = "libsvtav1_avx512",
+    srcs = glob(["Source/Lib/ASM_AVX512/*.c"]),
+    copts = [
+        "-mavx2",
+        "-mavx512f",
+        "-mavx512bw",
+        "-mavx512dq",
+        "-mavx512vl",
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libsvtav1_asm_wrapper",
+        ":libsvtav1_headers",
+    ],
+)
+
+cc_library(
+    name = "SvtAv1Enc",
+    srcs = glob([
+        "third_party/fastfeat/*.c",
+        "Source/Lib/Globals/*.c",
+        "Source/Lib/Codec/*.c",
+        "Source/Lib/C_DEFAULT/*.c",
+    ]),
+    hdrs = glob(["Source/API/*.h"]),
+    copts = [
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    includes = [
+        "Source/API",
+    ],
+    linkopts = [
+        "-lpthread",
+        "-lm",
+    ],
+    deps = [
+        ":libsvtav1_headers",
+        ":libsvtav1_sse2",
+        ":libsvtav1_ssse3",
+        ":libsvtav1_sse4_1",
+        ":libsvtav1_avx2",
+        ":libsvtav1_avx512",
+        "@cpuinfo",
+    ],
+)
+
+cc_binary(
+    name = "SvtAv1EncApp",
+    srcs = glob([
+        "Source/App/*.c",
+        "Source/App/*.h",
+    ]),
+    copts = [
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    includes = [
+        ".",
+        "Source/App",
+    ],
+    deps = [
+        ":SvtAv1Enc",
+        ":safestringlib",
+    ],
+)
+
+alias(
+    name = "libsvtav1",
+    actual = ":SvtAv1Enc",
+)
