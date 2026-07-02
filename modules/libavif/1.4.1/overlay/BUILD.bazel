@@ -1,0 +1,241 @@
+"""https://aomediacodec.github.io/av1-avif/"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# ===== Optional feature flags (mirrors CMakeLists.txt codec/library options) ==
+
+# Codec available in BCR
+bool_flag(
+    name = "with_aom",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_aom",
+    flag_values = {":with_aom": "True"},
+)
+
+# Codecs NOT available in BCR (stubs will error if enabled)
+bool_flag(
+    name = "with_dav1d",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_dav1d",
+    flag_values = {":with_dav1d": "True"},
+)
+
+bool_flag(
+    name = "with_libgav1",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_libgav1",
+    flag_values = {":with_libgav1": "True"},
+)
+
+bool_flag(
+    name = "with_rav1e",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_rav1e",
+    flag_values = {":with_rav1e": "True"},
+)
+
+bool_flag(
+    name = "with_svt",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_svt",
+    flag_values = {":with_svt": "True"},
+)
+
+bool_flag(
+    name = "with_libsharpyuv",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_libsharpyuv",
+    flag_values = {":with_libsharpyuv": "True"},
+)
+
+# libyuv: when enabled, uses system libyuv; when disabled (default), uses
+# the embedded third_party/libyuv subset.
+bool_flag(
+    name = "with_libyuv",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_libyuv",
+    flag_values = {":with_libyuv": "True"},
+)
+
+# ===== Stubs for dependencies not available in BCR ===========================
+
+_NOT_AVAILABLE_DEPS = {
+    "dav1d": "dav1d",
+    "libgav1": "libgav1",
+    "libsharpyuv": "libsharpyuv",
+    "rav1e": "rav1e",
+    "svt": "SVT-AV1",
+}
+
+[
+    write_file(
+        name = "_" + name + "_stub_src",
+        out = "_" + name + "_stub.c",
+        content = [
+            '#error "' + pkg + " is not available in the Bazel Central Registry. " +
+            "Please contribute a " + pkg + ' module to enable this feature."',
+        ],
+    )
+    for name, pkg in _NOT_AVAILABLE_DEPS.items()
+]
+
+[
+    cc_library(
+        name = "_" + name + "_stub",
+        srcs = [":_" + name + "_stub_src"],
+        tags = ["manual"],
+    )
+    for name in _NOT_AVAILABLE_DEPS
+]
+
+# ===== Library ===============================================================
+
+alias(
+    name = "libavif",
+    actual = ":avif",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "avif",
+    srcs = [
+        # AVIF_SRCS (CMakeLists.txt:364-386)
+        "src/alpha.c",
+        "src/avif.c",
+        "src/colr.c",
+        "src/colrconvert.c",
+        "src/diag.c",
+        "src/exif.c",
+        "src/gainmap.c",
+        "src/io.c",
+        "src/mem.c",
+        "src/obu.c",
+        "src/properties.c",
+        "src/rawdata.c",
+        "src/read.c",
+        "src/reformat.c",
+        "src/reformat_libsharpyuv.c",
+        "src/reformat_libyuv.c",
+        "src/sampletransform.c",
+        "src/scale.c",
+        "src/stream.c",
+        "src/utils.c",
+        "src/write.c",
+        # Internal header
+        "include/avif/internal.h",
+    ] + select({
+        # AOM codec (CMakeLists.txt:512-541)
+        ":_with_aom": ["src/codec_aom.c"],
+        "//conditions:default": [],
+    }) + select({
+        # Embedded libyuv subset, used when system libyuv is not
+        # available (CMakeLists.txt:442-446)
+        ":_with_libyuv": [],
+        "//conditions:default": [
+            "third_party/libyuv/source/planar_functions.c",
+            "third_party/libyuv/source/row_common.c",
+            "third_party/libyuv/source/scale.c",
+            "third_party/libyuv/source/scale_any.c",
+            "third_party/libyuv/source/scale_common.c",
+        ],
+    }),
+    hdrs = [
+        "include/avif/avif.h",
+        "include/avif/avif_cxx.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    includes = ["include"] + select({
+        ":_with_libyuv": [],
+        "//conditions:default": ["third_party/libyuv/include"],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-lpthread",
+        ],
+        "@platforms//os:macos": ["-lm"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        ":_with_aom": [
+            "AVIF_CODEC_AOM=1",
+            "AVIF_CODEC_AOM_ENCODE=1",
+            "AVIF_CODEC_AOM_DECODE=1",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_dav1d": ["AVIF_CODEC_DAV1D=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_libgav1": ["AVIF_CODEC_LIBGAV1=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_rav1e": ["AVIF_CODEC_RAV1E=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_svt": ["AVIF_CODEC_SVT=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_libyuv": ["AVIF_LIBYUV_ENABLED=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_libsharpyuv": ["AVIF_LIBSHARPYUV_ENABLED=1"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":_with_aom": ["@aom"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_dav1d": [":_dav1d_stub"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_libgav1": [":_libgav1_stub"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_rav1e": [":_rav1e_stub"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_svt": [":_svt_stub"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_libyuv": ["@libyuv"],
+        "//conditions:default": [],
+    }) + select({
+        ":_with_libsharpyuv": [":_libsharpyuv_stub"],
+        "//conditions:default": [],
+    }),
+)

@@ -1,0 +1,116 @@
+load("@bazel_lib//lib:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+
+_VERSION = module_version().partition(".bcr")[0].replace(".", "")  # "5.47.bcr.1" -> "547"
+
+expand_template(
+    name = "gen_magic_h",
+    out = "src/magic.h",
+    substitutions = {"X.YY": _VERSION},
+    template = "src/magic.h.in",
+)
+
+cc_library(
+    name = "lib_bootstrap",
+    srcs = [
+        "src/apprentice.c",
+        "src/apptype.c",
+        "src/ascmagic.c",
+        "src/buffer.c",
+        "src/cdf.c",
+        "src/cdf.h",
+        "src/cdf_time.c",
+        "src/compress.c",
+        "src/der.c",
+        "src/der.h",
+        "src/elfclass.h",
+        "src/encoding.c",
+        "src/file.h",
+        "src/file_opts.h",
+        "src/fmtcheck.c",
+        "src/fsmagic.c",
+        "src/funcs.c",
+        "src/is_csv.c",
+        "src/is_json.c",
+        "src/is_simh.c",
+        "src/is_tar.c",
+        "src/mygetopt.h",
+        "src/print.c",
+        "src/readcdf.c",
+        "src/readelf.c",
+        "src/readelf.h",
+        "src/softmagic.c",
+        "src/tar.h",
+    ] + select({
+        "@platforms//os:osx": [],
+        "//conditions:default": ["src/strlcpy.c"],
+    }),
+    hdrs = ["src/magic.h"],
+    copts = [
+        "-Wno-deprecated-declarations",
+        "-Wno-unused-variable",
+        "-Wno-unused-const-variable",
+    ],
+    defines = [
+        "HAVE_INTTYPES_H",
+        "HAVE_MKSTEMP",
+        "HAVE_STDINT_H",
+        "HAVE_UNISTD_H",
+        "VERSION=\\\"%s\\\"" % _VERSION,
+    ],
+    includes = ["src"],
+    local_defines = [
+        "BUILTIN_ELF",
+        "ELFCORE",
+    ],
+)
+
+cc_binary(
+    name = "file_bootstrap",
+    srcs = [
+        "src/file.c",
+        "src/magic.c",
+        "src/seccomp.c",
+    ],
+    deps = [":lib_bootstrap"],
+)
+
+genrule(
+    name = "gen_magic",
+    srcs = glob(["magic/Magdir/*"]),
+    outs = ["magic.mgc"],
+    cmd = """cat $(SRCS) > combined_magic && $(execpath :file_bootstrap) -C -m combined_magic 2>/dev/null && mv combined_magic.mgc $@ && rm combined_magic""",
+    tools = [":file_bootstrap"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "lib",
+    srcs = ["src/magic.c"],
+    data = [":magic.mgc"],
+    defines = ["MAGIC=\\\"$(rlocationpath :magic.mgc)\\\""],
+    visibility = ["//visibility:public"],
+    deps = [":lib_bootstrap"],
+)
+
+cc_shared_library(
+    name = "magic",
+    deps = [":lib"],
+)
+
+cc_binary(
+    name = "file",
+    srcs = [
+        "src/file.c",
+        "src/seccomp.c",
+    ],
+    data = [":magic.mgc"],
+    visibility = ["//visibility:public"],
+    deps = [":lib"],
+)
+
+alias(
+    name = "libmagic",
+    actual = "magic",
+    visibility = ["//visibility:public"],
+)

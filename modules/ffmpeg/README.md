@@ -39,6 +39,37 @@ Both also have `with_defaults/` variants (e.g. `@ffmpeg//:with_defaults/ffmpeg`)
 
 Note that there is no `ffplay` binary as it requires SDL2 which is not in the bazel-central-registry. ([bazelbuild/bazel-central-registry#7077](https://github.com/bazelbuild/bazel-central-registry/issues/7077))
 
+### Install tree
+
+For consumers that need FFmpeg as files on disk instead of Bazel `cc_library`
+targets, the module exposes install-tree targets:
+
+- `@ffmpeg//:gen_dir` — the bare, fully user-controlled install tree
+- `@ffmpeg//:with_defaults/gen_dir` — the platform-default convenience install
+  tree
+
+Building either target materializes an install-style directory tree containing:
+
+- `include/` with the headers exported through Bazel's C++ compilation
+  context for the FFmpeg libraries
+- `lib/` with the built FFmpeg libraries and native library dependencies
+- `link-flags.txt` with additional linker flags needed to consume the libraries
+
+This is useful for packaging workflows, generated toolchains, or integrations
+that expect an `include/` + `lib/` layout.
+
+`gen_dir` follows the bare target behavior: all component flags default to
+`False`, and codecs, muxers, demuxers, filters, and protocols are only compiled
+in when explicitly enabled with `--@ffmpeg//:enable_<component>=True`.
+Use `with_defaults/gen_dir` when you want FFmpeg's platform-appropriate default
+component set. Extra components can still be enabled with the same flags:
+
+```bash
+bazel build @ffmpeg//:gen_dir --@ffmpeg//:enable_http_protocol=True
+bazel build @ffmpeg//:with_defaults/gen_dir
+bazel build @ffmpeg//:with_defaults/gen_dir --@ffmpeg//:enable_http_protocol=True
+```
+
 ### Component flags
 
 FFmpeg codecs, muxers, demuxers, parsers, bitstream filters, filters, and device I/O modules are individually gated by `bool_flag` settings. Each flag defaults to `False` and can be enabled on the command line or via `.bazelrc`:
@@ -87,15 +118,20 @@ The Bazel transition constructs the key from `attr.os` and `attr.cpu`, then does
 
 ### Quick reference
 
+All generator scripts accept `--version <VERSION>` to target a specific overlay directory (e.g. `7.1.1.bcr.beta.5`). When omitted, the latest version from `metadata.json` is used automatically.
+
 ```bash
 # Step 1: regenerate config header templates
-python3 generate_config_defs.py /path/to/ffmpeg/source --output-dir .
+python3 generate_config_defs.py /path/to/ffmpeg/source
 
-# Step 3: regenerate per-component source lists
-python3 generate_component_srcs.py /path/to/ffmpeg/source > component_srcs.bzl
+# Step 2: regenerate per-component source lists
+python3 generate_component_srcs.py /path/to/ffmpeg/source
 
-# Step 4: regenerate resolved profiles
+# Step 3: regenerate resolved profiles
 python3 generate_resolved_profiles.py
+
+# Target a specific version:
+python3 generate_component_srcs.py --version 7.1.1.bcr.beta.5 /path/to/ffmpeg/source
 ```
 
 ## Adding a New FFmpeg Version to the BCR
@@ -146,18 +182,17 @@ Add or remove test targets in `libavcodec/tests/`, `libavfilter/tests/`, `libavu
 ### 3. Regenerating `component_srcs.bzl`
 
 `generate_component_srcs.py` (at `modules/ffmpeg/generate_component_srcs.py`) is reusable across versions. It reads
-`PROFILE_EVERYTHING` from `component_defs.bzl` **in the same directory as the script**, parses `OBJS-$(CONFIG_*)` lines
-from the FFmpeg Makefiles, and writes `component_srcs.bzl` to stdout.
+`PROFILE_EVERYTHING` from `component_defs.bzl` in the target overlay directory, parses `OBJS-$(CONFIG_*)` lines from the
+FFmpeg Makefiles, and writes `component_srcs.bzl` directly to the overlay.
 
 Steps:
 
 1. Update `component_defs.bzl` in the overlay first (the script depends on it).
-2. Copy or symlink `generate_component_srcs.py` into the overlay directory.
-3. Run:
+2. Run:
    ```bash
-   python3 generate_component_srcs.py /path/to/ffmpeg/source > $VERSION/overlay/component_srcs.bzl
+   python3 generate_component_srcs.py [--version <VERSION>] /path/to/ffmpeg/source
    ```
-4. New components are handled automatically as long as `PROFILE_EVERYTHING` is current.
+3. New components are handled automatically as long as `PROFILE_EVERYTHING` is current.
 
 #### Script tunables
 
@@ -192,7 +227,7 @@ For each profile, the script:
 Run after any change to `component_defs.bzl`:
 
 ```bash
-python3 generate_resolved_profiles.py
+python3 generate_resolved_profiles.py [--version <VERSION>]
 ```
 
 The script prints a summary of pruned components (with reasons) to stderr, which is useful for verifying that the

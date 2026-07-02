@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Generate config_defs.bzl by parsing FFmpeg's configure script.
+"""Generate config header templates by parsing FFmpeg's configure script.
 
 Extracts ARCH_LIST, HAVE_LIST, CONFIG_LIST, CONFIG_EXTRA, HAVE_LIST_PUB,
-and COMPONENT_LIST from the configure script, then emits a Starlark file
-with AVCONFIG_H, FFVERSION_H, and CONFIG_H_IN constants.
+and COMPONENT_LIST from the configure script, then writes the header
+templates into the version overlay directory:
+
+  <overlay>/config.h.in
+  <overlay>/libavutil/avconfig.h.in
+  <overlay>/libavutil/ffversion.h.in
 
 Usage:
-    python3 generate_config_defs.py /path/to/FFmpeg > config_defs.bzl
-    python3 generate_config_defs.py /path/to/FFmpeg --version 7.2
+    python3 generate_config_defs.py [--version 7.1.1.bcr.beta.5] /path/to/FFmpeg
+    python3 generate_config_defs.py /path/to/FFmpeg --ffmpeg-version 7.2
 """
 
 import argparse
@@ -15,6 +19,8 @@ import os
 import re
 import sys
 from collections import OrderedDict
+
+from _overlay_utils import add_version_arg, resolve_overlay_dir
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +46,6 @@ CONFIG_ENABLED = {
     "faan",
     "fast_unaligned",
     "iamf",
-    "network",
     # Features
     "runtime_cpudetect",
     "safe_bitstream_reader",
@@ -77,6 +82,14 @@ CONFIG_ENABLED = {
     "show_metadata_example",
     "transcode_aac_example",
     "transcode_example",
+}
+
+CONFIG_DERIVED = {
+    "gmp",
+    "mbedtls",
+    "network",
+    "openssl",
+    "protocols",
 }
 
 # Standard C99/POSIX math functions checked via AC_CHECK_LIB in the Bazel
@@ -370,7 +383,7 @@ def generate_config_h_in(
     # --- Static CONFIG_* defines ---
     lines.append("")
     static_configs = sorted(
-        (c for c in config_list if c not in AUTOCONF_DETECTED_CONFIGS),
+        (c for c in config_list if c not in AUTOCONF_DETECTED_CONFIGS and c not in CONFIG_DERIVED),
         key=lambda x: x.upper(),
     )
     for item in static_configs:
@@ -406,29 +419,32 @@ def generate_config_h_in(
     return lines
 
 
-def format_starlark_list(name: str, items: list[str], indent: str = "    ") -> str:
-    """Format a Starlark string-list constant."""
-    parts = [f"{name} = ["]
-    for item in items:
-        escaped = item.replace("\\", "\\\\").replace('"', '\\"')
-        parts.append(f'{indent}"{escaped}",')
-    parts.append("]")
-    return "\n".join(parts)
+def _write_file(path: str, lines: list[str]) -> None:
+    """Write *lines* to *path* with a trailing newline."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+        if lines:
+            f.write("\n")
+    print(f"  wrote {path}", file=sys.stderr)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Generate config_defs.bzl from FFmpeg's configure script.",
+        description="Generate config header templates from FFmpeg's configure script.",
     )
     parser.add_argument(
         "ffmpeg_root",
         help="Path to FFmpeg source tree root",
     )
+    add_version_arg(parser)
     parser.add_argument(
-        "--version",
+        "--ffmpeg-version",
         help="Override FFmpeg version string (default: read from RELEASE file)",
     )
     args = parser.parse_args()
+
+    overlay = resolve_overlay_dir(args.version)
 
     configure_path = os.path.join(args.ffmpeg_root, "configure")
     if not os.path.isfile(configure_path):
@@ -436,27 +452,19 @@ def main():
         sys.exit(1)
 
     lists = extract_all_lists(configure_path)
-    version = args.version or extract_version(args.ffmpeg_root)
+    version = args.ffmpeg_version or extract_version(args.ffmpeg_root)
 
-    avconfig = generate_avconfig_h(lists["HAVE_LIST_PUB"])
-    ffversion = generate_ffversion_h(version)
-    config_h_in = generate_config_h_in(
+    avconfig_lines = generate_avconfig_h(lists["HAVE_LIST_PUB"])
+    ffversion_lines = generate_ffversion_h(version)
+    config_h_in_lines = generate_config_h_in(
         lists["ARCH_LIST"],
         lists["HAVE_LIST"],
         lists["CONFIG_LIST"],
     )
 
-    parts = [
-        '"""FFmpeg static configuration defines (avconfig.h, ffversion.h, config.h.in)."""',
-        "",
-        format_starlark_list("AVCONFIG_H", avconfig),
-        "",
-        format_starlark_list("FFVERSION_H", ffversion),
-        "",
-        format_starlark_list("CONFIG_H_IN", config_h_in),
-        "",
-    ]
-    print("\n".join(parts), end="")
+    _write_file(str(overlay / "config.h.in"), config_h_in_lines)
+    _write_file(str(overlay / "libavutil" / "avconfig.h.in"), avconfig_lines)
+    _write_file(str(overlay / "libavutil" / "ffversion.h.in"), ffversion_lines)
 
 
 if __name__ == "__main__":
