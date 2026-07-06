@@ -1,0 +1,88 @@
+module(
+    name = "hermetic_android_toolchains",
+    version = "0.3.0",
+    bazel_compatibility = [">=8.4.2"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_android", version = "0.7.3")
+bazel_dep(name = "rules_android_ndk", version = "0.1.5")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_java", version = "9.3.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+bazel_dep(name = "llvm", version = "0.8.11", dev_dependency = True)
+bazel_dep(name = "protobuf", version = "35.1", dev_dependency = True)
+bazel_dep(name = "rules_python", version = "2.0.3", dev_dependency = True)
+
+rules_java_toolchains = use_extension("@rules_java//java:extensions.bzl", "toolchains")
+use_repo(rules_java_toolchains, "remote_java_tools")
+
+# https://github.com/bazelbuild/rules_android/issues/485
+bazel_dep(name = "rules_jvm_external", version = "7.0", dev_dependency = True)
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven", dev_dependency = True)
+maven.install(
+    name = "rules_android_maven",
+    aar_import_bzl_label = "@rules_android//rules:rules.bzl",
+    artifacts = [],
+    known_contributing_modules = ["rules_android"],
+    # REPIN=1 bazel run --enable_bzlmod @rules_android_maven//:pin
+    lock_file = "//:rules_android_maven_install.json",
+    repositories = [
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+    use_starlark_android_rules = True,
+)
+use_repo(
+    maven,
+    "rules_android_maven",
+)
+
+android = use_extension("//:extensions.bzl", "android", dev_dependency = True)
+android.sdk(
+    build_tools_version = "35.0.0",
+    version = "35",
+)
+android.emulator(
+    version = "36.6.11",
+)
+android.system_image(
+    arch = "arm64-v8a",
+    version = "28",
+)
+android.system_image(
+    arch = "x86_64",
+    version = "28",
+)
+android.system_image(
+    arch = "armeabi-v7a",
+    version = "24",
+)
+android.ndk(version = "r25c")
+use_repo(android, "androidndk", "androidsdk")
+
+rules_android_sdk = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+    dev_dependency = True,
+)
+
+override_repo(rules_android_sdk, "androidsdk")
+
+# Make @rules_android_ndk's @androidndk labels resolve to the hermetic SDK.
+rules_android_ndk = use_extension(
+    "@rules_android_ndk//:extension.bzl",
+    "android_ndk_repository_extension",
+    dev_dependency = True,
+)
+
+override_repo(rules_android_ndk, "androidndk")
+
+register_toolchains(
+    "@androidndk//:all",
+    "@androidsdk//:all",
+    dev_dependency = True,
+)
