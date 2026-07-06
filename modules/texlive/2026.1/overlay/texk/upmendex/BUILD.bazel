@@ -1,0 +1,36 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:cxx_utils.bzl", "cc_stdcc17_transitioned_library")
+load("//bazel:texlive.bzl", "texk_program")
+
+# Wrap the external @icu deps in a C++17 transition. icu's public
+# headers use C++17 type traits (std::is_same_v etc.); without this
+# the icu compile fails on toolchains whose default --cxxopt is
+# -std=c++14 (notably macOS Xcode 26).
+cc_library(
+    name = "_icu_raw",
+    tags = ["manual"],
+    deps = [
+        "@icu//icu4c/source/common:normalizer2",
+        "@icu//icu4c/source/common:uchar",
+        "@icu//icu4c/source/common:utypes",
+        "@icu//icu4c/source/i18n:collation",
+    ],
+)
+
+cc_stdcc17_transitioned_library(
+    name = "icu",
+    target = ":_icu_raw",
+)
+
+texk_program(
+    name = "upmendex",
+    srcs = glob(["*.c"]),
+    hdrs = glob(["*.h"]),
+    deps = [
+        ":icu",
+        # Sets ICU's data directory to its runfiles-tree location
+        # before main, so locale-aware APIs (ucol_open,
+        # unorm2_getInstance) find icudt78l.dat at runtime.
+        "//bazel:icu_runfiles_init",
+    ],
+)

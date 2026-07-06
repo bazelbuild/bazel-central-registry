@@ -1,0 +1,72 @@
+"""t1utils - Type 1 font utilities."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("//bazel:texlive.bzl", "force_include_copts")
+
+# config.h generated from upstream's autoheader template. HAVE_* probes
+# resolve against the root //:configure rule; the template's trailing
+# `my_memmem` prototype carries through verbatim.
+autoconf_hdr(
+    name = "config_h_gen",
+    out = "t1utils-src/config.h",
+    template = "config.h.in",
+    deps = ["//:configure"],
+)
+
+# Private config.h wrapper. Targets that need it must depend on this
+# directly; t1lib uses implementation_deps to keep config.h from leaking
+# into downstream consumers (where <config.h> would collide).
+cc_library(
+    name = "t1_config",
+    hdrs = [":config_h_gen"],
+    strip_include_prefix = "t1utils-src",
+)
+
+cc_library(
+    name = "t1lib",
+    srcs = [
+        "t1utils-src/clp.c",
+        "t1utils-src/memmem.c",
+        "t1utils-src/t1lib.c",
+    ],
+    hdrs = [
+        "t1utils-src/include/lcdf/clp.h",
+        "t1utils-src/include/lcdf/inttypes.h",
+        "t1utils-src/t1asmhelp.h",
+        "t1utils-src/t1lib.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": ["/w"],
+        "//conditions:default": ["-w"],
+    }) + force_include_copts("config.h"),
+    implementation_deps = [":t1_config"],
+    includes = ["t1utils-src/include"],
+    strip_include_prefix = "t1utils-src",
+)
+
+[
+    cc_binary(
+        name = prog,
+        srcs = ["t1utils-src/" + prog + ".c"],
+        copts = select({
+            "@platforms//os:windows": ["/w"],
+            "//conditions:default": ["-w"],
+        }) + force_include_copts("config.h"),
+        local_defines = ["VERSION=\\\"1.42\\\""],
+        visibility = ["//visibility:public"],
+        deps = [
+            ":t1_config",
+            ":t1lib",
+        ],
+    )
+    for prog in [
+        "t1ascii",
+        "t1binary",
+        "t1asm",
+        "t1disasm",
+        "t1unmac",
+        "t1mac",
+    ]
+]
