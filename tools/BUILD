@@ -55,7 +55,14 @@ py_binary(
         ":slsa",
         ":verify_stable_archives",
         requirement("requests"),
+        requirement("zstandard"),
     ],
+)
+
+py_test(
+    name = "bcr_validation_test",
+    srcs = ["bcr_validation_test.py"],
+    deps = [":bcr_validation"],
 )
 
 py_library(
