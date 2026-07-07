@@ -1,0 +1,320 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":thrift_codegen.bzl", "cachelib_thrift_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "README.md",
+    "cachelib/allocator/datastruct/serialize/objects.thrift",
+    "cachelib/allocator/memory/serialize/objects.thrift",
+    "cachelib/allocator/serialize/objects.thrift",
+    "cachelib/common/BloomFilter.thrift",
+    "cachelib/navy/serialization/objects.thrift",
+    "cachelib/shm/shm.thrift",
+    "thrift_codegen.bzl",
+])
+
+filegroup(
+    name = "thrift_includes",
+    srcs = [
+        "cachelib/allocator/datastruct/serialize/objects.thrift",
+        "cachelib/allocator/memory/serialize/objects.thrift",
+        "cachelib/allocator/serialize/objects.thrift",
+        "cachelib/common/BloomFilter.thrift",
+        "cachelib/navy/serialization/objects.thrift",
+        "cachelib/shm/shm.thrift",
+    ],
+)
+
+cachelib_thrift_library(
+    name = "allocator_datastruct_objects",
+    frozen2 = True,
+    generator_option = "frozen2",
+    module = "objects",
+    output_dir = "generated/cachelib/allocator/datastruct/serialize",
+    thrift_path = "cachelib/allocator/datastruct/serialize/objects.thrift",
+    thrift_src = ":cachelib/allocator/datastruct/serialize/objects.thrift",
+    deps = ["@fbthrift_cachelib//:frozen"],
+)
+
+cachelib_thrift_library(
+    name = "allocator_memory_objects",
+    frozen2 = True,
+    generator_option = "frozen2",
+    module = "objects",
+    output_dir = "generated/cachelib/allocator/memory/serialize",
+    thrift_path = "cachelib/allocator/memory/serialize/objects.thrift",
+    thrift_src = ":cachelib/allocator/memory/serialize/objects.thrift",
+    deps = [
+        ":allocator_datastruct_objects",
+        "@fbthrift_cachelib//:frozen",
+    ],
+)
+
+cachelib_thrift_library(
+    name = "allocator_objects",
+    frozen2 = True,
+    generator_option = "frozen2",
+    module = "objects",
+    output_dir = "generated/cachelib/allocator/serialize",
+    thrift_path = "cachelib/allocator/serialize/objects.thrift",
+    thrift_src = ":cachelib/allocator/serialize/objects.thrift",
+    deps = [
+        ":allocator_datastruct_objects",
+        "@fbthrift_cachelib//:frozen",
+    ],
+)
+
+cachelib_thrift_library(
+    name = "bloom_filter",
+    frozen2 = True,
+    generator_option = "frozen2",
+    module = "BloomFilter",
+    output_dir = "generated/cachelib/common",
+    thrift_path = "cachelib/common/BloomFilter.thrift",
+    thrift_src = ":cachelib/common/BloomFilter.thrift",
+    deps = ["@fbthrift_cachelib//:frozen"],
+)
+
+cachelib_thrift_library(
+    name = "navy_objects",
+    generator_option = "json",
+    module = "objects",
+    output_dir = "generated/cachelib/navy/serialization",
+    thrift_path = "cachelib/navy/serialization/objects.thrift",
+    thrift_src = ":cachelib/navy/serialization/objects.thrift",
+)
+
+cachelib_thrift_library(
+    name = "shm_objects",
+    frozen2 = True,
+    generator_option = "frozen2",
+    module = "shm",
+    output_dir = "generated/cachelib/shm",
+    thrift_path = "cachelib/shm/shm.thrift",
+    thrift_src = ":cachelib/shm/shm.thrift",
+    deps = ["@fbthrift_cachelib//:frozen"],
+)
+
+cc_library(
+    name = "generated_headers",
+    deps = [
+        ":allocator_datastruct_objects_headers",
+        ":allocator_memory_objects_headers",
+        ":allocator_objects_headers",
+        ":bloom_filter_headers",
+        ":navy_objects_headers",
+        ":shm_objects_headers",
+    ],
+)
+
+cc_library(
+    name = "generated",
+    deps = [
+        ":allocator_datastruct_objects",
+        ":allocator_memory_objects",
+        ":allocator_objects",
+        ":bloom_filter",
+        ":navy_objects",
+        ":shm_objects",
+    ],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob(
+        ["cachelib/**/*.h"],
+        exclude = [
+            "cachelib/**/testing/**",
+            "cachelib/**/tests/**",
+        ],
+    ),
+    defines = ["CACHELIB_IOURING_DISABLE"],
+    includes = ["."],
+    deps = [
+        ":generated_headers",
+        "@boost.context",
+        "@fmt",
+        "@folly//folly:benchmark",
+        "@folly//folly:json",
+        "@folly//folly:math",
+        "@folly//folly:synchronized",
+        "@folly//folly/debugging/exception_tracer",
+        "@folly//folly/fibers",
+        "@folly//folly/hash:checksum",
+        "@folly//folly/io:record_io",
+        "@folly//folly/io/async:async_base",
+        "@folly//folly/io/async:async_base_class",
+        "@folly//folly/io/async:async_io",
+        "@folly//folly/io/async:io_uring",
+        "@folly//folly/io/async:scoped_event_base_thread",
+        "@folly//folly/stats:quantile_estimator",
+        "@gflags",
+        "@glog",
+        "@googletest//:gtest_prod",
+        "@libaio_src//:aio",
+        "@magic_enum",
+        "@numactl_src//:numa",
+        "@xxhash",
+    ],
+)
+
+cc_library(
+    name = "folly_async_io_libaio",
+    srcs = ["@folly//folly/io/async:AsyncIO.cpp"],
+    deps = [
+        "@boost.intrusive//:boost.intrusive",
+        "@fmt",
+        "@folly//folly:exception",
+        "@folly//folly:likely",
+        "@folly//folly:small_vector",
+        "@folly//folly:string",
+        "@folly//folly/io/async:async_base_class",
+        "@folly//folly/io/async:async_io",
+        "@folly//folly/portability:unistd",
+        "@glog",
+        "@libaio_src//:aio",
+    ],
+)
+
+cc_library(
+    name = "common",
+    srcs = [
+        "cachelib/common/BloomFilter.cpp",
+        "cachelib/common/Cohort.cpp",
+        "cachelib/common/CountDownLatch.cpp",
+        "cachelib/common/EventTracker.cpp",
+        "cachelib/common/FurcHash.cpp",
+        "cachelib/common/PercentileStats.cpp",
+        "cachelib/common/PeriodicWorker.cpp",
+        "cachelib/common/Serialization.cpp",
+        "cachelib/common/Utils.cpp",
+        "cachelib/common/hothash/HotHashDetector.cpp",
+        "cachelib/common/inject_pause.cpp",
+        "cachelib/common/piecewise/GenericPieces.cpp",
+        "cachelib/common/piecewise/GenericPiecesBase.cpp",
+        "cachelib/common/piecewise/RequestRange.cpp",
+    ],
+    deps = [
+        ":generated",
+        ":headers",
+        "@fbthrift_cachelib//:protocol",
+    ],
+)
+
+cc_library(
+    name = "nvmitem",
+    srcs = ["cachelib/allocator/nvmcache/NvmItem.cpp"],
+    deps = [
+        ":common",
+        ":headers",
+    ],
+)
+
+cc_library(
+    name = "shm",
+    srcs = [
+        "cachelib/shm/PosixShmSegment.cpp",
+        "cachelib/shm/ShmCommon.cpp",
+        "cachelib/shm/ShmManager.cpp",
+        "cachelib/shm/SysVShmSegment.cpp",
+    ],
+    deps = [
+        ":common",
+        ":generated",
+        ":headers",
+    ],
+)
+
+cc_library(
+    name = "navy",
+    srcs = [
+        "cachelib/navy/Factory.cpp",
+        "cachelib/navy/admission_policy/DynamicRandomAP.cpp",
+        "cachelib/navy/admission_policy/RejectRandomAP.cpp",
+        "cachelib/navy/bighash/BigHash.cpp",
+        "cachelib/navy/bighash/Bucket.cpp",
+        "cachelib/navy/bighash/BucketStorage.cpp",
+        "cachelib/navy/block_cache/Allocator.cpp",
+        "cachelib/navy/block_cache/BlockCache.cpp",
+        "cachelib/navy/block_cache/CombinedEntryBlock.cpp",
+        "cachelib/navy/block_cache/FifoPolicy.cpp",
+        "cachelib/navy/block_cache/FixedSizeIndex.cpp",
+        "cachelib/navy/block_cache/HitsReinsertionPolicy.cpp",
+        "cachelib/navy/block_cache/LruPolicy.cpp",
+        "cachelib/navy/block_cache/Region.cpp",
+        "cachelib/navy/block_cache/RegionManager.cpp",
+        "cachelib/navy/block_cache/SparseMapIndex.cpp",
+        "cachelib/navy/common/Buffer.cpp",
+        "cachelib/navy/common/Device.cpp",
+        "cachelib/navy/common/FdpNvme.cpp",
+        "cachelib/navy/common/Hash.cpp",
+        "cachelib/navy/common/NavyThread.cpp",
+        "cachelib/navy/common/SizeDistribution.cpp",
+        "cachelib/navy/common/Types.cpp",
+        "cachelib/navy/driver/Driver.cpp",
+        "cachelib/navy/engine/EnginePair.cpp",
+        "cachelib/navy/scheduler/NavyRequestDispatcher.cpp",
+        "cachelib/navy/scheduler/NavyRequestScheduler.cpp",
+        "cachelib/navy/scheduler/ThreadPoolJobQueue.cpp",
+        "cachelib/navy/scheduler/ThreadPoolJobScheduler.cpp",
+        "cachelib/navy/serialization/RecordIO.cpp",
+    ],
+    deps = [
+        ":common",
+        ":folly_async_io_libaio",
+        ":generated",
+        ":headers",
+        ":nvmitem",
+        ":shm",
+        "@cachelib_sparse_map//:sparse_map",
+        "@fbthrift_cachelib//:protocol",
+    ],
+)
+
+cc_library(
+    name = "allocator",
+    srcs = [
+        "cachelib/allocator/CCacheAllocator.cpp",
+        "cachelib/allocator/CCacheManager.cpp",
+        "cachelib/allocator/Cache.cpp",
+        "cachelib/allocator/CacheAllocatorLruCache.cpp",
+        "cachelib/allocator/CacheDetails.cpp",
+        "cachelib/allocator/CacheStats.cpp",
+        "cachelib/allocator/ContainerTypes.cpp",
+        "cachelib/allocator/FreeMemStrategy.cpp",
+        "cachelib/allocator/FreeThresholdStrategy.cpp",
+        "cachelib/allocator/HitsPerSlabStrategy.cpp",
+        "cachelib/allocator/LruTailAgeStrategy.cpp",
+        "cachelib/allocator/MarginalHitsOptimizeStrategy.cpp",
+        "cachelib/allocator/MarginalHitsStrategy.cpp",
+        "cachelib/allocator/MemoryMonitor.cpp",
+        "cachelib/allocator/NvmCacheState.cpp",
+        "cachelib/allocator/PoolOptimizeStrategy.cpp",
+        "cachelib/allocator/PoolOptimizer.cpp",
+        "cachelib/allocator/PoolRebalancer.cpp",
+        "cachelib/allocator/PoolResizer.cpp",
+        "cachelib/allocator/RebalanceStrategy.cpp",
+        "cachelib/allocator/SlabReleaseStats.cpp",
+        "cachelib/allocator/TempShmMapping.cpp",
+        "cachelib/allocator/memory/AllocationClass.cpp",
+        "cachelib/allocator/memory/MemoryAllocator.cpp",
+        "cachelib/allocator/memory/MemoryPool.cpp",
+        "cachelib/allocator/memory/MemoryPoolManager.cpp",
+        "cachelib/allocator/memory/SlabAllocator.cpp",
+        "cachelib/allocator/nvmcache/NavyConfig.cpp",
+        "cachelib/allocator/nvmcache/NavySetup.cpp",
+    ],
+    defines = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["SKIP_SIZE_VERIFY"],
+    }),
+    deps = [
+        ":common",
+        ":generated",
+        ":headers",
+        ":navy",
+        ":nvmitem",
+        ":shm",
+    ],
+)
