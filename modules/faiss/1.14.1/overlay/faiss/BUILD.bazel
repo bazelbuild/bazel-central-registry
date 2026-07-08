@@ -1,0 +1,278 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(
+    default_package_metadata = ["//:package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+# OpenMP handling.
+#
+# The OpenMP runtime is always the hermetic LLVM libomp from the @openmp
+# module, which also supplies <omp.h>; there is deliberately NO `-fopenmp` at
+# link time, so the toolchain's own runtime (e.g. GCC's libgomp) is never
+# pulled in and binaries carry no libgomp.so dependency. The compile-time flag
+# is still required to expand the `#pragma omp` directives: `-fopenmp` for
+# GCC/Clang on Linux (the generated GOMP_* calls resolve against libomp's GCC
+# compatibility layer) and `-Xclang -fopenmp` for Apple Clang on macOS.
+OMP_COPTS = select({
+    "@platforms//os:linux": ["-fopenmp"],
+    "@platforms//os:macos": [
+        "-Xclang",
+        "-fopenmp",
+    ],
+    "//conditions:default": [],
+})
+
+OMP_DEPS = ["@openmp//:openmp"]
+
+# =========================================================================
+# Generic sources (no SIMD specialization).
+# =========================================================================
+FAISS_SRCS = [
+    "AutoTune.cpp",
+    "Clustering.cpp",
+    "IVFlib.cpp",
+    "Index.cpp",
+    "Index2Layer.cpp",
+    "IndexAdditiveQuantizer.cpp",
+    "IndexBinary.cpp",
+    "IndexBinaryFlat.cpp",
+    "IndexBinaryFromFloat.cpp",
+    "IndexBinaryHNSW.cpp",
+    "IndexBinaryHash.cpp",
+    "IndexBinaryIVF.cpp",
+    "IndexFlat.cpp",
+    "IndexFlatCodes.cpp",
+    "IndexHNSW.cpp",
+    "IndexIDMap.cpp",
+    "IndexIVF.cpp",
+    "IndexIVFAdditiveQuantizer.cpp",
+    "IndexIVFFlat.cpp",
+    "IndexIVFFlatPanorama.cpp",
+    "IndexIVFPQ.cpp",
+    "IndexIVFFastScan.cpp",
+    "IndexIVFAdditiveQuantizerFastScan.cpp",
+    "IndexIVFPQFastScan.cpp",
+    "IndexIVFPQR.cpp",
+    "IndexIVFRaBitQ.cpp",
+    "IndexIVFRaBitQFastScan.cpp",
+    "IndexIVFSpectralHash.cpp",
+    "IndexLSH.cpp",
+    "IndexNNDescent.cpp",
+    "IndexLattice.cpp",
+    "IndexNSG.cpp",
+    "IndexPQ.cpp",
+    "IndexFastScan.cpp",
+    "IndexAdditiveQuantizerFastScan.cpp",
+    "IndexIVFIndependentQuantizer.cpp",
+    "IndexPQFastScan.cpp",
+    "IndexPreTransform.cpp",
+    "IndexRaBitQ.cpp",
+    "IndexRaBitQFastScan.cpp",
+    "IndexRefine.cpp",
+    "IndexReplicas.cpp",
+    "IndexRowwiseMinMax.cpp",
+    "IndexScalarQuantizer.cpp",
+    "IndexShards.cpp",
+    "IndexShardsIVF.cpp",
+    "IndexNeuralNetCodec.cpp",
+    "MatrixStats.cpp",
+    "MetaIndexes.cpp",
+    "VectorTransform.cpp",
+    "clone_index.cpp",
+    "index_factory.cpp",
+    "factory_tools.cpp",
+    "impl/AuxIndexStructures.cpp",
+    "impl/VisitedTable.cpp",
+    "impl/ClusteringInitialization.cpp",
+    "impl/CodePacker.cpp",
+    "impl/CodePackerRaBitQ.cpp",
+    "impl/IDSelector.cpp",
+    "impl/FaissException.cpp",
+    "impl/HNSW.cpp",
+    "impl/NSG.cpp",
+    "impl/PolysemousTraining.cpp",
+    "impl/ProductQuantizer.cpp",
+    "impl/pq_code_distance/pq_code_distance-generic.cpp",
+    "impl/AdditiveQuantizer.cpp",
+    "impl/RaBitQuantizer.cpp",
+    "impl/RaBitQuantizerMultiBit.cpp",
+    "impl/RaBitQStats.cpp",
+    "impl/RaBitQUtils.cpp",
+    "impl/ResidualQuantizer.cpp",
+    "impl/LocalSearchQuantizer.cpp",
+    "impl/ProductAdditiveQuantizer.cpp",
+    "impl/ScalarQuantizer.cpp",
+    "impl/scalar_quantizer/training.cpp",
+    "impl/index_read.cpp",
+    "impl/index_write.cpp",
+    "impl/io.cpp",
+    "impl/kmeans1d.cpp",
+    "impl/lattice_Zn.cpp",
+    "impl/mapped_io.cpp",
+    "impl/pq4_fast_scan.cpp",
+    "impl/pq4_fast_scan_search_1.cpp",
+    "impl/pq4_fast_scan_search_qbs.cpp",
+    "impl/residual_quantizer_encode_steps.cpp",
+    "impl/zerocopy_io.cpp",
+    "impl/NNDescent.cpp",
+    "impl/Panorama.cpp",
+    "impl/PanoramaStats.cpp",
+    "invlists/BlockInvertedLists.cpp",
+    "invlists/DirectMap.cpp",
+    "invlists/InvertedLists.cpp",
+    "invlists/InvertedListsIOHook.cpp",
+    "invlists/OnDiskInvertedLists.cpp",
+    "utils/Heap.cpp",
+    "utils/NeuralNet.cpp",
+    "utils/WorkerThread.cpp",
+    "utils/distances.cpp",
+    "utils/distances_simd.cpp",
+    "utils/extra_distances.cpp",
+    "utils/hamming.cpp",
+    "utils/partitioning.cpp",
+    "utils/quantize_lut.cpp",
+    "utils/random.cpp",
+    "utils/sorting.cpp",
+    "utils/utils.cpp",
+    "utils/simd_levels.cpp",
+    "utils/distances_fused/avx512.cpp",
+    "utils/distances_fused/distances_fused.cpp",
+    "utils/distances_fused/simdlib_based.cpp",
+]
+
+FAISS_HEADERS = glob(
+    [
+        "*.h",
+        "cppcontrib/*.h",
+        "cppcontrib/detail/*.h",
+        "cppcontrib/sa_decode/*.h",
+        "impl/*.h",
+        "impl/pq_code_distance/*.h",
+        "impl/scalar_quantizer/*.h",
+        "invlists/*.h",
+        "utils/*.h",
+        "utils/approx_topk/*.h",
+        "utils/approx_topk_hamming/*.h",
+        "utils/distances_fused/*.h",
+        "utils/hamming_distance/*.h",
+        "utils/simd_impl/*.h",
+        "utils/transpose/*.h",
+    ],
+    exclude = [
+        "gpu/**",
+        "python/**",
+    ],
+)
+
+# =========================================================================
+# ARM NEON SIMD (baseline on aarch64).
+# =========================================================================
+cc_library(
+    name = "faiss_simd_neon",
+    srcs = [
+        "impl/scalar_quantizer/sq-neon.cpp",
+        "utils/simd_impl/distances_aarch64.cpp",
+    ],
+    hdrs = FAISS_HEADERS,
+    copts = ["-DCOMPILE_SIMD_ARM_NEON"] + OMP_COPTS,
+    includes = [".."],
+    target_compatible_with = ["@platforms//cpu:aarch64"],
+    deps = OMP_DEPS,
+)
+
+# =========================================================================
+# ARM SVE SIMD.
+# =========================================================================
+cc_library(
+    name = "faiss_simd_sve",
+    srcs = [
+        "impl/pq_code_distance/pq_code_distance-sve.cpp",
+        "utils/simd_impl/distances_arm_sve.cpp",
+    ],
+    hdrs = FAISS_HEADERS,
+    copts = [
+        "-march=armv8.2-a+sve",
+        "-DCOMPILE_SIMD_ARM_SVE",
+    ] + OMP_COPTS,
+    includes = [".."],
+    target_compatible_with = ["@platforms//cpu:aarch64"],
+    deps = OMP_DEPS,
+)
+
+# =========================================================================
+# x86_64 AVX2 SIMD.
+# =========================================================================
+cc_library(
+    name = "faiss_simd_avx2",
+    srcs = [
+        "impl/pq_code_distance/pq_code_distance-avx2.cpp",
+        "impl/scalar_quantizer/sq-avx2.cpp",
+        "utils/simd_impl/distances_avx2.cpp",
+    ],
+    hdrs = FAISS_HEADERS,
+    copts = [
+        "-mavx2",
+        "-mfma",
+        "-mf16c",
+        "-mpopcnt",
+        "-DCOMPILE_SIMD_AVX2",
+    ] + OMP_COPTS,
+    includes = [".."],
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = OMP_DEPS,
+)
+
+# =========================================================================
+# x86_64 AVX512 SIMD.
+# =========================================================================
+cc_library(
+    name = "faiss_simd_avx512",
+    srcs = [
+        "impl/pq_code_distance/pq_code_distance-avx512.cpp",
+        "impl/scalar_quantizer/sq-avx512.cpp",
+        "utils/simd_impl/distances_avx512.cpp",
+    ],
+    hdrs = FAISS_HEADERS,
+    copts = [
+        "-mavx512f",
+        "-mavx512cd",
+        "-mavx512vl",
+        "-mavx512dq",
+        "-mavx512bw",
+        "-mfma",
+        "-mf16c",
+        "-mpopcnt",
+        "-DCOMPILE_SIMD_AVX2",
+        "-DCOMPILE_SIMD_AVX512",
+    ] + OMP_COPTS,
+    includes = [".."],
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = OMP_DEPS,
+)
+
+# =========================================================================
+# Main library: CPU-only. BLAS/LAPACK come from the overridable //:blas
+# label_flag; the OpenMP runtime is the hermetic libomp from @openmp.
+# =========================================================================
+cc_library(
+    name = "faiss",
+    srcs = FAISS_SRCS,
+    hdrs = FAISS_HEADERS,
+    copts = ["-DFINTEGER=int"] + OMP_COPTS,
+    defines = ["FINTEGER=int"],
+    includes = [".."],
+    deps = [
+        "//:blas",
+    ] + OMP_DEPS + select({
+        "@platforms//cpu:aarch64": [
+            ":faiss_simd_neon",
+            ":faiss_simd_sve",
+        ],
+        "@platforms//cpu:x86_64": [
+            ":faiss_simd_avx2",
+            ":faiss_simd_avx512",
+        ],
+        "//conditions:default": [],
+    }),
+)
