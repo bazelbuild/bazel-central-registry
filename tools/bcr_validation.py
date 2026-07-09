@@ -174,9 +174,8 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
     """
 
     # Make sure the reference is not a pull request.
-    # GitHub archive URLs carry the full ref form (e.g. "refs/pull/1234/head"),
-    # so the previous "^pull/\d+/head$" pattern never matched and the guard was a
-    # no-op. Such refs exist in the base repo's namespace but point at commits the
+    # GitHub archive URLs carry the full ref form (e.g. "refs/pull/1234/head").
+    # Such refs exist in the base repo's namespace but point at commits the
     # project has not reviewed or accepted, so reject both the bare and "refs/"-
     # prefixed forms, covering "/merge" as well as "/head".
     if re.match(r"^(refs/)?pull/\d+/(head|merge)$", reference):
