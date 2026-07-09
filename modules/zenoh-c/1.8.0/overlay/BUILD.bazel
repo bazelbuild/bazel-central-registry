@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@crates_zenoh_c//:defs.bzl", "all_crate_deps")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@crates_zenoh_c//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_shared_library")
+load("//:features.bzl", "zenoh_c_crate_features")
 load("//cbindgen:cbindgen.bzl", "rust_cbindgen_library")
 
 # Transform the opaque types from a .txt to a .rs file.
@@ -27,15 +29,19 @@ rust_binary(
     deps = ["@crates_zenoh_c//:regex"],
 )
 
-genrule(
+run_binary(
     name = "generate_opaque_types",
     srcs = [
-        "//build-resources/opaque-types:src/lib.rs",
         "//build-resources/opaque-types:opaque_types",
+        "//build-resources/opaque-types:src/lib.rs",
     ],
     outs = ["src/opaque_types/mod.rs"],
-    cmd = "$(location :bazel_generate_opaque_types) $(SRCS) $@",
-    tools = [":bazel_generate_opaque_types"],
+    args = [
+        "$(location //build-resources/opaque-types:src/lib.rs)",
+        "$(location //build-resources/opaque-types:opaque_types)",
+        "$(location src/opaque_types/mod.rs)",
+    ],
+    tool = ":bazel_generate_opaque_types",
 )
 
 # Generate the rust library (name must match the [lib] in Cargo.toml)
@@ -48,28 +54,15 @@ rust_shared_library(
     ) + [
         ":generate_opaque_types",
     ],
-    crate_features = [
-        "auth_pubkey",
-        "auth_usrpwd",
-        "shared-memory",
-        "unstable",
-        "transport_compression",
-        "transport_multilink",
-        "transport_quic",
-        "transport_serial",
-        "transport_tcp",
-        "transport_tls",
-        "transport_udp",
-        "transport_unixsock-stream",
-        "transport_ws",
-        "transport_vsock",
-    ],
-    proc_macro_deps = all_crate_deps(
-        package_name = "zenoh-c",
-        proc_macro = True,
-    ),
+    aliases = aliases(),
+    crate_features = zenoh_c_crate_features(),
+    rustc_flags = select({
+        "@platforms//os:macos": [
+            "-Clink-arg=-Wl,-install_name,@rpath/libzenohc.dylib",
+        ],
+        "//conditions:default": [],
+    }),
     deps = all_crate_deps(
-        package_name = "zenoh-c",
         normal = True,
     ),
 )
@@ -90,26 +83,13 @@ cargo_build_script(
         "build.rs",
         "buildrs/**",
     ]),
+    aliases = aliases(),
     build_script_env = {
         "BUGGY_GENERATION_PATH": "$(locations :zenohc-cbindgen)",
         "OUT_DIR": ".",
+        "CARGO_PKG_NAME": "zenoh-c",
     },
-    crate_features = [
-        "auth_pubkey",
-        "auth_usrpwd",
-        "shared-memory",
-        "unstable",
-        "transport_compression",
-        "transport_multilink",
-        "transport_quic",
-        "transport_serial",
-        "transport_tcp",
-        "transport_tls",
-        "transport_udp",
-        "transport_unixsock-stream",
-        "transport_ws",
-        "transport_vsock",
-    ],
+    crate_features = zenoh_c_crate_features(),
     crate_root = "build.rs",
     data = [":zenohc-cbindgen"] + glob([
         "cbindgen.toml",
@@ -121,12 +101,7 @@ cargo_build_script(
         "version.txt",
         "src/**",
     ]),
-    proc_macro_deps = all_crate_deps(
-        package_name = "zenoh-c",
-        proc_macro = True,
-    ),
     deps = all_crate_deps(
-        package_name = "zenoh-c",
         build = True,
     ),
 )

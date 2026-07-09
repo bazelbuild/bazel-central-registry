@@ -16,7 +16,7 @@
 
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
-load("@rules_rust//rust:rust_common.bzl", "CrateInfo", "DepInfo")
+load("@rules_rust//rust:rust_common.bzl", "CrateInfo", "DepInfo", "TestCrateInfo")
 load(":cargo_manifest.bzl", "CargoManifestInfo", "cargo_manifest_aspect")
 
 def _rust_cbindgen_library_impl(ctx):
@@ -29,17 +29,26 @@ def _rust_cbindgen_library_impl(ctx):
     """
 
     rust_lib = ctx.attr.lib
-    
-    # Check if we have CrateInfo (rust_library) or just DepInfo (rust_shared_library/rust_static_library)
-    has_crate_info = CrateInfo in rust_lib
-    
-    # If we have CrateInfo, validate crate type
+
+    # rust_library exposes a CrateInfo directly. rust_shared_library and
+    # rust_static_library deliberately do not advertise a CrateInfo; they wrap
+    # it in a TestCrateInfo instead. Accept either so cbindgen can read the
+    # crate sources (and deps) in both cases.
+    if CrateInfo in rust_lib:
+        crate_info = rust_lib[CrateInfo]
+    elif TestCrateInfo in rust_lib:
+        crate_info = rust_lib[TestCrateInfo].crate
+    else:
+        crate_info = None
+    has_crate_info = crate_info != None
+
+    # If we have crate info, validate the crate type
     if has_crate_info:
         supported_crate_types = ["cdylib", "staticlib"]
-        if not rust_lib[CrateInfo].type in supported_crate_types:
+        if not crate_info.type in supported_crate_types:
             fail("Rust library '{}' of type '{}' must be one of {}".format(
                 rust_lib.label,
-                rust_lib[CrateInfo].type,
+                crate_info.type,
                 supported_crate_types,
             ))
 
@@ -84,51 +93,32 @@ def _rust_cbindgen_library_impl(ctx):
     )
 
     args = ctx.actions.args()
-    args.add("--config")
-    args.add(ctx.outputs.config)
-    args.add("--output")
-    args.add(output_header)
+    args.add(ctx.outputs.config, format = "--config=%s")
+    args.add(output_header, format = "--output=%s")
     args.add(rust_lib[CargoManifestInfo].toml.dirname)
 
-    # Build inputs - handle both CrateInfo and DepInfo cases
-    if has_crate_info:
-        # Traditional case with rust_library
-        input_srcs = rust_lib[CrateInfo].srcs
-        dep_srcs = [
-            depset(dep[CrateInfo].srcs)
-            for dep in rust_lib[CrateInfo].deps
-            if CrateInfo in dep
-        ]
-    else:
-        # For rust_shared_library/rust_static_library, get sources from the aspect
-        input_srcs = []
-        dep_srcs = []
+    # The crate's own sources come from its crate info (works for rust_library
+    # as well as rust_shared_library/rust_static_library via TestCrateInfo). The
+    # sources of dependency crates are supplied separately by the cargo manifest
+    # aspect via OutputGroupInfo.all_files.
+    input_srcs = crate_info.srcs.to_list() if has_crate_info else []
 
     inputs = depset(
         input_srcs + [ctx.outputs.config],
         transitive = [
             rust_lib[OutputGroupInfo].all_files,
-            depset(transitive = dep_srcs),
         ],
     )
 
     rust_toolchain = ctx.toolchains["@rules_rust//rust:toolchain"]
-    
-    # In newer rules_rust, exec_triple and target_triple are structs
-    # with a .str field containing the actual triple string
-    exec_triple = rust_toolchain.exec_triple.str if hasattr(rust_toolchain.exec_triple, 'str') else str(rust_toolchain.exec_triple)
-    target_triple = rust_toolchain.target_triple.str if hasattr(rust_toolchain.target_triple, 'str') else str(rust_toolchain.target_triple)
-    
+
     env = {
         "CARGO": rust_toolchain.cargo.path,
-        "HOST": exec_triple,
+        "HOST": rust_toolchain.exec_triple.str,
         "RUSTC": rust_toolchain.rustc.path,
-        "TARGET": target_triple,
+        "TARGET": rust_toolchain.target_triple.str,
     }
 
-    # Use all_files from the toolchain which contains all necessary files
-    # This is more reliable than trying to access individual components
-    # which may have different APIs across rules_rust versions
     tools = rust_toolchain.all_files
 
     ctx.actions.run(
@@ -171,8 +161,10 @@ def _rust_cbindgen_library_impl(ctx):
         ),
     ]
     
-    # Only include CrateInfo and DepInfo if they exist
-    if has_crate_info:
+    # Only re-provide CrateInfo and DepInfo if the wrapped library advertises
+    # them directly (rust_library does; rust_shared_library/rust_static_library
+    # intentionally do not).
+    if CrateInfo in rust_lib:
         providers.append(rust_lib[CrateInfo])
     if DepInfo in rust_lib:
         providers.append(rust_lib[DepInfo])
