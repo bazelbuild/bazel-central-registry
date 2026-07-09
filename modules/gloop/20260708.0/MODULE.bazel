@@ -1,0 +1,83 @@
+module(
+    name = "gloop",
+    version = "20260708.0",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+bazel_dep(name = "abseil-cpp", version = "20260107.1")
+bazel_dep(name = "protobuf", version = "35.0")
+bazel_dep(name = "tcmalloc", version = "0.0.0-20250927-12f2552")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "rules_license", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
+bazel_dep(name = "zlib", version = "1.3.2")
+bazel_dep(name = "boringssl", version = "0.20260413.0")
+bazel_dep(name = "re2", version = "2025-11-05.bcr.1")
+
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension")
+use_repo(cc_configure, "local_config_cc")
+
+# Dev dependencies, not needed for users of Gloop.
+
+bazel_dep(name = "google_benchmark", version = "1.9.5", dev_dependency = True)
+bazel_dep(name = "numactl", version = "2.0.19.bcr.1", dev_dependency = True)
+bazel_dep(name = "gloop_examples", version = "0.1", dev_dependency = True, repo_name = "examples")
+
+# Override our visibility settings in with patches.  Once Gloop is public and in BCR, we can
+# upstream these changes and declare a noop dependency in these repos for enabling visibility.
+# TODO: Make Gloop public
+# TODO: Add Gloop to BCR
+git_override(
+    module_name = "abseil-cpp",
+    commit = "f548b64d9bd07a8ea04ed953c869f4f76f88e696",
+    patches = ["//gloop:abseil.patch"],
+    remote = "https://github.com/abseil/abseil-cpp",
+)
+
+git_override(
+    module_name = "tcmalloc",
+    commit = "29bae22bff6cd2adcb32972f1cb4928f34dfa213",
+    patches = ["//gloop:tcmalloc.patch"],
+    remote = "https://github.com/google/tcmalloc",
+)
+
+local_path_override(
+    module_name = "gloop_examples",
+    path = "gloop/examples",
+)
+
+# Dev dependencies required for fuzz testing.
+# fuzztest is the main library. brotli, snappy, highwayhash, aspect_bazel_lib,
+# aspect_rules_esbuild, and rules_swift are transitive dependencies of fuzztest
+# (or its dependencies like riegeli/protobuf) that must be declared here
+# to ensure compatibility with Bazel 9.
+
+bazel_dep(name = "fuzztest", version = "20260219.0", dev_dependency = True)
+
+# TODO Fuzztest patch is required for Abseil compatibility in OSS.
+git_override(
+    module_name = "fuzztest",
+    commit = "1401ec33761985cc3f6ee41cc49fb135e1d34f39",
+    patches = ["//gloop:fuzztest.patch"],
+    remote = "https://github.com/google/fuzztest",
+)
+
+# rules_swift override is required to resolve compatibility level conflict
+# between flatbuffers (requires level 2) and bazel_tools (requires level 3).
+bazel_dep(name = "rules_swift", version = "3.1.2", dev_dependency = True)
+single_version_override(
+    module_name = "rules_swift",
+    version = "3.1.2",
+)
+
+# The following transitive dependencies are declared directly to force minimum
+# versions that are compatible with Bazel 9 (e.g., resolving issues with
+# deprecated features like incompatible_use_toolchain_transition).
+bazel_dep(name = "brotli", version = "1.2.0.bcr.1", dev_dependency = True)
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5", dev_dependency = True)
+bazel_dep(name = "aspect_rules_esbuild", version = "0.26.0", dev_dependency = True)
+bazel_dep(name = "snappy", version = "1.2.2.bcr.3", dev_dependency = True)
+bazel_dep(name = "highwayhash", version = "0.0.0-20240305-5ad3bf8.bcr.1", dev_dependency = True)
