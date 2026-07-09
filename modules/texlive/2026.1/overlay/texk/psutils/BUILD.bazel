@@ -1,0 +1,107 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+# Upstream's binary-io.h is empty and `set_binary_mode` is supplied by
+# gnulib on Windows. On POSIX, stdin/stdout are already binary-safe, so a
+# no-op is correct.
+write_file(
+    name = "binary_io_shim",
+    out = "binary-io-shim.h",
+    content = [
+        "#ifndef BINARY_IO_SHIM_H",
+        "#define BINARY_IO_SHIM_H",
+        "static inline int set_binary_mode(int fd, int mode) {",
+        "    (void)fd; (void)mode;",
+        "    return 0;",
+        "}",
+        "#endif",
+        "",
+    ],
+)
+
+# Bazel equivalent of upstream's autoheader-generated config.h. The
+# guard + trailing `#include <texlive.h>` mirrors what
+# texk/psutils/configure.ac injects via AH_TOP/AH_BOTTOM into
+# config.h.in. We have no AC_CHECK_HEADERS probes of our own, so the
+# middle "Define to 1 if you have ..." block is empty.
+#
+# The progname.h declarations are inlined here (rather than via
+# `#include "progname.h"`) because Bazel's -I order resolves the bare
+# include to kpathsea's identically-named header instead of the TL
+# wrapper's. Mirrored verbatim from texk/psutils/progname.h.
+write_file(
+    name = "psutils_config_h",
+    out = "psutils_config.h",
+    content = [
+        "#ifndef _PSUTILS_CONFIG_H",
+        "#define _PSUTILS_CONFIG_H 1",
+        "",
+        "#include <texlive.h>",
+        "",
+        "extern const char *program_name;",
+        "extern void set_program_name(const char *argv0);",
+        "",
+        "#endif /* _PSUTILS_CONFIG_H */",
+        "",
+    ],
+)
+
+cc_library(
+    name = "libpsutils",
+    srcs = [
+        "paper-size.c",
+        "progname.c",
+        "psutils-src/psspec.c",
+        "psutils-src/psutil.c",
+        "verror.c",
+    ],
+    hdrs = [
+        "binary-io.h",
+        "progname.h",
+        "psutils-src/psspec.h",
+        "psutils-src/psutil.h",
+        "texlive.h",
+        "verror.h",
+        "xvasprintf.h",
+        ":binary_io_shim",
+        ":psutils_config_h",
+    ],
+    copts = ["-w"] + force_include_copts("psutils_config.h"),
+    includes = [
+        ".",
+        "psutils-src",
+    ],
+    deps = [
+        "//texk/kpathsea",
+        "@libpaper",
+    ],
+)
+
+[
+    texk_program(
+        name = prog,
+        srcs = ["psutils-src/" + prog + ".c"],
+        copts = force_include_copts("binary-io-shim.h") +
+                force_include_copts("psutils_config.h"),
+        local_defines = select({
+            "@platforms//os:windows": [],
+            "//conditions:default": ["O_BINARY=0"],
+        }),
+        deps = [":libpsutils"],
+    )
+    for prog in [
+        "epsffit",
+        "psbook",
+        "psnup",
+        "psresize",
+        "psselect",
+        "pstops",
+    ]
+]
+
+alias(
+    name = "psutils",
+    actual = ":pstops",
+    visibility = ["//visibility:public"],
+)
