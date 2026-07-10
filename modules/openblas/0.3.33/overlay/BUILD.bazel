@@ -1,0 +1,71 @@
+"""Bazel build file for OpenBLAS (BLAS + CBLAS, TARGET=GENERIC, no LAPACK)."""
+
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load(":openblas_variants.bzl", "COMMON_DEFINES", "OPENBLAS_VARIANTS")
+
+package(default_visibility = ["//visibility:public"])
+
+# Generate config.h, the small set of build-time constants OpenBLAS's own
+# getarch/Makefile.system probing would otherwise write, fixed here to the
+# portable, assembly-free GENERIC kernel set.
+cmake_configure_file(
+    name = "generate_config_header",
+    src = "config.h.in",
+    out = "config.h",
+    defines = select({
+        "@platforms//os:macos": ["OS_DARWIN", "C_CLANG"],
+        "@platforms//os:linux": ["OS_LINUX", "C_GCC"],
+    }) + select({
+        "@platforms//cpu:x86_64": ["ARCH_X86_64"],
+        "@platforms//cpu:aarch64": ["ARCH_ARM64"],
+    }),
+)
+
+# Headers, and the many small implementation files that are never compiled on
+# their own but are textually #include-d (OpenBLAS's usual way of sharing
+# per-precision logic across driver/kernel translation units).
+cc_library(
+    name = "common_hdrs",
+    hdrs = glob(["*.h"]) + [":generate_config_header"],
+    textual_hdrs = glob([
+        "interface/*.c",
+        "driver/level2/*.c",
+        "driver/level3/*.c",
+        "driver/others/*.c",
+        "kernel/*.c",
+        "kernel/generic/*.c",
+        "kernel/generic/*.h",
+        "kernel/arm/*.c",
+        "kernel/arm64/*.c",
+        "kernel/arm64/*.h",
+        "kernel/simd/*.h",
+    ]),
+    includes = ["."],
+)
+
+# One tiny cc_library per compiled object in upstream's GENERIC/BLAS/CBLAS
+# build: the same template .c file is compiled repeatedly with different
+# -D/-U flags to produce each BLAS type-letter variant (sgemm/dgemm/cgemm/
+# zgemm from gemm.c, and so on), so each variant needs its own compilation
+# unit rather than a single glob()'d cc_library.
+[
+    cc_library(
+        name = "_ob_%s" % variant["name"],
+        srcs = [variant["src"]],
+        local_defines = COMMON_DEFINES + variant["defines"],
+        deps = [":common_hdrs"],
+        visibility = ["//visibility:private"],
+    )
+    for variant in OPENBLAS_VARIANTS
+]
+
+cc_library(
+    name = "openblas",
+    hdrs = ["cblas.h"],
+    includes = ["."],
+    deps = [":common_hdrs"] + [
+        ":_ob_%s" % variant["name"]
+        for variant in OPENBLAS_VARIANTS
+    ],
+)
