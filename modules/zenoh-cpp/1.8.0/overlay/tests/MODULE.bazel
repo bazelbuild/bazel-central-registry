@@ -18,54 +18,44 @@ local_path_override(
     path = "..",
 )
 
-bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "rules_cc", version = "0.2.16")
-bazel_dep(name = "rules_rust", version = "0.68.1")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "rules_rs", version = "0.0.93")
 bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "llvm", version = "0.8.9")
 
-# This is the rust edition and version used in the upstream zenoh-cpp project.
-rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
-rust.toolchain(
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
+toolchains.toolchain(
     edition = "2021",
-    versions = ["1.88.0"],
+    version = "1.93.0",
 )
-use_repo(rust, "rust_toolchains")
+use_repo(toolchains, "default_rust_toolchains")
+
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
 
 register_toolchains(
-    "@rust_toolchains//:all",
+    "@default_rust_toolchains//:all",
+    "@llvm//toolchain:all",
 )
 
-# We have to make use of a nightly toolchain to build the zenohd binary.
-rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
-rust_host_tools.host_tools(
-    name = "rust_host_tools_nightly",
-    version = "nightly",
-)
-use_repo(
-    rust_host_tools,
-    "rust_host_tools_nightly",
-)
-
-# When we create the crate spec for zenohd, we must annotate it to make sure the
-# binries are generated. We also have to pin the versuion of the time crate to
-# avoid pulling in time-macros 0.2.27+ which uses nightly-only features.
-bindeps = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
-bindeps.spec(
-    artifact = "bin",
-    features = ["shared-memory"],
-    package = "zenohd",
-    version = "1.8.0",
-)
-bindeps.spec(
-    package = "time-macros",
-    version = "=0.2.22",
-)
-bindeps.annotation(
-    crate = "zenohd",
-    gen_all_binaries = True,
-)
-bindeps.from_specs(
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.from_cargo(
     name = "zenoh_cpp_bindeps",
-    host_tools = "@rust_host_tools_nightly",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+    ],
 )
-use_repo(bindeps, "zenoh_cpp_bindeps")
+crate.annotation(
+    crate = "zenohd",
+    crate_features = ["shared-memory"],
+    gen_binaries = ["zenohd"],
+)
+use_repo(crate, "zenoh_cpp_bindeps")
