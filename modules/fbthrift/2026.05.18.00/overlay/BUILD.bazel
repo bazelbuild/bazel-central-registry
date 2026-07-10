@@ -1,0 +1,186 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load(":thrift_codegen.bzl", "fbthrift_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "README.md",
+    "thrift/lib/thrift/frozen.thrift",
+    "thrift_codegen.bzl",
+])
+
+filegroup(
+    name = "thrift_includes",
+    srcs = [
+        "thrift/annotation/cpp.thrift",
+        "thrift/annotation/scope.thrift",
+        "thrift/annotation/thrift.thrift",
+        "thrift/lib/thrift/frozen.thrift",
+    ],
+)
+
+# CacheLib's release archive contains Thrift schemas but intentionally omits
+# their generated C++. Build the exactly version-matched compiler as an exec
+# tool so those files are produced hermetically in bazel-out.
+cc_binary(
+    name = "compiler_build_templates",
+    srcs = ["thrift/compiler/generate/build_templates.cc"],
+)
+
+genrule(
+    name = "compiler_templates",
+    srcs = glob(["thrift/compiler/generate/templates/**/*.whisker"]),
+    outs = ["thrift/compiler/generate/templates.cc"],
+    cmd = "$(location :compiler_build_templates) " +
+          "$$(dirname $(location thrift/compiler/generate/templates/cpp2/Autogen.whisker))/.. > $@",
+    tools = [":compiler_build_templates"],
+)
+
+cc_library(
+    name = "compiler_support",
+    srcs = glob(
+        [
+            "thrift/common/**/*.cc",
+            "thrift/compiler/ast/*.cc",
+            "thrift/compiler/detail/*.cc",
+            "thrift/compiler/parse/*.cc",
+            "thrift/compiler/sema/*.cc",
+            "thrift/compiler/whisker/*.cc",
+            "thrift/compiler/whisker/detail/*.cc",
+        ],
+        exclude = [
+            "thrift/common/test/**",
+            "thrift/compiler/ast/thrift_ast_debug_tree_utils.cc",
+            "thrift/compiler/detail/generate_bundled_thrift.cc",
+        ],
+    ) + [
+        "thrift/compiler/diagnostic.cc",
+        "thrift/compiler/generate/common.cc",
+        "thrift/compiler/generate/cpp/name_resolver.cc",
+        "thrift/compiler/generate/cpp/orderable_type_utils.cc",
+        "thrift/compiler/generate/cpp/reference_type.cc",
+        "thrift/compiler/generate/cpp/util.cc",
+        "thrift/compiler/generate/t_generator.cc",
+        "thrift/compiler/generate/t_mstch_cpp2_generator.cc",
+        "thrift/compiler/generate/t_whisker_generator.cc",
+        "thrift/compiler/generate/templates_map.cc",
+        "thrift/compiler/source_location.cc",
+        ":compiler_templates",
+    ],
+    hdrs = glob([
+        "thrift/annotation/**/*.h",
+        "thrift/common/**/*.h",
+        "thrift/compiler/**/*.h",
+        "thrift/conformance/**/*.h",
+        "thrift/lib/cpp2/**/*.h",
+        "thrift/lib/thrift/**/*.h",
+    ]),
+    defines = ["THRIFT_OSS"],
+    includes = ["."],
+    deps = [
+        "@boost.algorithm",
+        "@boost.container",
+        "@boost.core",
+        "@fmt",
+        "@openssl//:crypto",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "thrift1",
+    srcs = [
+        "thrift/compiler/compiler.cc",
+        "thrift/compiler/main.cc",
+    ],
+    deps = [":compiler_support"],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob(
+        [
+            "thrift/common/**/*.h",
+            "thrift/lib/cpp/**/*.h",
+            "thrift/lib/cpp/**/*.tcc",
+            "thrift/lib/cpp2/**/*.h",
+            "thrift/lib/cpp2/**/*.tcc",
+        ],
+        allow_empty = True,
+    ),
+    includes = ["."],
+    deps = [
+        "@fmt",
+        "@folly//folly:benchmark",
+        "@folly//folly:json",
+        "@folly//folly:sorted_vector_types",
+        "@folly//folly:synchronized",
+        "@folly//folly/algorithm/simd:find_first_of",
+        "@folly//folly/codec:hex",
+        "@folly//folly/container:heap_vector_types",
+        "@folly//folly/container:range_traits",
+        "@folly//folly/fibers",
+        "@folly//folly/io/async:async_base",
+        "@folly//folly/io/async:async_socket_exception",
+        "@folly//folly/lang:bits_class",
+        "@folly//folly/lang:vector_traits",
+        "@folly//folly/memory:uninitialized_memory_hacks",
+        "@glog",
+    ],
+)
+
+cc_library(
+    name = "core",
+    srcs = [
+        "thrift/lib/cpp/Thrift.cpp",
+        "thrift/lib/cpp2/FieldRef.cpp",
+        "thrift/lib/cpp2/detail/Enum.cpp",
+        "thrift/lib/cpp2/gen/module_types_cpp.cpp",
+    ],
+    deps = [":headers"],
+)
+
+cc_library(
+    name = "protocol",
+    srcs = [
+        "thrift/lib/cpp/protocol/TBase64Utils.cpp",
+        "thrift/lib/cpp/protocol/TProtocolException.cpp",
+        "thrift/lib/cpp/protocol/TType.cpp",
+        "thrift/lib/cpp/util/VarintUtils.cpp",
+        "thrift/lib/cpp2/protocol/BinaryProtocol.cpp",
+        "thrift/lib/cpp2/protocol/CompactProtocol.cpp",
+        "thrift/lib/cpp2/protocol/CompactV1Protocol.cpp",
+        "thrift/lib/cpp2/protocol/DebugProtocol.cpp",
+        "thrift/lib/cpp2/protocol/JSONProtocol.cpp",
+        "thrift/lib/cpp2/protocol/JSONProtocolCommon.cpp",
+        "thrift/lib/cpp2/protocol/Protocol.cpp",
+        "thrift/lib/cpp2/protocol/Serializer.cpp",
+        "thrift/lib/cpp2/protocol/TableBasedSerializer.cpp",
+        "thrift/lib/cpp2/protocol/TableBasedSerializerImpl.cpp",
+        "thrift/lib/cpp2/protocol/VirtualProtocol.cpp",
+    ],
+    deps = [
+        ":core",
+        ":headers",
+    ],
+)
+
+fbthrift_library(
+    name = "fbthrift_frozen",
+    module = "frozen",
+    output_dir = "generated/thrift/lib/thrift",
+    thrift_path = "thrift/lib/thrift/frozen.thrift",
+    thrift_src = ":thrift/lib/thrift/frozen.thrift",
+)
+
+cc_library(
+    name = "frozen",
+    srcs = ["thrift/lib/cpp2/frozen/Frozen.cpp"],
+    deps = [
+        ":fbthrift_frozen",
+        ":headers",
+        ":protocol",
+        "@gflags",
+        "@glog",
+    ],
+)
