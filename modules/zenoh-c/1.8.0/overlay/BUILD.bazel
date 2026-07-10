@@ -16,7 +16,7 @@ load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
 load("@crates_zenoh_c//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_rust//cargo:defs.bzl", "cargo_build_script")
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_shared_library")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_shared_library", "rust_static_library")
 load("//:features.bzl", "zenoh_c_crate_features")
 load("//cbindgen:cbindgen.bzl", "rust_cbindgen_library")
 
@@ -62,6 +62,25 @@ rust_shared_library(
         ],
         "//conditions:default": [],
     }),
+    deps = all_crate_deps(
+        normal = True,
+    ),
+)
+
+# A static counterpart to :zenohc, matching Cargo.toml's "staticlib" crate-type
+# (alongside "cdylib"). Selected instead of :zenohc when --dynamic_mode=off, so
+# that consumers can produce a binary with no libzenohc.so dependency.
+
+rust_static_library(
+    name = "zenohc_static",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/opaque_types/mod.rs"],
+    ) + [
+        ":generate_opaque_types",
+    ],
+    aliases = aliases(),
+    crate_features = zenoh_c_crate_features(),
     deps = all_crate_deps(
         normal = True,
     ),
@@ -130,9 +149,19 @@ filegroup(
 
 # Package up the rust library and c headers as a cc_library
 
+config_setting(
+    name = "dynamic_mode_off",
+    values = {
+        "dynamic_mode": "off",
+    },
+)
+
 cc_library(
     name = "zenoh-c",
-    srcs = [":zenohc"],
+    srcs = select({
+        ":dynamic_mode_off": [],
+        "//conditions:default": [":zenohc"],
+    }),
     hdrs = [
         "include/zenoh.h",
         "include/zenoh_commons.h",
@@ -151,6 +180,13 @@ cc_library(
         ],
         "//conditions:default": [],
     }),
-    local_defines = ["ZENOHC_DYN_LIB"],
+    local_defines = select({
+        ":dynamic_mode_off": [],
+        "//conditions:default": ["ZENOHC_DYN_LIB"],
+    }),
     visibility = ["//visibility:public"],
+    deps = select({
+        ":dynamic_mode_off": [":zenohc_static"],
+        "//conditions:default": [],
+    }),
 )

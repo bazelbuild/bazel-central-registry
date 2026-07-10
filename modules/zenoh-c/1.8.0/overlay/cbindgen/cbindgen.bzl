@@ -160,7 +160,7 @@ def _rust_cbindgen_library_impl(ctx):
             runfiles = ctx.runfiles([output_header], transitive_files = rust_lib.files),
         ),
     ]
-    
+
     # Only re-provide CrateInfo and DepInfo if the wrapped library advertises
     # them directly (rust_library does; rust_shared_library/rust_static_library
     # intentionally do not).
@@ -168,7 +168,7 @@ def _rust_cbindgen_library_impl(ctx):
         providers.append(rust_lib[CrateInfo])
     if DepInfo in rust_lib:
         providers.append(rust_lib[DepInfo])
-    
+
     return providers
 
 rust_cbindgen_library = rule(
