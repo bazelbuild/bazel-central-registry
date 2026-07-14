@@ -102,12 +102,7 @@ FAISS_GPU_HDRS = glob(
     ],
 )
 
-# The public GPU C++ API: the top-level faiss/gpu/*.h headers plus the two
-# utils/ headers they transitively pull in. This is the entire set of headers a
-# consumer of `:faiss_gpu` can `#include`. The many impl/*.cuh and utils/*.cuh
-# headers are implementation details of the kernels and are deliberately kept
-# out of the public interface. (faiss's CMake `FAISS_GPU_HEADERS` installs all
-# of them for downstream CMake builds, but only these form the usable API.)
+# Public GPU headers used by downstream code.
 FAISS_GPU_PUBLIC_HDRS = [
     "GpuAutoTune.h",
     "GpuCloner.h",
@@ -129,11 +124,7 @@ FAISS_GPU_PUBLIC_HDRS = [
     "utils/StackDeviceMemory.h",
 ]
 
-# All GPU headers, published under the `faiss/gpu/...` include path. Unlike
-# cc_library, `cuda_library` has no include_prefix/strip_include_prefix, so the
-# include tree the kernels compile against is provided here instead. This target
-# is private: it also carries the internal impl/ and utils/ headers, so it must
-# not be depended on directly by consumers (see `:faiss_gpu` below).
+# Private header target for CUDA compilation.
 cc_library(
     name = "faiss_gpu_hdrs",
     hdrs = FAISS_GPU_HDRS,
@@ -151,23 +142,9 @@ cc_library(
     ],
 )
 
-# The compiled CUDA kernels (faiss/gpu), built with rules_cuda. Private: the
-# object code reaches consumers only through `:faiss_gpu`'s implementation_deps,
-# which keeps this target's compilation context (the internal headers from
-# `:faiss_gpu_hdrs`) from leaking into the public interface.
-#
-# nvcc flags mirror `target_compile_options(faiss_gpu_objs ...)` from
-# faiss/gpu/CMakeLists.txt for the non-cuVS build.
-#
-# NOTE for Bazel >= 9 + recent glibc: enable the `external_include_paths`
-# feature in your build (e.g. `build --features=external_include_paths`). Bazel 9
-# routes external-repo includes (the hermetic CUDA toolkit) through the CcInfo
-# `external_includes` bucket, which rules_cuda only emits as `-isystem` when that
-# feature is on; otherwise they arrive as `-I` and nvcc turns the benign
-# glibc<->CUDA `rsqrt` declaration mismatch into a hard error. Bazel 8 emitted
-# them as `-isystem` already. The feature must be set on the consuming build (it
-# governs how the @cuda repo's own includes are bucketed), so it cannot be baked
-# into this target.
+# CUDA kernels with nvcc flags matching the upstream non-cuVS build.
+# Bazel 9 builds need --features=external_include_paths so rules_cuda passes
+# hermetic CUDA headers as system includes.
 cuda_library(
     name = "faiss_gpu_kernels",
     srcs = FAISS_GPU_SRCS + _IVF_INTERLEAVED_SRCS,
@@ -189,18 +166,7 @@ cuda_library(
     ],
 )
 
-# GPU library for faiss (faiss/gpu).
-#
-# This target is gated behind `requires_cuda()`: it is only built when CUDA is
-# enabled (`--@rules_cuda//cuda:enable`, default on) AND a valid CUDA toolchain
-# is configured by the root module (auto-detected local install or a hermetic
-# `cuda.redist_json` download). A consumer that never configures/enables CUDA
-# transparently skips this target, so a CPU-only build is unaffected.
-#
-# It exposes only the public API headers (`FAISS_GPU_PUBLIC_HDRS`) and links the
-# kernels via `implementation_deps`: the kernels' internal headers are used to
-# compile them but are not propagated to consumers, so only the public headers
-# stay public.
+# Public API; implementation_deps keeps internal CUDA headers private.
 cc_library(
     name = "faiss_gpu",
     hdrs = FAISS_GPU_PUBLIC_HDRS,
