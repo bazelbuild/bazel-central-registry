@@ -497,10 +497,7 @@ class BcrValidator:
         if archive_type in ("tar.zst", "tzst"):
             with open(archive_file, "rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as reader:
                 with tarfile.open(fileobj=reader, mode="r|") as tar:
-                    if sys.version_info >= (3, 12):
-                        tar.extractall(output_dir, filter="data")
-                    else:
-                        tar.extractall(output_dir)
+                    tar.extractall(output_dir, filter="data")
             return
         format = {
             "tar.gz": "gztar",
@@ -513,12 +510,15 @@ class BcrValidator:
             "war": "zip",
             "aar": "zip",
         }.get(archive_type)
-        # Use PEP 706 safe extraction if available (Python 3.12+)
-        if sys.version_info >= (3, 12) and format != "zip":
-            shutil.unpack_archive(str(archive_file), output_dir, format=format, filter="data")
-        else:
-            # Fallback for older Python versions. Since CI is 3.12+, this handles local dev compatibility.
+        # Always use PEP 706 safe ("data") extraction for tar archives so that a malicious source
+        # archive cannot write outside output_dir via `../` members or symlinks. The filter is
+        # available on every interpreter the BCR runs on (CPython 3.8.17+/3.9.17+/3.10.12+/3.11.4+/
+        # 3.12+). zip/jar/war/aar are handled by zipfile, which sanitizes member names and never
+        # creates symlinks, so they need no filter.
+        if format == "zip":
             shutil.unpack_archive(str(archive_file), output_dir, format=format)
+        else:
+            shutil.unpack_archive(str(archive_file), output_dir, format=format, filter="data")
 
     @staticmethod
     def extract_attribute_from_module(module_dot_bazel_file, attribute, default=None):
