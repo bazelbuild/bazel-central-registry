@@ -2,6 +2,7 @@ load("@package_metadata//licenses/rules:license.bzl", "license")
 load("@package_metadata//purl:purl.bzl", "purl")
 load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
 
 package(default_package_metadata = [":package_metadata"])
 
@@ -182,9 +183,16 @@ cc_library(
         "-fexceptions",
     ],
     includes = ["src"],
-    linkopts = ["-ldl"],
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }),
     local_defines = ["_GNU_SOURCE"],
-    target_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     textual_hdrs = glob([
         "src/render/classic/*.h",
         "src/render/classic/font/*.inc",
@@ -194,6 +202,37 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [":mujoco"],
     alwayslink = True,
+)
+
+objc_library(
+    name = "simulate_macos",
+    srcs = [
+        "simulate/glfw_corevideo.mm",
+        "simulate/macos_gui.mm",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fexceptions",
+        "-fno-objc-arc",
+        "-Wno-deprecated-declarations",
+    ],
+    includes = ["simulate"],
+    linkopts = [
+        "-framework Cocoa",
+        "-framework CoreVideo",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    textual_hdrs = [
+        "simulate/glfw_adapter.h",
+        "simulate/glfw_corevideo.h",
+        "simulate/glfw_dispatch.h",
+        "simulate/platform_ui_adapter.h",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":mujoco",
+        "@glfw",
+    ],
 )
 
 cc_library(
@@ -215,7 +254,11 @@ cc_library(
         "-fexceptions",
     ],
     includes = ["simulate"],
-    target_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     textual_hdrs = [
         "simulate/array_safety.h",
         "simulate/glfw_corevideo.h",
@@ -226,13 +269,20 @@ cc_library(
         ":mujoco_renderer",
         "@glfw",
         "@lodepng",
-    ],
+    ] + select({
+        "@platforms//os:macos": [":simulate_macos"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_binary(
     name = "simulate",
     srcs = ["simulate/main.cc"],
-    target_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
     visibility = ["//visibility:public"],
     deps = [":simulate_lib"],
 )
