@@ -1,6 +1,3 @@
-/* fribidi-config.h checked in by the Bazel Central Registry overlay;
- * values taken from lib/meson.build for this release. */
-/* Not copyrighted, in public domain. */
 #ifndef FRIBIDI_CONFIG_H
 #define FRIBIDI_CONFIG_H
 
