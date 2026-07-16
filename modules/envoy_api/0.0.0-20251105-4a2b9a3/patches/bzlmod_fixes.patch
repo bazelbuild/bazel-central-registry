@@ -1,0 +1,116 @@
+diff --git a/bazel/BUILD b/bazel/BUILD
+index f68f07c9..feaada93 100644
+--- a/bazel/BUILD
++++ b/bazel/BUILD
+@@ -1,4 +1,3 @@
+-load("@envoy_toolshed//:macros.bzl", "json_data")
+ load("@io_bazel_rules_go//proto:compiler.bzl", "go_proto_compiler")
+ load(
+     ":external_proto_deps.bzl",
+@@ -28,17 +27,3 @@ go_proto_compiler(
+     valid_archive = False,
+     visibility = ["//visibility:public"],
+ )
+-
+-json_data(
+-    name = "repository_locations",
+-    data = load_repository_locations_spec(REPOSITORY_LOCATIONS_SPEC),
+-)
+-
+-json_data(
+-    name = "external_proto_deps",
+-    data = dict(
+-        cc = EXTERNAL_PROTO_CC_BAZEL_DEP_MAP,
+-        go = EXTERNAL_PROTO_GO_BAZEL_DEP_MAP,
+-        imports = EXTERNAL_PROTO_IMPORT_BAZEL_DEP_MAP,
+-    ),
+-)
+diff --git a/bazel/api_build_system.bzl b/bazel/api_build_system.bzl
+index e3047cac..a5d4ae70 100644
+--- a/bazel/api_build_system.bzl
++++ b/bazel/api_build_system.bzl
+@@ -1,6 +1,7 @@
+ load("@com_envoyproxy_protoc_gen_validate//bazel:pgv_proto_library.bzl", "pgv_cc_proto_library")
+ load("@com_github_grpc_grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+ load("@com_github_grpc_grpc//bazel:python_rules.bzl", _py_proto_library = "py_proto_library")
++load("@com_google_protobuf//bazel:java_proto_library.bzl", "java_proto_library")
+ load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
+ load("@io_bazel_rules_go//go:def.bzl", "go_test")
+ load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
+@@ -24,6 +25,7 @@ _CC_GRPC_SUFFIX = "_cc_grpc"
+ _GO_PROTO_SUFFIX = "_go_proto"
+ _GO_IMPORTPATH_PREFIX = "github.com/envoyproxy/go-control-plane/"
+ _JAVA_PROTO_SUFFIX = "_java_proto"
++_IS_BZLMOD = str(Label("//:invalid")).startswith("@@")
+
+ _COMMON_PROTO_DEPS = [
+     "@com_google_protobuf//:any_proto",
+@@ -43,7 +45,8 @@ _COMMON_PROTO_DEPS = [
+ def _proto_mapping(dep, proto_dep_map, proto_suffix):
+     mapped = proto_dep_map.get(dep)
+     if mapped == None:
+-        prefix = "@" + Label(dep).workspace_name if not dep.startswith("//") else ""
++        prefix = "@@" if _IS_BZLMOD else "@"
++        prefix = prefix + Label(dep).repo_name if not dep.startswith("//") else ""
+         return prefix + "//" + Label(dep).package + ":" + Label(dep).name + proto_suffix
+     return mapped
+
+@@ -113,7 +116,7 @@ def api_cc_py_proto_library(
+     )
+
+     if java:
+-        native.java_proto_library(
++        java_proto_library(
+             name = name + _JAVA_PROTO_SUFFIX,
+             visibility = ["//visibility:public"],
+             deps = [relative_name],
+diff --git a/bazel/cc_proto_descriptor_library/builddefs.bzl b/bazel/cc_proto_descriptor_library/builddefs.bzl
+index 23d9f558..e3ae549e 100644
+--- a/bazel/cc_proto_descriptor_library/builddefs.bzl
++++ b/bazel/cc_proto_descriptor_library/builddefs.bzl
+@@ -3,6 +3,9 @@
+ """
+
+ load("@bazel_skylib//lib:paths.bzl", "paths")
++load("@com_google_protobuf//bazel/common:proto_info.bzl", "ProtoInfo")
++load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
++load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+
+ # begin:google_only
+ # load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain", "use_cpp_toolchain")
+diff --git a/bazel/repositories.bzl b/bazel/repositories.bzl
+index 217614f5..274bee87 100644
+--- a/bazel/repositories.bzl
++++ b/bazel/repositories.bzl
+@@ -12,7 +12,13 @@ def external_http_archive(name, **kwargs):
+         **kwargs
+     )
+
+-def api_dependencies():
++def api_dependencies(bzlmod = False):
++    external_http_archive(
++        name = "prometheus_metrics_model",
++        build_file_content = PROMETHEUSMETRICS_BUILD_CONTENT,
++    )
++    if bzlmod:
++        return
+     external_http_archive(
+         name = "bazel_skylib",
+     )
+@@ -30,10 +36,6 @@ def api_dependencies():
+     external_http_archive(
+         name = "com_github_cncf_xds",
+     )
+-    external_http_archive(
+-        name = "prometheus_metrics_model",
+-        build_file_content = PROMETHEUSMETRICS_BUILD_CONTENT,
+-    )
+     external_http_archive(
+         name = "rules_buf",
+     )
+@@ -380,3 +382,5 @@ go_grpc_library(
+     ],
+ )
+ """
++
++non_module_deps = module_extension(implementation = lambda ctx: api_dependencies(bzlmod = True))

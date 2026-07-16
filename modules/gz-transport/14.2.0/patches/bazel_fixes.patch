@@ -1,0 +1,291 @@
+--- BUILD.bazel
++++ BUILD.bazel
+@@ -1,3 +1,5 @@
++load("@buildifier_prebuilt//:rules.bzl", "buildifier", "buildifier_test")
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+ load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header", "gz_export_header")
+ load("@rules_license//rules:license.bzl", "license")
+
+@@ -26,6 +28,7 @@ gz_configure_header(
+     name = "Config",
+     src = "include/gz/transport/config.hh.in",
+     out = "include/gz/transport/config.hh",
++    defines = ["HAVE_IFADDRS=1"],
+     package_xml = "package.xml",
+ )
+
+@@ -63,6 +66,9 @@ cc_library(
+     copts = [
+         "-Wno-deprecated-declarations",
+     ],
++    defines = [
++        'GZ_TRANSPORT_DEFAULT_IMPLEMENTATION=\\"zeromq\\"',
++    ],
+     features = [
+         # Layering check fails for clang build due to no module exporting
+         # `google/protobuf/stubs/common.h`. Unfortunately, the bazel target that
+@@ -95,6 +101,7 @@ cc_binary(
+     deps = [
+         ":gz-transport",
+         "@com_google_protobuf//:json_util",
++        "@com_google_protobuf//:protobuf",
+         "@gz-msgs",
+         "@gz-utils//cli:GzFormatter",
+         "@gz-utils//cli:cli11",
+@@ -114,28 +121,46 @@ cc_binary(
+     deps = [
+         ":gz-transport",
+         "@com_google_protobuf//:json_util",
++        "@com_google_protobuf//:protobuf",
+         "@gz-msgs",
+         "@gz-utils//cli:GzFormatter",
+         "@gz-utils//cli:cli11",
+     ],
+ )
+
+-# test_sources = glob(
+-#     include = ["src/*_TEST.cc"],
+-# )
+-
+-# [cc_test(
+-#     name = src.replace("/", "_").replace(".cc", "").replace("src_", ""),
+-#     srcs = [src],
+-#     env = {
+-#         "GZ_BAZEL": "1",
+-#         "GZ_BAZEL_PATH": "transport",
+-#     },
+-#     deps = [
+-#         ":transport",
+-#         GZ_ROOT + "common/testing",
+-#         GZ_ROOT + "transport/test:utils",
+-#         "@gtest",
+-#         "@gtest//:gtest_main",
+-#     ],
+-# ) for src in test_sources]
++test_sources = glob(
++    include = ["src/*_TEST.cc"],
++)
++
++[cc_test(
++    name = src.replace("/", "_").replace(".cc", "").replace("src_", ""),
++    srcs = [src],
++    env = {"GZ_BAZEL": "1"},
++    deps = [
++        ":gz-transport",
++        "//test:utils",
++        "@com_google_protobuf//:protobuf",
++        "@googletest//:gtest",
++        "@googletest//:gtest_main",
++        "@gz-common//testing",
++        "@gz-msgs//:gzmsgs_cc_proto",
++        "@gz-utils//:Environment",
++        "@gz-utils//:ExtraTestMacros",
++    ],
++) for src in test_sources]
++
++buildifier(
++    name = "buildifier.fix",
++    exclude_patterns = ["./.git/*"],
++    lint_mode = "fix",
++    mode = "fix",
++)
++
++buildifier_test(
++    name = "buildifier.test",
++    exclude_patterns = ["./.git/*"],
++    lint_mode = "warn",
++    mode = "diff",
++    no_sandbox = True,
++    workspace = "//:MODULE.bazel",
++)
+
+--- log/BUILD.bazel
++++ log/BUILD.bazel
+@@ -1,3 +1,4 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+ load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header", "gz_export_header")
+
+ package(
+@@ -56,30 +57,30 @@ cc_library(
+     ],
+ )
+
+-# test_sources = glob(
+-#     include = ["src/*_TEST.cc"],
+-#     exclude = ["src/LogCommandAPI_TEST.cc"],
+-# )
++test_sources = glob(
++    include = ["src/*_TEST.cc"],
++    exclude = ["src/LogCommandAPI_TEST.cc"],
++)
+
+-# [cc_test(
+-#     name = src.replace("/", "_").replace(".cc", "").replace("src_", ""),
+-#     srcs = [src],
+-#     data = [
+-#         "test/data/state.tlog",
+-#     ],
+-#     defines = [
+-#         'GZ_TRANSPORT_LOG_TEST_PATH=\\"transport/log/test\\"',
+-#         'CORRUPT_DB_TEST_PATH=\\"transport/log/test/data/state.tlog\\"',
+-#     ],
+-#     env = {
+-#         "GZ_BAZEL": "1",
+-#         "GZ_BAZEL_PATH": "transport",
+-#     },
+-#     deps = [
+-#         ":log",
+-#         GZ_ROOT + "common/testing",
+-#         GZ_ROOT + "transport/test:utils",
+-#         "@gtest",
+-#         "@gtest//:gtest_main",
+-#     ],
+-# ) for src in test_sources]
++[cc_test(
++    name = src.replace("/", "_").replace(".cc", "").replace("src_", ""),
++    srcs = [src],
++    copts = [
++        "-Wno-private-header",  # Required for Descriptor_TEST
++    ],
++    data = [
++        "test/data/state.tlog",
++    ],
++    defines = ['CORRUPT_DB_TEST_PATH=\\"log/test/data/state.tlog\\"'],
++    env = {
++        "GZ_BAZEL": "1",
++        "GZ_TRANSPORT_LOG_SQL_PATH": "log/sql",
++    },
++    deps = [
++        ":log",
++        "//test:utils",
++        "@googletest//:gtest",
++        "@googletest//:gtest_main",
++        "@gz-common//testing",
++    ],
++) for src in test_sources]
+
+--- parameters/BUILD.bazel
++++ parameters/BUILD.bazel
+@@ -1,3 +1,4 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+ load("@rules_gazebo//gazebo:headers.bzl", "gz_export_header")
+
+ package(
+
+--- test/BUILD.bazel
++++ test/BUILD.bazel
+@@ -1,3 +1,6 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
++load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header")
++
+ package(
+     default_applicable_licenses = ["//:license"],
+     features = [
+@@ -6,6 +9,14 @@ package(
+     ],
+ )
+
++gz_configure_header(
++    name = "Config",
++    src = "test_config.hh.in",
++    out = "include/test_config.hh",
++    package_xml = "//:package.xml",
++    visibility = ["//:__subpackages__"],
++)
++
+ cc_library(
+     name = "utils",
+     hdrs = ["test_utils.hh"],
+@@ -15,3 +26,92 @@ cc_library(
+         "@gz-utils",
+     ],
+ )
++
++test_executables = [
++    "authPubSubSubscriberInvalid_aux",
++    "fastPub_aux",
++    "pub_aux",
++    "pub_aux_throttled",
++    "scopedTopicSubscriber_aux",
++    "twoProcsPublisher_aux",
++    "twoProcsPubSubMixedSubscribers_aux",
++    "twoProcsPubSubSingleSubscriber_aux",
++    "twoProcsPubSubSubscriber_aux",
++    "twoProcsSrvCallReplier_aux",
++    "twoProcsSrvCallReplierInc_aux",
++    "twoProcsSrvCallWithoutInputReplier_aux",
++    "twoProcsSrvCallWithoutInputReplierInc_aux",
++    "twoProcsSrvCallWithoutOutputReplier_aux",
++    "twoProcsSrvCallWithoutOutputReplierInc_aux",
++]
++
++[cc_binary(
++    name = name,
++    srcs = ["integration/test_executables/" + name + ".cc"],
++    deps = [
++        ":Config",
++        "//:gz-transport",
++        "@googletest//:gtest",
++        "@gz-msgs//:gzmsgs_cc_proto",
++        "@gz-utils//:Environment",
++    ],
++) for name in test_executables]
++
++integration_test_sources = [
++    "authPubSub.cc",
++    "scopedTopic.cc",
++    "callback_scope_TEST.cc",
++    "statistics.cc",
++    "twoProcsPubSub.cc",
++    "twoProcsSrvCall.cc",
++    "twoProcsSrvCallStress.cc",
++    "twoProcsSrvCallSync1.cc",
++    "twoProcsSrvCallWithoutInput.cc",
++    "twoProcsSrvCallWithoutInputStress.cc",
++    "twoProcsSrvCallWithoutInputSync1.cc",
++    "twoProcsSrvCallWithoutOutput.cc",
++    "twoProcsSrvCallWithoutOutputStress.cc",
++]
++
++# Found with
++# bazel test test:all --runs_per_test 10
++flaky_test_srcs = [
++    "twoProcsPubSub.cc",
++    "twoProcsSrvCall.cc",
++    "twoProcsSrvCallWithoutInput.cc",
++    "twoProcsSrvCallWithoutOutput.cc",
++]
++
++[cc_test(
++    name = "INTEGRATION_" + src.replace(".cc", ""),
++    srcs = ["integration/" + src],
++    data = [":" + name for name in test_executables],
++    defines = [
++        'AUTH_PUB_SUB_SUBSCRIBER_INVALID_EXE=\\"./test/authPubSubSubscriberInvalid_aux\\"',
++        'FAST_PUB_EXE=\\"./test/fastPub_aux\\"',
++        'PUB_EXE=\\"./test/pub_aux\\"',
++        'PUB_THROTTLED_EXE=\\"./test/pub_aux_throttled\\"',
++        'SCOPED_TOPIC_SUBSCRIBER_EXE=\\"./test/scopedTopicSubscriber_aux\\"',
++        'TWO_PROCS_PUBLISHER_EXE=\\"./test/twoProcsPublisher_aux\\"',
++        'TWO_PROCS_PUB_SUB_MIXED_SUBSCRIBERS_EXE=\\"./test/twoProcsPubSubMixedSubscribers_aux\\"',
++        'TWO_PROCS_PUB_SUB_SINGLE_SUBSCRIBER_EXE=\\"./test/twoProcsPubSubSingleSubscriber_aux\\"',
++        'TWO_PROCS_PUB_SUB_SUBSCRIBER_EXE=\\"./test/twoProcsPubSubSubscriber_aux\\"',
++        'TWO_PROCS_SRV_CALL_REPLIER_EXE=\\"./test/twoProcsSrvCallReplier_aux\\"',
++        'TWO_PROCS_SRV_CALL_REPLIER_INC_EXE=\\"./test/twoProcsSrvCallReplierInc_aux\\"',
++        'TWO_PROCS_SRV_CALL_WITHOUT_INPUT_REPLIER_EXE=\\"./test/twoProcsSrvCallWithoutInputReplier_aux\\"',
++        'TWO_PROCS_SRV_CALL_WITHOUT_INPUT_REPLIER_INC_EXE=\\"./test/twoProcsSrvCallWithoutInputReplierInc_aux\\"',
++        'TWO_PROCS_SRV_CALL_WITHOUT_OUTPUT_REPLIER_EXE=\\"./test/twoProcsSrvCallWithoutOutputReplier_aux\\"',
++        'TWO_PROCS_SRV_CALL_WITHOUT_OUTPUT_REPLIER_INC_EXE=\\"./test/twoProcsSrvCallWithoutOutputReplierInc_aux\\"',
++    ],
++    env = {"GZ_BAZEL": "1"},
++    deps = [
++        ":Config",
++        ":utils",
++        "//:gz-transport",
++        "@googletest//:gtest",
++        "@googletest//:gtest_main",
++        "@gz-msgs//:gzmsgs_cc_proto",
++        "@gz-utils//:Environment",
++        "@gz-utils//:Subprocess",
++    ],
++) for src in integration_test_sources if src not in flaky_test_srcs]

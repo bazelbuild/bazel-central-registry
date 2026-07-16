@@ -1,0 +1,68 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Mirrors the CMake "CRON_USE_LOCAL_TIME" option (default OFF).
+# By default all dates are processed as UTC/GMT. Downstream modules can opt in
+# to system-local time with `--@ccronexpr//:use_local_time=True`.
+bool_flag(
+    name = "use_local_time",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "local_time_enabled",
+    flag_values = {":use_local_time": "True"},
+)
+
+# Disables the Year field, shrinking `cron_expr` by 29 bytes. The year field is
+# still accepted but not validated and matches every year. This changes the
+# public layout of `cron_expr`, so the define is propagated to all dependents.
+# Opt in with `--@ccronexpr//:disable_years=True`.
+bool_flag(
+    name = "disable_years",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "years_disabled",
+    flag_values = {":disable_years": "True"},
+)
+
+# Mirrors the CMake "ccronexpr" STATIC library target.
+cc_library(
+    name = "ccronexpr",
+    srcs = ["ccronexpr.c"],
+    hdrs = ["ccronexpr.h"],
+    defines = select({
+        ":local_time_enabled": ["CRON_USE_LOCAL_TIME"],
+        "//conditions:default": [],
+    }) + select({
+        ":years_disabled": ["CRON_DISABLE_YEARS"],
+        "//conditions:default": [],
+    }),
+    includes = ["."],
+)
+
+# Mirrors the CMake "ccronexpr_test" executable / ctest target.
+# The upstream test asserts UTC results, so it is built with the default
+# (UTC) configuration regardless of the flag.
+cc_test(
+    name = "ccronexpr_test",
+    srcs = ["ccronexpr_test.c"],
+    deps = [":ccronexpr"],
+)
+
+# The supertinycron command-line tool (commented out in upstream CMake). It
+# relies on POSIX APIs (fork/wait/signal), so it is not built on Windows.
+cc_binary(
+    name = "supertinycron",
+    srcs = ["supertinycron.c"],
+    local_defines = ['VERSION=\\"2.1.0\\"'],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":ccronexpr"],
+)

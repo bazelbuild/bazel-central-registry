@@ -1,0 +1,212 @@
+"""rules_req_compile"""
+
+module(
+    name = "rules_req_compile",
+    version = "1.0.0rc29",
+)
+
+bazel_dep(name = "platforms", version = "0.0.9")
+bazel_dep(name = "rules_python", version = "0.34.0")
+
+bazel_dep(name = "buildozer", version = "7.1.2", dev_dependency = True)
+
+bazel_dep(name = "bazel_skylib", version = "1.6.1")
+bazel_dep(name = "rules_cc", version = "0.0.9")
+
+bazel_dep(
+    name = "buildifier_prebuilt",
+    version = "6.4.0",
+    dev_dependency = True,
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+python.toolchain(
+    configure_coverage_tool = True,
+    # Working around a rules_python issue wiht docker
+    # https://github.com/bazelbuild/rules_python/pull/713
+    ignore_root_user_error = True,
+    is_default = True,
+    python_version = "3.11",
+)
+use_repo(
+    python,
+    "python_3_11",
+    "python_3_11_aarch64-apple-darwin",
+    "python_3_11_x86_64-apple-darwin",
+    "python_3_11_x86_64-pc-windows-msvc",
+    "python_3_11_x86_64-unknown-linux-gnu",
+)
+
+requirements = use_extension("//extensions:python.bzl", "requirements")
+requirements.parse(
+    name = "req_compile_deps",
+    requirements_locks = {
+        "//3rdparty:requirements.linux.311.txt": "@platforms//os:linux",
+        "//3rdparty:requirements.macos.311.txt": "@platforms//os:macos",
+        "//3rdparty:requirements.windows.311.txt": "@platforms//os:windows",
+    },
+)
+use_repo(requirements, "req_compile_deps")
+
+sdist_deps = use_extension("//private:sdist.bzl", "sdist_deps")
+use_repo(
+    sdist_deps,
+    "req_compile_sdist_compiler__pip",
+    "req_compile_sdist_compiler__setuptools",
+    "req_compile_sdist_compiler__wheel",
+)
+
+dev_requirements = use_extension("//extensions:python.bzl", "requirements", dev_dependency = True)
+dev_requirements.parse(
+    name = "req_compile_test_sdist",
+    # Required to compile sdists
+    interpreter_linux = "@python_3_11_x86_64-unknown-linux-gnu//:python",
+    interpreter_macos_aarch64 = "@python_3_11_aarch64-apple-darwin//:python",
+    interpreter_macos_intel = "@python_3_11_x86_64-apple-darwin//:python",
+    interpreter_windows = "@python_3_11_x86_64-pc-windows-msvc//:python",
+    requirements_lock = "//private/tests/sdist:requirements.txt",
+)
+use_repo(dev_requirements, "req_compile_test_sdist", "req_compile_test_sdist__pyspark")
+dev_requirements.parse(
+    name = "req_compile_test_simple",
+    requirements_lock = "//private/tests/simple:requirements.txt",
+)
+use_repo(dev_requirements, "req_compile_test_simple")
+dev_requirements.parse(
+    name = "req_compile_test_platlib",
+    requirements_locks = {
+        "//private/tests/platlib:requirements.linux.txt": "@platforms//os:linux",
+        "//private/tests/platlib:requirements.macos.txt": "@platforms//os:macos",
+        "//private/tests/platlib:requirements.windows.txt": "@platforms//os:windows",
+    },
+)
+use_repo(dev_requirements, "req_compile_test_platlib")
+dev_requirements.parse(
+    name = "req_compile_test_transitive_ins",
+    requirements_lock = "//private/tests/transitive_ins:requirements.txt",
+)
+use_repo(dev_requirements, "req_compile_test_transitive_ins")
+dev_requirements.parse(
+    name = "req_compile_test_pip_parse_compat_single_plat",
+    requirements_lock = "//private/tests/pip_parse_compat:requirements.txt",
+)
+use_repo(dev_requirements, "req_compile_test_pip_parse_compat_single_plat")
+dev_requirements.parse(
+    name = "req_compile_test_pip_parse_compat_multi_plat",
+    requirements_locks = {
+        "//private/tests/pip_parse_compat:requirements.linux.txt": "@platforms//os:linux",
+        "//private/tests/pip_parse_compat:requirements.macos.txt": "@platforms//os:macos",
+        "//private/tests/pip_parse_compat:requirements.windows.txt": "@platforms//os:windows",
+    },
+)
+use_repo(dev_requirements, "req_compile_test_pip_parse_compat_multi_plat")
+dev_requirements.parse(
+    name = "req_compile_test_annotations",
+    requirements_locks = {
+        "//private/tests/annotations:requirements.linux.txt": "@platforms//os:linux",
+        "//private/tests/annotations:requirements.macos.txt": "@platforms//os:macos",
+        "//private/tests/annotations:requirements.windows.txt": "@platforms//os:windows",
+    },
+)
+use_repo(
+    dev_requirements,
+    "req_compile_test_annotations",
+    "req_compile_test_annotations_linux__numpy",
+    "req_compile_test_annotations_macos__numpy",
+    "req_compile_test_annotations_windows__numpy",
+)
+dev_requirements.package_annotation(
+    additive_build_file_content = """\
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_req_compile//:defs.bzl", "py_package_annotation_target")
+
+_INCLUDE_DIR = "site-packages/numpy/core/include"
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["{}/**/*.h".format(_INCLUDE_DIR)]),
+    includes = [_INCLUDE_DIR],
+)
+
+py_package_annotation_target(
+    name = "pkg.headers",
+    target = ":headers",
+)
+""",
+    copy_executables = {
+        "site-packages/numpy/testing/setup.py": "site-packages/numpy/testing/setup.copy.py",
+    },
+    copy_files = {
+        "site-packages/numpy-1.26.4.dist-info/entry_points.txt": "site-packages/numpy-1.26.4.dist-info/entry_points.copy.txt",
+    },
+    copy_srcs = {
+        "site-packages/numpy/conftest.py": "site-packages/numpy/conftest.copy.py",
+    },
+    data = [":pkg.headers"],
+    package = "numpy",
+    patches = [
+        "//private/tests/annotations:numpy.patch",
+    ],
+    deps = [
+        # Show that label dependencies can be added.
+        "@rules_python//python/runfiles",
+    ],
+)
+
+# Sphinx is known to have a circular dependency. The annotations here solve for that.
+dev_requirements.package_annotation(
+    package = "sphinxcontrib-htmlhelp",
+    deps = ["-sphinx"],
+)
+dev_requirements.package_annotation(
+    package = "sphinxcontrib-applehelp",
+    deps = ["-sphinx"],
+)
+dev_requirements.package_annotation(
+    package = "sphinxcontrib-devhelp",
+    deps = ["-sphinx"],
+)
+dev_requirements.package_annotation(
+    package = "sphinxcontrib-jsmath",
+    deps = ["-sphinx"],
+)
+dev_requirements.package_annotation(
+    package = "sphinxcontrib-qthelp",
+    deps = ["-sphinx"],
+)
+dev_requirements.package_annotation(
+    deps_excludes = ["sphinx"],
+    package = "sphinxcontrib-serializinghtml",
+)
+
+find_links_test_repository = use_repo_rule("//private/tests/find_links:find_links_test_repo.bzl", "find_links_test_repository")
+
+find_links_test_repository(
+    name = "req_compile_find_links_test",
+    build_file = "//private/tests/find_links:BUILD.find_links.bazel",
+    dev_dependency = True,
+    pyspark_wheel_data = "@req_compile_test_sdist__pyspark//:whl.json",
+    requirements_in = "//private/tests/find_links:requirements.in",
+    requirements_txt = "//private/tests/find_links:requirements.txt",
+    # Needs to match `--find-links` in `//private/tests/find_links:requirements.in`
+    wheeldir = "wheeldir",
+)
+
+# Use a separate extension since the @req_compile_find_links_test is generated by an extension
+# that also depend upon //extensions:python.bzl
+find_links_requirements = use_extension("//private/tests/find_links:extension.bzl", "requirements", dev_dependency = True)
+find_links_requirements.parse(
+    name = "req_compile_test_find_links",
+    requirements_lock = "@req_compile_find_links_test//:requirements.txt",
+)
+use_repo(find_links_requirements, "req_compile_test_find_links")
+
+dev_requirements.parse(
+    name = "req_compile_test_cross_platform",
+    requirements_locks = {
+        "//private/tests/cross_platform:requirements.linux.txt": "@platforms//os:linux",
+        "//private/tests/cross_platform:requirements.macos.txt": "@platforms//os:macos",
+        "//private/tests/cross_platform:requirements.windows.txt": "@platforms//os:windows",
+    },
+)
+use_repo(dev_requirements, "req_compile_test_cross_platform")

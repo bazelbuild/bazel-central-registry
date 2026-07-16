@@ -1,0 +1,786 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+load(
+    "//:opencv.bzl",
+    "CONFIG_DESKTOP",
+    "CONFIG_NON_DESKTOP",
+    "ENABLED_OPTS",
+    "OPENCV_COPTS",
+    "OPENCV_OPTIMIZATION_COPTS",
+    "opencv_module",
+)
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
+    license_text = "LICENSE",
+)
+
+exports_files([
+    "LICENSE",
+])
+
+write_file(
+    name = "_private/version_string.inc",
+    out = "private/version_string.inc",
+    content = ["\"4.12.0\""],
+)
+
+write_file(
+    name = "_opencv2/opencv_modules_desktop.hpp",
+    out = "opencv2/opencv_modules_desktop.hpp",
+    content = ["".join([
+        "#define HAVE_OPENCV_{}\n".format(x.upper())
+        for x in CONFIG_DESKTOP["modules"]
+    ])],
+)
+
+write_file(
+    name = "_opencv2/opencv_modules_non_desktop.hpp",
+    out = "opencv2/opencv_modules_non_desktop.hpp",
+    content = ["".join([
+        "#define HAVE_OPENCV_{}\n".format(x.upper())
+        for x in CONFIG_NON_DESKTOP["modules"]
+    ])],
+)
+
+copy_file(
+    name = "generate_opencv_modules_hpp",
+    src = select({
+        "@platforms//os:linux": "opencv2/opencv_modules_desktop.hpp",
+        "@platforms//os:macos": "opencv2/opencv_modules_desktop.hpp",
+        "@platforms//os:windows": "opencv2/opencv_modules_desktop.hpp",
+        "//conditions:default": "opencv2/opencv_modules_non_desktop.hpp",
+    }),
+    out = "opencv2/opencv_modules.hpp",
+)
+
+write_file(
+    name = "_custom_hal.hpp",
+    out = "custom_hal.hpp",
+    content = [
+        "#ifndef _CUSTOM_HAL_INCLUDED_",
+        "#define _CUSTOM_HAL_INCLUDED_",
+        "#endif",
+    ],
+)
+
+write_file(
+    name = "_opencv_data_config.hpp",
+    out = "opencv_data_config.hpp",
+    content = [
+        "#define OPENCV_INSTALL_PREFIX \"\"",
+        "#define OPENCV_DATA_INSTALL_PATH \"\"",
+        "#define OPENCV_BUILD_DIR \"\"",
+        "#define OPENCV_DATA_BUILD_DIR_SEARCH_PATHS \"\"",
+        "#define OPENCV_INSTALL_DATA_DIR_RELATIVE \"\"",
+    ],
+)
+
+[
+    write_file(
+        name = "_bazel-config/cv_cpu_config-{}.h".format(arch),
+        out = "bazel-config/cv_cpu_config-{}.h".format(arch),
+        content = [
+            "// OpenCV CPU baseline features\n",
+        ] + [
+            "#define CV_CPU_COMPILE_{} 1\n#define CV_CPU_BASELINE_COMPILE_{} 1\n".format(arch.upper(), arch.upper())
+            for arch in config.get("baseline", [])
+        ] + [
+            "#define CV_CPU_BASELINE_FEATURES 0 \\",
+        ] + [
+            "    , CV_CPU_{} \\".format(arch.upper())
+            for arch in config.get("baseline", [])
+        ] + [
+            "\n",
+            "// OpenCV supported CPU dispathed features\n",
+        ] + [
+            "#define CV_CPU_DISPATCH_COMPILE_{} 1".format(arch.upper())
+            for arch in config.get("dispatch", [])
+        ] + [
+            "\n#define CV_CPU_DISPATCH_FEATURES 0 \\",
+        ] + [
+            "    , CV_CPU_{} \\".format(arch.upper())
+            for arch in config.get("dispatch", [])
+        ] + [
+            "\n",
+        ],
+    ) for arch, config in ENABLED_OPTS.items()
+]
+
+write_file(
+    name = "_bazel-config/cv_cpu_config_no_baseline.h",
+    out = "bazel-config/cv_cpu_config_no_baseline.h",
+    content = [
+        "// OpenCV CPU baseline features\n",
+        "#define CV_CPU_BASELINE_FEATURES 0\n",
+        "// OpenCV supported CPU dispathed features\n",
+        "#define CV_CPU_DISPATCH_FEATURES 0\n",
+    ],
+)
+
+copy_file(
+    name = "_cv_cpu_config.h",
+    out = "cv_cpu_config.h",
+    src = select({
+        "@platforms//cpu:arm64": "bazel-config/cv_cpu_config-arm64.h",
+        "@platforms//cpu:armv7": "bazel-config/cv_cpu_config-armv7.h",
+        "@platforms//cpu:x86_64": "bazel-config/cv_cpu_config-x86_64.h",
+        "@platforms//cpu:mips64": "bazel-config/cv_cpu_config-mips64.h",
+        "@platforms//cpu:ppc64le": "bazel-config/cv_cpu_config-ppc64le.h",
+        "@platforms//cpu:riscv64": "bazel-config/cv_cpu_config-riscv64.h",
+        # LoongArch is not yet supported in the official platforms repo
+        # "@platforms//cpu:loongarch64": "bazel-config/cv_cpu_config-loongarch64.h",
+        "//conditions:default": "bazel-config/cv_cpu_config_no_baseline.h",
+    }),
+)
+
+# Opencv has a lot of options to enable certain features
+# Leverage this, cv_cpu_config.h, and cpu opts to enable these features
+expand_template(
+    name = "expand_cvconfig.h.in",
+    out = "cvconfig.h",
+    substitutions = {
+        "#cmakedefine BUILD_SHARED_LIBS\n": "/* #undef BUILD_SHARED_LIBS */\n",
+        "#cmakedefine CV_ENABLE_INTRINSICS\n": "#define CV_ENABLE_INTRINSICS\n",
+        "#cmakedefine CV_DISABLE_OPTIMIZATION\n": "/* #undef CV_DISABLE_OPTIMIZATION */\n",
+        "${OPENCV_CUDA_ARCH_BIN}": "",
+        "${OPENCV_CUDA_ARCH_FEATURES}": "",
+        "${OPENCV_CUDA_ARCH_PTX}": "",
+        "#cmakedefine HAVE_CLAMDBLAS\n": "/* #undef HAVE_CLAMDBLAS */\n",
+        "#cmakedefine HAVE_CLAMDFFT\n": "/* #undef HAVE_CLAMDFFT */\n",
+        "#cmakedefine HAVE_CLP\n": "/* #undef HAVE_CLP */\n",
+        "#cmakedefine HAVE_CUDA\n": "/* #undef HAVE_CUDA */\n",
+        "#cmakedefine HAVE_CUBLAS\n": "/* #undef HAVE_CUBLAS */\n",
+        "#cmakedefine HAVE_CUDNN\n": "/* #undef HAVE_CUDNN */\n",
+        "#cmakedefine HAVE_CUFFT\n": "/* #undef HAVE_CUFFT */\n",
+        "#cmakedefine HAVE_DIRECTX\n": "/* #undef HAVE_DIRECTX */\n",
+        "#cmakedefine HAVE_DIRECTX_NV12\n": "/* #undef HAVE_DIRECTX_NV12 */\n",
+        "#cmakedefine HAVE_D3D11\n": "/* #undef HAVE_D3D11 */\n",
+        "#cmakedefine HAVE_D3D10\n": "/* #undef HAVE_D3D10 */\n",
+        "#cmakedefine HAVE_D3D9\n": "/* #undef HAVE_D3D9 */\n",
+        "#cmakedefine HAVE_GDAL\n": "/* #undef HAVE_GDAL */\n",
+        "#cmakedefine HAVE_HALIDE\n": "/* #undef HAVE_HALIDE */\n",
+        "#cmakedefine HAVE_VULKAN\n": "/* #undef HAVE_VULKAN */\n",
+        "#cmakedefine HAVE_INTTYPES_H 1\n": "/* #undef HAVE_INTTYPES_H */\n",
+        "#cmakedefine HAVE_IPP\n": "/* #undef HAVE_IPP */\n",
+        "#cmakedefine HAVE_IPP_IW_LL\n": "/* #undef HAVE_IPP_IW_LL */",
+        "#cmakedefine HAVE_IPP_ICV\n": "/* #undef HAVE_IPP_ICV */\n",
+        "#cmakedefine HAVE_IPP_IW\n": "/* #undef HAVE_IPP_IW */\n",
+        "#cmakedefine HAVE_IPP_A\n": "/* #undef HAVE_IPP_A */\n",
+        "#cmakedefine HAVE_OPENJPEG\n": "/* #undef HAVE_OPENJPEG */\n",
+        "#cmakedefine HAVE_JASPER\n": "/* #undef HAVE_JASPER */\n",
+        "#cmakedefine HAVE_AVIF\n": "/* #undef HAVE_AVIF */\n",
+        "#cmakedefine HAVE_JPEG\n": "#define HAVE_JPEG 1\n",
+        "#cmakedefine HAVE_JPEGXL\n": "/* #undef HAVE_JPEGXL */\n",
+        "#cmakedefine HAVE_GDCM\n": "/* #undef HAVE_GDCM */\n",
+        "#cmakedefine HAVE_NVCUVID\n": "/* #undef HAVE_NVCUVID */\n",
+        "#cmakedefine HAVE_NVCUVID_HEADER\n": "/* #undef HAVE_NVCUVID_HEADER */\n",
+        "#cmakedefine HAVE_DYNLINK_NVCUVID_HEADER\n": "/* #undef HAVE_DYNLINK_NVCUVID_HEADER */\n",
+        "#cmakedefine HAVE_NVCUVENC\n": "/* #undef HAVE_NVCUVENC */\n",
+        "#cmakedefine HAVE_OPENCL\n": "/* #undef HAVE_OPENCL */\n",
+        "#cmakedefine HAVE_OPENCL_STATIC\n": "/* #undef HAVE_OPENCL_STATIC */\n",
+        "#cmakedefine HAVE_OPENCL_SVM\n": "/* #undef HAVE_OPENCL_SVM */\n",
+        "#cmakedefine HAVE_OPENCL_D3D11_NV\n": "/* #undef HAVE_OPENCL_D3D11_NV */\n",
+        "#cmakedefine HAVE_OPENEXR\n": "/* #undef HAVE_OPENEXR */\n",
+        "#cmakedefine HAVE_OPENGL\n": "/* #undef HAVE_OPENGL */\n",
+        "#cmakedefine HAVE_PNG\n": "#define HAVE_PNG 1\n",
+        "#cmakedefine HAVE_SPNG\n": "/* #undef HAVE_SPNG */\n",
+        "#cmakedefine HAVE_PTHREAD\n": "#define HAVE_PTHREAD\n",
+        "#cmakedefine HAVE_PTHREADS_PF\n": "#define HAVE_PTHREADS_PF\n",
+        "#cmakedefine HAVE_TBB\n": "/* #undef HAVE_TBB */\n",
+        "#cmakedefine HAVE_HPX\n": "/* #undef HAVE_HPX */\n",
+        "#cmakedefine HAVE_TIFF\n": "/* #undef HAVE_TIFF */\n",
+        "#cmakedefine WORDS_BIGENDIAN\n": "/* #undef WORDS_BIGENDIAN */\n",
+        "#cmakedefine HAVE_VA\n": "/* #undef HAVE_VA */\n",
+        "#cmakedefine HAVE_VA_INTEL\n": "/* #undef HAVE_VA_INTEL */\n",
+        "#cmakedefine HAVE_LAPACK\n": "/* #undef HAVE_LAPACK */\n",
+        "#cmakedefine ENABLE_INSTRUMENTATION\n": "/* #undef ENABLE_INSTRUMENTATION */\n",
+        "#cmakedefine HAVE_OPENVX\n": "/* #undef HAVE_OPENVX */\n",
+        "#cmakedefine OPENCV_TRACE\n": "/* #undef OPENCV_TRACE */\n",
+        "#cmakedefine HAVE_QUIRC\n": "/* undef HAVE_QUIRC */\n",
+    } | select({
+        ":have_eigen": {
+            "#cmakedefine HAVE_EIGEN\n": "#define HAVE_EIGEN 1\n",
+        },
+        "//conditions:default": {
+            "#cmakedefine HAVE_EIGEN\n": "/* #undef HAVE_EIGEN */\n",
+        },
+    }),
+    template = "@opencv//:cmake/templates/cvconfig.h.in",
+)
+
+cc_library(
+    name = "_base_headers",
+    hdrs = [
+        "custom_hal.hpp",
+        "cv_cpu_config.h",
+        "cvconfig.h",
+        "opencv2/opencv_modules.hpp",
+        "opencv_data_config.hpp",
+        "include/opencv2/opencv.hpp",
+    ],
+    includes = [
+        "opencv2",
+        "private",
+        "include",
+    ],
+    textual_hdrs = [
+        "private/version_string.inc",
+    ],
+    defines = select({
+        ":emscripten_with_simd": ["CV_WASM_SIMD=1"],
+        "@platforms//os:emscripten": ["CV_FORCE_SIMD128_CPP=1"],  # Use CPP SIMD emulation on Emscripten when WASM SIMD is not available
+        "//conditions:default": [],
+    })
+)
+
+cc_library(
+    name = "opencv",
+    deps = selects.with_or({
+        ("@platforms//os:linux", "@platforms//os:macos", "@platforms//os:windows"): [":" + module for module in CONFIG_DESKTOP["modules"]],
+        "//conditions:default": [":" + module for module in CONFIG_NON_DESKTOP["modules"]],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "cpufeatures_android",
+    hdrs = ["3rdparty/cpufeatures/cpu-features.h"],
+    strip_include_prefix = "3rdparty/cpufeatures",
+    deps = [
+        "@androidndk//:cpufeatures",
+    ],
+    target_compatible_with = ["@platforms//os:android"],
+)
+
+opencv_module(
+    name = "core",
+    dispatched_files = {
+        "mathfuncs_core": [
+            "sse2",
+            "avx",
+            "avx2",
+            "lasx",
+        ],
+        "stat": [
+            "sse4_2",
+            "avx2",
+            "lasx",
+        ],
+        "arithm": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+            "vsx3",
+            "lasx",
+        ],
+        "convert": [
+            "sse2",
+            "avx2",
+            "vsx3",
+            "lasx",
+        ],
+        "convert_scale": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "count_non_zero": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "has_non_zero": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "matmul": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+            "avx512_skx",
+            "neon_dotprod",
+            "lasx",
+        ],
+        "mean": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "merge": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "split": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "sum": [
+            "sse2",
+            "avx2",
+            "lasx",
+        ],
+        "norm": [
+            "sse2",
+            "sse4_1",
+            "avx",
+            "avx2",
+            "neon_dotprod",
+            "lasx",
+        ],
+    },
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl", "-lpthread", "-lrt"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        ":have_allocator_stats": [],
+        "//conditions:default": [
+            "OPENCV_DISABLE_ALLOCATOR_STATS=1"
+        ],
+    }) + select({
+        "@platforms//os:android": [
+            "HAVE_CPUFEATURES=1",
+        ],
+        "//conditions:default": [],
+    }) + selects.with_or({
+        "@platforms//os:windows": [
+            "HAVE_WIN32_ALIGNED_MALLOC=1",
+        ],
+        ("@platforms//os:macos", "@platforms//os:ios"): [
+            "HAVE_POSIX_MEMALIGN=1",
+        ],
+        ("@platforms//os:android", "@platforms//os:linux", "@platforms//os:emscripten"): [
+            "HAVE_POSIX_MEMALIGN=1",
+            "HAVE_MALLOC_H=1",
+            "HAVE_MEMALIGN=1",
+        ],
+        "//conditions:default": [ ],
+    }) + select({
+        ":ubsan_enabled": [
+            "CV_STRONG_ALIGNMENT=1",  # UBSan checks for strict alignment
+        ],
+        "//conditions:default": [],
+    }),
+    copts = select({
+        ":ubsan_enabled": [
+            "-fno-sanitize=function", # call to function cv::hal::sub32f via pointer of incorrect type
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "@zlib",
+    ] + select({
+        "@platforms//os:android": [":cpufeatures_android"],
+        "//conditions:default": [],
+    }) + select({
+        ":have_eigen": ["@eigen"],
+        "//conditions:default": [],
+    }),
+)
+
+opencv_module(
+    name = "imgproc",
+    copts = [
+        "-Wno-deprecated-enum-float-conversion",
+        "-Wno-deprecated-volatile",
+    ],
+    dispatched_files = {
+        "accum": [
+            "sse4_1",
+            "avx",
+            "avx2",
+        ],
+        "bilateral_filter": [
+            "sse2",
+            "avx2",
+        ],
+        "box_filter": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "filter": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "color_hsv": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "color_rgb": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "color_yuv": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "median_blur": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "morph": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "smooth": [
+            "sse2",
+            "sse4_1",
+            "avx2",
+        ],
+        "sumpixels": [
+            "sse2",
+            "avx2",
+            "avx512_skx",
+        ],
+    },
+    deps = [":core"],
+)
+
+opencv_module(
+    name = "features2d",
+    copts = [
+        "-Wno-deprecated-enum-float-conversion",
+        "-Wno-deprecated-volatile",
+    ],
+    dispatched_files = {
+        "sift": [
+            "sse4_1",
+            "avx2",
+            "avx512_skx",
+        ],
+    },
+    deps = [
+        ":imgproc",
+        ":flann",
+    ],
+)
+
+opencv_module(
+    name = "flann",
+    deps = [":core"],
+)
+
+opencv_module(
+    name = "calib3d",
+    copts = [
+        "-Wno-deprecated-enum-float-conversion",
+    ],
+    dispatched_files = {
+        "undistort": [
+            "sse2",
+            "avx2",
+        ],
+    },
+    deps = [
+        ":imgproc",
+        ":features2d",
+        ":flann",
+    ],
+)
+
+opencv_module(
+    name = "imgcodecs",
+    deps = [
+        ":imgproc",
+        "@libjpeg_turbo//:jpeg",
+        "@libpng",
+    ],
+)
+
+opencv_module(
+    name = "objdetect",
+    deps = [
+        ":calib3d",
+        ":imgproc",
+        ":core",
+    ],
+)
+
+# TODO: add build flags for enabling varoious video backends on different platforms
+objc_library(
+    name = "ocv.3rdparty.avfoundation",
+    srcs = select({
+        "@platforms//os:macos": [
+            "modules/videoio/src/cap_avfoundation_mac.mm",
+        ],
+        "@platforms//os:ios": [
+            "modules/videoio/src/cap_avfoundation.mm",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = glob([
+        "modules/videoio/src/**/*.h",
+        "modules/videoio/src/**/*.hpp",
+        "modules/videoio/include/**/*.hpp",
+        "modules/videoio/include/**/*.h",
+    ]),
+    includes = [
+        "modules/videoio/include",
+        "modules/videoio/src",
+    ],
+    copts = OPENCV_COPTS + OPENCV_OPTIMIZATION_COPTS + [
+        "-fno-objc-arc",  # Disable Automatic Reference Counting, as OpenCV uses manual reference counting
+    ],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework Cocoa",
+            "-framework Accelerate",
+            "-framework AVFoundation",
+            "-framework CoreGraphics",
+            "-framework CoreMedia",
+            "-framework CoreVideo",
+            "-framework QuartzCore",
+        ],
+        "@platforms//os:ios": [
+            "-framework AVFoundation",
+            "-framework QuartzCore",
+        ],
+    }),
+    deps = [
+        ":imgproc",
+        ":imgcodecs",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:macos": ["@platforms//os:macos"],
+        "@platforms//os:ios": ["@platforms//os:ios"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+opencv_module(
+    name = "videoio",
+    deps = [
+        ":imgproc",
+        ":imgcodecs",
+    ] + select({
+        "@platforms//os:macos": [":ocv.3rdparty.avfoundation"],
+        "@platforms//os:ios": [":ocv.3rdparty.avfoundation"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        "@platforms//os:macos": ["HAVE_AVFOUNDATION=1"],
+        "@platforms//os:ios": ["HAVE_AVFOUNDATION=1"],
+        "@platforms//os:linux": ["HAVE_CAMV4L=1"],
+        "@platforms//os:windows": ["HAVE_DSHOW=1"],
+        "//conditions:default": [],
+    }),
+    sources = [
+        "modules/videoio/src/videoio_registry.cpp",
+        "modules/videoio/src/videoio_c.cpp",
+        "modules/videoio/src/cap.cpp",
+        "modules/videoio/src/cap_images.cpp",
+        "modules/videoio/src/cap_mjpeg_encoder.cpp",
+        "modules/videoio/src/cap_mjpeg_decoder.cpp",
+        "modules/videoio/src/backend_plugin.cpp",
+        "modules/videoio/src/backend_static.cpp",
+        "modules/videoio/src/container_avi.cpp",
+    ] + select({
+        "@platforms//os:linux": [
+            "modules/videoio/src/cap_v4l.cpp",
+        ],
+        "@platforms//os:windows": [
+            "modules/videoio/src/cap_dshow.cpp",
+        ],
+        "//conditions:default": [],
+    }),
+    compatible_with = select({
+        "@platforms//os:linux": ["@platforms//os:linux"],
+        "@platforms//os:windows": ["@platforms//os:windows"],
+        "@platforms//os:macos": ["@platforms//os:macos"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+objc_library(
+    name = "ocv.3rdparty.cocoa",
+    srcs = [
+        "opencv_highgui_config.hpp",
+    ] + select({
+        "@platforms//os:macos": [
+            "modules/highgui/src/window_cocoa.mm",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = glob([
+        "modules/highgui/src/**/*.h",
+        "modules/highgui/src/**/*.hpp",
+        "modules/highgui/include/**/*.hpp",
+        "modules/highgui/include/**/*.h",
+    ]),
+    includes = [
+        "modules/highgui/include",
+        "modules/highgui/src",
+    ],
+    copts = OPENCV_COPTS + OPENCV_OPTIMIZATION_COPTS + [
+        "-fno-objc-arc",  # Disable Automatic Reference Counting, as OpenCV uses manual reference counting
+    ],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework Cocoa",
+        ],
+    }),
+    deps = [
+        ":videoio",
+        ":imgcodecs",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:macos": ["@platforms//os:macos"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+write_file(
+    name = "_highgui_config.hpp",
+    out = "opencv_highgui_config.hpp",
+    content = select({
+        ":have_gtk3": [
+            "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"GTK3\"",
+        ],
+        "@platforms//os:macos": [
+            "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"COCOA\"",
+        ],
+        "@platforms//os:windows": [
+            "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"WIN32UI\"",
+        ],
+        "//conditions:default": [
+            "#define OPENCV_HIGHGUI_BUILTIN_BACKEND_STR \"\"",
+        ],
+    }),
+)
+
+# NOTE: HighGUI is not a hermetic module, it depends on system-provided GUI libraries
+# Referencing of system libs based on https://stackoverflow.com/questions/51408079/how-do-i-reference-a-system-library-used-by-an-external-dependency-if-copts-does
+
+opencv_module(
+    name = "highgui",
+    deps = [
+        ":videoio",
+        ":imgcodecs",
+    ] + select({
+        ":have_gtk3": [":gtk3"],
+        "@platforms//os:macos": [":ocv.3rdparty.cocoa"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        ":have_gtk3": ["HAVE_GTK3=1", "HAVE_GTK=1"],
+        "@platforms//os:macos": ["HAVE_COCOA=1"],
+        "@platforms//os:windows": ["HAVE_WIN32UI=1"],
+        "//conditions:default": [],
+    }),
+    sources = [
+        "modules/highgui/src/backend.cpp",
+        "modules/highgui/src/window.cpp",
+        "modules/highgui/src/roiSelector.cpp",
+        "opencv_highgui_config.hpp",
+    ] + select({
+        ":have_gtk3": [
+            "modules/highgui/src/window_gtk.cpp",
+        ],
+        "@platforms//os:windows": [
+            "modules/highgui/src/window_w32.cpp",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": [
+            "user32.lib",
+            "gdi32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    compatible_with = select({
+        "@platforms//os:linux": ["@platforms//os:linux"],
+        "@platforms//os:windows": ["@platforms//os:windows"],
+        "@platforms//os:macos": ["@platforms//os:macos"],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+################ FLAGS and configuration settings ################
+
+
+bool_flag(
+    name = "disable_allocator_stats",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "have_allocator_stats",
+    flag_values = {":disable_allocator_stats": "False"},
+)
+
+bool_flag(
+    name = "with_eigen",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "have_eigen",
+    flag_values = {":with_eigen": "True"},
+)
+
+config_setting(
+    name = "debug_build",
+    values = {"compilation_mode": "dbg"},
+)
+
+config_setting(
+    name = "emscripten_with_simd",
+    constraint_values = [
+        "@platforms//os:emscripten",
+    ],
+    values = {
+        "features": "wasm_simd",
+    },
+)
+
+config_setting(
+    name = "ubsan_enabled",
+    values = {
+        "features": "ubsan",
+    },
+)
+
+bool_flag(
+    name = "with_gtk3",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "have_gtk3",
+    flag_values = {":with_gtk3": "True"},
+)
+
+# TODO: replace with BCR version of GTK3 after https://github.com/bazelbuild/bazel-central-registry/issues/6187 is resolved
+label_flag(
+    name = "gtk3",
+    build_setting_default = ":gtk3_stub",
+)
+
+cc_library(
+    name = "gtk3_stub",
+    target_compatible_with = ["@platforms//:incompatible"],
+)

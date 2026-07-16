@@ -1,0 +1,385 @@
+module(
+    name = "ape",
+    version = "1.0.0-beta.15",
+    bazel_compatibility = [
+        ">=7.0.0",
+    ],
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "rules_curl", version = "1.0.0-alpha.8", dev_dependency = True)
+
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "toolchain_utils", version = "1.0.0-beta.18")
+bazel_dep(name = "download_utils", version = "1.0.0-beta.2")
+
+download_archive = use_repo_rule("@download_utils//download/archive:defs.bzl", "download_archive")
+
+download_archive(
+    name = "zig-0.11.0-arm64-darwin",
+    srcs = [
+        "entrypoint",
+        "zig",
+    ],
+    integrity = "sha256-xuv5J7sTpwfXQmdHSp9VMnTmSQb9Ib8cdaIL3oyt97I=",
+    links = {
+        "zig-macos-aarch64-0.11.0/zig": "zig",
+        "zig": "entrypoint",
+    },
+    urls = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/zig/0.11.0/zig-macos-aarch64-0.11.0.tar.xz",
+        "https://ziglang.org/download/0.11.0/zig-macos-aarch64-0.11.0.tar.xz",
+    ],
+)
+
+select = use_repo_rule("@toolchain_utils//toolchain/local/select:defs.bzl", "toolchain_local_select")
+
+select(
+    name = "zig",
+    map = {
+        "@zig-0.11.0-arm64-darwin": "arm64-darwin",
+    },
+)
+
+download_file = use_repo_rule("@download_utils//download/file:defs.bzl", "download_file")
+
+download_file(
+    name = "ape-m1.c",
+    executable = False,
+    integrity = "sha256-siSN87YY1f4LMWIEe8OCycM+61MmIVRAczNhQ28umGo=",
+    output = "ape-m1.c",
+    urls = [
+        "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/cosmos.zip/3.7.1/ape-m1.c",
+        "https://raw.githubusercontent.com/jart/cosmopolitan/3.7.1/ape/ape-m1.c",
+    ],
+)
+
+compile = use_repo_rule("//ape/compile:repository.bzl", "compile")
+
+compile(
+    name = "ape-arm64.macho",
+    srcs = ["@ape-m1.c"],
+    output = "ape",
+    zig = "@zig//:entrypoint",
+)
+
+[
+    download_file(
+        name = binary,
+        executable = True,
+        integrity = integrity,
+        output = "ape",
+        urls = [
+            "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/cosmo.zip/3.7.1/{}".format(binary),
+            "https://cosmo.zip/pub/cosmos/v/3.7.1/bin/{}".format(binary),
+        ],
+    )
+    for binary, integrity in {
+        "ape-arm64.elf": "sha256-h3zL1GUkMGVCbLSjyrQ1GsrZGGSfhlZVa7YEiC7q0I8=",
+        "ape-x86_64.elf": "sha256-fBz4sk4bbdatfaOBcEXVgq2hRrTW7AxqRb6oMOOmX00=",
+        "ape-x86_64.macho": "sha256-btvd3YJTsgZojeJJGIrf2OuFDpw9nxmEMleBS5NsWZg=",
+    }.items()
+]
+
+pe = use_repo_rule("//ape/pe:repository.bzl", "pe")
+
+pe(name = "ape.pe")
+
+select(
+    name = "launcher",
+    map = {
+        "@ape-arm64.elf": "arm64-linux",
+        "@ape-x86_64.elf": "amd64-linux",
+        "@ape-x86_64.macho": "amd64-darwin",
+        "@ape-arm64.macho": "arm64-darwin",
+        "@ape.pe": "windows",
+    },
+)
+
+resolved = use_repo_rule("@toolchain_utils//toolchain/resolved:defs.bzl", "toolchain_resolved")
+
+resolved(
+    name = "resolved-ape",
+    toolchain_type = "//ape/toolchain/ape:type",
+)
+
+register_toolchains("//ape/toolchain/...")
+
+ape_entrypoint = use_repo_rule("//ape/entrypoint:defs.bzl", "ape_entrypoint")
+
+export = use_extension("@toolchain_utils//toolchain/export:defs.bzl", "toolchain_export")
+
+[
+    (
+        download_file(
+            name = "cosmos-{}".format(binary),
+            executable = True,
+            integrity = integrity,
+            output = binary,
+            urls = [
+                "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/cosmo.zip/3.7.1/{}".format(binary),
+                "https://cosmo.zip/pub/cosmos/v/3.7.1/bin/{}".format(binary),
+            ],
+        ),
+        ape_entrypoint(
+            name = binary,
+            binary = "@cosmos-{}//:{}".format(binary, binary),
+        ),
+        export.symlink(
+            name = "ape-{}".format(binary),
+            target = "@{}".format(binary),
+        ),
+    )
+    for binary, integrity in {
+        "assimilate": "sha256-x+QFHsl3qS+jYjho0xxbJeBp3O6uL2wnKJZKEoDEw1A=",
+        "awk": "sha256-PiOShImEzzvOu2+R9k0K0AdyMlr1nnT3cJ7p9cIHXjE=",
+        "b2sum": "sha256-TrKBzOCkeaNUsddSja41LMcFBTesbSsqpYnUfjNsYT8=",
+        "base32": "sha256-7Wn4eKnZPrtsJKWTL1u0HeY63JkwvuWaTf54/+6oo3w=",
+        "base64": "sha256-CMWX3B4d/BW1QFVTXJZk0/i4qWHsjmx218lkhVa5cyc=",
+        "basename": "sha256-IU5SRGkrC5s0wiuXowmyMnpxRger/+lri50bLu+9/W4=",
+        "basenc": "sha256-Lo7PPPjsCdHLnS3ZXFHA6cBJxl4RHoAzqGG43/tvQVw=",
+        "bash": "sha256-s2mO/u1+fRTc7NjyuwnBBFpmFQsfMUolvlwnD4mAA6A=",
+        "berry": "sha256-zYXC3x2H+BVSMkKl3lHuU6YtGpcfkA1C/po4gJEFbVU=",
+        "brotli": "sha256-kFHVadj7qO8fa++DoRfo5mF3yRQfEzwY8oYmAkNrZWU=",
+        "bzip2": "sha256-kBAQdR6JQLKqPepHDOKFedVxhY6djhlzdO/ioQVriqg=",
+        "cat": "sha256-iaqHF+splIN98lPFyBN6UkLaklBaIquFgX+cnF8l830=",
+        "chcon": "sha256-Kzs3JDn3lGd4KMEc8b/NaqUIT5QCSSqpGU8Z9i1pR04=",
+        "chgrp": "sha256-wVPuS25JuvPsnRfDwy7SUqdS9wtM3tnNFmMKvtv1IwI=",
+        "chown": "sha256-h08zDAqTb26lDxnjaO2QQJQMA6a8WjkCNqFLW8+x0xQ=",
+        "chroot": "sha256-u/W5RQbAT8MMZaZ0755Kr779zDFEAZZaJg4ccHaDcJ0=",
+        "cksum": "sha256-zdiwW+Uzmd5nRPg33iL/t8MwMgThvFH05XxkBZFKrDI=",
+        "clang-format": "sha256-t1/HDaTZ/klR+VFONNcqj5uxgIm37dafKu5Mp99ecVQ=",
+        "cmp": "sha256-7zg2xAXwOgGbHZcQT5BKEXKC5HnSvgFcshKcwt9r0eo=",
+        "comm": "sha256-JKgeaH32IXUsNSJsImmlhixKaWgSS1MuY7xuBadWVWE=",
+        "cpuid": "sha256-wKcRpoBRuDBkUc/kZ4xc9/0NglwuOqoH5UWSmFnK23M=",
+        "csplit": "sha256-c2HGNGUV5pcT9L1I+YpF+03zCXd1D6YvyKNmgyO6THE=",
+        "ctags": "sha256-MGiJNJzEAlK7odpF9igTuPdX7DsdjV2F/QZeg2NtsWM=",
+        "curl": "sha256-CO01oqQL/e8THjI+IUMI7IXQlrBR2Y2R46gGWHnHtAc=",
+        "cut": "sha256-pwryW/gZrXVk8zEs+MNjzyK/Rb2CrbyxfMsGM2MbGhI=",
+        "dash": "sha256-5bVTl8JjEtM3SrWi+FN1v1ujskxlmKSN69kD8vf6Vi4=",
+        "datasette": "sha256-PzZY+pMnE8+d4P8BZUi7eLezP+x8Umsy2U7xj+QMuU4=",
+        "date": "sha256-cjOSAN46p90Df/2wz8sNqUDiXzJW1qO9RaqnA0xWxMk=",
+        "df": "sha256-xTsgLo5CQt/5zRilYsLZmDloOMIC+IndGeDsnNo2XLQ=",
+        "dir": "sha256-+9rM66ovQ+tQjs9tEd2DWBIugHe3nVNotKD+yhxt31o=",
+        "dircolors": "sha256-HeXbmGM/Y3H8HdIM6aMUijIGudJsu3quDfXL9Ik6NQk=",
+        "dirname": "sha256-OBGImE8XvGfcxIpDJ/dF+eUSye6bRqYkHrCziPcbU4U=",
+        "diff": "sha256-LNhyxlYcMaGJ9nALEl88adOXLButi4INTHyV223qGo8=",
+        "diff3": "sha256-O51KFif+qTkNuExjKEX2Isyc9JWMoZI5hPIlxheNq8Q=",
+        "du": "sha256-RW6WRDazzwOBI6081Y4LZ+6j2uc0hIBeX9s/ZBS++VQ=",
+        "emacs": "sha256-IySVf0e15ywmGKV5UVKFm6nmNMMDhk3BuzmmtZKuceI=",
+        "emacsclient": "sha256-nEykFz15u4uryFG3Zf18smsiDcFiplml5WudESjHrRo=",
+        "env": "sha256-j2a8SGrIZHhJje9aRsmMnQokzjE2qtQNjFX1hBamyaI=",
+        "expand": "sha256-Be/uWdzKcuXmQ+vwbALRxwjtqQ+bsG6/NeOyCfQVask=",
+        "expr": "sha256-YkaWuXbndUjCcxA7EDvQ/ppES/XJAmQWRsc+6LrhIhA=",
+        "factor": "sha256-zo4zhzl2vTTBAL+ExDoIxu4VjIyRTgZvcPg6c7sCft4=",
+        "false": "sha256-KZqfrd0BLNhoZn5EvdyfCk2eib65MDy8cKA8J1tPgEc=",
+        "find": "sha256-uBAQwdFN5k1iNYoSj9HheP30ptebbBrxbS3DPJNbByQ=",
+        "fmt": "sha256-WhcItBIoGAkjgaZ6e2TcfOoBZC2lKCcFhpSfyP5p/A4=",
+        "fold": "sha256-oEg8o2bbU2TolIjizOYQWaoRIHFQiKv7OTcPscPTjj8=",
+        "gmake": "sha256-C+xPo5b8yskTLBZpnMili3TlSCb74/kDlDWGXyFoMeE=",
+        "greenbean": "sha256-P3uA2rP87pXaytqVsrnyHUcpMGzlz4EnKe5VxnN2jaU=",
+        "grep": "sha256-9YIyw29q0DZUOxJvzFa51DD39vlsr4Ejd7XpQPe443w=",
+        "groups": "sha256-rCOoPZoB1oIeyWyOXgE0b+L8mhv3tDNP4fqmLNQuZPY=",
+        "head": "sha256-lXis1YA7kIXODBDOojYBfVQ4D0TtWQYLhZ6iL9q/vCo=",
+        "id": "sha256-yA9Nj0DusOHy8nEBzAHKUQeFlRdpqZtLqvbi66JWrlU=",
+        "install": "sha256-Qocp0AJAl1Tnm+gEYaLnL2PQ+Iz4Eg9wvdSsDU3oyH0=",
+        "join": "sha256-O1m7i9RAFxLZLirlvVle3R7nrCM7O7DaHUGW/BdDIlI=",
+        "kill": "sha256-hnQL/qh+uLgvgJVKs8MY1aKqVMHhR+cPRBkcNkztXc0=",
+        "less": "sha256-60FEOUh4bKXuf9yNKYPQFD5XFTxSkIfGSBdSQNroS/4=",
+        "life": "sha256-L8gjytgadSZu/CR32m9XH8CWykHGWhrIHiPaUHxUSyQ=",
+        "link": "sha256-l7GKrbz2rhRORMZbEOqEWgd3WFfs/Jc8umv3AxFC1bE=",
+        "links": "sha256-QE5AsVCI8zIhrgWrWAUGIjqr1vwYnE0B7GT4Kp2wLVk=",
+        "ln": "sha256-KwsF0B1x4TV357FnU2rgBpkTehyJ1q+T1Hb7R6BA/c4=",
+        "locate": "sha256-2v5XygbHC3trjPe/kzl/a5uTNrjZVTfz1o2Fn69O7O8=",
+        "logname": "sha256-aWGmwv8y6zHr7QbCBEGZXGzaQqr/toBzj7OyuMbIFg4=",
+        "ls": "sha256-EfOI6SFZvVYArbKFcfKUKqg5DTRsstdA0Dq1HNCJ3qU=",
+        "lua": "sha256-/5cXknboTuyZqgUAheLxXmRtY9XSb25cse1wFFjNk2k=",
+        "lz4": "sha256-PFx+fDvlUnhL54BQgtEuIeRIadNjR2hWukUkpyFt6bU=",
+        "make": "sha256-tMO2mNneT8sXwqiZKc7/uCKZ2UOyTr4nNSLrJLfttuc=",
+        "md5sum": "sha256-jX70gTagi/lSMYBoxxqp42o9LEhCxORVbMtRuPaUmyw=",
+        "mkfifo": "sha256-QpY9VZ2D6rVYMoeZEGlDngWWYvETxwHDXtbX6Bf1Km4=",
+        "mknod": "sha256-EGB0N+L84vGnN+yPkmu3BnkcPBSTGlc9iOjL2UIKBj8=",
+        "mktemp": "sha256-J5p3mYE5WRqIgjBZxDntj22AbpCCyhcT9HREuXV8IL8=",
+        "mktemper": "sha256-XFEfUwhs9mu4y1osxpfpOSgSbUUEP07ks6vgqSVlXhQ=",
+        "nano": "sha256-YqQLjI+pz0Bx0399iAJLMB6+k9IrEArw8MqwRFWOR00=",
+        "nesemu1": "sha256-UiWfFm+px9oSPOZOfWHz4WZZUyieBSde9Y7lYqscfWk=",
+        "nice": "sha256-8DkKoJs9xYTJpS0A9+SRFS0s67I9YfcsUDXCAmhMvVc=",
+        "ninja": "sha256-UNQAHco+aKm9fqsO7n10vyF0qYVIpYtxNqYs27P/9Zw=",
+        "nl": "sha256-V9SNa4NXjc3KFY4AAPkWQA1RCzPkOhEQqqvz3f1sAL0=",
+        "nohup": "sha256-2pBFo53we/mbI9ruzWIkywp94SxZDdNOSpWhV69bDyE=",
+        "nproc": "sha256-KfKKPfUAK6j6DzSQwdgm/6yuXl9f066N2kRvE/o2a0g=",
+        "numfmt": "sha256-N2z4bSxNwaCzl+3EiJ0TalTMvICgwPYDj2WnnmA4KE8=",
+        "od": "sha256-n1EJ7s9h4IlbehGRxXJG2pKznTyMkNRZVh12SVmo6IY=",
+        "paste": "sha256-k+f1ri+vXgEAMzdNILQzy8x/zUnB8oLFlJ1NjxcyjNY=",
+        "patch": "sha256-i9HGSs650eXHgK5SUdoKPrHCjaFt9QqoMIbZM0prB/8=",
+        "pathchk": "sha256-zkQm8sad2E49yUnq5w5kPfZGJzUw3zBn8+px/FaQUBs=",
+        # "pigz": "",
+        "pinky": "sha256-7kbCtFSv9O5MxBQ2dlv5VaIiOZAJyOa8SFTlkJr64SU=",
+        "pledge": "sha256-cFwuCvq3IncQx6kb315bxnNl/lIUfKc8gN/IU+j1EAw=",
+        "pr": "sha256-IjM5F+Lh7ebuoIxjJCqn4yz6qkDPx9plrYvl0KCGULw=",
+        "printenv": "sha256-wBxvMOxzo392/M4gV0YD2GzI5Q4ymYxsAbsoAQL5zAo=",
+        "printimage": "sha256-8p+VqLEbvXDW02N1ESwggkB59CpyCW5PFMi+d0UncAU=",
+        "ptx": "sha256-sYXTprxPH5gCs7g+gxVurMn+78nYsZ0FXIuf58MPP/c=",
+        "pwd": "sha256-hPcozpA3HcPu3pTfaYeAA1qnfoTEwXQ8hIQCKiAm+dg=",
+        "pypack1": "sha256-s8hepPfEr+kF3ZfB1g6Xux/2NDgC0eegFVBzUr7WAvc=",
+        "python": "sha256-lBG+er+uWn+jZ0Roa4tsw5pTMoQr73SEeioqvXmeJIk=",
+        # "qjs": "sha256-dgblh0J7T6VumjgCrL0PPJAUIzrqGFw9oqoYSO+g39o=",
+        "readlink": "sha256-XhCpnWcaDbrSaDiEiS9h4CNrbBjUd68YoTPMJsfgAsE=",
+        "realpath": "sha256-kZqQKF7DTEM7uy5tYwaxFB2mdews5yLSOKOKA7gXA1g=",
+        "redbean": "sha256-NxcEyoSdLqO8xpGzkVVlqM3ts4faX0dh0ZKaX/olfr4=",
+        "rmdir": "sha256-ApDRffmoYTrpjaxfmoyclVTBguDgy8tIEWfMeDGQmgU=",
+        # "rsync": "sha256-IpC+6WKlj7EqkYxNXXDdO7IaF1/jTItBvlSKr0MdNIk=",
+        "runcon": "sha256-ObiMxp7eh2DgOwnv49LU+RqkxNQ7nSdpKQha0XzOWyM=",
+        "script": "sha256-u3I17IwawT81h3gKPJZQR2VwhN+96HSLQ6zP7M1f4OU=",
+        "sdiff": "sha256-J6oSzHOdOqXrgcMt6ZsbGQEskRLyGe3zAyM85H+ctlI=",
+        "sed": "sha256-icpkHAOmRg/2a/1AQwoot/h2AnvgYVaU+tClvzb5ztI=",
+        "seq": "sha256-d0yypk3Es9I+n9YT5jSz5SPY4VOHsJ8RBgN4d+xv8MA=",
+        "sha1sum": "sha256-zt/dnqgiviQCXjFMDakN2olRVJNKMG3+ltB87h//jZY=",
+        "sha224sum": "sha256-S0QdQ0Z94hiL3sr6c6U0fOrCdCrWFjqRsQ0xuq/0fQk=",
+        "sha256sum": "sha256-Ek6NepBpJTQMWW9MuM2IzFnDiCEIP8300d5nkumjSr8=",
+        "sha384sum": "sha256-ehLWdCUgB1mVnv8OBdG+BZlWoBTfLUgHttxknsTEPb4=",
+        "sha512sum": "sha256-kHa4fp0C3CCN2+wD3SrSVUaxRIWWhYGBI7UytEzMcOw=",
+        "shred": "sha256-xioIsrk5HHwT3Mcf2CWhPyJnxl9z3AFCLsxS+b8kuRo=",
+        "shuf": "sha256-fI98jKWCZ5MgHpELnz/lHJy+VrIWf80nKokoY1lfmB0=",
+        "sleep": "sha256-xuzuadvt0AfjiJyTQWoKLoQM+oK6QfGT2n4eGMa42Fs=",
+        "sort": "sha256-2ZhQUCjqdJ2tZxv88NLBTMjyHd/GtK4aHgr9zEMN9E8=",
+        "split": "sha256-FzzJgL/jc+gMwChdKi2zA8sSefWPCp/xHGukXJ09W3E=",
+        "sqlite3": "sha256-u8e4EAvy2OkPwGt2h4HMnliOKeRnrhigka9AHSsy45g=",
+        "stat": "sha256-l/9uV0whTEirjNCOU/KMvCL4zOmbt9urtLpibFDGlu4=",
+        "stty": "sha256-+R3nXybBi3lnghBxNJqt/E9lSVEvXWNd48kdUkdz71g=",
+        "sum": "sha256-u34u/+HUzo8nqhqIRrwVEywYj/mSpwewShkTJy2RDqg=",
+        "sync": "sha256-e6vHf9wOOoHj+0pERfTHnbY2/xW5cO8bY22sxtzwQt4=",
+        "tac": "sha256-onhYcgU+khm2rdWZcJUXeNQDyhSEiByavttEL6h0YzU=",
+        "tail": "sha256-zxkALJng81qdJvA1FhTJG/PEqEwRQz2X7ntR/ERQJhA=",
+        "tar": "sha256-u7s1gyarncmBRHYS+nYkzsxPp0ct1+P7EnH0xsLWO/U=",
+        "tee": "sha256-sEvEKaZ1kuuB5vWsSDeDiKeVVUlFLv1BrPM7SGc/A88=",
+        "test": "sha256-TXhCDuGK2EpzvO1D4cwlz7S33zKrcXSjwYErpjsb9a4=",
+        "tidy": "sha256-207CBLHdgJnu3zu6HLd2aP9yt372xpE2loUwJr952xc=",
+        "timeout": "sha256-jUb/3AUdDxpToWg8fr0ie37ATBbxiqXp7kQdW548tVY=",
+        "tmux": "sha256-S9r1cPinQXIVeQhfvGPh95JeoVQmILnerEtvX2sSKns=",
+        "touch": "sha256-9QX4NOQt2gMwvwAi7dorq57ZpQx2/qkRmYaMdUgESWE=",
+        "tr": "sha256-xPxJICWFt9Fjvc2QWgN/p82BDw+F04gACFy54aTvp0s=",
+        "tree": "sha256-ijXcmtpVw2VIHocvCK2rU60wVbtd8VSNKY6A81LoVo4=",
+        "true": "sha256-WKAtufxhFpWDlc1RUFztyyQMI1inrOrFjjsYxrYKhIE=",
+        "truncate": "sha256-9yZlpBInSbImh6MeUhj2RRTDz/35uguyhxYbcOZt0q0=",
+        "tsort": "sha256-zHOD+Aiw5VADXW+55GNlTwRg6PQyY6juJa/L1PLSRjM=",
+        "tty": "sha256-C3pT3B/kZbJVhabYYQzS670cxvTAPalx+ONfJ7HjBw0=",
+        "ttyinfo": "sha256-xH4w+VGbPxESNAQW0WMRwdi00YwMkOXDo1IPPNpkfWk=",
+        "unbourne": "sha256-GxVzljrGjc4KjGJvtRQDnkym9UGinxDXCpy3vDon6mY=",
+        "unexpand": "sha256-D1tBeE/Y5gz6QuF4MXlDj4fdP5osoIpX0lSnMNIDpXQ=",
+        "uniq": "sha256-LcupCoDKanj1jigte19txmuPVLh/8rvA3fT7r4xkcRs=",
+        "unlink": "sha256-180ZCH3gkYeLDY1jivNvYJXNm5AqOJVx6vjFbuqWFhc=",
+        "unzip": "sha256-mWVG9/vk5WnR1nrnLrYErSL/e9qZCT8eY9QzW7UeI0o=",
+        "uptime": "sha256-qD1cZCh7hJJ55AGevqag0zTthSgo8UN2ddPG5mOBuC8=",
+        "users": "sha256-Q8V9U6YfpaGlCSBLXGn2HJzCCnc8q03bEPCcjZD5WRA=",
+        "vdir": "sha256-Zbah+UiDmhGAmWAJNe8J1lW9PwpgTEdr8puenKbJf4s=",
+        "verynice": "sha256-REVMf9GYTyaiAPrTE4WVV7LqfCI2lasj8ajJhXyFKyE=",
+        "vim": "sha256-emyIHvfRwplyshI3IOFaIDaYIjXtmIhmk18wBmFDm/U=",
+        "wall": "sha256-4/Lqe9lqSUVb5RU1mXq4c1K1XPDyllMkZePVLi4ymKs=",
+        "wc": "sha256-//qpbuPZ8XLio/54/m2DVXN2a+oFUN7LQ0dO3+Jl/mY=",
+        "wget": "sha256-IYg+YKgJ0KbAFHKwyyFpJ2HWtRoukuYH+PJECY3TkZ8=",
+        "who": "sha256-+msow+UYZ5LFhoLYWXN/B3RpkP4DVZM32p2gfRxlxDk=",
+        "whoami": "sha256-yEHpMZVa95mHV1ZTNdJujB+ZZpk4kuC8QafC8Q5xHN0=",
+        "xargs": "sha256-mz9bnqosuFcbM6LMjnCySEP5fei7yvapyWgz60hLiok=",
+        # "xz": "sha256-84VVLEvkMFVKsNTKX8IZ90XAqebHofJ4bsy3J3f+Xe0=",
+        "yes": "sha256-jFwnz8FHv8LdK3EW6Zp6IAT9Y0dt38JkePWM7+PpG1M=",
+        "zip": "sha256-33JZlJppAfxlEvW/obvCQdpCWwaprCfOP4J5lTNhktM=",
+        "zsh": "sha256-eMYlKSlyIJW0BDZLDEDn19zT3zg3dSzPVNUnrrZSAKs=",
+        "zstd": "sha256-RdAEdLJGfzc4vORGYtwxR1csgthzp9gY7Bmu8KiK20A=",
+    }.items()
+]
+
+# Some upstream binaries have the `.ape` extension
+[
+    (
+        download_file(
+            name = "cosmos-{}".format(binary),
+            executable = True,
+            integrity = integrity,
+            output = binary,
+            urls = [
+                "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/cosmo.zip/3.7.1/{}".format(binary),
+                "https://cosmo.zip/pub/cosmos/v/3.7.1/bin/{}.ape".format(binary),
+            ],
+        ),
+        ape_entrypoint(
+            name = binary,
+            binary = "@cosmos-{}//:{}".format(binary, binary),
+        ),
+        export.symlink(
+            name = "ape-{}".format(binary),
+            target = "@{}".format(binary),
+        ),
+    )
+    for binary, integrity in {
+        "chmod": "sha256-Q1xECBpFyIYCDkcqQ+tUnTi166LC/Hng0pWq8h/Nna4=",
+        "cp": "sha256-8+ioU1winJ0waEUPBvFPEwCtnTJnhOjIjOS/knCCU1Q=",
+        "dd": "sha256-5UAFsJ5LaSEX+aqv1jrk/T6OxpHbprE5i7ZYV0ulYg4=",
+        "echo": "sha256-jWC35ahFQvRjO0uhLCgt4jnyO1ZgLtF5yDiXFO2Kx/I=",
+        "gzip": "sha256-s4JO4E7BeTOUdzMuLEPRmW4QDodtbuscYZhQR2OjyEA=",
+        "mkdir": "sha256-djlif5zZl7ociZlF/0NaiP60kRDOTTS980cxGBRJSI0=",
+        "mv": "sha256-4k6/zz5QRC2KP2n5/bEv24Ko+ebUT5a73L2sxuV73pg=",
+        "printf": "sha256-tEvBob4PXlQ70HFHcD+m1DG27BQ8UcLy9Wo7DRN6txc=",
+        "rm": "sha256-IL/aTd3nIpSXAwqp40bf9COzAuWIxKgO4kMsgOf9aFI=",
+        "uname": "sha256-wcjn5dEUIat1FmI6j/YesdIMJE+Gj13q1G2caC/RMHs=",
+    }.items()
+]
+
+# 3.2.4 downloads
+[
+    (
+        download_file(
+            name = "cosmos-{}".format(binary),
+            executable = True,
+            integrity = integrity,
+            output = binary,
+            urls = [
+                "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/cosmo.zip/3.2.4/{}".format(binary),
+                "https://cosmo.zip/pub/cosmos/v/3.2.4/bin/{}".format(binary),
+            ],
+        ),
+        ape_entrypoint(
+            name = binary,
+            binary = "@cosmos-{}//:{}".format(binary, binary),
+        ),
+        export.symlink(
+            name = "ape-{}".format(binary),
+            target = "@{}".format(binary),
+        ),
+    )
+    for binary, integrity in {
+        # TODO: `pigz` decompression fails on `>3.2.4`
+        # https://github.com/ahgamut/superconfigure/issues/38
+        "pigz": "sha256-KReMrcHfifpjgxeb/k4WNl6ZtgJwfDIf9mTbcEldR0w=",
+    }.items()
+]
+
+# 3.3.1 downloads
+[
+    (
+        download_file(
+            name = "cosmos-{}".format(binary),
+            executable = True,
+            integrity = integrity,
+            output = binary,
+            urls = [
+                "https://gitlab.arm.com/api/v4/projects/bazel%2Fape/packages/generic/cosmo.zip/3.3.1/{}".format(binary),
+                "https://cosmo.zip/pub/cosmos/v/3.3.1/bin/{}".format(binary),
+            ],
+        ),
+        ape_entrypoint(
+            name = binary,
+            binary = "@cosmos-{}//:{}".format(binary, binary),
+        ),
+        export.symlink(
+            name = "ape-{}".format(binary),
+            target = "@{}".format(binary),
+        ),
+    )
+    for binary, integrity in {
+        # TODO: remove these when future versions make them available
+        "qjs": "sha256-dgblh0J7T6VumjgCrL0PPJAUIzrqGFw9oqoYSO+g39o=",
+        "rsync": "sha256-IpC+6WKlj7EqkYxNXXDdO7IaF1/jTItBvlSKr0MdNIk=",
+        "xz": "sha256-84VVLEvkMFVKsNTKX8IZ90XAqebHofJ4bsy3J3f+Xe0=",
+    }.items()
+]

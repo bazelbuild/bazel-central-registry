@@ -1,0 +1,171 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..d010ec4
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,23 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++cc_library(
++    name = "fastjson",
++    srcs = glob(["src/*.cpp"]),
++    hdrs = glob(["include/**/*.h"]),
++    copts = select({
++        "@platforms//os:windows": [],
++        "//conditions:default": [
++            "-Wno-unused-variable",  # Ignore unused element - Don't pollute downstream users
++        ],
++    }),
++    includes = ["include"],  # Expose for import without include prefix
++    visibility = ["//visibility:public"],
++)
++
++# This must be defined in top level BUILD as we can't access files above the target(s) file
++cc_library(
++    name = "fastjson-test-srcs",
++    hdrs = glob(["src/*.cpp"]),
++    includes = ["include/fastjson"],  # Tests need access to includes without fastjson folder prefix
++    visibility = ["//tests:__pkg__"],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..778f7fe
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,17 @@
++"""
++Module: fastjson
++Purpose: Provides the fastjson library compileable as a Bazel target. Includes unit testing through Bazel
++Notes: boost.property_tree is used for the speed test unit test. saru is used as the unit testing framework
++"""
++
++module(
++    name = "fastjson",
++    version = "0.0.0-20120701063936-485f994a61a6",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "rules_cc", version = "0.1.1")
++bazel_dep(name = "platforms", version = "0.0.11")
++
++bazel_dep(name = "boost.property_tree", version = "1.87.0", dev_dependency = True)
++bazel_dep(name = "saru", version = "0.0.0-20130617092049-c11c375fefd7", dev_dependency = True)
+diff --git a/examples/address_book/BUILD.bazel b/examples/address_book/BUILD.bazel
+new file mode 100644
+index 0000000..99f75c1
+--- /dev/null
++++ b/examples/address_book/BUILD.bazel
+@@ -0,0 +1,12 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary")
++
++cc_binary(
++    name = "address_book",
++    srcs = ["address_book.cpp"],
++    copts = [
++        "-g",  # Debug symbols
++        "-Wall",  # All warnings
++    ],
++    data = ["book.json"],  # Include the JSON file as a runtime dependency
++    deps = ["//:fastjson"],
++)
+diff --git a/tests/BUILD.bazel b/tests/BUILD.bazel
+new file mode 100644
+index 0000000..96554fa
+--- /dev/null
++++ b/tests/BUILD.bazel
+@@ -0,0 +1,38 @@
++load("@rules_cc//cc:defs.bzl", "cc_test")
++load("tools.bzl", "test_set")
++
++TEST_COPTS = select({
++    "@platforms//os:windows": [],
++    "//conditions:default": [
++        "-g",  # Debug symbols
++        "-Wall",  # All warnings
++    ],
++})
++
++DEPS = [
++    "//:fastjson",
++    "//:fastjson-test-srcs",
++    "@saru",
++]
++
++test_suite(
++    name = "all_tests",
++    tests = test_set(
++        copts = TEST_COPTS,
++        test_files = glob(
++            ["**/*.cpp"],
++            exclude = ["misc/speed_test_boost.cpp"],
++        ),
++        deps = DEPS,
++    ) + [":speed_test"],
++)
++
++cc_test(
++    name = "speed_test",
++    size = "medium",
++    srcs = ["misc/speed_test_boost.cpp"],
++    copts = TEST_COPTS,
++    deps = DEPS + [
++        "@boost.property_tree",
++    ],
++)
+diff --git a/tests/misc/speed_test_boost.cpp b/tests/misc/speed_test_boost.cpp
+index 490cab5..11df3e2 100644
+--- a/tests/misc/speed_test_boost.cpp
++++ b/tests/misc/speed_test_boost.cpp
+@@ -111 +111 @@ int main()
+-    boost::property_tree::write_json_compact( ssout, n );
++    boost::property_tree::write_json( ssout, n );
+diff --git a/tests/tools.bzl b/tests/tools.bzl
+new file mode 100644
+index 0000000..af74519
+--- /dev/null
++++ b/tests/tools.bzl
+@@ -0,0 +1,44 @@
++"""Tool for generating C++ test targets efficiently using Bazel rules.
++"""
++
++load("@rules_cc//cc:defs.bzl", "cc_test")
++
++def test_set(
++        test_files = None,
++        size = "small",
++        srcs = [],
++        file_extensions = ".cpp",
++        **kwargs):
++    """Creates C++ test targets from a list of test files.
++
++    Args:
++        test_files: List of test file paths to process. Defaults to None.
++        size: Test size parameter for cc_test rule. Defaults to "small".
++        srcs: Additional source files to include in all tests. Defaults to empty list.
++        file_extensions: Expected extension of test files. Defaults to ".cpp".
++        **kwargs: Additional arguments to pass to cc_test rule.
++
++    Returns:
++        List of test target names (e.g., [":test1", ":test2"]).
++
++    Note:
++        Only files ending with the specified file_extensions are processed.
++        Each test target is created with the filename (without extension) as its name.
++    """
++    test_targets = []
++
++    # Process positive tests
++    for file in test_files:
++        if not file.endswith(file_extensions):
++            continue
++        name = file[:-len(file_extensions)]
++        target = ":" + name
++        cc_test(
++            name = name,
++            size = size,
++            srcs = srcs + [file],
++            **kwargs
++        )
++        test_targets.append(target)
++
++    return test_targets

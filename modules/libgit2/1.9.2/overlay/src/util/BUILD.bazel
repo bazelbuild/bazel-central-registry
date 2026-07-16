@@ -1,0 +1,212 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+config_setting(
+    name = "use_https_openssl",
+    flag_values = {"//:use_https": "openssl"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "use_https_mbedtls",
+    flag_values = {"//:use_https": "mbedtls"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "use_https_securetransport",
+    flag_values = {"//:use_https": "securetransport"},
+)
+
+config_setting(
+    name = "use_https_winhttp",
+    flag_values = {"//:use_https": "winhttp"},
+)
+
+config_setting(
+    name = "use_ssh_libssh2",
+    flag_values = {"//:use_ssh": "libssh2"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "use_ssh_exec",
+    flag_values = {"//:use_ssh": "exec"},
+)
+
+config_setting(
+    name = "use_https_openssl_windows",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"//:use_https": "openssl"},
+)
+
+_GIT2_FEATURES_H = """
+#define GIT_REGEX_BUILTIN
+#define GIT_SHA1_COLLISIONDETECT
+#define GIT_HTTPPARSER_BUILTIN
+#define GIT_THREADS
+#define GIT_TRACE
+#define GIT_USE_NSEC
+"""
+
+write_file(
+    name = "git2_features_h",
+    out = "git2_features.h",
+    content = [_GIT2_FEATURES_H] +
+              select({
+                  "@platforms//cpu:aarch32": ["#define GIT_ARCH_32 1"],
+                  "@platforms//cpu:wasm32": ["#define GIT_ARCH_32 1"],
+                  "@platforms//cpu:x86_32": ["#define GIT_ARCH_32 1"],
+                  "//conditions:default": ["#define GIT_ARCH_64 1"],
+              }) +
+              select({
+                  "@platforms//os:windows": ["#define GIT_IO_WSAPOLL 1"],
+                  "//conditions:default": [
+                      "#define GIT_IO_POLL 1",
+                      "#define GIT_IO_SELECT 1",
+                  ],
+              }) +
+              select({
+                  "@platforms//os:macos": [
+                      "#define GIT_USE_STAT_MTIMESPEC 1",
+                      "#define GIT_USE_ICONV 1",
+                  ],
+                  "//conditions:default": ["#define GIT_USE_STAT_MTIM 1"],
+              }) +
+              select({
+                  ":use_https_mbedtls": [
+                      "#define GIT_HTTPS 1",
+                      "#define GIT_MBEDTLS 1",
+                      "#define GIT_SHA256_MBEDTLS 1",
+                  ],
+                  ":use_https_openssl": [
+                      "#define GIT_HTTPS 1",
+                      "#define GIT_OPENSSL 1",
+                      "#define GIT_SHA256_OPENSSL 1",
+                  ],
+                  ":use_https_securetransport": [
+                      "#define GIT_HTTPS 1",
+                      "#define GIT_SECURE_TRANSPORT 1",
+                      "#define GIT_SHA256_COMMON_CRYPTO 1",
+                  ],
+                  ":use_https_winhttp": [
+                      "#define GIT_HTTPS 1",
+                      "#define GIT_WINHTTP 1",
+                      "#define GIT_SHA256_WIN32 1",
+                  ],
+                  "//conditions:default": ["#define GIT_SHA256_BUILTIN"],
+              }) +
+              select({
+                  ":use_ssh_exec": [
+                      "#define GIT_SSH 1",
+                      "#define GIT_SSH_EXEC 1",
+                  ],
+                  ":use_ssh_libssh2": [
+                      "#define GIT_SSH 1",
+                      "#define GIT_SSH_LIBSSH2 1",
+                      "#define GIT_SSH_LIBSSH2_MEMORY_CREDENTIALS 1",
+                  ],
+                  "//conditions:default": [],
+              }),
+    newline = "unix",
+)
+
+cc_library(
+    name = "git2_features",
+    hdrs = [":git2_features_h"],
+    strip_include_prefix = "/src/util",
+)
+
+cc_library(
+    name = "util_hdrs",
+    hdrs = glob(["**/*.h"]),
+    strip_include_prefix = "/src/util",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":git2_features",
+        "//deps/pcre:pcre_hdrs",
+        "//include:git2",
+        "@zlib",
+    ] + select({
+        ":use_https_mbedtls": ["@mbedtls"],
+        ":use_https_openssl": ["@openssl//:ssl"],
+        "//conditions:default": [],
+    }),
+)
+
+GIT2_UTIL_WINDOWS_SRCS = glob(["win32/*"])
+
+GIT2_UTIL_UNIX_SRCS = glob(["unix/*"])
+
+GIT2_UTIL_SRCS = glob(
+    include = ["**/*.c"],
+    exclude = [
+        "hash/builtin.c",
+        "hash/rfc6234/sha224-256.c",
+        "hash/common_crypto.c",
+        "hash/mbedtls.c",
+        "hash/openssl.c",
+        "hash/win32.c",
+    ] + GIT2_UTIL_WINDOWS_SRCS + GIT2_UTIL_UNIX_SRCS,
+)
+
+cc_library(
+    name = "util",
+    srcs = GIT2_UTIL_SRCS + select({
+        "@platforms//os:windows": GIT2_UTIL_WINDOWS_SRCS,
+        "//conditions:default": GIT2_UTIL_UNIX_SRCS,
+    }) + select({
+        ":use_https_mbedtls": ["hash/mbedtls.c"],
+        ":use_https_openssl": ["hash/openssl.c"],
+        ":use_https_securetransport": ["hash/common_crypto.c"],
+        ":use_https_winhttp": ["hash/win32.c"],
+        "//conditions:default": [
+            "hash/builtin.c",
+            "hash/rfc6234/sha224-256.c",
+        ],
+    }),
+    implementation_deps = [
+        "//deps/pcre",
+        "//deps/xdiff",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:windows": [
+            "secur32.lib",
+            "ws2_32.lib",
+            "advapi32.lib",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":use_https_securetransport": [
+            "-framework Security",
+            "-framework CoreFoundation",
+        ],
+        ":use_https_winhttp": [
+            "winhttp.lib",
+            "rpcrt4.lib",
+            "ole32.lib",
+            "crypt32.lib",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:macos": ["-liconv"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_https_openssl_windows": [
+            "user32.lib",
+            "crypt32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        ":use_https_securetransport": ["@platforms//os:macos"],
+        ":use_https_winhttp": ["@platforms//os:windows"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:__subpackages__"],
+    deps = [":util_hdrs"] + select({
+        ":use_ssh_libssh2": ["@libssh2"],
+        "//conditions:default": [],
+    }),
+)

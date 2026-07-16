@@ -1,0 +1,133 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+exports_files([
+    "LICENSE",
+])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "LICENSE",
+)
+
+bool_flag(
+    name = "header_only",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "header_only_true",
+    flag_values = {
+        ":header_only": "True",
+    },
+)
+
+bool_flag(
+    name = "use_fmt",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "use_fmt_true",
+    flag_values = {
+        ":use_fmt": "True",
+    },
+)
+
+SRCS = glob(
+    [
+        "src/*.cpp",
+    ],
+    exclude = [
+        "src/bundled*",
+    ],
+)
+
+HDRS = glob(
+    [
+        "include/**/*.h",
+    ],
+    exclude = [
+        "include/**/*-inl.h",
+        "include/spdlog/fmt/bundled/**",
+    ],
+)
+
+INLS = glob(
+    [
+        "include/**/*-inl.h",
+    ],
+    exclude = [
+        "include/spdlog/fmt/bundled/**",
+    ],
+)
+
+cc_library(
+    name = "spdlog",
+    srcs = select({
+        ":header_only_true": [],
+        "//conditions:default": SRCS + INLS,
+    }),
+    hdrs = select({
+        ":header_only_true": HDRS + INLS,
+        "//conditions:default": HDRS,
+    }),
+    defines = select({
+                  ":use_fmt_true": ["SPDLOG_FMT_EXTERNAL"],
+                  "//conditions:default": ["SPDLOG_USE_STD_FORMAT"],
+              }) +
+              select({
+                  ":header_only_true": [],
+                  "//conditions:default": ["SPDLOG_COMPILED_LIB"],
+              }),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":use_fmt_true": ["@fmt"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_test(
+    name = "spdlog_test",
+    srcs = [
+        "tests/includes.h",
+        "tests/main.cpp",
+        "tests/test_async.cpp",
+        "tests/test_backtrace.cpp",
+        "tests/test_bin_to_hex.cpp",
+        "tests/test_cfg.cpp",
+        "tests/test_circular_q.cpp",
+        "tests/test_create_dir.cpp",
+        "tests/test_custom_callbacks.cpp",
+        "tests/test_daily_logger.cpp",
+        "tests/test_dup_filter.cpp",
+        "tests/test_errors.cpp",
+        "tests/test_eventlog.cpp",
+        "tests/test_file_helper.cpp",
+        "tests/test_file_logging.cpp",
+        "tests/test_fmt_helper.cpp",
+        "tests/test_macros.cpp",
+        "tests/test_misc.cpp",
+        "tests/test_mpmc_q.cpp",
+        "tests/test_pattern_formatter.cpp",
+        "tests/test_registry.cpp",
+        "tests/test_sink.h",
+        "tests/test_stdout_api.cpp",
+        "tests/test_stopwatch.cpp",
+        "tests/test_systemd.cpp",
+        "tests/test_time_point.cpp",
+        "tests/utils.cpp",
+        "tests/utils.h",
+    ],
+    deps = [
+        ":spdlog",
+        "@catch2//:catch2_main",
+    ],
+)

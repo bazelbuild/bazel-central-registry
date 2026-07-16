@@ -1,0 +1,108 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+expand_template(
+    name = "expat_config_h",
+    out = "expat/lib/expat_config.h",
+    # Enable features assuming we are compiling for a modern posix system.
+    substitutions = {
+        "#cmakedefine BYTEORDER @BYTEORDER@": "#define BYTEORDER 1234",
+        "#cmakedefine HAVE_DLFCN_H": "#define HAVE_DLFCN_H 1",
+        "#cmakedefine HAVE_FCNTL_H": "#define HAVE_FCNTL_H 1",
+        "#cmakedefine HAVE_GETPAGESIZE": "#define HAVE_GETPAGESIZE 1",
+        "#cmakedefine HAVE_INTTYPES_H": "#define HAVE_INTTYPES_H 1",
+        "#cmakedefine HAVE_MEMORY_H": "#define HAVE_MEMORY_H 1",
+        "#cmakedefine HAVE_MMAP": "#define HAVE_MMAP 1",
+        "#cmakedefine HAVE_STDINT_H": "#define HAVE_STDINT_H 1",
+        "#cmakedefine HAVE_STDLIB_H": "#define HAVE_STDLIB_H 1",
+        "#cmakedefine HAVE_STRINGS_H": "#define HAVE_STRINGS_H 1",
+        "#cmakedefine HAVE_STRING_H": "#define HAVE_STRING_H 1",
+        "#cmakedefine HAVE_SYS_STAT_H": "#define HAVE_SYS_STAT_H 1",
+        "#cmakedefine HAVE_SYS_TYPES_H": "#define HAVE_SYS_TYPES_H 1",
+        "#cmakedefine HAVE_UNISTD_H": "#define HAVE_UNISTD_H 1",
+        "#define PACKAGE \"@PACKAGE_NAME@\"": "",
+        "#cmakedefine PACKAGE_BUGREPORT \"@PACKAGE_BUGREPORT@\"": "",
+        "#cmakedefine PACKAGE_NAME \"@PACKAGE_NAME@\"": "",
+        "#cmakedefine PACKAGE_STRING \"@PACKAGE_STRING@\"": "",
+        "#cmakedefine PACKAGE_TARNAME \"@PACKAGE_TARNAME@\"": "",
+        "#cmakedefine PACKAGE_VERSION \"@PACKAGE_VERSION@\"": "",
+        "#cmakedefine STDC_HEADERS": "#define STDC_HEADERS 1",
+        "#cmakedefine WORDS_BIGENDIAN": "",
+        "#cmakedefine XML_ATTR_INFO": "#define XML_ATTR_INFO 1",
+        "#define XML_CONTEXT_BYTES @XML_CONTEXT_BYTES@": "#define XML_CONTEXT_BYTES 1024",
+        "#cmakedefine XML_DEV_URANDOM": "#define XML_DEV_URANDOM 1",
+        "#cmakedefine XML_DTD": "#define XML_DTD 1",
+        "#define XML_GE @XML_GE@": "#define XML_GE 1",
+        "#cmakedefine XML_NS": "#define XML_NS 1",
+        "#cmakedefine off_t @off_t@": "",
+        "#cmakedefine HAVE_LIBBSD": "",  # libbsd is not in the BCR yet.
+        # HAVE_ARC4RANDOM_BUF must come before HAVE_ARC4RANDOM since these subs
+        # are done in order.
+        "#cmakedefine HAVE_ARC4RANDOM_BUF": "",  # depends on libbsd
+        "#cmakedefine HAVE_ARC4RANDOM": "",  # depends on libbsd
+    } | select({
+        "@platforms//os:linux": {
+            "#cmakedefine HAVE_GETRANDOM": "#define HAVE_GETRANDOM 1",
+            "#cmakedefine HAVE_SYSCALL_GETRANDOM": "#define HAVE_SYSCALL_GETRANDOM 1",
+        },
+        "@platforms//os:macos": {
+            "#cmakedefine HAVE_GETRANDOM": "",  # not available on macos
+            "#cmakedefine HAVE_SYSCALL_GETRANDOM": "",  # not available on macos
+        },
+        # Only support Linux and Mac for now.
+    }),
+    template = "expat/expat_config.h.cmake",
+)
+
+cc_library(
+    name = "expat",
+    srcs = glob(["expat/lib/*.c"]),
+    hdrs = [":expat_config_h"] + glob([
+        # Some expat c files include other c files.
+        "expat/lib/*.c",
+        "expat/lib/*.h",
+    ]),
+    includes = ["expat/lib"],
+)
+
+alias(
+    name = "libexpat",
+    actual = ":expat",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "expat_test_lib",
+    testonly = True,
+    srcs = [
+        "expat/tests/chardata.c",
+        "expat/tests/chardata.h",
+        "expat/tests/common.c",
+        "expat/tests/common.h",
+        "expat/tests/dummy.c",
+        "expat/tests/dummy.h",
+        "expat/tests/handlers.c",
+        "expat/tests/handlers.h",
+        "expat/tests/memcheck.c",
+        "expat/tests/memcheck.h",
+        "expat/tests/minicheck.c",
+        "expat/tests/minicheck.h",
+        "expat/tests/structdata.c",
+        "expat/tests/structdata.h",
+    ],
+    deps = [
+        ":expat",
+    ],
+)
+
+# Must be run with --copt=-DXML_TESTING because files in the expat target look
+# for this macro.
+cc_test(
+    name = "expat_tests",
+    srcs = ["expat/tests/runtests.c"] + glob([
+        "expat/tests/*_tests.c",
+        "expat/tests/*_tests.h",
+    ]),
+    args = ["--verbose"],
+    deps = [":expat_test_lib"],
+)

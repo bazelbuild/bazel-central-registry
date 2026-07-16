@@ -1,0 +1,156 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//tools:autoconf.bzl", "configure_header", "define_macro_if", "define_macro_with")
+load("//tools:version.bzl", "parse_version")
+load(":jemalloc_hdr.bzl", "jemalloc_hdr")
+
+version = parse_version(module_version())
+
+configure_header(
+    name = "jemalloc_defs",
+    out = "jemalloc_defs.h",
+    stamp = 0,
+    substitutions =
+        define_macro_if("JEMALLOC_HAVE_ATTR_ALLOC_SIZE", "//settings/compiler:gcc_compatible") |
+        define_macro_if("JEMALLOC_HAVE_ATTR_FORMAT_ARG", "//settings/compiler:gcc_compatible") |
+        define_macro_if("JEMALLOC_HAVE_ATTR_FORMAT_GNU_PRINTF", "//settings/compiler:gcc_core") |
+        define_macro_if("JEMALLOC_HAVE_ATTR_FORMAT_PRINTF", "//settings/compiler:gcc_compatible") |
+        define_macro_if("JEMALLOC_HAVE_ATTR_FALLTHROUGH", "//settings/compiler:gcc_compatible") |
+        define_macro_if("JEMALLOC_HAVE_ATTR_COLD", "//settings/compiler:gcc_compatible") |
+        define_macro_if("JEMALLOC_HAVE_ATTR", "//settings/compiler:gcc_compatible") |
+        define_macro_if("JEMALLOC_OVERRIDE_MEMALIGN", "//settings/platform:has_memalign") |
+        define_macro_if("JEMALLOC_OVERRIDE_VALLOC", "//settings/platform:has_valloc") |
+        define_macro_with("JEMALLOC_USABLE_SIZE_CONST", "$(JEMALLOC_USABLE_SIZE_CONST)") |
+        define_macro_if("JEMALLOC_USE_CXX_THROW", "@platforms//os:linux") |
+        selects.with_or(
+            {
+                "//settings/compiler:msvc_compatible": define_macro_with("LG_SIZEOF_PTR", "LG_SIZEOF_PTR_WIN"),
+                ("@platforms//cpu:aarch32", "@platforms//cpu:x86_32"): define_macro_with("LG_SIZEOF_PTR", "2"),
+                ("@platforms//cpu:aarch64", "@platforms//cpu:x86_64"): define_macro_with("LG_SIZEOF_PTR", "3"),
+            },
+            no_match_error = "Cannot determine LG_SIZEOF_PTR value, missing support for platform.",
+        ),
+    tags = ["manual"],
+    template = "jemalloc_defs.h.in",
+    toolchains = ["//settings/platform:usable_size_const"],
+)
+
+expand_template(
+    name = "jemalloc_macros",
+    out = "jemalloc_macros.h",
+    substitutions = {
+        "@jemalloc_version@": version.full,
+        "@jemalloc_version_major@": version.major,
+        "@jemalloc_version_minor@": version.minor,
+        "@jemalloc_version_bugfix@": version.bugfix,
+        "@jemalloc_version_nrev@": version.nrev,
+        "@jemalloc_version_gid@": version.gid,
+    },
+    template = "jemalloc_macros.h.in",
+)
+
+sh_binary(
+    name = "jemalloc_mangle_sh",
+    srcs = ["jemalloc_mangle.sh"],
+)
+
+# Note this scripts are not hermetic.
+genrule(
+    name = "jemalloc_mangle",
+    srcs = [
+        "//include/jemalloc/internal:public_symbols",
+    ],
+    outs = ["jemalloc_mangle.h"],
+    cmd = "$(execpath :jemalloc_mangle_sh) $(execpath //include/jemalloc/internal:public_symbols) je_ > $@",
+    cmd_bat = "$(execpath :jemalloc_mangle_sh) $(execpath //include/jemalloc/internal:public_symbols) je_ > $@",
+    tags = ["manual"],
+    tools = [":jemalloc_mangle_sh"],
+    visibility = ["//visibility:public"],
+)
+
+# Note this scripts are not hermetic.
+genrule(
+    name = "jemalloc_mangle_jet",
+    srcs = [
+        "//include/jemalloc/internal:public_symbols",
+    ],
+    outs = ["jemalloc_mangle_jet.h"],
+    cmd = "$(execpath :jemalloc_mangle_sh) $(execpath //include/jemalloc/internal:public_symbols) jet_ > $@",
+    cmd_bat = "$(execpath :jemalloc_mangle_sh) $(execpath //include/jemalloc/internal:public_symbols) jet_ > $@",
+    tags = ["manual"],
+    tools = [":jemalloc_mangle_sh"],
+    visibility = ["//visibility:public"],
+)
+
+expand_template(
+    name = "jemalloc_protos",
+    out = "jemalloc_protos.h",
+    substitutions = {
+        "@je_@": "je_",
+        "@install_suffix@": "",
+    },
+    template = "jemalloc_protos.h.in",
+)
+
+expand_template(
+    name = "jemalloc_protos_jet",
+    out = "jemalloc_protos_jet.h",
+    substitutions = {
+        "@je_@": "jet_",
+        "@install_suffix@": "",
+    },
+    template = "jemalloc_protos.h.in",
+)
+
+sh_binary(
+    name = "jemalloc_rename_sh",
+    srcs = ["jemalloc_rename.sh"],
+)
+
+# Invoke jemalloc_rename.sh to generate jemalloc_rename.h
+genrule(
+    name = "jemalloc_rename",
+    srcs = [
+        "//include/jemalloc/internal:public_symbols",
+    ],
+    outs = ["jemalloc_rename.h"],
+    cmd = "$(execpath :jemalloc_rename_sh) $(execpath //include/jemalloc/internal:public_symbols) > $@",
+    cmd_bat = "$(execpath :jemalloc_rename_sh) $(execpath //include/jemalloc/internal:public_symbols) > $@",
+    tags = ["manual"],
+    tools = [":jemalloc_rename_sh"],
+    visibility = ["//visibility:public"],
+)
+
+expand_template(
+    name = "jemalloc_typedefs",
+    out = "jemalloc_typedefs.h",
+    substitutions = {},
+    template = "jemalloc_typedefs.h.in",
+)
+
+cc_binary(
+    name = "jemalloc_hdr_gen",
+    srcs = ["jemalloc_hdr_gen.cc"],
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++11"],
+        "//conditions:default": ["-std=c++11"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+jemalloc_hdr(
+    name = "jemalloc",
+    srcs = [
+        ":jemalloc_defs",
+        ":jemalloc_rename",
+        ":jemalloc_macros",
+        ":jemalloc_protos",
+        ":jemalloc_typedefs",
+        ":jemalloc_mangle",
+    ],
+    out = "jemalloc.h",
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+)

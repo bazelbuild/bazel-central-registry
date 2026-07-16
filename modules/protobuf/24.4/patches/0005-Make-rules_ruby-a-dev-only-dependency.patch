@@ -1,0 +1,358 @@
+From 738d9640e9954f8e10c1060b0b08c943145bed8b Mon Sep 17 00:00:00 2001
+From: Mike Kruskal <mkruskal@google.com>
+Date: Tue, 21 Nov 2023 12:08:51 -0800
+Subject: [PATCH 6/7] Make rules_ruby a dev-only dependency.
+
+There is no canonical rules_ruby repo today, and we don't want our fork to become one.  In order to unblock inclusion of Protobuf in the bzlmod registry, we're making this a dev dependency and dropping support for Bazel/Ruby.
+
+Fixes #14569
+
+PiperOrigin-RevId: 584393841
+
+Backport of commit 571b727cb66ad51f89fbef565d3a6c123366a1f5
+---
+ BUILD.bazel                                   | 40 +------------
+ conformance/BUILD.bazel                       |  6 +-
+ protobuf.bzl                                  |  3 +-
+ protobuf_deps.bzl                             |  8 ---
+ ruby/BUILD.bazel                              | 56 +++++++++++++++++--
+ .../v3.0.0/tests/BUILD.bazel                  |  2 +-
+ ruby/defs.bzl                                 | 24 ++++++++
+ ruby/lib/google/BUILD.bazel                   |  7 ++-
+ src/google/protobuf/BUILD.bazel               |  1 +
+ src/google/protobuf/compiler/BUILD.bazel      |  1 +
+ 10 files changed, 88 insertions(+), 60 deletions(-)
+ create mode 100644 ruby/defs.bzl
+
+diff --git a/BUILD.bazel b/BUILD.bazel
+index 637882c49..e2d1687e5 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -5,7 +5,7 @@ load("@rules_pkg//:mappings.bzl", "pkg_files", "strip_prefix")
+ load("@rules_proto//proto:defs.bzl", "proto_lang_toolchain", "proto_library")
+ load("@rules_java//java:defs.bzl", "java_lite_proto_library", "java_proto_library")
+ load("//build_defs:cpp_opts.bzl", "COPTS", "LINK_OPTS")
+-load(":protobuf.bzl", "internal_objc_proto_library", "internal_php_proto_library", "internal_py_proto_library", "internal_ruby_proto_library")
++load(":protobuf.bzl", "internal_objc_proto_library", "internal_php_proto_library", "internal_py_proto_library")
+ 
+ licenses(["notice"])
+ 
+@@ -144,17 +144,6 @@ filegroup(
+     visibility = ["//visibility:public"],
+ )
+ 
+-internal_ruby_proto_library(
+-    name = "well_known_ruby_protos",
+-    srcs = [":well_known_protos"],
+-    includes = ["src"],
+-    default_runtime = "",
+-    visibility = [
+-        "//conformance:__pkg__",
+-        "//ruby:__subpackages__",
+-    ],
+-)
+-
+ ################################################################################
+ # Protocol Buffers Compiler
+ ################################################################################
+@@ -511,33 +500,6 @@ internal_php_proto_library(
+     ],
+ )
+ 
+-internal_ruby_proto_library(
+-    name = "test_messages_proto2_ruby_proto",
+-    testonly = 1,
+-    srcs = ["//src/google/protobuf:test_messages_proto2.proto"],
+-    includes = ["src/google/protobuf"],
+-    visibility = [
+-        "//conformance:__pkg__",
+-        "//ruby:__subpackages__",
+-    ],
+-)
+-
+-internal_ruby_proto_library(
+-    name = "test_messages_proto3_ruby_proto",
+-    testonly = 1,
+-    srcs = ["//src/google/protobuf:test_messages_proto3.proto"],
+-    includes = [
+-        "src/google/protobuf",
+-        # The above must come first.
+-        "src",
+-    ],
+-    deps = [":well_known_ruby_protos"],
+-    visibility = [
+-        "//conformance:__pkg__",
+-        "//ruby:__subpackages__",
+-    ],
+-)
+-
+ filegroup(
+     name = "bzl_srcs",
+     srcs = glob(["**/*.bzl"]),
+diff --git a/conformance/BUILD.bazel b/conformance/BUILD.bazel
+index dde520228..4f9b79060 100644
+--- a/conformance/BUILD.bazel
++++ b/conformance/BUILD.bazel
+@@ -2,7 +2,8 @@
+ 
+ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_proto_library", "objc_library")
+ load("@rules_ruby//ruby:defs.bzl", "ruby_binary")
+-load("//:protobuf.bzl", "internal_csharp_proto_library", "internal_objc_proto_library", "internal_php_proto_library", "internal_py_proto_library", "internal_ruby_proto_library")
++load("//ruby:defs.bzl", "internal_ruby_proto_library")
++load("//:protobuf.bzl", "internal_csharp_proto_library", "internal_objc_proto_library", "internal_php_proto_library", "internal_py_proto_library")
+ load("//build_defs:internal_shell.bzl", "inline_sh_binary")
+ load(
+     "@rules_pkg//:mappings.bzl",
+@@ -328,8 +329,7 @@ ruby_binary(
+     srcs = ["conformance_ruby.rb"],
+     deps = [
+         ":conformance_ruby_proto",
+-        "//:test_messages_proto2_ruby_proto",
+-        "//:test_messages_proto3_ruby_proto",        
++        "//ruby:conformance_test_ruby_proto",
+     ],
+     visibility = ["//ruby:__subpackages__"],
+ )
+diff --git a/protobuf.bzl b/protobuf.bzl
+index e7b7a14eb..3f7e001ae 100644
+--- a/protobuf.bzl
++++ b/protobuf.bzl
+@@ -2,7 +2,6 @@ load("@bazel_skylib//lib:versions.bzl", "versions")
+ load("@rules_cc//cc:defs.bzl", "objc_library")
+ load("@rules_proto//proto:defs.bzl", "ProtoInfo")
+ load("@rules_python//python:defs.bzl", "py_library")
+-load("@rules_ruby//ruby:defs.bzl", "ruby_library")
+ 
+ def _GetPath(ctx, path):
+     if ctx.label.workspace_root:
+@@ -490,6 +489,7 @@ def internal_objc_proto_library(
+ 
+ def internal_ruby_proto_library(
+         name,
++        ruby_library,
+         srcs = [],
+         deps = [],
+         includes = ["."],
+@@ -506,6 +506,7 @@ def internal_ruby_proto_library(
+ 
+     Args:
+       name: the name of the ruby_proto_library.
++      ruby_library: the ruby library rules to use.
+       srcs: the .proto files to compile.
+       deps: a list of dependency labels; must be a internal_ruby_proto_library.
+       includes: a string indicating the include path of the .proto files.
+diff --git a/protobuf_deps.bzl b/protobuf_deps.bzl
+index 7d825b4c7..8ce8e6ab0 100644
+--- a/protobuf_deps.bzl
++++ b/protobuf_deps.bzl
+@@ -105,14 +105,6 @@ def protobuf_deps():
+             sha256 = "f9e4f6acf82449324d56669bda4bdb28b48688ad2990d8b39fa5b93ed39c9ad1",
+         )
+ 
+-    if not native.existing_rule("rules_ruby"):
+-        _github_archive(
+-            name = "rules_ruby",
+-            repo = "https://github.com/protocolbuffers/rules_ruby",
+-            commit = "8fca842a3006c3d637114aba4f6bf9695bb3a432",
+-            sha256 = "2619f9a23cee6f6a198d9ef284b6f6cbc901545ee9a9aac9ffa6b83dbf17cf0c",
+-        )
+-
+     if not native.existing_rule("rules_jvm_external"):
+         _github_archive(
+             name = "rules_jvm_external",
+diff --git a/ruby/BUILD.bazel b/ruby/BUILD.bazel
+index c581355c5..1942dc001 100755
+--- a/ruby/BUILD.bazel
++++ b/ruby/BUILD.bazel
+@@ -5,7 +5,8 @@
+ load("@rules_pkg//:mappings.bzl", "pkg_files", "strip_prefix")
+ load("@rules_ruby//ruby:defs.bzl", "ruby_library")
+ load("//build_defs:internal_shell.bzl", "inline_sh_binary")
+-load("//:protobuf.bzl", "internal_ruby_proto_library")
++load("//python:internal.bzl", "internal_copy_files")
++load("//ruby:defs.bzl", "internal_ruby_proto_library")
+ load("//conformance:defs.bzl", "conformance_test")
+ load("//:protobuf_version.bzl", "PROTOBUF_RUBY_VERSION")
+ 
+@@ -13,6 +14,49 @@ load("//:protobuf_version.bzl", "PROTOBUF_RUBY_VERSION")
+ # Ruby Runtime
+ ################################################################################
+ 
++internal_copy_files(
++    name = "copied_wkt_proto_files",
++    srcs = [
++        "//:well_known_type_protos",
++        "//src/google/protobuf:descriptor_proto_srcs",
++        "//src/google/protobuf/compiler:plugin.proto",
++    ],
++    strip_prefix = "src",
++)
++
++internal_ruby_proto_library(
++    name = "well_known_ruby_protos",
++    srcs = [":copied_wkt_proto_files"],
++    default_runtime = "",
++    includes = ["."],
++    visibility = [
++        "//conformance:__pkg__",
++        "//ruby:__subpackages__",
++    ],
++)
++
++internal_copy_files(
++    name = "copied_conformance_test_files",
++    testonly = 1,
++    srcs = [
++        "//src/google/protobuf:test_messages_proto2.proto",
++        "//src/google/protobuf:test_messages_proto3.proto",
++    ],
++    strip_prefix = "src",
++)
++
++internal_ruby_proto_library(
++    name = "conformance_test_ruby_proto",
++    testonly = 1,
++    srcs = [":copied_conformance_test_files"],
++    includes = ["."],
++    visibility = [
++        "//conformance:__pkg__",
++        "//ruby:__subpackages__",
++    ],
++    deps = [":well_known_ruby_protos"],
++)
++
+ ruby_library(
+     name = "protobuf",
+     deps = ["//ruby/lib/google:protobuf_lib"],
+@@ -29,7 +73,7 @@ genrule(
+     srcs = [
+       "//ruby/lib/google:copy_jar",
+       "//ruby/lib/google:dist_files",
+-      "//:well_known_ruby_protos",
++      ":well_known_ruby_protos",
+       "google-protobuf.gemspec",
+     ],
+     outs = ["google-protobuf-"+PROTOBUF_RUBY_VERSION+"-java.gem"],
+@@ -39,7 +83,7 @@ genrule(
+         for src in $(SRCS); do
+             cp --parents -L "$$src" tmp
+         done
+-        for wkt in $(execpaths //:well_known_ruby_protos); do
++        for wkt in $(execpaths :well_known_ruby_protos); do
+             mv "tmp/$$wkt" "tmp/ruby/lib/google/protobuf/"
+         done
+         mv "tmp/$(execpath //ruby/lib/google:copy_jar)" "tmp/ruby/lib/google"
+@@ -61,7 +105,7 @@ genrule(
+     srcs = [
+       "@utf8_range//:utf8_range_srcs",
+       "@utf8_range//:LICENSE",
+-      "//:well_known_ruby_protos",
++      ":well_known_ruby_protos",
+       "//ruby/ext/google/protobuf_c:dist_files",
+       "//ruby/lib/google:dist_files",
+       "google-protobuf.gemspec",
+@@ -77,7 +121,7 @@ genrule(
+         for utf in $(execpaths @utf8_range//:utf8_range_srcs) $(execpath @utf8_range//:LICENSE); do
+             mv "tmp/$$utf" "tmp/ruby/ext/google/protobuf_c/third_party/utf8_range"
+         done
+-        for wkt in $(execpaths //:well_known_ruby_protos); do
++        for wkt in $(execpaths :well_known_ruby_protos); do
+             mv "tmp/$$wkt" "tmp/ruby/lib/google/protobuf/"
+         done
+         cd tmp/ruby
+@@ -111,7 +155,7 @@ filegroup(
+ internal_ruby_proto_library(
+     name = "test_ruby_protos",
+     srcs = ["//ruby/tests:test_protos"],
+-    deps = ["//:well_known_ruby_protos"],
++    deps = [":well_known_ruby_protos"],
+     includes = [".", "src", "ruby/tests"],
+     visibility = [
+         "//ruby:__subpackages__",
+diff --git a/ruby/compatibility_tests/v3.0.0/tests/BUILD.bazel b/ruby/compatibility_tests/v3.0.0/tests/BUILD.bazel
+index e165b0bb2..1b92a0863 100644
+--- a/ruby/compatibility_tests/v3.0.0/tests/BUILD.bazel
++++ b/ruby/compatibility_tests/v3.0.0/tests/BUILD.bazel
+@@ -1,6 +1,6 @@
+ load("@rules_pkg//:mappings.bzl", "pkg_files", "strip_prefix")
+ load("@rules_ruby//ruby:defs.bzl", "ruby_test")
+-load("//:protobuf.bzl", "internal_ruby_proto_library")
++load("//ruby:defs.bzl", "internal_ruby_proto_library")
+ 
+ internal_ruby_proto_library(
+     name = "test_ruby_protos",
+diff --git a/ruby/defs.bzl b/ruby/defs.bzl
+new file mode 100644
+index 000000000..7f60b47f5
+--- /dev/null
++++ b/ruby/defs.bzl
+@@ -0,0 +1,24 @@
++"""Wrapper around internal_ruby_proto_library to supply our rules_ruby"""
++
++load("@rules_ruby//ruby:defs.bzl", "ruby_library")
++load("//:protobuf.bzl", _internal_ruby_proto_library = "internal_ruby_proto_library")
++
++def internal_ruby_proto_library(
++        name,
++        **kwargs):
++    """Bazel rule to create a Ruby protobuf library from proto source files
++
++    NOTE: the rule is only an internal workaround to generate protos. The
++    interface may change and the rule may be removed when bazel has introduced
++    the native rule.
++
++    Args:
++      name: the name of the ruby_proto_library.
++      **kwargs: other keyword arguments that are passed to ruby_library.
++
++    """
++    _internal_ruby_proto_library(
++        name,
++        ruby_library,
++        **kwargs
++    )
+diff --git a/ruby/lib/google/BUILD.bazel b/ruby/lib/google/BUILD.bazel
+index 4cfa5cbcf..f1f0ce789 100644
+--- a/ruby/lib/google/BUILD.bazel
++++ b/ruby/lib/google/BUILD.bazel
+@@ -46,8 +46,11 @@ ruby_library(
+     srcs = glob([
+         "**/*.rb",
+     ]),
+-    deps = ["//:well_known_ruby_protos"],
+-    includes = ["ruby/lib"],
++    deps = ["//ruby:well_known_ruby_protos"],
++    includes = [
++        "ruby",
++        "ruby/lib",
++    ],
+     data = select({
+         "@rules_ruby//ruby/runtime:config_jruby": ["protobuf_java.jar"],
+         "@platforms//os:osx": ["protobuf_c.bundle"],
+diff --git a/src/google/protobuf/BUILD.bazel b/src/google/protobuf/BUILD.bazel
+index 77ed2309f..f7f1c7b48 100644
+--- a/src/google/protobuf/BUILD.bazel
++++ b/src/google/protobuf/BUILD.bazel
+@@ -732,6 +732,7 @@ exports_files(
+     visibility = [
+         "//:__pkg__",
+         "//python:__pkg__",
++        "//ruby:__pkg__",
+     ],
+ )
+ 
+diff --git a/src/google/protobuf/compiler/BUILD.bazel b/src/google/protobuf/compiler/BUILD.bazel
+index a2171c806..936d7a21d 100644
+--- a/src/google/protobuf/compiler/BUILD.bazel
++++ b/src/google/protobuf/compiler/BUILD.bazel
+@@ -196,6 +196,7 @@ exports_files(
+     visibility = [
+         "//:__pkg__",
+         "//python:__pkg__",
++        "//ruby:__pkg__",
+     ],
+ )
+ 
+-- 
+2.42.1
+

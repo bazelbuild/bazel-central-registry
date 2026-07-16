@@ -1,0 +1,353 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:flex_test.bzl", "flex_test")
+
+# AC_INIT([the fast lexical analyser generator],[2.6.4],
+#         [flex-help@lists.sourceforge.net],[flex])
+package_info(
+    name = "package",
+    package_name = "the fast lexical analyser generator",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "//:MODULE.bazel",
+    package_bugreport = "flex-help@lists.sourceforge.net",
+    package_tarname = "flex",
+)
+
+string_flag(
+    name = "m4_path",
+    build_setting_default = "/bin/false",
+    values = [
+        "m4",
+        "/bin/false",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "bazel_m4_path",
+    flag_values = {":m4_path": "/bin/false"},
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        # AC_PROG_CC
+        checks.AC_PROG_CC(),
+        # AC_PROG_CXX
+        checks.AC_PROG_CXX(),
+        # AM_PROG_CC_C_O
+        checks.AC_PROG_CC_C_O(),
+    ] +
+    # AC_CHECK_HEADERS - required (configure.ac:117)
+    macros.AC_CHECK_HEADERS([
+        "regex.h",
+        "strings.h",
+        "sys/stat.h",
+        "sys/wait.h",
+        "unistd.h",
+    ]) +
+    # AC_CHECK_HEADERS - optional (configure.ac:120)
+    macros.AC_CHECK_HEADERS([
+        "inttypes.h",
+        "libintl.h",
+        "limits.h",
+        "locale.h",
+        "malloc.h",
+        "netinet/in.h",
+    ]) +
+    # Implicit from AC_HEADER_STDC, AC_HEADER_STDBOOL, AC_FUNC_ALLOCA,
+    # AC_FUNC_FORK, AC_CHECK_LIB(pthread, ...)
+    macros.AC_CHECK_HEADERS([
+        "alloca.h",
+        "dlfcn.h",
+        "memory.h",
+        "stdbool.h",
+        "stdint.h",
+        "stdlib.h",
+        "string.h",
+        "sys/types.h",
+        "vfork.h",
+        "pthread.h",
+    ]) +
+    # AC_CHECK_FUNCS - required (configure.ac:156-163)
+    macros.AC_CHECK_FUNCS([
+        "dup2",
+        "memset",
+        "regcomp",
+        "strcasecmp",
+        "strchr",
+        "strdup",
+        "strtol",
+    ]) +
+    # AC_CHECK_FUNCS - optional (configure.ac:166-170)
+    # NOTE: reallocarray is intentionally omitted. Its glibc declaration
+    # requires _GNU_SOURCE, but AC_CHECK_FUNCS detects the linker symbol.
+    # Without the declaration, GCC treats the return as int, truncating
+    # the pointer on 64-bit and causing a segfault.
+    macros.AC_CHECK_FUNCS([
+        "pow",
+        "setlocale",
+    ]) +
+    # AC_FUNC_ALLOCA (configure.ac:145)
+    macros.AC_CHECK_FUNCS([
+        "alloca",
+    ]) +
+    # AC_FUNC_FORK (configure.ac:146)
+    macros.AC_CHECK_FUNCS([
+        "fork",
+        "vfork",
+    ]) + [
+        # AC_CHECK_LIB(m, log10) (configure.ac:135)
+        checks.AC_CHECK_LIB("m", "log10"),
+
+        # AC_HEADER_STDBOOL (configure.ac:139) - _Bool type check
+        checks.AC_CHECK_TYPE(
+            "_Bool",
+            define = "HAVE__BOOL",
+            includes = ["#include <stdbool.h>"],
+        ),
+
+        # STDC_HEADERS (always 1 on modern systems)
+        checks.AC_DEFINE("STDC_HEADERS", 1),
+
+        # YYTEXT_POINTER (AM_PROG_LEX sets this; flex uses char *yytext)
+        checks.AC_DEFINE("YYTEXT_POINTER", 1),
+
+        # LT_OBJDIR (libtool)
+        checks.AC_DEFINE("LT_OBJDIR", "\".libs/\""),
+
+        # AC_FUNC_MALLOC (configure.ac:149)
+        # On all modern systems (glibc, macOS, Windows), malloc(0) returns
+        # non-NULL. Set to 1 unconditionally; for exotic targets where this
+        # is not the case, override with lib/malloc.c.
+        checks.AC_DEFINE("HAVE_MALLOC", 1),
+
+        # AC_FUNC_REALLOC (configure.ac:152)
+        checks.AC_DEFINE("HAVE_REALLOC", 1),
+
+        # AC_FUNC_FORK derived defines (configure.ac:146)
+        checks.AC_DEFINE(
+            "HAVE_WORKING_FORK",
+            condition = "ac_cv_func_fork",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_DEFINE(
+            "HAVE_WORKING_VFORK",
+            condition = "ac_cv_func_vfork",
+            if_false = None,
+            if_true = 1,
+        ),
+
+        # AC_FUNC_FORK: On systems without vfork, config.h.in's "#undef vfork"
+        # stays as "/* #undef vfork */" and HAVE_WORKING_VFORK is unset.
+        # All modern systems (Linux, macOS) have working vfork.
+    ] + select({
+        ":bazel_m4_path": [
+            # Prevent any host installed m4 from being run.
+            checks.AC_DEFINE_UNQUOTED("M4", "\"/bin/false\""),
+        ],
+        "//conditions:default": [
+            # Allow users to have a canonical flex binary that would look for host m4.
+            checks.AC_DEFINE_UNQUOTED("M4", "\"m4\""),
+        ],
+    }),
+    deps = [":package"],
+)
+
+# AC_CONFIG_HEADER([src/config.h])
+autoconf_hdr(
+    name = "gen_config_h",
+    out = "src/config.h",
+    template = "src/config.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":gen_config_h"],
+    strip_include_prefix = "src",
+)
+
+FLEX_SRCS = [
+    "src/buf.c",
+    "src/ccl.c",
+    "src/dfa.c",
+    "src/ecs.c",
+    "src/filter.c",
+    "src/gen.c",
+    "src/main.c",
+    "src/misc.c",
+    "src/nfa.c",
+    "src/options.c",
+    "src/regex.c",
+    "src/scanflags.c",
+    "src/scanopt.c",
+    "src/skel.c",
+    "src/sym.c",
+    "src/tables.c",
+    "src/tables_shared.c",
+    "src/tblcmp.c",
+    "src/yylex.c",
+    # Pre-generated from parse.y (bison) and scan.l (flex bootstrap)
+    "src/parse.c",
+    "src/scan.c",
+]
+
+FLEX_HDRS = [
+    "src/flexdef.h",
+    "src/flexint.h",
+    "src/gettext.h",
+    "src/options.h",
+    "src/parse.h",
+    "src/scanopt.h",
+    "src/tables.h",
+    "src/tables_shared.h",
+    "src/version.h",
+]
+
+filegroup(
+    name = "flex_runfiles",
+    srcs = [
+        "@rules_m4//m4:current_m4_toolchain",
+    ],
+)
+
+cc_binary(
+    name = "flex",
+    srcs = FLEX_SRCS + FLEX_HDRS,
+    copts = ["-DHAVE_CONFIG_H"],
+    data = [
+        ":flex_runfiles",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "libfl",
+    srcs = [
+        "src/libmain.c",
+        "src/libyywrap.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = ["src/FlexLexer.h"],
+    strip_include_prefix = "src",
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+flex_test(
+    name = "basic_nr",
+    src = "tests/basic_nr.l",
+    input = "tests/basic_nr.txt",
+)
+
+flex_test(
+    name = "basic_r",
+    src = "tests/basic_r.l",
+    input = "tests/basic_r.txt",
+)
+
+flex_test(
+    name = "array_nr",
+    src = "tests/array_nr.l",
+    input = "tests/array_nr.txt",
+)
+
+flex_test(
+    name = "array_r",
+    src = "tests/array_r.l",
+    input = "tests/array_r.txt",
+)
+
+flex_test(
+    name = "ccl",
+    src = "tests/ccl.l",
+    input = "tests/ccl.txt",
+)
+
+flex_test(
+    name = "extended",
+    src = "tests/extended.l",
+    input = "tests/extended.txt",
+)
+
+flex_test(
+    name = "quotes",
+    src = "tests/quotes.l",
+    input = "tests/quotes.txt",
+)
+
+flex_test(
+    name = "yyextra",
+    src = "tests/yyextra.l",
+    input = "tests/yyextra.txt",
+)
+
+flex_test(
+    name = "prefix_nr",
+    src = "tests/prefix_nr.l",
+    input = "tests/prefix_nr.txt",
+)
+
+flex_test(
+    name = "prefix_r",
+    src = "tests/prefix_r.l",
+    input = "tests/prefix_r.txt",
+)
+
+flex_test(
+    name = "debug_nr",
+    src = "tests/debug_nr.l",
+    input = "tests/debug_nr.txt",
+)
+
+flex_test(
+    name = "debug_r",
+    src = "tests/debug_r.l",
+    input = "tests/debug_r.txt",
+)
+
+flex_test(
+    name = "mem_nr",
+    src = "tests/mem_nr.l",
+    input = "tests/mem_nr.txt",
+)
+
+flex_test(
+    name = "mem_r",
+    src = "tests/mem_r.l",
+    input = "tests/mem_r.txt",
+)
+
+flex_test(
+    name = "quote_in_comment",
+    src = "tests/quote_in_comment.l",
+    input = "tests/quote_in_comment.txt",
+)
+
+flex_test(
+    name = "alloc_extra",
+    src = "tests/alloc_extra.l",
+    input = "tests/alloc_extra.txt",
+)

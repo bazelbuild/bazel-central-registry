@@ -1,0 +1,247 @@
+--- a/dev/null	2025-11-06 14:51:16.189427788 +0000
++++ b/open62541.bzl	2025-11-09 00:45:14.980412671 +0000
+@@ -0,0 +1,244 @@
++"""Code generation tools for open62541."""
++
++load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
++
++def _generate_nodeset_impl(ctx):
++    gen_args = ctx.actions.args()
++    if ctx.attr.internal:
++        gen_args.add("--internal-headers")
++
++    if ctx.file.ignore:
++        gen_args.add("--ignore", ctx.file.ignore.path)
++
++    if ctx.file.blacklist:
++        gen_args.add("--blacklist", ctx.file.blacklist.path)
++
++    file_suffix = ctx.label.name + "_generated"
++    c_file = ctx.actions.declare_file(ctx.attr.prefix + "/" + file_suffix + ".c")
++    h_file = ctx.actions.declare_file(ctx.attr.prefix + "/" + file_suffix + ".h")
++
++    gen_args.add_all(ctx.files.files, format_each = "--xml=%s")
++    gen_args.add(c_file.dirname + "/" + file_suffix)
++
++    all_inputs = depset(ctx.files.files + [ctx.file.ignore])
++
++    ctx.actions.run(
++        executable = ctx.executable._generate_nodeset,
++        outputs = [h_file, c_file],
++        inputs = all_inputs,
++        arguments = [gen_args],
++    )
++
++    return DefaultInfo(files = depset([c_file, h_file]))
++
++generate_nodeset = rule(
++    doc = "Generates C code for given Nodeset XML files.",
++    implementation = _generate_nodeset_impl,
++    attrs = {
++        "files": attr.label_list(allow_files = True),
++        "prefix": attr.string(),
++        "blacklist": attr.label(allow_single_file = True),
++        "ignore": attr.label(allow_single_file = True),
++        "internal": attr.bool(),
++        "_generate_nodeset": attr.label(executable = True, default = "@open62541//:nodeset_compiler", cfg = "exec"),
++    },
++    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
++    fragments = ["cpp"],
++)
++
++def _generate_config_h_impl(ctx):
++    output_file = ctx.actions.declare_file(ctx.attr.output_path)
++
++    # First collect all the substitutions we'd like to make to generate the config.h file.
++    unordered_substitutions = {
++        "${OPEN62541_VER_MAJOR}": "1",
++        "${OPEN62541_VER_MINOR}": "4",
++        "${OPEN62541_VER_PATCH}": "14",
++        "${OPEN62541_VER_LABEL}": "",
++        "${OPEN62541_VER_COMMIT}": "",
++        "${OPEN62541_VERSION}": "1.4.14-bazel",
++        "#cmakedefine UA_ARCHITECTURE_WIN32": "#undef UA_ARCHITECTURE_WIN32",
++        "#cmakedefine UA_ARCHITECTURE_POSIX": "#define UA_ARCHITECTURE_POSIX 1",
++        "${UA_LOGLEVEL}": "300",
++        "${UA_MULTITHREADING}": "0",
++        "${UA_ARCHITECTURES_NODEF}": "0",
++        "${UA_ARCHITECTURE}": "posix",
++        "${UA_VALGRIND_INTERACTIVE_INTERVAL}": "1000",
++    }
++
++    defines = [
++        "UA_ENABLE_METHODCALLS",
++        "UA_ENABLE_SUBSCRIPTIONS_EVENTS",
++        "UA_ENABLE_SUBSCRIPTIONS",
++        "UA_ENABLE_DISCOVERY_SEMAPHORE",
++        "UA_ENABLE_ENCRYPTION_OPENSSL",
++        "UA_ENABLE_TYPEDESCRIPTION",
++        "UA_ENABLE_PARSING",
++        "UA_ENABLE_STATUSCODE_DESCRIPTIONS",
++        "UA_ENABLE_HISTORIZING",
++        "UA_ENABLE_NODEMANAGEMENT",
++        "UA_ENABLE_DA",
++        "UA_ENABLE_NODESET_COMPILER_DESCRIPTIONS",
++        "UA_GENERATED_NAMESPACE_ZERO",
++        "UA_DEBUG",
++    ]
++
++    undefines = [
++        "UA_ENABLE_DISCOVERY_MULTICAST",
++        "UA_ENABLE_DISCOVERY",
++        "UA_ENABLE_EXPERIMENTAL_HISTORIZING",
++        "UA_ENABLE_WEBSOCKET_SERVER",
++        "UA_ENABLE_UNIT_TEST_FAILURE_HOOKS",
++        "UA_ENABLE_VALGRIND_INTERACTIVE",
++        "UA_PACK_DEBIAN",
++        "UA_ENABLE_AMALGAMATION",
++        "UA_DEBUG_DUMP_PKGS",
++        "UA_DEBUG_FILE_LINE_INFO",
++        "UA_DYNAMIC_LINKING",
++        "UA_ENABLE_DIAGNOSTICS",
++        "UA_ENABLE_JSON_ENCODING",
++        "UA_ENABLE_MALLOC_SINGLETON",
++        "UA_ENABLE_PUBSUB_ENCRYPTION",
++        "UA_ENABLE_PUBSUB_ETH_UADP",
++        "UA_ENABLE_PUBSUB_DELTAFRAMES",
++        "UA_ENABLE_PUBSUB_MQTT",
++        "UA_ENABLE_PUBSUB_FILE_CONFIG",
++        "UA_ENABLE_PUBSUB_INFORMATIONMODEL_METHODS",
++        "UA_ENABLE_PUBSUB_INFORMATIONMODEL",
++        "UA_ENABLE_PUBSUB_MONITORING",
++        "UA_ENABLE_PUBSUB_BUFMALLOC",
++        "UA_ENABLE_PUBSUB_SKS",
++        "UA_ENABLE_PUBSUB",
++        "UA_ENABLE_SUBSCRIPTION_EVENTS",
++        "UA_ENABLE_XML_ENCODING",
++        "UA_ENABLE_NODESET_INJECTOR",
++        "UA_INFORMATION_MODEL_AUTOLOAD",
++        "UA_ENABLE_ENCRYPTION_MBEDTLS",
++        "UA_ENABLE_TPM2_SECURITY",
++        "UA_ENABLE_ENCRYPTION_LIBRESSL",
++        "UA_ENABLE_SUBSCRIPTIONS_ALARMS_CONDITIONS",
++        "UA_ENABLE_IMMUTABLE_NODES",
++        "UA_ENABLE_INLINABLE_EXPORT",
++        "UA_ENABLE_DETERMINISTIC_RNG",
++        "UA_ENABLE_QUERY",
++        "UA_GENERATED_NAMESPACE_ZERO_FULL",
++        "UA_ENABLE_MQTT_TLS_OPENSSL",
++        "UA_ENABLE_MQTT_TLS_MBEDTLS",
++        "UA_ENABLE_MQTT_TLS",
++        "UA_ENABLE_MQTT",
++        "UA_ENABLE_CERT_REJECTED_DIR",
++        "UA_ENABLE_ALLOW_REUSEADDR",
++    ]
++
++    for undefine in undefines:
++        unordered_substitutions["#cmakedefine %s" % undefine] = "/* #undef %s */" % undefine
++
++    for define in defines:
++        unordered_substitutions["#cmakedefine %s" % define] = "#define %s" % define
++
++    # Build the actual substitutions map. These substitutions are applied in
++    # insertion order, so it's important to apply changes to the longest prefix
++    # first.
++    key_order = sorted(unordered_substitutions.keys(), reverse = True)
++    substitutions = {k: unordered_substitutions[k] for k in key_order}
++
++    ctx.actions.expand_template(
++        template = ctx.file._template_file,
++        output = output_file,
++        substitutions = substitutions,
++    )
++
++    return DefaultInfo(files = depset([output_file]))
++
++generate_config_h = rule(
++    implementation = _generate_config_h_impl,
++    attrs = {
++        "_template_file": attr.label(allow_single_file = True, default = "@open62541//:include/open62541/config.h.in"),
++        "output_path": attr.string(),
++    },
++)
++
++def _generate_datatypes_impl(ctx):
++    file_suffix = ctx.label.name + "_generated"
++
++    c_file = ctx.actions.declare_file(ctx.attr.prefix + "/" + file_suffix + ".c")
++    h_file = ctx.actions.declare_file(ctx.attr.prefix + "/" + file_suffix + ".h")
++    handling_h_file = ctx.actions.declare_file(ctx.attr.prefix + "/" + file_suffix + "_handling.h")
++
++    all_inputs = ctx.files.files_bsd + [ctx.file.file_csv]
++    if ctx.file.files_selected:
++        all_inputs.append(ctx.file.files_selected)
++
++    gen_args = ctx.actions.args()
++    if not ctx.attr.builtin:
++        gen_args.add("--no-builtin")
++
++    gen_args.add_all(ctx.files.files_bsd, format_each = "--type-bsd=%s")
++    gen_args.add("--type-csv=%s" % ctx.file.file_csv.path)
++
++    gen_args.add(c_file.dirname + "/" + ctx.label.name)
++
++    ctx.actions.run(
++        executable = ctx.executable._generate_datatypes,
++        outputs = [c_file, h_file, handling_h_file],
++        inputs = depset(all_inputs),
++        arguments = [gen_args],
++    )
++
++    cc_toolchain = find_cpp_toolchain(ctx)
++    feature_configuration = cc_common.configure_features(
++        ctx = ctx,
++        cc_toolchain = cc_toolchain,
++        requested_features = ctx.features,
++        unsupported_features = ctx.disabled_features,
++    )
++    (compilation_context, compilation_outputs) = cc_common.compile(
++        name = ctx.label.name,
++        actions = ctx.actions,
++        feature_configuration = feature_configuration,
++        cc_toolchain = cc_toolchain,
++        srcs = [c_file],
++        public_hdrs = [h_file, handling_h_file],
++        # Pass types.h in as a private header to avoid circular dependencies.
++        private_hdrs = [ctx.file._types_hdr],
++        compilation_contexts = [
++            ctx.attr._common_lib[CcInfo].compilation_context,
++            ctx.attr._statuscodes_lib[CcInfo].compilation_context,
++        ] + [dep[CcInfo].compilation_context for dep in ctx.attr.deps],
++    )
++
++    (linking_context, _linking_outputs) = cc_common.create_linking_context_from_compilation_outputs(
++        name = ctx.label.name,
++        actions = ctx.actions,
++        feature_configuration = feature_configuration,
++        cc_toolchain = cc_toolchain,
++        compilation_outputs = compilation_outputs,
++        linking_contexts = [
++            ctx.attr._common_lib[CcInfo].linking_context,
++            ctx.attr._statuscodes_lib[CcInfo].linking_context,
++        ] + [dep[CcInfo].linking_context for dep in ctx.attr.deps],
++    )
++
++    return [
++        DefaultInfo(files = depset([c_file, h_file])),
++        CcInfo(compilation_context = compilation_context, linking_context = linking_context),
++    ]
++
++generate_datatypes = rule(
++    implementation = _generate_datatypes_impl,
++    attrs = {
++        "builtin": attr.bool(doc = "If true, then builtin types will be generated."),
++        "file_csv": attr.label(allow_single_file = True, doc = "The .csv file containing the node ids."),
++        "files_bsd": attr.label_list(allow_files = True, doc = "The .bsd files containing the type definitions."),
++        "files_selected": attr.label(allow_single_file = True, doc = "Optional text file containing a list of types which should be included in the generation."),
++        "prefix": attr.string(doc = "Generate files under this path."),
++        "deps": attr.label_list(providers = [CcInfo], doc = "Dependencies of the generated C++ code."),
++        "_generate_datatypes": attr.label(executable = True, default = "@open62541//:generate_datatypes", cfg = "exec"),
++        "_cc_toolchain": attr.label(default = "@bazel_tools//tools/cpp:current_cc_toolchain"),
++        "_common_lib": attr.label(default = "@open62541//:common"),
++        "_statuscodes_lib": attr.label(default = "@open62541//:statuscodes"),
++        "_types_hdr": attr.label(allow_single_file = True, default = "@open62541//:include/open62541/types.h"),
++    },
++    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
++    fragments = ["cpp"],
++)

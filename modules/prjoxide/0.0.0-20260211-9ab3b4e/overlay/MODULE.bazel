@@ -1,0 +1,81 @@
+"""https://github.com/gatecat/prjoxide"""
+
+module(
+    name = "prjoxide",
+    version = "0.0.0-20260211-9ab3b4e",
+    bazel_compatibility = [">=7.2.1"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "capnp-cpp", version = "1.1.0.bcr.1")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "prjoxide-db", version = "0.0.0-20260126-79c15ee")
+bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "rules_rust", version = "0.71.2")
+bazel_dep(name = "rules_rust_pyo3", version = "0.71.2")
+
+# Toolchains are dev-only: downstream consumers register their own.
+rust = use_extension(
+    "@rules_rust//rust:extensions.bzl",
+    "rust",
+    dev_dependency = True,
+)
+rust.toolchain(
+    edition = "2018",
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+# `@rules_rust_pyo3//toolchains:*` is `dev_dependency = True` upstream too,
+# so we re-register here for our own `bazel build //:pyprjoxide`.
+register_toolchains(
+    "@rules_rust_pyo3//toolchains:rust_toolchain",
+    "@rules_rust_pyo3//toolchains:toolchain",
+    dev_dependency = True,
+)
+
+# Run `modules/prjoxide/repin.py` to regenerate the two lockfiles.
+# `generate_binaries = True` is what exposes `@prjoxide_crates//:capnpc__capnpc-rust`
+# (the plugin our `bazel/capnp.bzl` invokes via `capnp compile -o<plugin>`).
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "prjoxide_crates",
+    cargo_lockfile = "//libprjoxide:Cargo.lock",
+    lockfile = "//libprjoxide:cargo-bazel-lock.json",
+    manifests = ["//libprjoxide:Cargo.toml"],
+)
+use_repo(crate, "prjoxide_crates")
+
+# Schemas for the optional `interchange` feature. Only fetched when something
+# in the build graph actually references `@fpga_interchange_schema//...`,
+# which only happens under the `//:interchange_enabled` config_setting.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "fpga_interchange_schema",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["interchange/*.capnp"]))
+
+filegroup(
+    name = "schemas",
+    srcs = glob(["interchange/*.capnp"]),
+)
+""",
+    integrity = "sha256-2NdjbEL+XLnQAFweCSkmFPId8s0pNLk0VUCvxzfh1fM=",
+    # Strips `using Java = ...;` + `$Java.*` annotations from each FIS
+    # schema so capnp's parser doesn't need a `/capnp/java.capnp` import.
+    # capnpc-rust ignores those annotations anyway. Use the system `patch`
+    # binary; Bazel's built-in patch implementation chokes on this multi-file
+    # diff with `CONTENT_DOES_NOT_MATCH_TARGET` despite the content matching.
+    patch_args = ["-p0"],
+    patch_tool = "patch",
+    patches = ["@prjoxide//bazel:patches/strip_java.patch"],
+    strip_prefix = "fpga-interchange-schema-78abf3f30770ccc6d0e1f5dbfeaef2666f55acf6",
+    urls = ["https://github.com/chipsalliance/fpga-interchange-schema/archive/78abf3f30770ccc6d0e1f5dbfeaef2666f55acf6.tar.gz"],
+)

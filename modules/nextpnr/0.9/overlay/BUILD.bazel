@@ -1,0 +1,492 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+# Generate version header
+expand_template(
+    name = "gen_version",
+    out = "common/version.h",
+    substitutions = {
+        "@CURRENT_GIT_VERSION@": "nextpnr-bazel-0.9",
+    },
+    template = "common/version.h.in",
+)
+
+# Third-party: json11
+cc_library(
+    name = "json11",
+    srcs = ["3rdparty/json11/json11.cpp"],
+    hdrs = ["3rdparty/json11/json11.hpp"],
+    includes = ["3rdparty/json11"],
+)
+
+# Third-party: pybind11 (header-only library)
+cc_library(
+    name = "pybind11",
+    hdrs = glob(["3rdparty/pybind11/include/**/*.h"]),
+    includes = ["3rdparty/pybind11/include"],
+    deps = ["@rules_python//python/cc:current_py_cc_headers"],
+)
+
+# Third-party: oourafft (needs namespace headers from kernel)
+cc_library(
+    name = "oourafft",
+    srcs = [
+        "3rdparty/oourafft/fftsg.cc",
+        "3rdparty/oourafft/fftsg2d.cc",
+    ],
+    hdrs = [
+        "3rdparty/oourafft/fftsg.h",
+        "common/kernel/nextpnr_namespaces.h",
+    ],
+    includes = [
+        "3rdparty/oourafft",
+        "common/kernel",
+    ],
+)
+
+# Common: version
+cc_library(
+    name = "nextpnr_version",
+    hdrs = [":gen_version"],
+    includes = ["common"],
+)
+
+# Rust stubs (NO_RUST)
+cc_library(
+    name = "nextpnr_rust",
+    hdrs = ["rust/rust.h"],
+    defines = ["NO_RUST"],
+    includes = ["rust"],
+)
+
+# Frontend (header-only, compiled by architecture targets)
+cc_library(
+    name = "nextpnr_frontend",
+    hdrs = [
+        "frontend/frontend_base.h",
+        "frontend/json_frontend.h",
+    ],
+    includes = ["frontend"],
+    textual_hdrs = [
+        "frontend/json_frontend.cc",
+    ],
+    deps = [":json11"],
+)
+
+# JSON (header-only, compiled by architecture targets)
+cc_library(
+    name = "nextpnr_json",
+    hdrs = [
+        "json/jsonwrite.h",
+    ],
+    includes = ["json"],
+    textual_hdrs = [
+        "json/jsonwrite.cc",
+    ],
+)
+
+# Route (header-only, compiled by architecture targets)
+cc_library(
+    name = "nextpnr_route",
+    hdrs = [
+        "common/route/router1.h",
+        "common/route/router2.h",
+    ],
+    includes = ["common/route"],
+    textual_hdrs = [
+        "common/route/router1.cc",
+        "common/route/router2.cc",
+    ],
+)
+
+# Place (header-only, compiled by architecture targets)
+cc_library(
+    name = "nextpnr_place",
+    hdrs = [
+        "common/place/detail_place_cfg.h",
+        "common/place/detail_place_core.h",
+        "common/place/fast_bels.h",
+        "common/place/parallel_refine.h",
+        "common/place/place_common.h",
+        "common/place/placer1.h",
+        "common/place/placer_heap.h",
+        "common/place/placer_static.h",
+        "common/place/static_util.h",
+        "common/place/timing_opt.h",
+    ],
+    includes = ["common/place"],
+    textual_hdrs = [
+        "common/place/detail_place_core.cc",
+        "common/place/parallel_refine.cc",
+        "common/place/place_common.cc",
+        "common/place/placer1.cc",
+        "common/place/placer_heap.cc",
+        "common/place/placer_static.cc",
+        "common/place/timing_opt.cc",
+    ],
+)
+
+# Kernel headers (to avoid circular dependencies)
+cc_library(
+    name = "nextpnr_kernel_headers",
+    hdrs = [
+        "common/kernel/arch_api.h",
+        "common/kernel/arch_pybindings_shared.h",
+        "common/kernel/array2d.h",
+        "common/kernel/base_arch.h",
+        "common/kernel/base_clusterinfo.h",
+        "common/kernel/basectx.h",
+        "common/kernel/bits.h",
+        "common/kernel/chain_utils.h",
+        "common/kernel/command.h",
+        "common/kernel/constraints.h",
+        "common/kernel/constraints.impl.h",
+        "common/kernel/context.h",
+        "common/kernel/design_utils.h",
+        "common/kernel/deterministic_rng.h",
+        "common/kernel/dynamic_bitarray.h",
+        "common/kernel/embed.h",
+        "common/kernel/exclusive_state_groups.h",
+        "common/kernel/exclusive_state_groups.impl.h",
+        "common/kernel/hashlib.h",
+        "common/kernel/idstring.h",
+        "common/kernel/idstringlist.h",
+        "common/kernel/indexed_store.h",
+        "common/kernel/log.h",
+        "common/kernel/nextpnr.h",
+        "common/kernel/nextpnr_assertions.h",
+        "common/kernel/nextpnr_base_types.h",
+        "common/kernel/nextpnr_namespaces.h",
+        "common/kernel/nextpnr_types.h",
+        "common/kernel/property.h",
+        "common/kernel/pybindings.h",
+        "common/kernel/pycontainers.h",
+        "common/kernel/pywrappers.h",
+        "common/kernel/relptr.h",
+        "common/kernel/scope_lock.h",
+        "common/kernel/sso_array.h",
+        "common/kernel/str_ring_buffer.h",
+        "common/kernel/timing.h",
+        "common/kernel/util.h",
+    ],
+    includes = ["common/kernel"],
+    deps = [
+        ":pybind11",
+        "@boost.filesystem//:boost.filesystem",
+        "@boost.iostreams//:boost.iostreams",
+        "@boost.program_options//:boost.program_options",
+        "@boost.system//:boost.system",
+        "@boost.thread//:boost.thread",
+        "@eigen",
+        "@rules_python//python/cc:current_py_cc_headers",
+    ],
+)
+
+# Kernel (core - header-only, compiled by architecture targets)
+cc_library(
+    name = "nextpnr_kernel",
+    textual_hdrs = [
+        "common/kernel/archcheck.cc",
+        "common/kernel/basectx.cc",
+        "common/kernel/bits.cc",
+        "common/kernel/command.cc",
+        "common/kernel/context.cc",
+        "common/kernel/design_utils.cc",
+        "common/kernel/embed.cc",
+        "common/kernel/handle_error.cc",
+        "common/kernel/idstring.cc",
+        "common/kernel/idstringlist.cc",
+        "common/kernel/log.cc",
+        "common/kernel/nextpnr.cc",
+        "common/kernel/nextpnr_assertions.cc",
+        "common/kernel/nextpnr_namespaces.cc",
+        "common/kernel/nextpnr_types.cc",
+        "common/kernel/property.cc",
+        "common/kernel/pybindings.cc",
+        "common/kernel/report.cc",
+        "common/kernel/sdc.cc",
+        "common/kernel/sdf.cc",
+        "common/kernel/str_ring_buffer.cc",
+        "common/kernel/svg.cc",
+        "common/kernel/timing.cc",
+        "common/kernel/timing_log.cc",
+    ],
+    deps = [
+        ":json11",
+        ":nextpnr_frontend",
+        ":nextpnr_json",
+        ":nextpnr_kernel_headers",
+        ":nextpnr_rust",
+        ":nextpnr_version",
+    ],
+)
+
+# Generic architecture - defs
+cc_library(
+    name = "nextpnr-generic-defs",
+    hdrs = [
+        "generic/arch.h",
+        "generic/archdefs.h",
+    ],
+    defines = [
+        "ARCHNAME=generic",
+        "ARCH_GENERIC",
+        "NEXTPNR_NAMESPACE=nextpnr_generic",
+        "NO_GUI",
+    ],
+    includes = [
+        "common/kernel",
+        "generic",
+    ],
+)
+
+# Generic architecture - core
+cc_library(
+    name = "nextpnr-generic-core",
+    srcs = [
+        # Generic arch sources
+        "generic/arch.cc",
+        "generic/arch_pybindings.cc",
+        "generic/cells.cc",
+        "generic/chipdb.cc",
+        "generic/pack.cc",
+        "generic/viaduct/example/example.cc",
+        "generic/viaduct/fabulous/fabulous.cc",
+        "generic/viaduct/fabulous/fasm.cc",
+        "generic/viaduct/fabulous/pack.cc",
+        "generic/viaduct/fabulous/validity_check.cc",
+        "generic/viaduct_api.cc",
+        "generic/viaduct_helpers.cc",
+        # Common kernel sources
+        "common/kernel/archcheck.cc",
+        "common/kernel/basectx.cc",
+        "common/kernel/bits.cc",
+        "common/kernel/command.cc",
+        "common/kernel/context.cc",
+        "common/kernel/design_utils.cc",
+        "common/kernel/embed.cc",
+        "common/kernel/handle_error.cc",
+        "common/kernel/idstring.cc",
+        "common/kernel/idstringlist.cc",
+        "common/kernel/log.cc",
+        "common/kernel/nextpnr.cc",
+        "common/kernel/nextpnr_assertions.cc",
+        "common/kernel/nextpnr_namespaces.cc",
+        "common/kernel/nextpnr_types.cc",
+        "common/kernel/property.cc",
+        "common/kernel/pybindings.cc",
+        "common/kernel/report.cc",
+        "common/kernel/sdc.cc",
+        "common/kernel/sdf.cc",
+        "common/kernel/str_ring_buffer.cc",
+        "common/kernel/svg.cc",
+        "common/kernel/timing.cc",
+        "common/kernel/timing_log.cc",
+        # Common place sources
+        "common/place/detail_place_core.cc",
+        "common/place/parallel_refine.cc",
+        "common/place/place_common.cc",
+        "common/place/placer1.cc",
+        "common/place/placer_heap.cc",
+        "common/place/placer_static.cc",
+        "common/place/timing_opt.cc",
+        # Common route sources
+        "common/route/router1.cc",
+        "common/route/router2.cc",
+        # Frontend sources
+        "frontend/json_frontend.cc",
+        # JSON sources
+        "json/jsonwrite.cc",
+        # FFT sources
+        "3rdparty/oourafft/fftsg.cc",
+        "3rdparty/oourafft/fftsg2d.cc",
+    ],
+    hdrs = [
+        "generic/arch_pybindings.h",
+        "generic/cells.h",
+        "generic/viaduct/example/constids.inc",
+        "generic/viaduct/fabulous/constids.inc",
+        "generic/viaduct/fabulous/fab_cfg.h",
+        "generic/viaduct/fabulous/fab_defs.h",
+        "generic/viaduct/fabulous/fabric_parsing.h",
+        "generic/viaduct/fabulous/fasm.h",
+        "generic/viaduct/fabulous/pack.h",
+        "generic/viaduct/fabulous/validity_check.h",
+        "generic/viaduct_api.h",
+        "generic/viaduct_constids.h",
+        "generic/viaduct_helpers.h",
+    ],
+    deps = [
+        ":nextpnr-generic-defs",
+        ":nextpnr_frontend",
+        ":nextpnr_json",
+        ":nextpnr_kernel",
+        ":nextpnr_kernel_headers",
+        ":nextpnr_place",
+        ":nextpnr_route",
+        ":oourafft",
+        "@boost.filesystem//:boost.filesystem",
+        "@boost.iostreams//:boost.iostreams",
+        "@boost.program_options//:boost.program_options",
+        "@boost.system//:boost.system",
+        "@boost.thread//:boost.thread",
+        "@eigen",
+        "@rules_python//python/cc:current_py_cc_libs",
+    ],
+)
+
+# Generic architecture - binary
+cc_binary(
+    name = "nextpnr-generic",
+    srcs = ["generic/main.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":nextpnr-generic-core",
+    ],
+)
+
+################################################################################
+# ECP5 Architecture
+################################################################################
+
+# ECP5 architecture - defs
+cc_library(
+    name = "nextpnr-ecp5-defs",
+    hdrs = [
+        "ecp5/arch.h",
+        "ecp5/archdefs.h",
+    ],
+    defines = [
+        "ARCHNAME=ecp5",
+        "ARCH_ECP5",
+        "NEXTPNR_NAMESPACE=nextpnr_ecp5",
+        "NO_GUI",
+    ],
+    includes = [
+        "common/kernel",
+        "ecp5",
+    ],
+)
+
+# ECP5 architecture - core
+cc_library(
+    name = "nextpnr-ecp5-core",
+    srcs = [
+        # ECP5 arch sources
+        "ecp5/arch.cc",
+        "ecp5/arch_place.cc",
+        "ecp5/arch_pybindings.cc",
+        "ecp5/baseconfigs.cc",
+        "ecp5/bitstream.cc",
+        "ecp5/cells.cc",
+        "ecp5/config.cc",
+        "ecp5/gfx.cc",
+        "ecp5/globals.cc",
+        "ecp5/lpf.cc",
+        "ecp5/pack.cc",
+        "ecp5/pio.cc",
+        # Common kernel sources
+        "common/kernel/archcheck.cc",
+        "common/kernel/basectx.cc",
+        "common/kernel/bits.cc",
+        "common/kernel/command.cc",
+        "common/kernel/context.cc",
+        "common/kernel/design_utils.cc",
+        "common/kernel/embed.cc",
+        "common/kernel/handle_error.cc",
+        "common/kernel/idstring.cc",
+        "common/kernel/idstringlist.cc",
+        "common/kernel/log.cc",
+        "common/kernel/nextpnr.cc",
+        "common/kernel/nextpnr_assertions.cc",
+        "common/kernel/nextpnr_namespaces.cc",
+        "common/kernel/nextpnr_types.cc",
+        "common/kernel/property.cc",
+        "common/kernel/pybindings.cc",
+        "common/kernel/report.cc",
+        "common/kernel/sdc.cc",
+        "common/kernel/sdf.cc",
+        "common/kernel/str_ring_buffer.cc",
+        "common/kernel/svg.cc",
+        "common/kernel/timing.cc",
+        "common/kernel/timing_log.cc",
+        # Common place sources
+        "common/place/detail_place_core.cc",
+        "common/place/parallel_refine.cc",
+        "common/place/place_common.cc",
+        "common/place/placer1.cc",
+        "common/place/placer_heap.cc",
+        "common/place/placer_static.cc",
+        "common/place/timing_opt.cc",
+        # Common route sources
+        "common/route/router1.cc",
+        "common/route/router2.cc",
+        # Frontend sources
+        "frontend/json_frontend.cc",
+        # JSON sources
+        "json/jsonwrite.cc",
+        # FFT sources
+        "3rdparty/oourafft/fftsg.cc",
+        "3rdparty/oourafft/fftsg2d.cc",
+    ],
+    hdrs = [
+        "ecp5/arch_pybindings.h",
+        "ecp5/bitstream.h",
+        "ecp5/cells.h",
+        "ecp5/config.h",
+        "ecp5/constids.inc",
+        "ecp5/dcu_bitstream.h",
+        "ecp5/gfx.h",
+        "ecp5/globals.h",
+        "ecp5/iotypes.inc",
+        "ecp5/pio.h",
+    ],
+    deps = [
+        ":nextpnr-ecp5-defs",
+        ":nextpnr_frontend",
+        ":nextpnr_json",
+        ":nextpnr_kernel",
+        ":nextpnr_kernel_headers",
+        ":nextpnr_place",
+        ":nextpnr_route",
+        ":oourafft",
+        "@boost.filesystem//:boost.filesystem",
+        "@boost.iostreams//:boost.iostreams",
+        "@boost.program_options//:boost.program_options",
+        "@boost.system//:boost.system",
+        "@boost.thread//:boost.thread",
+        "@eigen",
+        "@prjtrellis//:trellis",
+        "@rules_python//python/cc:current_py_cc_libs",
+    ],
+)
+
+# ECP5 architecture - binary
+cc_binary(
+    name = "nextpnr-ecp5",
+    srcs = ["ecp5/main.cc"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":nextpnr-ecp5-core",
+    ],
+)
+
+# Aliases
+
+alias(
+    name = "nextpnr",
+    actual = "nextpnr-generic",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "generic",
+    actual = "nextpnr-generic",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "ecp5",
+    actual = "nextpnr-ecp5",
+    visibility = ["//visibility:public"],
+)

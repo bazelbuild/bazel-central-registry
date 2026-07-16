@@ -1,0 +1,61 @@
+module(
+    name = "rules_java",
+    version = "5.5.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "platforms", version = "0.0.4")
+bazel_dep(name = "rules_cc", version = "0.0.2")
+bazel_dep(name = "bazel_skylib", version = "1.2.0")
+
+# rules_proto is required by @remote_java_tools, which is loaded via module extension.
+bazel_dep(name = "rules_proto", version = "4.0.0")
+
+register_toolchains("//toolchains:all")
+
+toolchains = use_extension("//java:extensions.bzl", "toolchains")
+
+# Declare remote java tools repos
+use_repo(toolchains, "remote_java_tools")
+use_repo(toolchains, "remote_java_tools_linux")
+use_repo(toolchains, "remote_java_tools_windows")
+use_repo(toolchains, "remote_java_tools_darwin_x86_64")
+use_repo(toolchains, "remote_java_tools_darwin_arm64")
+
+# Declare local jdk repo
+use_repo(toolchains, "local_jdk")
+
+register_toolchains("@local_jdk//:runtime_toolchain_definition")
+
+# Declare all remote jdk toolchain config repos
+JDK_VERSIONS = [
+    "11",
+    "17",
+    "19",
+]
+
+PLATFORMS = [
+    "linux",
+    "macos",
+    "macos_aarch64",
+    "win",
+]
+
+# Remote JDK repos for those Linux platforms are only defined for JDK 11.
+EXTRA_REMOTE_JDK11_REPOS = [
+    "remotejdk11_linux_aarch64",
+    "remotejdk11_linux_ppc64le",
+    "remotejdk11_linux_s390x",
+]
+
+REMOTE_JDK_REPOS = [("remotejdk" + version + "_" + platform) for version in JDK_VERSIONS for platform in PLATFORMS] + EXTRA_REMOTE_JDK11_REPOS
+
+[use_repo(
+    toolchains,
+    repo + "_toolchain_config_repo",
+) for repo in REMOTE_JDK_REPOS]
+
+[register_toolchains("@" + name + "_toolchain_config_repo//:toolchain") for name in REMOTE_JDK_REPOS]
+
+# Dev dependencies
+bazel_dep(name = "rules_pkg", version = "0.5.1", dev_dependency = True)

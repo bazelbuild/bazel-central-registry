@@ -1,0 +1,417 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..2d4c29b
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,41 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
++cc_library(
++    name = "ujson4c",
++    srcs = ["src/ujdecode.c"],
++    hdrs = ["src/ujdecode.h"],
++    includes = ["src"],
++    visibility = ["//visibility:public"],
++    deps = [":ultrajson"],
++)
++
++cc_library(
++    name = "ultrajson",
++    srcs = ["3rdparty/ultrajsondec.c"],
++    hdrs = ["3rdparty/ultrajson.h"],
++    includes = ["3rdparty"],
++    visibility = ["//visibility:private"],
++)
++
++cc_test(
++    name = "tests",
++    size = "small",
++    srcs = ["tests/tests_LF.c"],
++    visibility = ["//visibility:public"],
++    deps = [":ujson4c"],
++)
++
++# Use `bazel test benchmark --test_output=all`
++cc_test(
++    name = "benchmark",
++    size = "small",
++    srcs = ["tests/benchmark_LF.c"],
++    copts = ["-D__BENCHMARK__"],
++    data = ["tests/sample.json"],
++    defines = [
++        "MAX_ITERATIONS=10",
++        'SAMPLE_JSON_PATH=\\"tests/sample.json\\"',
++    ],
++    visibility = ["//visibility:public"],
++    deps = [":ujson4c"],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..0319fe8
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,13 @@
++"""
++Module: ujson4c
++Purpose: Provides the ujson4c library compileable as a Bazel target. Includes tests through Bazel
++"""
++
++module(
++    name = "ujson4c",
++    version = "0.0.0-20140408072550-e14f3fd5207f",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "rules_cc", version = "0.1.1")
++bazel_dep(name = "platforms", version = "0.0.11")
+diff --git a/tests/benchmark_LF.c b/tests/benchmark_LF.c
+new file mode 100644
+index 0000000..f59a2fe
+--- /dev/null
++++ b/tests/benchmark_LF.c
+@@ -0,0 +1,235 @@
++/*
++ujson4c decoder helper 1.0
++Developed by ESN, an Electronic Arts Inc. studio. 
++Copyright (c) 2013, Electronic Arts Inc.
++All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are met:
++* Redistributions of source code must retain the above copyright
++notice, this list of conditions and the following disclaimer.
++* Redistributions in binary form must reproduce the above copyright
++notice, this list of conditions and the following disclaimer in the
++documentation and/or other materials provided with the distribution.
++* Neither the name of ESN, Electronic Arts Inc. nor the
++names of its contributors may be used to endorse or promote products
++derived from this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
++ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
++WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++DISCLAIMED. IN NO EVENT SHALL ELECTRONIC ARTS INC. BE LIABLE 
++FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
++ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++Uses UltraJSON library:
++Copyright (c) 2013, Electronic Arts Inc.
++All rights reserved.
++www.github.com/esnme/ultrajson
++*/
++
++#include <stdio.h>
++#include "ujdecode.h"
++#include <stdlib.h>
++#include <stdio.h>
++#include <time.h>
++#include <string.h>
++
++void prefixLine(int level)
++{
++	int index;
++	for (index = 0; index < level; index ++)
++	{
++		fputc(' ', stdout);
++		fputc(' ', stdout);
++	}
++}
++
++
++void dumpObject(int level, void *state, UJObject obj)
++{
++	switch (UJGetType(obj))
++	{
++	case UJT_Null:
++		{
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fprintf (stdout, "NULL\n");
++#endif
++			break;
++		}
++	case UJT_True:
++		{
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fprintf (stdout, "True\n");
++#endif
++			break;
++		}
++	case UJT_False:
++		{
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fprintf (stdout, "False\n");
++#endif
++			break;
++		}
++	case UJT_Long:
++		{
++			long value = (long) UJNumericLongLong(obj);
++
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fprintf (stdout, "%ld\n", value);
++#endif
++			break;
++		}
++	case UJT_LongLong:
++		{
++			long long value = UJNumericLongLong(obj);
++
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fprintf (stdout, "%lld\n", value);
++#endif
++			break;
++		}
++	case UJT_Double:
++		{
++			double value = UJNumericFloat(obj);
++
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fprintf (stdout, "%f\n", value);
++#endif
++			break;
++		}
++	case UJT_String:
++		{
++			size_t len;
++			const wchar_t *value;
++			value = UJReadString(obj, &len);
++
++#ifdef VERBOSE_DUMP
++			fwprintf (stdout, L"%s\n", value);
++#endif
++			break;
++		}
++	case UJT_Array:
++		{
++			void *iter = NULL;
++			UJObject objiter = NULL;
++
++#ifdef VERBOSE_DUMP
++			fputc('[', stdout);
++#endif
++
++			iter = UJBeginArray(obj);
++
++			while(UJIterArray(&iter, &objiter))
++			{
++				dumpObject(level + 1, state, objiter);
++			}
++
++#ifdef VERBOSE_DUMP
++			fputc(']', stdout);
++#endif
++
++			break;
++		}
++	case UJT_Object:
++		{
++			void *iter = NULL;
++			UJObject objiter = NULL;
++			UJString key;
++
++#ifdef VERBOSE_DUMP
++			prefixLine(level);
++			fputc('{', stdout);
++#endif
++
++			iter = UJBeginObject(obj);
++
++			while(UJIterObject(&iter, &key, &objiter))
++			{
++#ifdef VERBOSE_DUMP
++				fwprintf (stdout, L"%s: ", key.ptr);
++#endif
++				dumpObject(level + 1, state, objiter);
++			}
++
++#ifdef VERBOSE_DUMP
++			fputc('}', stdout);
++#endif
++			break;
++		}
++	}
++
++}
++
++#ifdef __BENCHMARK__
++int main ()
++{
++	const char *input;
++	size_t cbInput;
++	void *state;
++	FILE *file;
++	char buffer[32768];
++	time_t tsNow;
++	int count;
++	size_t bytesDecoded;
++
++	UJHeapFuncs hf;
++	hf.cbInitialHeap = sizeof(buffer);
++	hf.initalHeap = buffer;
++	hf.free = free;
++	hf.malloc = malloc;
++	hf.realloc = realloc;
++
++#ifndef SAMPLE_JSON_PATH
++#define SAMPLE_JSON_PATH "./sample.json"
++#endif
++
++	file = fopen(SAMPLE_JSON_PATH, "rb");
++	input = (char *) malloc(1024 * 1024);
++	cbInput = fread ( (void *) input, 1, 1024 * 1024, file);
++	fclose(file);
++	
++	tsNow = time(0);
++	count = 0;
++	bytesDecoded = 0;
++
++	for (;;)
++	{
++		UJObject obj;
++
++		obj = UJDecode(input, cbInput, &hf, &state);
++		dumpObject(0, state, obj);
++
++		UJFree(state);
++
++		count ++;
++		bytesDecoded += cbInput;
++
++		if (tsNow != time(0))
++		{
++			float bps = (float) bytesDecoded;
++			fprintf (stderr, "Count %d, MBps: %f\n", count, bps / 1000000.0f);
++			
++			count = 0;
++			bytesDecoded = 0;
++			tsNow = time(0);
++
++#ifdef MAX_ITERATIONS
++			static int i = 1;
++			if (i++ >= MAX_ITERATIONS)
++				break;
++#endif
++		}
++	}
++}
++#endif
+\ No newline at end of file
+diff --git a/tests/tests_LF.c b/tests/tests_LF.c
+new file mode 100644
+index 0000000..300da5c
+--- /dev/null
++++ b/tests/tests_LF.c
+@@ -0,0 +1,102 @@
++/*
++ujson4c decoder helper 1.0
++Developed by ESN, an Electronic Arts Inc. studio. 
++Copyright (c) 2013, Electronic Arts Inc.
++All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are met:
++* Redistributions of source code must retain the above copyright
++notice, this list of conditions and the following disclaimer.
++* Redistributions in binary form must reproduce the above copyright
++notice, this list of conditions and the following disclaimer in the
++documentation and/or other materials provided with the distribution.
++* Neither the name of ESN, Electronic Arts Inc. nor the
++names of its contributors may be used to endorse or promote products
++derived from this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
++ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
++WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++DISCLAIMED. IN NO EVENT SHALL ELECTRONIC ARTS INC. BE LIABLE 
++FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
++ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++Uses UltraJSON library:
++Copyright (c) 2013, Electronic Arts Inc.
++All rights reserved.
++www.github.com/esnme/ultrajson
++*/
++
++#include "ujdecode.h"
++#include <stdlib.h>
++#include <assert.h>
++#include <limits.h>
++
++void test_unpackKeys()
++{
++	UJObject obj;
++	void *state;
++	char buffer[32768];
++	const char input[] = "{\"name\": \"John Doe\", \"age\": 31, \"number\": 1337.37, \"address\": { \"city\": \"Uppsala\", \"population\": 9223372036854775807 } }";
++	size_t cbInput = sizeof(input) - 1;
++
++	const wchar_t *personKeys[] = { L"name", L"age", L"number", L"address"};
++	UJObject oName, oAge, oNumber, oAddress;
++
++	UJHeapFuncs hf;
++	hf.cbInitialHeap = sizeof(buffer);
++	hf.initalHeap = buffer;
++	hf.free = free;
++	hf.malloc = malloc;
++	hf.realloc = realloc;
++
++	obj = UJDecode(input, cbInput, NULL, &state);
++
++	if (UJObjectUnpack(obj, 4, "SNNO", personKeys, &oName, &oAge, &oNumber, &oAddress) == 4)
++	{
++		const wchar_t *addressKeys[] = { L"city", L"population" };
++		UJObject oCity, oPopulation;
++
++		const wchar_t *name = UJReadString(oName, NULL);
++		int age = UJNumericInt(oAge);
++		double number = UJNumericFloat(oNumber);
++
++		assert(wcscmp(name, L"John Doe") == 0);
++		assert(age == 31);
++		assert(number == 1337.37);
++
++		if (UJObjectUnpack(oAddress, 2, "SN", addressKeys, &oCity, &oPopulation) == 2)
++		{
++			const wchar_t *city;
++			long long population;
++			city = UJReadString(oCity, NULL);
++			assert(wcscmp(city, L"Uppsala") == 0);
++			population = UJNumericLongLong(oPopulation);
++			assert(population == LLONG_MAX);
++		}
++		else
++		{
++			assert(0);
++		}
++	}
++	else
++	{
++		assert(0);
++	}
++
++
++	UJFree(state);
++}
++
++#ifndef __BENCHMARK__
++int main ()
++{
++	test_unpackKeys();
++	return 0;
++}
++#endif
+\ No newline at end of file

@@ -1,0 +1,58 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_java//java:java_library.bzl", "java_library")
+load(":build.bzl", "gen_java_parser", "javaparser_library")
+
+gen_java_parser(
+    name = "javacc_java_jj",
+    src = "src/main/javacc/java.jj",
+    outs = [
+        "GeneratedJavaParser.java",
+        "GeneratedJavaParserConstants.java",
+        "GeneratedJavaParserTokenManager.java",
+        "ParseException.java",
+        "Provider.java",
+        "SimpleCharStream.java",
+        "StreamProvider.java",
+        "StringProvider.java",
+        "Token.java",
+        "TokenMgrException.java",
+    ],
+    out_dir = "src/main/java/com/github/javaparser",
+)
+
+# https://github.com/javaparser/javaparser/issues/4022
+javaparser_library(
+    name = "javaparser-core",
+    actual = ":javaparser-core_impl",
+    skip_jdk_version_check = select({
+        ":skip_jdk_version_check__true": True,
+        "//conditions:default": False,
+    }),
+    visibility = ["//visibility:public"],
+)
+
+java_library(
+    name = "javaparser-core_impl",
+    srcs = [":javacc_java_jj"] + glob([
+        "src/main/java/**/*.java",
+        "src/main/javacc-support/**/*.java",
+    ]),
+    javacopts = [
+        "-XepAllErrorsAsWarnings",
+        "-Xep:DoubleBraceInitialization:OFF",
+        "-Xlint:-dep-ann",
+    ],
+)
+
+bool_flag(
+    name = "skip_jdk_version_check",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "skip_jdk_version_check__true",
+    flag_values = {
+        ":skip_jdk_version_check": "true",
+    },
+)

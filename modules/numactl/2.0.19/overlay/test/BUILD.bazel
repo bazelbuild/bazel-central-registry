@@ -1,0 +1,100 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Common configuration for all tests
+COMMON_COPTS = ["-Wall"]
+
+# Linux-only constraint - all numactl tests require Linux
+LINUX_ONLY = select({
+    "@platforms//os:linux": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# Test programs from Makefile.am
+# All tests are Linux-specific
+# Tests that work without NUMA hardware
+TEST_CASES = {
+    "ftok": ["ftok.c"],
+    "mynode": ["mynode.c"],
+    "pagesize": ["pagesize.c"],
+}
+
+# Tests that require NUMA hardware/kernel support (tagged as manual)
+MANUAL_TEST_CASES = {
+    "distance": ["distance.c"],
+    "mbind_mig_pages": ["mbind_mig_pages.c"],
+    "migrate_pages": ["migrate_pages.c"],
+    "move_pages": ["move_pages.c"],
+    "nodemap": ["nodemap.c"],
+    "realloc_test": ["realloc_test.c"],
+    "tshared": ["tshared.c"],
+}
+
+# Generate basic tests
+[cc_test(
+    name = name,
+    srcs = srcs,
+    copts = COMMON_COPTS,
+    linkstatic = True,
+    target_compatible_with = LINUX_ONLY,
+    deps = ["@numactl//:numa"],
+) for name, srcs in TEST_CASES.items()]
+
+# Generate manual tests (require NUMA hardware)
+[cc_test(
+    name = name,
+    srcs = srcs,
+    copts = COMMON_COPTS,
+    linkstatic = True,
+    tags = ["manual"],
+    target_compatible_with = LINUX_ONLY,
+    deps = ["@numactl//:numa"],
+) for name, srcs in MANUAL_TEST_CASES.items()]
+
+# Tests that also need util library
+cc_test(
+    name = "node-parse",
+    srcs = ["node-parse.c"],
+    copts = COMMON_COPTS,
+    linkstatic = True,
+    target_compatible_with = LINUX_ONLY,
+    deps = [
+        "@numactl//:numa",
+        "@numactl//:util",
+    ],
+)
+
+cc_test(
+    name = "prefered",
+    srcs = ["prefered.c"],
+    copts = COMMON_COPTS,
+    linkstatic = True,
+    tags = ["manual"],  # Requires NUMA hardware
+    target_compatible_with = LINUX_ONLY,
+    deps = [
+        "@numactl//:numa",
+        "@numactl//:util",
+    ],
+)
+
+cc_test(
+    name = "tbitmap",
+    srcs = ["tbitmap.c"],
+    copts = COMMON_COPTS,
+    linkstatic = True,
+    target_compatible_with = LINUX_ONLY,
+    deps = [
+        "@numactl//:numa",
+        "@numactl//:util",
+    ],
+)
+
+# Test that is known to be broken (per Makefile.am comment)
+cc_test(
+    name = "randmap",
+    srcs = ["randmap.c"],
+    copts = COMMON_COPTS,
+    linkstatic = True,
+    tags = ["manual"],
+    target_compatible_with = LINUX_ONLY,
+    deps = ["@numactl//:numa"],
+)

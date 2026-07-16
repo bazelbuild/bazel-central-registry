@@ -1,0 +1,112 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Rename .asm to .S so that it will be handled with the C preprocessor.
+[copy_file(
+    name = "rename_%s" % name,
+    src = "src/asm/%s_x86_64_ms_pe_masm.asm" % name,
+    out = "src/asm/%s_x86_64_ms_pe_masm.S" % name,
+) for name in [
+    "make",
+    "jump",
+    "ontop",
+]]
+
+filegroup(
+    name = "elf_asm",
+    srcs = select({
+        "@platforms//cpu:aarch64": [
+            "src/asm/jump_arm64_aapcs_elf_gas.S",
+            "src/asm/make_arm64_aapcs_elf_gas.S",
+            "src/asm/ontop_arm64_aapcs_elf_gas.S",
+        ],
+        "@platforms//cpu:arm": [
+            "src/asm/jump_arm_aapcs_elf_gas.S",
+            "src/asm/make_arm_aapcs_elf_gas.S",
+            "src/asm/ontop_arm_aapcs_elf_gas.S",
+        ],
+        "@platforms//cpu:x86_64": [
+            "src/asm/jump_x86_64_sysv_elf_gas.S",
+            "src/asm/make_x86_64_sysv_elf_gas.S",
+            "src/asm/ontop_x86_64_sysv_elf_gas.S",
+        ],
+    }),
+)
+
+filegroup(
+    name = "apple_asm",
+    srcs = select({
+        "@platforms//cpu:aarch64": [
+            "src/asm/jump_arm64_aapcs_macho_gas.S",
+            "src/asm/make_arm64_aapcs_macho_gas.S",
+            "src/asm/ontop_arm64_aapcs_macho_gas.S",
+        ],
+        "@platforms//cpu:arm": [
+            "src/asm/jump_arm_aapcs_macho_gas.S",
+            "src/asm/make_arm_aapcs_macho_gas.S",
+            "src/asm/ontop_arm_aapcs_macho_gas.S",
+        ],
+        "@platforms//cpu:x86_64": [
+            "src/asm/jump_x86_64_sysv_macho_gas.S",
+            "src/asm/make_x86_64_sysv_macho_gas.S",
+            "src/asm/ontop_x86_64_sysv_macho_gas.S",
+        ],
+    }),
+)
+
+cc_library(
+    name = "boost.context",
+    srcs = select({
+        "@platforms//os:windows": [
+            "src/asm/jump_x86_64_ms_pe_masm.S",
+            "src/asm/make_x86_64_ms_pe_masm.S",
+            "src/asm/ontop_x86_64_ms_pe_masm.S",
+            "src/windows/stack_traits.cpp",
+        ],
+        "@platforms//os:macos": [
+            "src/posix/stack_traits.cpp",
+            ":apple_asm",
+        ],
+        "//conditions:default": [
+            "src/posix/stack_traits.cpp",
+            ":elf_asm",
+        ],
+    }),
+    hdrs = glob(
+        [
+            "include/**/*.hpp",
+        ],
+        exclude = [
+            "include/boost/context/continuation_winfib.hpp",
+            "include/boost/context/fiber_winfib.hpp",
+            "include/boost/context/posix/segmented_stack.hpp",
+            "include/boost/context/preallocated.hpp",
+            "include/boost/context/windows/protected_fixedsize_stack.hpp",
+        ],
+    ),
+    features = [
+        "parse_headers",
+    ],
+    includes = ["include"],
+    local_defines = select({
+        "@platforms//os:windows": ["BOOST_CONTEXT_EXPORT="],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "include/boost/context/continuation_winfib.hpp",
+        "include/boost/context/fiber_winfib.hpp",
+        "include/boost/context/posix/segmented_stack.hpp",
+        "include/boost/context/preallocated.hpp",
+        "include/boost/context/windows/protected_fixedsize_stack.hpp",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.assert",
+        "@boost.config",
+        "@boost.core",
+        "@boost.mp11",
+        "@boost.pool",
+        "@boost.predef",
+        "@boost.smart_ptr",
+    ],
+)

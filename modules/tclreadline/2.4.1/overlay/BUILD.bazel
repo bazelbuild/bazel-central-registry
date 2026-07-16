@@ -1,0 +1,147 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+# Version parameterization - derive version from MODULE.bazel using module_version().
+# Strip any BCR suffix (e.g., "2.4.1.bcr.1" becomes "2.4.1") to get the upstream version.
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+MAJOR = UPSTREAM_VERSION.split(".")[0]
+MINOR = UPSTREAM_VERSION.split(".")[1]
+PATCHLEVEL = UPSTREAM_VERSION.split(".")[2]
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+# Machine-readable license specification.
+license(
+    name = "license",
+    package_name = "tclreadline",
+    license_kind = "@rules_license//licenses/spdx:BSD-3-Clause",
+    license_text = "COPYING",
+)
+
+licenses(["notice"])  # BSD 3-Clause
+
+# Generate tclreadline.h from tclreadline.h.in
+# Note: @TCLRL_DIR@ uses a runtime-determined path via Tcl's package system
+# instead of hardcoded system paths for hermetic builds.
+expand_template(
+    name = "generate_tclreadline_h",
+    out = "tclreadline.h",
+    substitutions = {
+        "@TCLRL_DIR@": "$::tclreadline::library",
+        "@VERSION@": UPSTREAM_VERSION,
+        "@PATCHLEVEL_STR@": UPSTREAM_VERSION,
+        "@MAJOR@": MAJOR,
+        "@MINOR@": MINOR,
+        "@PATCHLEVEL@": PATCHLEVEL,
+    },
+    template = "tclreadline.h.in",
+)
+
+# Generate config.h from config.h.in
+expand_template(
+    name = "generate_config_h",
+    out = "config.h",
+    substitutions = {
+        "#undef HAVE_TCL_H": "#define HAVE_TCL_H 1",
+        "#undef HAVE_READLINE_READLINE_H": "#define HAVE_READLINE_READLINE_H 1",
+        "#undef HAVE_READLINE_HISTORY_H": "#define HAVE_READLINE_HISTORY_H 1",
+        "#undef EXECUTING_MACRO_HACK": "#define EXECUTING_MACRO_HACK 1",
+        "#undef HAVE_RL_COMPLETION_MATCHES": "#define HAVE_RL_COMPLETION_MATCHES 1",
+        "#undef HAVE_RL_DING": "#define HAVE_RL_DING 1",
+    },
+    template = "config.h.in",
+)
+
+# Generate tclreadlineInit.tcl from tclreadlineInit.tcl.in
+# Note: @TCLRL_LIBDIR@ uses runtime-determined path for hermetic builds.
+expand_template(
+    name = "generate_tclreadlineInit_tcl",
+    out = "tclreadlineInit.tcl",
+    substitutions = {
+        "@VERSION@": UPSTREAM_VERSION,
+        "@TCLRL_LIBDIR@": "$::tclreadline::library",
+        "[file join [file dirname [info script]] tclreadlineSetup.tcl]": "$::tclreadline::setup_path",
+        "[file join [file dirname [info script]] tclreadlineCompleter.tcl]": "$::tclreadline::completer_path",
+    },
+    template = "tclreadlineInit.tcl.in",
+)
+
+# Generate tclreadlineSetup.tcl from tclreadlineSetup.tcl.in
+expand_template(
+    name = "generate_tclreadlineSetup_tcl",
+    out = "tclreadlineSetup.tcl",
+    substitutions = {
+        "@TCLRL_DIR@": "$::tclreadline::library",
+        "@VERSION@": UPSTREAM_VERSION,
+    },
+    template = "tclreadlineSetup.tcl.in",
+)
+
+# Patch tclreadline.c to avoid hardcoded library path lookups
+expand_template(
+    name = "patch_tclreadline_c",
+    out = "tclreadline_patched.c",
+    substitutions = {
+        "\"::tclreadline::library\"": "\"::tclreadline::library_dummy_ignored\"",
+        "\"tclreadline_library\"": "\"tclreadline_library_dummy_ignored\"",
+    },
+    template = "tclreadline.c",
+)
+
+# Generate tclIndex for tcl auto_index
+genrule(
+    name = "generate_tclIndex",
+    srcs = [
+        "tclreadlineInit.tcl",
+        "tclreadlineSetup.tcl",
+        "tclreadlineCompleter.tcl",
+    ],
+    outs = ["tclIndex"],
+    cmd = "echo 'set auto_index(::tclreadline::Completer) [list source [file join $$dir tclreadlineCompleter.tcl]]' > $@ && " +
+          "echo 'set auto_index(::tclreadline::Setup) [list source [file join $$dir tclreadlineSetup.tcl]]' >> $@ && " +
+          "echo 'set auto_index(::tclreadline::Init) [list source [file join $$dir tclreadlineInit.tcl]]' >> $@",
+)
+
+# Main tclreadline C library
+# Note: Compiler warning suppressions have been removed. Any warnings that appear
+# should be fixed in the source code (tclreadline.c) by adding proper headers,
+# fixing type conversions, or updating deprecated API usage.
+cc_library(
+    name = "tclreadline",
+    srcs = [
+        "config.h",
+        "tclreadline_patched.c",
+    ],
+    hdrs = [
+        "tclreadline.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@readline",
+        "@tcl_lang//:tcl",
+    ],
+)
+
+# Convenience library that defines ENABLE_READLINE
+cc_library(
+    name = "tclreadline_defs",
+    defines = [
+        "ENABLE_READLINE",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Runtime tcl scripts needed by tclreadline
+filegroup(
+    name = "tclreadline_scripts",
+    srcs = [
+        "tclIndex",
+        "tclreadlineCompleter.tcl",
+        "tclreadlineInit.tcl",
+        "tclreadlineSetup.tcl",
+    ],
+    visibility = ["//visibility:public"],
+)

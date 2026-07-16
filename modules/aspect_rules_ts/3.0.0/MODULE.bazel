@@ -1,0 +1,70 @@
+"aspect-build/rules_ts"
+
+module(
+    name = "aspect_rules_ts",
+    version = "3.0.0",
+    compatibility_level = 1,
+)
+
+# Lower-bounds (minimum) versions for direct runtime dependencies
+bazel_dep(name = "aspect_bazel_lib", version = "2.7.7")
+bazel_dep(name = "aspect_rules_js", version = "2.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.5.0")
+bazel_dep(name = "platforms", version = "0.0.5")
+
+# TODO(4.x): remove support for non-toolchainized protoc
+bazel_dep(name = "protobuf", version = "21.7", repo_name = "com_google_protobuf")
+
+# Similar to rules_python/MODULE.bazel, see https://github.com/bazelbuild/rules_python/pull/832
+# These are loaded only when using ts_proto_library
+bazel_dep(name = "rules_proto", version = "6.0.0")
+
+####### Dev dependencies ########
+
+bazel_dep(name = "aspect_rules_lint", version = "0.9.1", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.5.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "6.4.0", dev_dependency = True)
+bazel_dep(name = "gazelle", version = "0.36.0", dev_dependency = True, repo_name = "bazel_gazelle")
+bazel_dep(name = "rules_go", version = "0.46.0", dev_dependency = True, repo_name = "io_bazel_rules_go")
+bazel_dep(name = "rules_nodejs", version = "6.2.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.6.2", dev_dependency = True, repo_name = "io_bazel_stardoc")
+bazel_dep(name = "toolchains_protoc", version = "0.3.0", dev_dependency = True)
+
+# Should not be required, stardoc leaks a dependency
+bazel_dep(name = "rules_java", version = "7.6.1", dev_dependency = True)
+
+register_toolchains(
+    "//tools/toolchains:all",
+    dev_dependency = True,
+)
+
+# pick up fix: https://github.com/bazelbuild/stardoc/pull/221
+git_override(
+    module_name = "stardoc",
+    commit = "3baa5d1761970c6285d2ac9c3adccfaac42f54c5",
+    remote = "https://github.com/bazelbuild/stardoc.git",
+)
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm", dev_dependency = True)
+npm.npm_translate_lock(
+    name = "npm",
+    npmrc = "//:.npmrc",
+    pnpm_lock = "//examples:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "npm")
+
+# Allow us to do 'bazel run @pnpm -- --dir=$PWD install'
+pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm", dev_dependency = True)
+use_repo(pnpm, "pnpm")
+
+rules_ts_ext = use_extension("@aspect_rules_ts//ts:extensions.bzl", "ext", dev_dependency = True)
+rules_ts_ext.deps(ts_version_from = "//examples:package.json")
+use_repo(rules_ts_ext, "npm_typescript")
+
+go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk.download(version = "1.19.3")
+use_repo(
+    go_sdk,
+    go_sdk = "go_default_sdk",
+)

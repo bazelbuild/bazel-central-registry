@@ -1,0 +1,75 @@
+"aspect-build/rules_py"
+
+module(
+    name = "aspect_rules_py",
+    compatibility_level = 1,
+    version = "0.7.3",
+)
+
+# Lower-bound versions of direct dependencies.
+# When bumping, add a comment explaining what's required from the newer release.
+bazel_dep(name = "aspect_bazel_lib", version = "1.40.0")
+bazel_dep(name = "bazel_skylib", version = "1.4.2")
+bazel_dep(name = "rules_python", version = "0.29.0")
+bazel_dep(name = "platforms", version = "0.0.7")
+
+tools = use_extension("//py:extensions.bzl", "py_tools")
+tools.rules_py_tools()
+use_repo(tools, "rules_py_tools")
+
+register_toolchains(
+    "@rules_py_tools//:all",
+
+    # Register the "from source" toolchains last, so there's no accidental dependency on Rust
+    # For manual testing: comment these out to force use of pre-built binaries.
+    "@aspect_rules_py//py/private/toolchain/venv/...",
+    "@aspect_rules_py//py/private/toolchain/unpack/...",
+)
+
+# To allow Rust binaries in /py/tools to be built from source
+# NOTE: when publishing to BCR, we patch these to be dev_dependency, as we publish pre-built binaries
+# along with our releases.
+
+bazel_dep(
+    name = "rules_rust",
+    version = "0.38.0",
+    dev_dependency = True
+)
+
+rust = use_extension(
+    "@rules_rust//rust:extensions.bzl",
+    "rust",
+    dev_dependency = True
+)
+
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.74.1"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:all",
+    dev_dependency = True
+)
+
+crate = use_extension(
+    "@rules_rust//crate_universe:extension.bzl",
+    "crate",
+    dev_dependency = True
+)
+
+crate.from_cargo(
+    name = "crate_index",
+    cargo_lockfile = "//:Cargo.lock",
+    # Apparently not needed under bzlmod?
+    # lockfile = "//:Cargo.Bazel.lock",
+    manifests = [
+        "//:Cargo.toml",
+        "//py/tools/py:Cargo.toml",
+        "//py/tools/venv_bin:Cargo.toml",
+        "//py/tools/unpack_bin:Cargo.toml",
+    ],
+)
+
+use_repo(crate, "crate_index")

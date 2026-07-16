@@ -1,0 +1,97 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+DEFINES = select({
+    "@platforms//os:windows": [
+        "SC_BUILD",
+        "SC_INCLUDE_FX",
+        "_CRT_SECURE_NO_WARNINGS",
+    ],
+    "//conditions:default": [
+        "SC_BUILD",
+        "SC_INCLUDE_FX",
+    ],
+})
+
+PLATFORM_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/wd4996",
+    ],
+    "//conditions:default": [
+        "-Wno-deprecated",
+    ],
+})
+
+PLATFORM_CXXOPTS = PLATFORM_COPTS + select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/std:c++17",
+    ],
+    "//conditions:default": [
+        "-std=c++17",
+    ],
+})
+
+cc_library(
+    name = "systemc_qt_asm",
+    srcs = select({
+        "@platforms//cpu:aarch64": ["src/sysc/packages/qt/md/aarch64.s"],
+        "@platforms//cpu:x86_64": ["src/sysc/packages/qt/md/iX86_64.s"],
+        "//conditions:default": [],
+    }),
+    copts = select({
+        "@platforms//os:linux": [
+            "-x",
+            "assembler-with-cpp",  # Enable preprocessing for .s files on Linux
+        ],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# QuickThreads C implementation - only used on non-Windows platforms
+cc_library(
+    name = "systemc_qt",
+    srcs = [
+        "src/sysc/packages/qt/qt.c",
+    ],
+    hdrs = glob([
+        "src/sysc/packages/qt/**/*.h",
+    ]),
+    copts = PLATFORM_COPTS,
+    includes = [
+        "src",
+        "src/sysc/packages/qt/md",
+    ],
+    local_defines = DEFINES,
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":systemc_qt_asm"],
+)
+
+cc_library(
+    name = "systemc",
+    srcs = glob(
+        include = ["src/**/*.cpp"],
+        exclude = ["src/sysc/packages/qt/**"],
+    ),
+    hdrs = glob(
+        include = ["src/**/*.h"],
+        exclude = ["src/sysc/packages/qt/**"],
+    ) + [
+        "src/systemc",
+        "src/tlm",
+    ],
+    copts = PLATFORM_COPTS,
+    cxxopts = PLATFORM_CXXOPTS,
+    includes = ["src"],
+    local_defines = DEFINES,
+    visibility = ["//visibility:public"],
+    deps = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [":systemc_qt"],
+    }),
+)

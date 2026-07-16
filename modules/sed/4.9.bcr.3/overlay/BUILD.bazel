@@ -1,0 +1,393 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:native_binary.bzl", "native_binary")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":config_linux.bzl", LINUX_CONFIGURATION = "CONFIGURATION")
+load(":config_macos.bzl", MACOS_CONFIGURATION = "CONFIGURATION")
+
+VERSION = "4.9"
+
+COPTS = [
+    "-w",
+]
+
+copy_file(
+    name = "config_h",
+    src = select({
+        "@platforms//os:macos": "config_macos.h",
+        "//conditions:default": "config_linux.h",
+    }),
+    out = "config.h",
+)
+
+CONFIGURATION = select({
+    "@platforms//os:macos": MACOS_CONFIGURATION,
+    "//conditions:default": LINUX_CONFIGURATION,
+})
+
+HDR_TEMPLATES = {
+    "lib/alloca.h": "lib/alloca.in.h",
+    "lib/assert.h": "lib/assert.in.h",
+    "lib/ctype.h": "lib/ctype.in.h",
+    "lib/fcntl.h": "lib/fcntl.in.h",
+    "lib/inttypes.h": "lib/inttypes.in.h",
+    "lib/langinfo.h": "lib/langinfo.in.h",
+    "lib/limits.h": "lib/limits.in.h",
+    "lib/locale.h": "lib/locale.in.h",
+    "lib/malloc/dynarray-skeleton.gl.h": "lib/malloc/dynarray-skeleton.c",
+    "lib/malloc/dynarray.gl.h": "lib/malloc/dynarray.h",
+    "lib/malloc/scratch_buffer.gl.h": "lib/malloc/scratch_buffer.h",
+    "lib/selinux/context.h": "lib/se-context.in.h",
+    "lib/selinux/label.h": "lib/se-label.in.h",
+    "lib/selinux/selinux.h": "lib/se-selinux.in.h",
+    "lib/stdckdint.h": "lib/stdckdint.in.h",
+    "lib/stdint.h": "lib/stdint.in.h",
+    "lib/stdio.h": "lib/stdio.in.h",
+    "lib/stdlib.h": "lib/stdlib.in.h",
+    "lib/string.h": "lib/string.in.h",
+    "lib/sys/random.h": "lib/sys_random.in.h",
+    "lib/sys/stat.h": "lib/sys_stat.in.h",
+    "lib/sys/types.h": "lib/sys_types.in.h",
+    "lib/time.h": "lib/time.in.h",
+    "lib/unistd.h": "lib/unistd.in.h",
+    "lib/wchar.h": "lib/wchar.in.h",
+    "lib/wctype.h": "lib/wctype.in.h",
+}
+
+[
+    expand_template(
+        name = hdr[:-len(".h")] + "_h_pre_inline",
+        out = hdr + ".pre_inline",
+        substitutions = CONFIGURATION,
+        template = template,
+    )
+    for hdr, template in HDR_TEMPLATES.items()
+]
+
+copy_file(
+    name = "inline_sh_copy",
+    src = "inline.sh",
+    out = "inline_exe.sh",
+    is_executable = True,
+)
+
+copy_file(
+    name = "inline_bat_copy",
+    src = "inline.bat",
+    out = "inline_exe.bat",
+    is_executable = True,
+)
+
+native_binary(
+    name = "inline_sh",
+    src = "inline_exe.sh",
+    out = "inline_bin.sh",
+)
+
+native_binary(
+    name = "inline_bat",
+    src = "inline_exe.bat",
+    out = "inline_bin.bat",
+)
+
+expand_template(
+    name = "lib/verify_h",
+    out = "lib/static_assert.h",
+    substitutions = {
+        "_GL_VERIFY": "_GL_STATIC_ASSERT",
+        "_gl_verify": "_gl_static_assert",
+    },
+    template = "lib/verify.h",
+)
+
+[
+    run_binary(
+        name = hdr[:-len(".h")] + "_h_inline",
+        srcs = [
+            hdr + ".pre_inline",
+            "lib/_Noreturn.h",
+            "lib/arg-nonnull.h",
+            "lib/c++defs.h",
+            "lib/static_assert.h",
+            "lib/warn-on-use.h",
+        ],
+        outs = [hdr],
+        args = [
+            "$(execpath {})".format(hdr + ".pre_inline"),
+            "$(execpath {})".format(hdr),
+            "$(execpath lib/arg-nonnull.h)",
+            "definition of _GL_ARG_NONNULL",
+            "$(execpath lib/warn-on-use.h)",
+            "definition of _GL_WARN_ON_USE",
+            "$(execpath lib/_Noreturn.h)",
+            "definition of _Noreturn",
+            "$(execpath lib/c++defs.h)",
+            "definitions of _GL_FUNCDECL_RPL",
+            "$(execpath lib/static_assert.h)",
+            "definition of static_assert",
+        ],
+        tool = select({
+            "@platforms//os:windows": ":inline_bat",
+            "//conditions:default": ":inline_sh",
+        }),
+    )
+    for hdr in HDR_TEMPLATES.keys()
+]
+
+GENERATED_HDRS = [
+    "config.h",
+] + HDR_TEMPLATES.keys()
+
+SRCS = [
+    "lib/copy-acl.c",
+    "lib/set-acl.c",
+    "lib/acl-errno-valid.c",
+    "lib/acl-internal.c",
+    "lib/get-permissions.c",
+    "lib/set-permissions.c",
+    "lib/basename-lgpl.c",
+    "lib/binary-io.h",
+    "lib/binary-io.c",
+    "lib/btowc.c",
+    "lib/c-ctype.c",
+    "lib/c-strcasecmp.c",
+    "lib/c-strncasecmp.c",
+    "lib/canonicalize-lgpl.c",
+    "lib/cloexec.c",
+    "lib/close.c",
+    "lib/close-stream.c",
+    "lib/closeout.c",
+    "lib/dfa.c",
+    "lib/localeinfo.c",
+    "lib/dirname-lgpl.c",
+    "lib/stripslash.c",
+    "lib/dup2.c",
+    "lib/error.c",
+    "lib/exitfail.c",
+    "lib/fcntl.c",
+    "lib/fd-hook.c",
+    "lib/fpending.c",
+    "lib/free.c",
+    "lib/fstat.c",
+    "lib/getdelim.c",
+    "lib/getdtablesize.c",
+    "lib/getprogname.c",
+    "lib/getrandom.c",
+    "lib/malloc/dynarray_at_failure.c",
+    "lib/malloc/dynarray_emplace_enlarge.c",
+    "lib/malloc/dynarray_finalize.c",
+    "lib/malloc/dynarray_resize.c",
+    "lib/malloc/dynarray_resize_clear.c",
+    "lib/malloc/scratch_buffer_grow.c",
+    "lib/malloc/scratch_buffer_grow_preserve.c",
+    "lib/malloc/scratch_buffer_set_array_size.c",
+    "lib/hard-locale.c",
+    "lib/ialloc.c",
+    "lib/localcharset.c",
+    "lib/glthread/lock.c",
+    "lib/lstat.c",
+    "lib/malloca.c",
+    "lib/mbrlen.c",
+    "lib/mbrtowc.c",
+    "lib/mbsinit.c",
+    "lib/mbtowc.c",
+    "lib/memchr.c",
+    "lib/mempcpy.c",
+    "lib/memrchr.c",
+    "lib/mkdir.c",
+    "lib/mkostemp.c",
+    "lib/nl_langinfo.c",
+    "lib/nl_langinfo-lock.c",
+    "lib/obstack.c",
+    "lib/open.c",
+    "lib/progname.c",
+    "lib/qcopy-acl.c",
+    "lib/qset-acl.c",
+    "lib/quotearg.c",
+    "lib/rawmemchr.c",
+    "lib/readlink.c",
+    "lib/reallocarray.c",
+    "lib/regex.c",
+    "lib/rename.c",
+    "lib/rmdir.c",
+    "lib/se-context.in.h",
+    "lib/se-context.c",
+    "lib/se-label.c",
+    "lib/se-selinux.c",
+    "lib/setlocale_null.c",
+    "lib/setlocale-lock.c",
+    "lib/stat.c",
+    "lib/stat-time.c",
+    "lib/stdio-read.c",
+    "lib/stdio-write.c",
+    "lib/strerror.c",
+    "lib/strerror-override.c",
+    "lib/strverscmp.c",
+    "lib/tempname.c",
+    "lib/glthread/threadlib.c",
+    "lib/unistd.c",
+    "lib/version-etc.h",
+    "lib/version-etc.c",
+    "lib/version-etc-fsf.c",
+    "lib/wcrtomb.c",
+    "lib/wctob.c",
+    "lib/wctomb.c",
+    "lib/wctype-h.c",
+    "lib/xmalloc.c",
+    "lib/xalloc-die.c",
+] + select({
+    "@platforms//os:macos": [
+        "lib/acl_entries.c",
+        "lib/fwriting.c",
+        "lib/getfilecon.c",
+    ],
+    "@platforms//os:windows": [
+        "lib/windows-mutex.c",
+        "lib/windows-once.c",
+        "lib/windows-recmutex.c",
+        "lib/windows-rwlock.c",
+        "lib/msvc-inval.c",
+        "lib/msvc-nothrow.c",
+    ],
+    "//conditions:default": [],
+})
+
+WINDOWS_HDRS = [
+    "lib/msvc-inval.h",
+    "lib/msvc-nothrow.h",
+    "lib/windows-mutex.h",
+    "lib/windows-once.h",
+    "lib/windows-recmutex.h",
+    "lib/windows-rwlock.h",
+]
+
+HDRS = glob(
+    include = [
+        "*.h",
+        "lib/**/*.h",
+    ],
+    exclude = GENERATED_HDRS + WINDOWS_HDRS,
+) + select({
+    "@platforms//os:windows": GENERATED_HDRS + WINDOWS_HDRS,
+    "//conditions:default": GENERATED_HDRS,
+})
+
+cc_library(
+    name = "lib/sed",
+    srcs = SRCS,
+    hdrs = HDRS,
+    copts = COPTS + [
+        "-DHAVE_CONFIG_H",
+    ],
+    includes = [
+        ".",
+        "lib",
+    ],
+    textual_hdrs = [
+        "lib/regex_internal.c",
+        "lib/regcomp.c",
+        "lib/regexec.c",
+        "lib/malloc/dynarray-skeleton.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libsed",
+    actual = ":lib/sed",
+    visibility = ["//visibility:public"],
+)
+
+write_file(
+    name = "sed/version_h",
+    out = "sed/version.h",
+    content = [
+        "extern char const *Version;",
+        "",
+    ],
+    newline = "unix",
+)
+
+write_file(
+    name = "sed/version_c",
+    out = "sed/version.c",
+    content = [
+        "#include \"config.h\"",
+        "char const *Version = \"{}\";".format(VERSION),
+        "",
+    ],
+    newline = "unix",
+)
+
+cc_binary(
+    name = "sed/sed",
+    srcs = [
+        "sed/compile.c",
+        "sed/debug.c",
+        "sed/execute.c",
+        "sed/mbcs.c",
+        "sed/regexp.c",
+        "sed/sed.c",
+        "sed/sed.h",
+        "sed/utils.c",
+        "sed/utils.h",
+        "sed/version.c",
+        "sed/version.h",
+    ],
+    copts = COPTS + [
+        "-DLOCALEDIR=\\\"/usr/share/locale\\\"",
+    ],
+    includes = ["sed"],
+    deps = [":libsed"],
+)
+
+alias(
+    name = "sed",
+    actual = ":sed/sed",
+    visibility = ["//visibility:public"],
+)
+
+# Tests
+
+write_file(
+    name = "sed_test_base",
+    out = "sed_test_base.txt",
+    content = [
+        "Hello World",
+        "This is a test.",
+        "Hello again.",
+        "",
+    ],
+    newline = "unix",
+)
+
+genrule(
+    name = "sed_test_output",
+    srcs = ["sed_test_base.txt"],
+    outs = ["sed_test_output.txt"],
+    cmd = "$(execpath :sed) 's/Hello/Hallo/g' $(execpath :sed_test_base.txt) > $@",
+    cmd_bat = "$(execpath :sed) \"s/Hello/Hallo/g\" $(execpath :sed_test_base.txt) > $@",
+    tools = [":sed"],
+)
+
+write_file(
+    name = "sed_test_output_golden",
+    out = "sed_test_output_golden.txt",
+    content = [
+        "Hallo World",
+        "This is a test.",
+        "Hallo again.",
+        "",
+    ],
+    newline = "unix",
+)
+
+diff_test(
+    name = "sed_diff_test",
+    file1 = "sed_test_output.txt",
+    file2 = "sed_test_output_golden.txt",
+)

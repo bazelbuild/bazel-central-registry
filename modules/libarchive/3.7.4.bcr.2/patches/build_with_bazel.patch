@@ -1,0 +1,1809 @@
+diff --git a/.bazelrc b/.bazelrc
+new file mode 100644
+index 00000000..211a1b50
+--- /dev/null
++++ b/.bazelrc
+@@ -0,0 +1,6 @@
++common --enable_bzlmod
++build --enable_runfiles
++
++build:bcr_presubmit --build_tag_filters=-bcr_presubmit_skip
++test:bcr_presubmit --test_tag_filters=-bcr_presubmit_skip
++
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 00000000..8a5b68ff
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,31 @@
++load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++bool_flag(
++    name = "use_mbedtls",
++    build_setting_default = False,
++)
++
++config_setting(
++    name = "use_mbedtls_setting",
++    flag_values = {":use_mbedtls": "true"},
++    visibility = ["//:__subpackages__"],
++)
++
++cc_library(
++    name = "config",
++    visibility = ["//:__subpackages__"],
++    defines = select({
++        "//:use_mbedtls_setting": [
++            "HAVE_LIBMBEDCRYPTO",
++            "HAVE_MBEDTLS_AES_H",
++            "HAVE_MBEDTLS_MD_H",
++            "HAVE_MBEDTLS_PKCS5_H",
++        ],
++        "//conditions:default": [],
++    }),
++    hdrs = select({
++        "@platforms//os:windows": ["libarchive_bazel_windows_config.h"],
++        "//conditions:default": ["libarchive_bazel_generic_config.h"],
++    }),
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 00000000..fafe8e7a
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,15 @@
++module(
++    name = "libarchive",
++    version = "3.7.4.bcr.2",
++    compatibility_level = 1,
++)
++
++bazel_dep(name = "bzip2", version = "1.0.8.bcr.1")
++bazel_dep(name = "lz4", version = "1.9.4")
++bazel_dep(name = "xz", version = "5.4.5.bcr.2")
++bazel_dep(name = "zlib", version = "1.3.1.bcr.1")
++bazel_dep(name = "zstd", version = "1.5.6")
++bazel_dep(name = "platforms", version = "0.0.10")
++bazel_dep(name = "rules_cc", version = "0.0.9")
++bazel_dep(name = "bazel_skylib", version = "1.6.1")
++bazel_dep(name = "mbedtls", version = "3.6.0")
+diff --git a/WORKSPACE.bzlmod b/WORKSPACE.bzlmod
+new file mode 100644
+index 00000000..8b137891
+--- /dev/null
++++ b/WORKSPACE.bzlmod
+@@ -0,0 +1 @@
++
+diff --git a/bazel/BUILD.bazel b/bazel/BUILD.bazel
+new file mode 100644
+index 00000000..e1e1a513
+--- /dev/null
++++ b/bazel/BUILD.bazel
+@@ -0,0 +1 @@
++# empty for patch sake
+diff --git a/bazel/config.bzl b/bazel/config.bzl
+new file mode 100644
+index 00000000..1519aedb
+--- /dev/null
++++ b/bazel/config.bzl
+@@ -0,0 +1,8 @@
++PLATFORM_LOCAL_DEFINES = select({
++    "@platforms//os:windows": [
++        "PLATFORM_CONFIG_H=\\\"libarchive_bazel_windows_config.h\\\"",
++    ],
++    "//conditions:default": [
++        "PLATFORM_CONFIG_H=\\\"libarchive_bazel_generic_config.h\\\"",
++    ],
++})
+diff --git a/bazel/libarchive_test.bzl b/bazel/libarchive_test.bzl
+new file mode 100644
+index 00000000..b7744dee
+--- /dev/null
++++ b/bazel/libarchive_test.bzl
+@@ -0,0 +1,31 @@
++load("@bazel_skylib//rules:write_file.bzl", "write_file")
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
++def libarchive_test(name = None, tests = None, data = None, deps = [], **kwargs):
++    if not tests:
++        tests = [name]
++    if not data:
++        data = native.glob(["*.uu"])
++    write_file(
++        name = "{}_list_h".format(name),
++        out = "_{}_list_h/list.h".format(name),
++        content = ["DEFINE_TEST({})".format(test) for test in tests],
++    )
++    cc_library(
++        name = "{}_list".format(name),
++        hdrs = ["_{}_list_h/list.h".format(name)],
++        strip_include_prefix = "_{}_list_h".format(name),
++    )
++    cc_test(
++        name = name,
++        includes = ["."],
++        srcs = ["//test_utils:test_main.c"] + ["{}.c".format(name)],
++        data = data,
++        deps = deps + [
++            ":{}_list".format(name),
++            "//test_utils:common",
++            "//libarchive",
++            "//libarchive:internal_hdrs",
++        ],
++        **kwargs
++    )
+diff --git a/cat/BUILD.bazel b/cat/BUILD.bazel
+new file mode 100644
+index 00000000..3d9312d3
+--- /dev/null
++++ b/cat/BUILD.bazel
+@@ -0,0 +1,22 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_binary(
++    name = "bsdcat",
++    srcs = [
++        "bsdcat.c",
++        "bsdcat.h",
++        "bsdcat_platform.h",
++        "cmdline.c",
++    ],
++    deps = [
++        "//libarchive",
++        "//libarchive_fe",
++    ],
++)
++
++alias(
++    name = "cat",
++    actual = ":bsdcat",
++)
+diff --git a/cpio/BUILD.bazel b/cpio/BUILD.bazel
+new file mode 100644
+index 00000000..7af0afe0
+--- /dev/null
++++ b/cpio/BUILD.bazel
+@@ -0,0 +1,28 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_binary(
++    name = "bsdcpio",
++    srcs = [
++        "cmdline.c",
++        "cpio.c",
++        "cpio.h",
++        "cpio_platform.h",
++    ] + select({
++        "@platforms//os:windows": [
++            "cpio_windows.c",
++            "cpio_windows.h",
++        ],
++        "//conditions:default": [],
++    }),
++    deps = [
++        "//libarchive",
++        "//libarchive_fe",
++    ],
++)
++
++alias(
++    name = "cpio",
++    actual = ":bsdcpio",
++)
+diff --git a/libarchive/BUILD.bazel b/libarchive/BUILD.bazel
+new file mode 100644
+index 00000000..e3d14a98
+--- /dev/null
++++ b/libarchive/BUILD.bazel
+@@ -0,0 +1,220 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("//bazel:config.bzl", "PLATFORM_LOCAL_DEFINES")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_library(
++    name = "internal_hdrs",
++    visibility = ["//:__subpackages__"],
++    hdrs = glob(["*.h"]),
++    strip_include_prefix = ".",
++)
++
++cc_library(
++    name = "archive",
++    strip_include_prefix = ".",
++    hdrs = [
++        "archive.h",
++        "archive_entry.h",
++    ],
++    defines = ["LIBARCHIVE_STATIC"],
++    local_defines = PLATFORM_LOCAL_DEFINES,
++    srcs = [
++        "archive_acl.c",
++        "archive_acl_private.h",
++        "archive_check_magic.c",
++        "archive_cmdline.c",
++        "archive_cmdline_private.h",
++        "archive_crc32.h",
++        "archive_cryptor.c",
++        "archive_cryptor_private.h",
++        "archive_digest.c",
++        "archive_digest_private.h",
++        "archive_endian.h",
++        "archive_entry.c",
++        "archive_entry.h",
++        "archive_entry_copy_stat.c",
++        "archive_entry_link_resolver.c",
++        "archive_entry_locale.h",
++        "archive_entry_private.h",
++        "archive_entry_sparse.c",
++        "archive_entry_stat.c",
++        "archive_entry_strmode.c",
++        "archive_entry_xattr.c",
++        "archive_getdate.c",
++        "archive_getdate.h",
++        "archive_hmac.c",
++        "archive_hmac_private.h",
++        "archive_match.c",
++        "archive_openssl_evp_private.h",
++        "archive_openssl_hmac_private.h",
++        "archive_options.c",
++        "archive_options_private.h",
++        "archive_pack_dev.h",
++        "archive_pack_dev.c",
++        "archive_pathmatch.c",
++        "archive_pathmatch.h",
++        "archive_platform.h",
++        "archive_platform_acl.h",
++        "archive_platform_xattr.h",
++        "archive_ppmd_private.h",
++        "archive_ppmd8.c",
++        "archive_ppmd8_private.h",
++        "archive_ppmd7.c",
++        "archive_ppmd7_private.h",
++        "archive_private.h",
++        "archive_random.c",
++        "archive_random_private.h",
++        "archive_rb.c",
++        "archive_rb.h",
++        "archive_read.c",
++        "archive_read_add_passphrase.c",
++        "archive_read_append_filter.c",
++        "archive_read_data_into_fd.c",
++        "archive_read_disk_entry_from_file.c",
++        "archive_read_disk_posix.c",
++        "archive_read_disk_private.h",
++        "archive_read_disk_set_standard_lookup.c",
++        "archive_read_extract.c",
++        "archive_read_extract2.c",
++        "archive_read_open_fd.c",
++        "archive_read_open_file.c",
++        "archive_read_open_filename.c",
++        "archive_read_open_memory.c",
++        "archive_read_private.h",
++        "archive_read_set_format.c",
++        "archive_read_set_options.c",
++        "archive_read_support_filter_all.c",
++        "archive_read_support_filter_by_code.c",
++        "archive_read_support_filter_bzip2.c",
++        "archive_read_support_filter_compress.c",
++        "archive_read_support_filter_gzip.c",
++        "archive_read_support_filter_grzip.c",
++        "archive_read_support_filter_lrzip.c",
++        "archive_read_support_filter_lz4.c",
++        "archive_read_support_filter_lzop.c",
++        "archive_read_support_filter_none.c",
++        "archive_read_support_filter_program.c",
++        "archive_read_support_filter_rpm.c",
++        "archive_read_support_filter_uu.c",
++        "archive_read_support_filter_xz.c",
++        "archive_read_support_filter_zstd.c",
++        "archive_read_support_format_7zip.c",
++        "archive_read_support_format_all.c",
++        "archive_read_support_format_ar.c",
++        "archive_read_support_format_by_code.c",
++        "archive_read_support_format_cab.c",
++        "archive_read_support_format_cpio.c",
++        "archive_read_support_format_empty.c",
++        "archive_read_support_format_iso9660.c",
++        "archive_read_support_format_lha.c",
++        "archive_read_support_format_mtree.c",
++        "archive_read_support_format_rar.c",
++        "archive_read_support_format_rar5.c",
++        "archive_read_support_format_raw.c",
++        "archive_read_support_format_tar.c",
++        "archive_read_support_format_warc.c",
++        "archive_read_support_format_xar.c",
++        "archive_read_support_format_zip.c",
++        "archive_string.c",
++        "archive_string.h",
++        "archive_string_composition.h",
++        "archive_string_sprintf.c",
++        "archive_util.c",
++        "archive_version_details.c",
++        "archive_virtual.c",
++        "archive_write.c",
++        "archive_write_disk_posix.c",
++        "archive_write_disk_private.h",
++        "archive_write_disk_set_standard_lookup.c",
++        "archive_write_private.h",
++        "archive_write_open_fd.c",
++        "archive_write_open_file.c",
++        "archive_write_open_filename.c",
++        "archive_write_open_memory.c",
++        "archive_write_add_filter.c",
++        "archive_write_add_filter_b64encode.c",
++        "archive_write_add_filter_by_name.c",
++        "archive_write_add_filter_bzip2.c",
++        "archive_write_add_filter_compress.c",
++        "archive_write_add_filter_grzip.c",
++        "archive_write_add_filter_gzip.c",
++        "archive_write_add_filter_lrzip.c",
++        "archive_write_add_filter_lz4.c",
++        "archive_write_add_filter_lzop.c",
++        "archive_write_add_filter_none.c",
++        "archive_write_add_filter_program.c",
++        "archive_write_add_filter_uuencode.c",
++        "archive_write_add_filter_xz.c",
++        "archive_write_add_filter_zstd.c",
++        "archive_write_set_format.c",
++        "archive_write_set_format_7zip.c",
++        "archive_write_set_format_ar.c",
++        "archive_write_set_format_by_name.c",
++        "archive_write_set_format_cpio.c",
++        "archive_write_set_format_cpio_binary.c",
++        "archive_write_set_format_cpio_newc.c",
++        "archive_write_set_format_cpio_odc.c",
++        "archive_write_set_format_filter_by_ext.c",
++        "archive_write_set_format_gnutar.c",
++        "archive_write_set_format_iso9660.c",
++        "archive_write_set_format_mtree.c",
++        "archive_write_set_format_pax.c",
++        "archive_write_set_format_private.h",
++        "archive_write_set_format_raw.c",
++        "archive_write_set_format_shar.c",
++        "archive_write_set_format_ustar.c",
++        "archive_write_set_format_v7tar.c",
++        "archive_write_set_format_warc.c",
++        "archive_write_set_format_xar.c",
++        "archive_write_set_format_zip.c",
++        "archive_write_set_options.c",
++        "archive_write_set_passphrase.c",
++        "archive_xxhash.h",
++        "filter_fork_posix.c",
++        "filter_fork.h",
++        "xxhash.c",
++
++        # blake2 srcs
++        "archive_blake2.h",
++        "archive_blake2_impl.h",
++        "archive_blake2sp_ref.c",
++        "archive_blake2s_ref.c",
++    ] + select({
++        "@platforms//os:windows": [
++            "archive_entry_copy_bhfi.c",
++            "archive_read_disk_windows.c",
++            "archive_windows.c",
++            "archive_windows.h",
++            "archive_write_disk_windows.c",
++            "filter_fork_windows.c",
++        ],
++        "@platforms//os:macos": ["archive_disk_acl_darwin.c"],
++        "@platforms//os:linux": ["archive_disk_acl_linux.c"],
++        "//conditions:default": [],
++    }),
++    linkopts = select({
++        "@rules_cc//cc/compiler:msvc-cl": [
++            "/DEFAULTLIB:bcrypt",
++        ],
++        "//conditions:default": [],
++    }),
++    deps = [
++        ":internal_hdrs",
++        "//:config",
++        "@bzip2//:bz2",
++        "@lz4",
++        "@lz4//:lz4_hc",
++        "@xz//:lzma",
++        "@zlib",
++        "@zstd",
++    ] + select({
++        "//:use_mbedtls_setting": ["@mbedtls"],
++        "//conditions:default": [],
++    }),
++)
++
++alias(
++    name = "libarchive",
++    actual = ":archive",
++)
+diff --git a/libarchive/test/BUILD.bazel b/libarchive/test/BUILD.bazel
+new file mode 100644
+index 00000000..6e255b71
+--- /dev/null
++++ b/libarchive/test/BUILD.bazel
+@@ -0,0 +1,918 @@
++load("@bazel_skylib//rules:write_file.bzl", "write_file")
++load("@rules_cc//cc:defs.bzl", "cc_test")
++load("//bazel:libarchive_test.bzl", "libarchive_test")
++
++libarchive_test(name = "test_acl_nfs4", deps = [":lib"])
++libarchive_test(name = "test_acl_pax", deps = [":lib"], tests = ["test_acl_pax_posix1e", "test_acl_pax_nfs4"])
++libarchive_test(name = "test_acl_platform_nfs4", deps = [":lib"])
++libarchive_test(
++    name = "test_acl_platform_posix1e",
++    deps = [":lib"],
++    tests = [
++        "test_acl_platform_posix1e_restore",
++        "test_acl_platform_posix1e_read",
++    ],
++)
++libarchive_test(name = "test_acl_posix1e", deps = [":lib"])
++libarchive_test(
++    name = "test_acl_text",
++    deps = [":lib"],
++    tests = [
++        "test_acl_to_text",
++        "test_acl_from_text",
++    ],
++)
++libarchive_test(name = "test_archive_api_feature", deps = [":lib"])
++libarchive_test(name = "test_archive_clear_error", deps = [":lib"])
++libarchive_test(name = "test_archive_cmdline", deps = [":lib"])
++
++libarchive_test(
++    name = "test_archive_digest",
++    deps = [":lib"],
++    tests = [
++        "test_archive_md5",
++        "test_archive_rmd160",
++        "test_archive_sha1",
++        "test_archive_sha256",
++        "test_archive_sha384",
++        "test_archive_sha512",
++    ],
++)
++libarchive_test(name = "test_archive_getdate", deps = [":lib"])
++libarchive_test(name = "test_archive_match_owner", deps = [":lib"])
++libarchive_test(name = "test_archive_match_path", deps = [":lib"])
++libarchive_test(name = "test_archive_match_time", deps = [":lib"])
++libarchive_test(name = "test_archive_pathmatch", deps = [":lib"])
++libarchive_test(
++    name = "test_archive_read_add_passphrase",
++    deps = [":lib"],
++    tests = [
++        "test_archive_read_add_passphrase",
++        "test_archive_read_add_passphrase_incorrect_sequance",
++        "test_archive_read_add_passphrase_single",
++        "test_archive_read_add_passphrase_multiple",
++        "test_archive_read_add_passphrase_set_callback1",
++        "test_archive_read_add_passphrase_set_callback2",
++        "test_archive_read_add_passphrase_set_callback3",
++        "test_archive_read_add_passphrase_multiple_with_callback",
++        "test_archive_read_add_passphrase_multiple_with_callback2",
++    ],
++)
++libarchive_test(name = "test_archive_read_close_twice", deps = [":lib"])
++libarchive_test(name = "test_archive_read_close_twice_open_fd", deps = [":lib"])
++libarchive_test(name = "test_archive_read_close_twice_open_filename", deps = [":lib"])
++libarchive_test(name = "test_archive_read_multiple_data_objects", deps = [":lib"])
++libarchive_test(name = "test_archive_read_next_header_empty", deps = [":lib"])
++libarchive_test(name = "test_archive_read_next_header_raw", deps = [":lib"])
++libarchive_test(name = "test_archive_read_open2", deps = [":lib"])
++libarchive_test(name = "test_archive_read_set_filter_option", deps = [":lib"])
++libarchive_test(name = "test_archive_read_set_format_option", deps = [":lib"])
++libarchive_test(name = "test_archive_read_set_option", deps = [":lib"])
++libarchive_test(name = "test_archive_read_set_options", deps = [":lib"])
++libarchive_test(name = "test_archive_read_support", deps = [":lib"])
++libarchive_test(name = "test_archive_set_error", deps = [":lib"])
++libarchive_test(
++    name = "test_archive_string",
++    deps = [":lib"],
++    tests = [
++        "test_archive_string",
++        "test_archive_string_sort",
++    ],
++)
++libarchive_test(name = "test_archive_string_conversion", deps = [":lib"])
++libarchive_test(
++    name = "test_archive_write_add_filter_by_name",
++    deps = [":lib"],
++    tests = [
++        "test_archive_write_add_filter_by_name_b64encode",
++        "test_archive_write_add_filter_by_name_bzip2",
++        "test_archive_write_add_filter_by_name_compress",
++        "test_archive_write_add_filter_by_name_grzip",
++        "test_archive_write_add_filter_by_name_gzip",
++        "test_archive_write_add_filter_by_name_lrzip",
++        "test_archive_write_add_filter_by_name_lz4",
++        "test_archive_write_add_filter_by_name_lzip",
++        "test_archive_write_add_filter_by_name_lzma",
++        "test_archive_write_add_filter_by_name_lzop",
++        "test_archive_write_add_filter_by_name_uuencode",
++        "test_archive_write_add_filter_by_name_xz",
++        "test_archive_write_add_filter_by_name_zstd",
++    ],
++)
++libarchive_test(name = "test_archive_write_set_filter_option", deps = [":lib"])
++libarchive_test(
++    name = "test_archive_write_set_format_by_name",
++    deps = [":lib"],
++    tests = [
++        "test_archive_write_set_format_by_name_7zip",
++        "test_archive_write_set_format_by_name_ar",
++        "test_archive_write_set_format_by_name_arbsd",
++        "test_archive_write_set_format_by_name_arsvr4",
++        "test_archive_write_set_format_by_name_bsdtar",
++        "test_archive_write_set_format_by_name_cd9660",
++        "test_archive_write_set_format_by_name_cpio",
++        "test_archive_write_set_format_by_name_gnutar",
++        "test_archive_write_set_format_by_name_iso",
++        "test_archive_write_set_format_by_name_iso9660",
++        "test_archive_write_set_format_by_name_mtree",
++        "test_archive_write_set_format_by_name_mtree_classic",
++        "test_archive_write_set_format_by_name_newc",
++        "test_archive_write_set_format_by_name_odc",
++        "test_archive_write_set_format_by_name_oldtar",
++        "test_archive_write_set_format_by_name_pax",
++        "test_archive_write_set_format_by_name_paxr",
++        "test_archive_write_set_format_by_name_posix",
++        "test_archive_write_set_format_by_name_rpax",
++        "test_archive_write_set_format_by_name_shar",
++        "test_archive_write_set_format_by_name_shardump",
++        "test_archive_write_set_format_by_name_ustar",
++        "test_archive_write_set_format_by_name_v7tar",
++        "test_archive_write_set_format_by_name_v7",
++        "test_archive_write_set_format_by_name_warc",
++        "test_archive_write_set_format_by_name_xar",
++        "test_archive_write_set_format_by_name_zip",
++    ],
++)
++libarchive_test(
++    name = "test_archive_write_set_format_filter_by_ext",
++    deps = [":lib"],
++    tests = [
++        "test_archive_write_set_format_filter_by_ext_7zip",
++        "test_archive_write_set_format_filter_by_ext_zip",
++        "test_archive_write_set_format_filter_by_ext_jar",
++        "test_archive_write_set_format_filter_by_ext_a",
++        "test_archive_write_set_format_filter_by_ext_ar",
++        "test_archive_write_set_format_filter_by_ext_cpio",
++        "test_archive_write_set_format_filter_by_ext_iso",
++        "test_archive_write_set_format_filter_by_ext_tar",
++        "test_archive_write_set_format_filter_by_ext_tar_gz",
++        "test_archive_write_set_format_filter_by_ext_tar_bz2",
++        "test_archive_write_set_format_filter_by_ext_tar_xz",
++        "test_archive_write_set_format_filter_by_no_ext_def_zip",
++        "test_archive_write_set_format_filter_by_ext_tar_bz2_def_zip",
++    ],
++)
++libarchive_test(name = "test_archive_write_set_format_option", deps = [":lib"])
++libarchive_test(name = "test_archive_write_set_option", deps = [":lib"])
++libarchive_test(name = "test_archive_write_set_options", deps = [":lib"])
++libarchive_test(
++    name = "test_archive_write_set_passphrase",
++    deps = [":lib"],
++    tests = [
++        "test_archive_write_set_passphrase",
++        "test_archive_write_set_passphrase_callback",
++    ],
++)
++libarchive_test(name = "test_bad_fd", deps = [":lib"])
++libarchive_test(name = "test_compat_bzip2", deps = [":lib"])
++libarchive_test(name = "test_compat_cpio", deps = [":lib"])
++libarchive_test(name = "test_compat_gtar", deps = [":lib"])
++libarchive_test(name = "test_compat_gzip", deps = [":lib"])
++libarchive_test(name = "test_compat_lz4", deps = [":lib"])
++libarchive_test(name = "test_compat_lzip", deps = [":lib"])
++libarchive_test(name = "test_compat_lzma", deps = [":lib"])
++libarchive_test(name = "test_compat_lzop", deps = [":lib"])
++libarchive_test(name = "test_compat_mac", deps = [":lib"])
++libarchive_test(name = "test_compat_perl_archive_tar", deps = [":lib"])
++libarchive_test(name = "test_compat_plexus_archiver_tar", deps = [":lib"])
++libarchive_test(name = "test_compat_solaris_pax_sparse", deps = [":lib"])
++libarchive_test(name = "test_compat_solaris_tar_acl", deps = [":lib"])
++libarchive_test(
++    name = "test_compat_star_acl",
++    deps = [":lib"],
++    tests = [
++        "test_compat_star_acl_posix1e",
++        "test_compat_star_acl_nfs4",
++    ],
++)
++libarchive_test(name = "test_compat_tar_directory", deps = [":lib"])
++libarchive_test(name = "test_compat_tar_hardlink", deps = [":lib"])
++libarchive_test(name = "test_compat_uudecode", deps = [":lib"])
++libarchive_test(name = "test_compat_uudecode_large", deps = [":lib"])
++libarchive_test(name = "test_compat_xz", deps = [":lib"])
++
++libarchive_test(
++    name = "test_compat_zip",
++    deps = [":lib"],
++    tests = [
++        "test_compat_zip_1",
++        "test_compat_zip_2",
++        "test_compat_zip_3",
++        "test_compat_zip_4",
++        "test_compat_zip_5",
++        "test_compat_zip_6",
++        "test_compat_zip_7",
++        "test_compat_zip_8",
++    ],
++)
++libarchive_test(name = "test_compat_zstd", deps = [":lib"])
++libarchive_test(name = "test_empty_write", deps = [":lib"])
++libarchive_test(name = "test_entry", deps = [":lib"])
++libarchive_test(name = "test_entry_strmode", deps = [":lib"])
++libarchive_test(name = "test_extattr_freebsd", deps = [":lib"])
++libarchive_test(name = "test_filter_count", deps = [":lib"])
++libarchive_test(
++    name = "test_fuzz",
++    size = "large",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # NOTE: runs too slow on Windows
++    tests = [
++        "test_fuzz_ar",
++        "test_fuzz_cab",
++        "test_fuzz_cpio",
++        "test_fuzz_iso9660",
++        "test_fuzz_lzh",
++        "test_fuzz_mtree",
++        "test_fuzz_rar",
++        "test_fuzz_tar",
++        "test_fuzz_zip",
++    ],
++)
++libarchive_test(
++    name = "test_gnutar_filename_encoding",
++    deps = [":lib"],
++    tests = [
++        "test_gnutar_filename_encoding_UTF8_CP866",
++        "test_gnutar_filename_encoding_KOI8R_UTF8",
++        "test_gnutar_filename_encoding_KOI8R_CP866",
++        "test_gnutar_filename_encoding_CP1251_UTF8",
++        "test_gnutar_filename_encoding_ru_RU_CP1251",
++        "test_gnutar_filename_encoding_Russian_Russia",
++        "test_gnutar_filename_encoding_EUCJP_UTF8",
++        "test_gnutar_filename_encoding_EUCJP_CP932",
++    ],
++)
++libarchive_test(name = "test_link_resolver", deps = [":lib"])
++libarchive_test(name = "test_open_failure", deps = [":lib"])
++libarchive_test(name = "test_open_fd", deps = [":lib"])
++libarchive_test(name = "test_open_file", deps = [":lib"])
++libarchive_test(name = "test_open_filename", deps = [":lib"])
++libarchive_test(
++    name = "test_pax_filename_encoding",
++    deps = [":lib"],
++    tests = [
++        "test_pax_filename_encoding_KOI8R",
++        "test_pax_filename_encoding_CP1251",
++        "test_pax_filename_encoding_EUCJP",
++        "test_pax_filename_encoding_CP932",
++        "test_pax_filename_encoding_KOI8R_BINARY",
++        "test_pax_filename_encoding_KOI8R_CP1251",
++        "test_pax_filename_encoding",
++    ],
++)
++libarchive_test(name = "test_pax_xattr_header", deps = [":lib"])
++libarchive_test(name = "test_read_data_large", deps = [":lib"])
++libarchive_test(name = "test_read_disk", deps = [":lib"])
++libarchive_test(name = "test_read_disk_directory_traversals", deps = [":lib"])
++libarchive_test(name = "test_read_disk_entry_from_file", deps = [":lib"])
++libarchive_test(name = "test_read_extract", deps = [":lib"])
++libarchive_test(name = "test_read_file_nonexistent", deps = [":lib"])
++libarchive_test(
++    name = "test_read_filter_compress",
++    deps = [":lib"],
++    tests = [
++        "test_read_filter_compress_truncated",
++        "test_read_filter_compress_empty2",
++        "test_read_filter_compress_invalid",
++    ],
++)
++libarchive_test(name = "test_read_filter_grzip", deps = [":lib"])
++libarchive_test(name = "test_read_filter_lrzip", deps = [":lib"])
++libarchive_test(name = "test_read_filter_lzop", deps = [":lib"])
++libarchive_test(name = "test_read_filter_lzop_multiple_parts", deps = [":lib"])
++libarchive_test(name = "test_read_filter_program", deps = [":lib"])
++libarchive_test(name = "test_read_filter_program_signature", deps = [":lib"])
++libarchive_test(
++    name = "test_read_filter_uudecode",
++    deps = [":lib"],
++    tests = [
++        "test_read_filter_uudecode",
++        "test_read_filter_uudecode_base64",
++    ],
++)
++libarchive_test(
++    name = "test_read_filter_uudecode_raw",
++    deps = [":lib"],
++    tests = [
++        "test_read_filter_uudecode_raw",
++        "test_read_filter_uudecode_base64_raw",
++    ],
++)
++libarchive_test(
++    name = "test_read_format_7zip",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_7zip",
++        "test_read_format_7zip_bzip2",
++        "test_read_format_7zip_from_fd",
++        "test_read_format_7zip_copy",
++        "test_read_format_7zip_deflate",
++        "test_read_format_7zip_zstd",
++        "test_read_format_7zip_zstd_solid",
++        "test_read_format_7zip_zstd_bcj",
++        "test_read_format_7zip_zstd_nobcj",
++        "test_read_format_7zip_empty",
++        "test_read_format_7zip_lzma1",
++        "test_read_format_7zip_lzma2",
++        "test_read_format_7zip_zstd_arm",
++        "test_read_format_7zip_lzma2_arm",
++        "test_read_format_7zip_ppmd",
++        "test_read_format_7zip_lzma2_arm64",
++        "test_read_format_7zip_deflate_arm64",
++        "test_read_format_7zip_win_attrib",
++    ],
++)
++libarchive_test(name = "test_read_format_7zip_encryption_data", deps = [":lib"])
++libarchive_test(name = "test_read_format_7zip_encryption_header", deps = [":lib"])
++libarchive_test(name = "test_read_format_7zip_encryption_partially", deps = [":lib"])
++libarchive_test(name = "test_read_format_7zip_malformed", deps = [":lib"])
++libarchive_test(name = "test_read_format_7zip_packinfo_digests", deps = [":lib"])
++libarchive_test(name = "test_read_format_ar", deps = [":lib"])
++libarchive_test(name = "test_read_format_cab", deps = [":lib"])
++libarchive_test(name = "test_read_format_cab_filename", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_afio", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_Z", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_be", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_bz2", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_gz", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_le", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_lzip", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_lzma", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_bin_xz", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_cpio_filename",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_cpio_filename_eucJP_UTF8",
++        "test_read_format_cpio_filename_UTF8_eucJP",
++        "test_read_format_cpio_filename_UTF8_UTF8_jp",
++        "test_read_format_cpio_filename_CP866_KOI8R",
++        "test_read_format_cpio_filename_CP866_UTF8",
++        "test_read_format_cpio_filename_KOI8R_CP866",
++        "test_read_format_cpio_filename_KOI8R_UTF8",
++        "test_read_format_cpio_filename_UTF8_KOI8R",
++        "test_read_format_cpio_filename_UTF8_CP866",
++        "test_read_format_cpio_filename_UTF8_UTF8_ru",
++        "test_read_format_cpio_filename_eucJP_CP932",
++        "test_read_format_cpio_filename_UTF8_CP932",
++        "test_read_format_cpio_filename_CP866_CP1251",
++        "test_read_format_cpio_filename_CP866_CP1251_win",
++        "test_read_format_cpio_filename_KOI8R_CP1251",
++        "test_read_format_cpio_filename_UTF8_CP1251",
++    ],
++)
++libarchive_test(name = "test_read_format_cpio_odc", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_svr4_bzip2_rpm", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_svr4_gzip", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_svr4_gzip_rpm", deps = [":lib"])
++libarchive_test(name = "test_read_format_cpio_svr4c_Z", deps = [":lib"])
++libarchive_test(name = "test_read_format_empty", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_gtar_filename",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_gtar_filename_eucJP_UTF8",
++        "test_read_format_gtar_filename_CP866_KOI8R",
++        "test_read_format_gtar_filename_CP866_UTF8",
++        "test_read_format_gtar_filename_KOI8R_CP866",
++        "test_read_format_gtar_filename_KOI8R_UTF8",
++        "test_read_format_gtar_filename_eucJP_CP932",
++        "test_read_format_gtar_filename_CP866_CP1251",
++        "test_read_format_gtar_filename_CP866_CP1251_win",
++    ],
++)
++libarchive_test(name = "test_read_format_gtar_gz", deps = [":lib"])
++libarchive_test(name = "test_read_format_gtar_lzma", deps = [":lib"])
++libarchive_test(name = "test_read_format_gtar_sparse", deps = [":lib"])
++libarchive_test(name = "test_read_format_gtar_sparse_skip_entry", deps = [":lib"])
++libarchive_test(name = "test_read_format_iso_Z", deps = [":lib"])
++libarchive_test(name = "test_read_format_iso_multi_extent", deps = [":lib"])
++libarchive_test(name = "test_read_format_iso_xorriso", deps = [":lib"])
++libarchive_test(name = "test_read_format_isojoliet_bz2", deps = [":lib"])
++libarchive_test(name = "test_read_format_isojoliet_long", deps = [":lib"])
++libarchive_test(name = "test_read_format_isojoliet_rr", deps = [":lib"])
++libarchive_test(name = "test_read_format_isojoliet_versioned", deps = [":lib"])
++libarchive_test(name = "test_read_format_isorr_bz2", deps = [":lib"])
++libarchive_test(name = "test_read_format_isorr_ce", deps = [":lib"])
++libarchive_test(name = "test_read_format_isorr_new_bz2", deps = [":lib"])
++libarchive_test(name = "test_read_format_isorr_rr_moved", deps = [":lib"])
++libarchive_test(name = "test_read_format_isozisofs_bz2", deps = [":lib"])
++libarchive_test(name = "test_read_format_lha", deps = [":lib"])
++libarchive_test(name = "test_read_format_lha_bugfix_0", deps = [":lib"])
++libarchive_test(name = "test_read_format_lha_filename", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_lha_filename_utf16",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_lha_filename_UTF16",
++    ],
++)
++libarchive_test(name = "test_read_format_mtree", deps = [":lib"])
++libarchive_test(name = "test_read_format_mtree_crash747", deps = [":lib"])
++libarchive_test(name = "test_read_format_pax_bz2", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_rar",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on Windows
++    tests = [
++        "test_read_format_rar_set_format",
++        "test_read_format_rar_basic",
++        "test_read_format_rar_subblock",
++        "test_read_format_rar_noeof",
++        "test_read_format_rar_unicode_UTF8",
++        "test_read_format_rar_unicode_CP932",
++        "test_read_format_rar_compress_normal",
++        "test_read_format_rar_multi_lzss_blocks",
++        "test_read_format_rar_compress_best",
++        "test_read_format_rar_ppmd_lzss_conversion",
++        "test_read_format_rar_binary",
++        "test_read_format_rar_windows",
++        "test_read_format_rar_multivolume",
++        "test_read_format_rar_multivolume_w",
++        "test_read_format_rar_multivolume_skip",
++        "test_read_format_rar_sfx",
++        "test_read_format_rar_multivolume_stored_file",
++        "test_read_format_rar_multivolume_stored_file_skip",
++        "test_read_format_rar_multivolume_seek_data",
++        "test_read_format_rar_multivolume_seek_multiple_files",
++        "test_read_format_rar_multivolume_uncompressed_files",
++        "test_read_format_rar_ppmd_use_after_free",
++        "test_read_format_rar_ppmd_use_after_free2",
++    ],
++)
++libarchive_test(
++    name = "test_read_format_rar5",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on Windows
++    tests = [
++        "test_read_format_rar5_set_format",
++        "test_read_format_rar5_stored",
++        "test_read_format_rar5_compressed",
++        "test_read_format_rar5_multiple_files",
++        "test_read_format_rar5_multiple_files_solid",
++        "test_read_format_rar5_multiarchive_skip_all",
++        "test_read_format_rar5_multiarchive_skip_all_but_first",
++        "test_read_format_rar5_multiarchive_skip_all_but_second",
++        "test_read_format_rar5_blake2",
++        "test_read_format_rar5_arm_filter",
++        "test_read_format_rar5_stored_skip_all",
++        "test_read_format_rar5_stored_skip_in_part",
++        "test_read_format_rar5_stored_skip_all_but_first",
++        "test_read_format_rar5_stored_skip_all_in_part",
++        "test_read_format_rar5_multiarchive_solid_extr_all",
++        "test_read_format_rar5_multiarchive_solid_skip_all",
++        "test_read_format_rar5_multiarchive_solid_skip_all_but_first",
++        "test_read_format_rar5_multiarchive_solid_skip_all_but_scnd",
++        "test_read_format_rar5_multiarchive_solid_skip_all_but_third",
++        "test_read_format_rar5_multiarchive_solid_skip_all_but_last",
++        "test_read_format_rar5_solid_skip_all",
++        "test_read_format_rar5_solid_skip_all_but_first",
++        "test_read_format_rar5_solid_skip_all_but_second",
++        "test_read_format_rar5_solid_skip_all_but_last",
++        "test_read_format_rar5_extract_win32",
++        "test_read_format_rar5_unicode",
++        "test_read_format_rar5_block_by_block",
++        "test_read_format_rar5_owner",
++        "test_read_format_rar5_symlink",
++        "test_read_format_rar5_hardlink",
++        "test_read_format_rar5_extra_field_version",
++        "test_read_format_rar5_readtables_overflow",
++        "test_read_format_rar5_leftshift1",
++        "test_read_format_rar5_leftshift2",
++        "test_read_format_rar5_truncated_huff",
++        "test_read_format_rar5_invalid_dict_reference",
++        "test_read_format_rar5_distance_overflow",
++        "test_read_format_rar5_nonempty_dir_stream",
++        "test_read_format_rar5_fileattr",
++        "test_read_format_rar5_different_window_size",
++        "test_read_format_rar5_window_buf_and_size_desync",
++        "test_read_format_rar5_arm_filter_on_window_boundary",
++        "test_read_format_rar5_different_solid_window_size",
++        "test_read_format_rar5_different_winsize_on_merge",
++        "test_read_format_rar5_block_size_is_too_small",
++        "test_read_format_rar5_sfx",
++        "test_read_format_rar5_decode_number_out_of_bounds_read",
++        "test_read_format_rar5_bad_window_size_in_multiarchive_file",
++        "test_read_format_rar5_read_data_block_uninitialized_offset",
++    ],
++)
++libarchive_test(name = "test_read_format_rar_encryption_data", deps = [":lib"])
++libarchive_test(name = "test_read_format_rar_encryption_header", deps = [":lib"])
++libarchive_test(name = "test_read_format_rar_encryption_partially", deps = [":lib"])
++libarchive_test(name = "test_read_format_rar_filter", deps = [":lib"])
++libarchive_test(name = "test_read_format_rar_invalid1", deps = [":lib"])
++libarchive_test(name = "test_read_format_raw", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar_concatenated", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar_empty_filename", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar_empty_pax", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar_empty_with_gnulabel", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar_filename", deps = [":lib"])
++libarchive_test(name = "test_read_format_tar_invalid_pax_size", deps = [":lib"])
++libarchive_test(name = "test_read_format_tbz", deps = [":lib"])
++libarchive_test(name = "test_read_format_tgz", deps = [":lib"])
++libarchive_test(name = "test_read_format_tlz", deps = [":lib"])
++libarchive_test(name = "test_read_format_txz", deps = [":lib"])
++libarchive_test(name = "test_read_format_tz", deps = [":lib"])
++libarchive_test(name = "test_read_format_ustar_filename", deps = [":lib"])
++libarchive_test(name = "test_read_format_warc", deps = [":lib"])
++libarchive_test(name = "test_read_format_xar", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_zip",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip",
++        "test_read_format_zip_ppmd_one_file",
++        "test_read_format_zip_ppmd_one_file_blockread",
++        "test_read_format_zip_ppmd_multi",
++        "test_read_format_zip_ppmd_multi_blockread",
++        "test_read_format_zip_lzma_one_file",
++        "test_read_format_zip_lzma_one_file_blockread",
++        "test_read_format_zip_lzma_multi",
++        "test_read_format_zip_lzma_multi_blockread",
++        "test_read_format_zip_bzip2_one_file",
++        "test_read_format_zip_bzip2_one_file_blockread",
++        "test_read_format_zip_bzip2_multi",
++        "test_read_format_zip_bzip2_multi_blockread",
++        "test_read_format_zip_zstd_one_file",
++        "test_read_format_zip_zstd_one_file_blockread",
++        "test_read_format_zip_zstd_multi",
++        "test_read_format_zip_zstd_multi_blockread",
++        "test_read_format_zip_xz_multi",
++        "test_read_format_zip_xz_multi_blockread",
++        "test_read_format_zip_ppmd8_crash_1",
++        "test_read_format_zip_bz2_hang_on_invalid",
++        "test_read_format_zip_ppmd8_crash_2",
++        "test_read_format_zip_lzma_alone_leak",
++        "test_read_format_zip_lzma_stream_end",
++        "test_read_format_zip_lzma_stream_end_blockread",
++        "test_read_format_zip_7z_lzma",
++        "test_read_format_zip_7z_deflate",
++    ],
++)
++libarchive_test(
++    name = "test_read_format_zip_7075_utf8_paths",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_utf8_paths",
++    ],
++)
++libarchive_test(name = "test_read_format_zip_comment_stored", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_encryption_data", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_encryption_header", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_encryption_partially", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_extra_padding", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_zip_filename",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_filename_CP932_eucJP",
++        "test_read_format_zip_filename_CP932_UTF8",
++        "test_read_format_zip_filename_UTF8_eucJP",
++        "test_read_format_zip_filename_UTF8_UTF8",
++        "test_read_format_zip_filename_CP866_KOI8R",
++        "test_read_format_zip_filename_CP866_UTF8",
++        "test_read_format_zip_filename_KOI8R_CP866",
++        "test_read_format_zip_filename_KOI8R_UTF8",
++        "test_read_format_zip_filename_UTF8_KOI8R",
++        "test_read_format_zip_filename_UTF8_CP866",
++        "test_read_format_zip_filename_UTF8_UTF8_ru",
++        "test_read_format_zip_filename_CP932_CP932",
++        "test_read_format_zip_filename_UTF8_CP932",
++        "test_read_format_zip_filename_CP866_CP1251",
++        "test_read_format_zip_filename_CP866_CP1251_win",
++        "test_read_format_zip_filename_KOI8R_CP1251",
++        "test_read_format_zip_filename_UTF8_CP1251",
++        "test_read_format_zip_filename_KOI8R_UTF8_2",
++    ],
++)
++libarchive_test(
++    name = "test_read_format_zip_high_compression",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_high_compression",
++        "test_read_format_zip_high_compression2",
++    ],
++)
++libarchive_test(name = "test_read_format_zip_jar", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_mac_metadata", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_malformed", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_msdos", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_nested", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_nofiletype", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_zip_padded",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_padded1",
++        "test_read_format_zip_padded2",
++        "test_read_format_zip_padded3",
++    ],
++)
++libarchive_test(name = "test_read_format_zip_sfx", deps = [":lib"])
++libarchive_test(name = "test_read_format_zip_traditional_encryption_data", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_zip_winzip_aes",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_winzip_aes128",
++        "test_read_format_zip_winzip_aes256",
++        "test_read_format_zip_winzip_aes256_stored",
++    ],
++)
++libarchive_test(
++    name = "test_read_format_zip_winzip_aes_large",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_winzip_aes256_large",
++    ],
++)
++libarchive_test(name = "test_read_format_zip_with_invalid_traditional_eocd", deps = [":lib"])
++libarchive_test(
++    name = "test_read_format_zip_zip64",
++    deps = [":lib"],
++    tests = [
++        "test_read_format_zip_zip64a",
++        "test_read_format_zip_zip64b",
++    ],
++)
++libarchive_test(name = "test_read_large", deps = [":lib"])
++libarchive_test(name = "test_read_pax_truncated", deps = [":lib"])
++libarchive_test(name = "test_read_pax_xattr_rht_security_selinux", deps = [":lib"])
++libarchive_test(name = "test_read_pax_xattr_schily", deps = [":lib"])
++libarchive_test(name = "test_read_position", deps = [":lib"])
++libarchive_test(
++    name = "test_read_set_format",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on Windows
++    tests = [
++        "test_read_set_format",
++        "test_read_set_wrong_format",
++        "test_read_append_filter",
++        "test_read_append_wrong_filter",
++        "test_read_append_filter_program",
++        "test_read_append_filter_wrong_program",
++    ],
++)
++libarchive_test(name = "test_read_too_many_filters", deps = [":lib"])
++libarchive_test(name = "test_read_truncated", deps = [":lib"])
++libarchive_test(
++    name = "test_read_truncated_filter",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # NOTE: runs too slow on Windows
++    tests = [
++        "test_read_truncated_filter_bzip2",
++        "test_read_truncated_filter_compress",
++        "test_read_truncated_filter_gzip",
++        "test_read_truncated_filter_lzip",
++        "test_read_truncated_filter_lzma",
++        "test_read_truncated_filter_lzop",
++        "test_read_truncated_filter_xz",
++    ],
++)
++libarchive_test(name = "test_short_writes", deps = [":lib"])
++libarchive_test(
++    name = "test_sparse_basic",
++    deps = [":lib"],
++    tests = [
++        # TODO: tests_sparse_basic not passing on macOS
++        # "test_sparse_basic",
++        "test_fully_sparse_files",
++    ],
++)
++libarchive_test(name = "test_tar_filenames", deps = [":lib"])
++libarchive_test(name = "test_tar_large", deps = [":lib"])
++libarchive_test(
++    name = "test_ustar_filename_encoding",
++    deps = [":lib"],
++    tests = [
++        "test_ustar_filename_encoding_UTF8_CP866",
++        "test_ustar_filename_encoding_KOI8R_UTF8",
++        "test_ustar_filename_encoding_KOI8R_CP866",
++        "test_ustar_filename_encoding_CP1251_UTF8",
++        "test_ustar_filename_encoding_ru_RU_CP1251",
++        "test_ustar_filename_encoding_Russian_Russia",
++        "test_ustar_filename_encoding_EUCJP_UTF8",
++        "test_ustar_filename_encoding_EUCJP_CP932",
++        "test_ustar_filename_encoding_CP932_UTF8",
++    ],
++)
++libarchive_test(name = "test_ustar_filenames", deps = [":lib"])
++libarchive_test(name = "test_warn_missing_hardlink_target", deps = [":lib"])
++libarchive_test(name = "test_write_disk", deps = [":lib"])
++libarchive_test(name = "test_write_disk_appledouble", deps = [":lib"])
++libarchive_test(name = "test_write_disk_failures", deps = [":lib"])
++libarchive_test(name = "test_write_disk_fixup", deps = [":lib"])
++libarchive_test(name = "test_write_disk_hardlink", deps = [":lib"])
++libarchive_test(name = "test_write_disk_hfs_compression", deps = [":lib"])
++libarchive_test(name = "test_write_disk_lookup", deps = [":lib"])
++libarchive_test(name = "test_write_disk_mac_metadata", deps = [":lib"])
++libarchive_test(name = "test_write_disk_no_hfs_compression", deps = [":lib"])
++libarchive_test(
++    name = "test_write_disk_perms",
++    deps = [":lib"],
++    target_compatible_with = select({
++        # TODO: not working on macos
++        "@platforms//os:macos": ["@platforms//:incompatible"],
++        "//conditions:default": [],
++    }),
++)
++libarchive_test(name = "test_write_disk_secure", deps = [":lib"])
++libarchive_test(name = "test_write_disk_secure744", deps = [":lib"])
++libarchive_test(name = "test_write_disk_secure745", deps = [":lib"])
++libarchive_test(
++    name = "test_write_disk_secure746",
++    deps = [":lib"],
++    tests = [
++        "test_write_disk_secure746a",
++        "test_write_disk_secure746b",
++    ],
++)
++libarchive_test(name = "test_write_disk_sparse", deps = [":lib"])
++libarchive_test(name = "test_write_disk_symlink", deps = [":lib"])
++libarchive_test(name = "test_write_disk_times", deps = [":lib"])
++libarchive_test(name = "test_write_filter_b64encode", deps = [":lib"])
++libarchive_test(name = "test_write_filter_bzip2", deps = [":lib"])
++libarchive_test(name = "test_write_filter_compress", deps = [":lib"])
++libarchive_test(name = "test_write_filter_gzip", deps = [":lib"])
++libarchive_test(
++    name = "test_write_filter_gzip_timestamp",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on Windows
++)
++libarchive_test(name = "test_write_filter_lrzip", deps = [":lib"])
++libarchive_test(name = "test_write_filter_lz4", deps = [":lib"])
++libarchive_test(name = "test_write_filter_lzip", deps = [":lib"])
++libarchive_test(name = "test_write_filter_lzma", deps = [":lib"])
++libarchive_test(name = "test_write_filter_lzop", deps = [":lib"])
++libarchive_test(name = "test_write_filter_program", deps = [":lib"])
++libarchive_test(name = "test_write_filter_uuencode", deps = [":lib"])
++libarchive_test(name = "test_write_filter_xz", deps = [":lib"])
++libarchive_test(name = "test_write_filter_zstd", deps = [":lib"])
++libarchive_test(
++    name = "test_write_format_7zip",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_7zip",
++        "test_write_format_7zip_basic_bzip2",
++        "test_write_format_7zip_basic_copy",
++        "test_write_format_7zip_basic_deflate",
++        "test_write_format_7zip_basic_lzma1",
++        "test_write_format_7zip_basic_lzma2",
++        "test_write_format_7zip_basic_ppmd",
++    ],
++)
++libarchive_test(
++    name = "test_write_format_7zip_empty",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_7zip_empty_archive",
++        "test_write_format_7zip_empty_files",
++    ],
++)
++libarchive_test(
++    name = "test_write_format_7zip_large",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_7zip_large_bzip2",
++        "test_write_format_7zip_large_copy",
++        "test_write_format_7zip_large_deflate",
++        "test_write_format_7zip_large_lzma1",
++        "test_write_format_7zip_large_lzma2",
++        "test_write_format_7zip_large_ppmd",
++    ],
++)
++libarchive_test(name = "test_write_format_ar", deps = [":lib"])
++libarchive_test(name = "test_write_format_cpio", deps = [":lib"])
++libarchive_test(name = "test_write_format_cpio_empty", deps = [":lib"])
++libarchive_test(name = "test_write_format_cpio_newc", deps = [":lib"])
++libarchive_test(name = "test_write_format_cpio_odc", deps = [":lib"])
++libarchive_test(name = "test_write_format_gnutar", deps = [":lib"])
++libarchive_test(
++    name = "test_write_format_gnutar_filenames",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_gnutar_filenames",
++        "test_write_format_gnutar_linknames",
++    ],
++)
++libarchive_test(
++    name = "test_write_format_iso9660",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on macOS arm64
++)
++libarchive_test(
++    name = "test_write_format_iso9660_boot",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on macOS arm64
++)
++libarchive_test(name = "test_write_format_iso9660_empty", deps = [":lib"])
++libarchive_test(
++    name = "test_write_format_iso9660_filename",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on macOS arm64
++)
++libarchive_test(
++    name = "test_write_format_iso9660_zisofs",
++    deps = [":lib"],
++    tags = ["bcr_presubmit_skip"],  # TODO: failing on macOS arm64
++)
++libarchive_test(
++    name = "test_write_format_mtree",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_mtree",
++        "test_write_format_mtree_no_leading_dotslash",
++    ],
++)
++libarchive_test(name = "test_write_format_mtree_absolute_path", deps = [":lib"])
++libarchive_test(name = "test_write_format_mtree_classic", deps = [":lib"])
++libarchive_test(name = "test_write_format_mtree_classic_indent", deps = [":lib"])
++libarchive_test(name = "test_write_format_mtree_fflags", deps = [":lib"])
++libarchive_test(name = "test_write_format_mtree_no_separator", deps = [":lib"])
++libarchive_test(name = "test_write_format_mtree_quoted_filename", deps = [":lib"])
++libarchive_test(name = "test_write_format_pax", deps = [":lib"])
++libarchive_test(name = "test_write_format_raw", deps = [":lib"])
++libarchive_test(name = "test_write_format_raw_b64", deps = [":lib"])
++libarchive_test(name = "test_write_format_shar_empty", deps = [":lib"])
++libarchive_test(name = "test_write_format_tar", deps = [":lib"])
++libarchive_test(name = "test_write_format_tar_empty", deps = [":lib"])
++libarchive_test(name = "test_write_format_tar_sparse", deps = [":lib"])
++libarchive_test(name = "test_write_format_tar_ustar", deps = [":lib"])
++libarchive_test(name = "test_write_format_tar_v7tar", deps = [":lib"])
++libarchive_test(name = "test_write_format_warc", deps = [":lib"])
++libarchive_test(name = "test_write_format_warc_empty", deps = [":lib"])
++libarchive_test(name = "test_write_format_xar", deps = [":lib"])
++libarchive_test(name = "test_write_format_xar_empty", deps = [":lib"])
++libarchive_test(
++    name = "test_write_format_zip",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_zip",
++        "test_write_format_zip64",
++        "test_write_format_zip_traditional_pkware_encryption",
++        "test_write_format_zip_winzip_aes128_encryption",
++        "test_write_format_zip_winzip_aes256_encryption",
++    ],
++)
++libarchive_test(name = "test_write_format_zip64_stream", deps = [":lib"])
++libarchive_test(name = "test_write_format_zip_compression_store", deps = [":lib"])
++libarchive_test(name = "test_write_format_zip_empty", deps = [":lib"])
++libarchive_test(name = "test_write_format_zip_empty_zip64", deps = [":lib"])
++libarchive_test(name = "test_write_format_zip_entry_size_unset", deps = [":lib"], tests = ["test_write_format_zip_size_unset"])
++libarchive_test(name = "test_write_format_zip_file", deps = [":lib"])
++libarchive_test(name = "test_write_format_zip_file_zip64", deps = [":lib"])
++libarchive_test(name = "test_write_format_zip_large", deps = [":lib"])
++
++# TODO: figure out why this test fails with Bazel
++libarchive_test(name = "test_write_format_zip_stream", deps = [":lib"], tags = ["manual"])
++
++libarchive_test(
++    name = "test_write_format_zip_zip64",
++    deps = [":lib"],
++    tests = [
++        "test_write_format_zip_zip64_oversize",
++    ],
++)
++libarchive_test(name = "test_write_open_memory", deps = [":lib"])
++libarchive_test(
++    name = "test_write_read_format_zip",
++    deps = [":lib"],
++    tests = [
++        "test_write_read_format_zip",
++        "test_write_read_format_zip_improved_streaming",
++        "test_write_read_format_zip64",
++        "test_write_read_format_zip64_improved_streaming",
++    ],
++)
++libarchive_test(name = "test_xattr_platform", deps = [":lib"])
++libarchive_test(
++    name = "test_zip_filename_encoding",
++    deps = [":lib"],
++    tests = [
++        "test_zip_filename_encoding_UTF8",
++        "test_zip_filename_encoding_KOI8R",
++        "test_zip_filename_encoding_ru_RU_CP1251",
++        "test_zip_filename_encoding_Russian_Russia",
++        "test_zip_filename_encoding_EUCJP",
++        "test_zip_filename_encoding_CP932",
++    ],
++)
++
++cc_library(
++    name = "lib",
++    strip_include_prefix = ".",
++    hdrs = ["test.h"],
++    srcs = ["read_open_memory.c"],
++    linkopts = select({
++        # tests override some methods in libarchive
++        # SEE: read_open_memory.c
++        "@rules_cc//cc/compiler:msvc-cl": ["/IGNORE:4217"],
++        "//conditions:default": [],
++    }),
++    deps = [
++        "//:config",
++        "//test_utils:common",
++    ],
++)
+diff --git a/libarchive_bazel_generic_config.h b/libarchive_bazel_generic_config.h
+new file mode 100644
+index 00000000..c998c9f0
+--- /dev/null
++++ b/libarchive_bazel_generic_config.h
+@@ -0,0 +1,187 @@
++#define __LIBARCHIVE_CONFIG_H_INCLUDED 1
++
++#define BSDCPIO_VERSION_STRING "3.7.3"
++#define BSDTAR_VERSION_STRING "3.7.3"
++#define BSDCAT_VERSION_STRING "3.7.3"
++#define BSDUNZIP_VERSION_STRING "3.7.3"
++#define LIBARCHIVE_VERSION_NUMBER "3007003"
++#define LIBARCHIVE_VERSION_STRING "3.7.3"
++#define VERSION "3.7.3"
++
++#define HAVE_DECL_SIZE_MAX 1
++#define HAVE_DECL_SSIZE_MAX 1
++#define HAVE_DECL_UINT32_MAX 1
++#define HAVE_DECL_INT32_MAX 1
++#define HAVE_DECL_INT32_MIN 1
++#define HAVE_DECL_UINT64_MAX 1
++#define HAVE_DECL_INT64_MAX 1
++#define HAVE_DECL_INT64_MIN 1
++#define HAVE_DECL_UINTMAX_MAX 1
++#define HAVE_DECL_INTMAX_MAX 1
++#define HAVE_DECL_INTMAX_MIN 1
++
++#define HAVE_CHOWN 1
++#define HAVE_CTYPE_H 1
++#define HAVE_DIRENT_H 1
++#define HAVE_DLFCN_H 1
++#define HAVE_EILSEQ 1
++#define HAVE_ERRNO_H 1
++#define HAVE_FCNTL_H 1
++#define HAVE_FSEEKO 1
++#define HAVE_FSTAT 1
++#define HAVE_FTRUNCATE 1
++#define HAVE_GETPID 1
++#define HAVE_INTMAX_T 1
++#define HAVE_INTTYPES_H 1
++#define HAVE_LIMITS_H 1
++#define HAVE_LOCALE_H 1
++#define HAVE_LONG_LONG_INT 1
++#define HAVE_MBRTOWC 1
++#define HAVE_MEMMOVE 1
++#define HAVE_MEMORY_H 1
++#define HAVE_MEMSET 1
++#define HAVE_MKDIR 1
++#define HAVE_PTHREAD_H 1
++#define HAVE_READDIR_R 1
++#define HAVE_SETLOCALE 1
++#define HAVE_SIGNAL_H 1
++#define HAVE_STDARG_H 1
++#define HAVE_STDINT_H 1
++#define HAVE_STDLIB_H 1
++#define HAVE_STRCHR 1
++#define HAVE_STRDUP 1
++#define HAVE_STRERROR 1
++#define HAVE_STRFTIME 1
++#define HAVE_STRINGS_H 1
++#define HAVE_STRING_H 1
++#define HAVE_STRRCHR 1
++#define HAVE_SYS_PARAM_H 1
++#define HAVE_SYS_STAT_H 1
++#define HAVE_SYS_TIME_H 1
++#define HAVE_SYS_TYPES_H 1
++#define HAVE_TIME_H
++#define HAVE_TZSET 1
++#define HAVE_UINTMAX_T 1
++#define HAVE_UNSIGNED_LONG_LONG 1
++#define HAVE_UNSIGNED_LONG_LONG_INT 1
++#define HAVE_UTIME 1
++#define HAVE_UTIME_H 1
++#define HAVE_VPRINTF 1
++#define HAVE_WCHAR_H 1
++#define HAVE_WCHAR_T 1
++#define HAVE_WCRTOMB 1
++#define HAVE_WCSCMP 1
++#define HAVE_WCSCPY 1
++#define HAVE_WCSLEN 1
++#define HAVE_WCTOMB 1
++#define HAVE_WCTYPE_H 1
++#define HAVE_WMEMCMP 1
++#define HAVE_WMEMCPY 1
++
++#define STDC_HEADERS 1
++#define HAVE_SYS_TIME_H 1
++
++#define HAVE_CHROOT 1
++#define HAVE_CTIME_R 1
++#define HAVE_DIRFD 1
++#define HAVE_FCHDIR 1
++#define HAVE_FCHMOD 1
++#define HAVE_FCHOWN 1
++#define HAVE_FCNTL 1
++#define HAVE_FDOPENDIR 1
++#define HAVE_FGETXATTR 1
++#define HAVE_FLISTXATTR 1
++#define HAVE_FORK 1
++#define HAVE_FSETXATTR 1
++#define HAVE_FSTATAT 1
++#define HAVE_FSTATFS 1
++#define HAVE_FSTATVFS 1
++#define HAVE_FUTIMENS 1
++#define HAVE_FUTIMES 1
++#define HAVE_GETEUID 1
++#define HAVE_GETGRGID_R 1
++#define HAVE_GETGRNAM_R 1
++#define HAVE_GETPWNAM_R 1
++#define HAVE_GETPWUID_R 1
++#define HAVE_GETXATTR 1
++#define HAVE_GMTIME_R 1
++#define HAVE_GRP_H 1
++#define HAVE_LANGINFO_H 1
++#define HAVE_LCHOWN 1
++#define HAVE_LGETXATTR 1
++#define HAVE_LINK 1
++#define HAVE_LISTXATTR 1
++#define HAVE_LLISTXATTR 1
++#define HAVE_LOCALTIME_R 1
++#define HAVE_LSETXATTR 1
++#define HAVE_LSTAT 1
++#define HAVE_LUTIMES 1
++#define HAVE_MKFIFO 1
++#define HAVE_MKNOD 1
++#define HAVE_MKSTEMP 1
++#define HAVE_NL_LANGINFO 1
++#define HAVE_OPENAT 1
++#define HAVE_PIPE 1
++#define HAVE_POLL 1
++#define HAVE_POLL_H 1
++#define HAVE_POSIX_SPAWNP 1
++#define HAVE_PWD_H 1
++#define HAVE_READLINK 1
++#define HAVE_READLINKAT 1
++#define HAVE_REGEX_H 1
++#define HAVE_SELECT 1
++#define HAVE_SIGACTION 1
++#define HAVE_SPAWN_H 1
++#define HAVE_STATFS 1
++#define HAVE_STAVTFS 1
++#define HAVE_STRERROR_R 1
++#define HAVE_STRUCT_STAT_ST_BLKSIZE 1
++#define HAVE_STRUCT_TM_TM_GMTOFF 1
++#define HAVE_SYMLINK 1
++#define HAVE_SYS_IOCTL_H 1
++#define HAVE_SYS_MOUNT_H 1
++#define HAVE_SYS_POLL_H 1
++#define HAVE_SYS_SELECT_H 1
++#define HAVE_SYS_UTSNAME_H 1
++#define HAVE_SYS_VFS_H 1
++#define HAVE_SYS_WAIT_H 1
++#define HAVE_TIMEGM 1
++#define HAVE_UNISTD_H 1
++#define HAVE_UNSETENV 1
++#define HAVE_UTIMENSAT 1
++#define HAVE_UTIMES 1
++#define HAVE_VFORK 1
++#define LSTAT_FOLLOWS_SLASHED_SYMLINK 1
++#define STRERROR_R_CHAR_P 1
++
++#define HAVE_ZLIB_H 1
++#define HAVE_ZSTD_H 1
++#define HAVE_LIBZSTD 1
++#define HAVE_LIBZSTD_COMPRESSOR 1
++#define HAVE_LIBLZMA 1
++#define HAVE_LZMA_H 1
++#define HAVE_LZMA_STREAM_ENCODER_MT 1
++#define HAVE_LIBBZ2 1
++#define HAVE_BZLIB_H 1
++#define HAVE_LIBLZ4 1
++#define HAVE_LZ4_H 1
++#define HAVE_LZ4HC_H 1
++
++#ifdef __APPLE__
++#define MAC_OS_X_VERSION_MIN_REQUIRED 1060
++#define MAC_OS_X_VERSION_MAX_ALLOWED 1070
++#define HAVE_STRUCT_STAT_ST_BIRTHTIME 1
++#define HAVE_SYS_CDEFS_H 1
++#endif
++
++#ifdef __linux__
++#if (defined(__GNUC__) && !defined(__clang__))
++#define HAVE_FUTIMESAT 1
++#endif
++#define HAVE_LINUX_FS_H 1
++#define HAVE_LINUX_MAGIC_H 1
++#define HAVE_LINUX_TYPES_H 1
++#define HAVE_PATHS_H 1
++#define HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC 1
++#define HAVE_SYS_XATTR_H 1
++#endif
+diff --git a/libarchive_bazel_windows_config.h b/libarchive_bazel_windows_config.h
+new file mode 100644
+index 00000000..baf68cff
+--- /dev/null
++++ b/libarchive_bazel_windows_config.h
+@@ -0,0 +1,110 @@
++#define __LIBARCHIVE_CONFIG_H_INCLUDED 1
++
++#define HAVE_INT16_T
++#define HAVE_INT32_T
++#define HAVE_INT64_T
++#define HAVE_INTMAX_T
++
++#define HAVE_UINT8_T
++#define HAVE_UINT16_T
++#define HAVE_UINT32_T
++#define HAVE_UINT64_T
++#define HAVE_UINTMAX_T
++
++#define SIZEOF_SHORT 2
++#define SIZEOF_INT 4
++#define SIZEOF_LONG 4
++#define SIZEOF_LONG_LONG 8
++#define SIZEOF_UNSIGNED_SHORT 2
++#define SIZEOF_UNSIGNED 4
++#define SIZEOF_UNSIGNED_LONG 4
++#define SIZEOF_UNSIGNED_LONG_LONG 8
++
++#define ARCHIVE_CRYPTO_MD5_WIN 1
++#define ARCHIVE_CRYPTO_SHA1_WIN 1
++#define ARCHIVE_CRYPTO_SHA256_WIN 1
++#define ARCHIVE_CRYPTO_SHA384_WIN 1
++#define ARCHIVE_CRYPTO_SHA512_WIN 1
++
++#define BSDCPIO_VERSION_STRING "3.7.3"
++#define BSDTAR_VERSION_STRING "3.7.3"
++#define BSDCAT_VERSION_STRING "3.7.3"
++#define BSDUNZIP_VERSION_STRING "3.7.3"
++
++#define HAVE_BCRYPT_H 1
++#define HAVE_CTYPE_H 1
++#define HAVE_DECL_INT32_MAX 1
++#define HAVE_DECL_INT32_MIN 1
++#define HAVE_DECL_INT64_MAX 1
++#define HAVE_DECL_INT64_MIN 1
++#define HAVE_DECL_INTMAX_MAX 1
++#define HAVE_DECL_INTMAX_MIN 1
++#define HAVE_DECL_SIZE_MAX 1
++#define HAVE_DECL_UINT32_MAX 1
++#define HAVE_DECL_UINT64_MAX 1
++#define HAVE_DECL_UINTMAX_MAX 1
++#define HAVE_DIRECT_H 1
++#define HAVE_EILSEQ 1
++#define HAVE_ERRNO_H 1
++#define HAVE_FCNTL_H 1
++#define HAVE_FSTAT 1
++#define HAVE_GETPID 1
++#define HAVE_INTTYPES_H 1
++#define HAVE_IO_H 1
++#define HAVE_LIMITS_H 1
++#define HAVE_LOCALE_H 1
++#define HAVE_MBRTOWC 1
++#define HAVE_MEMMOVE 1
++#define HAVE_MEMORY_H 1
++#define HAVE_MKDIR 1
++#define HAVE_PROCESS_H 1
++#define HAVE_SETLOCALE 1
++#define HAVE_SIGNAL_H 1
++#define HAVE_STDARG_H 1
++#define HAVE_STDINT_H 1
++#define HAVE_STDLIB_H 1
++#define HAVE_STRCHR 1
++#define HAVE_STRNLEN 1
++#define HAVE_STRDUP 1
++#define HAVE_STRERROR 1
++#define HAVE_STRFTIME 1
++#define HAVE_STRING_H 1
++#define HAVE_STRRCHR 1
++#define HAVE_SYS_STAT_H 1
++#define HAVE_SYS_TYPES_H 1
++#define HAVE_SYS_UTIME_H 1
++#define HAVE_TIME_H 1
++#define HAVE_TZSET 1
++#define HAVE_UTIME 1
++#define HAVE_WCHAR_H 1
++#define HAVE_WCHAR_T 1
++#define HAVE_WCRTOMB 1
++#define HAVE_WCSCMP 1
++#define HAVE_WCSCPY 1
++#define HAVE_WCSLEN 1
++#define HAVE_WCTOMB 1
++#define HAVE_WCTYPE_H 1
++#define HAVE_WINCRYPT_H 1
++#define HAVE_WINDOWS_H 1
++#define HAVE_WINIOCTL_H 1
++#define HAVE__CrtSetReportMode 1
++#define HAVE_CTIME_S 1
++#define HAVE__FSEEKI64 1
++#define HAVE__GET_TIMEZONE 1
++#define HAVE_GMTIME_S 1
++#define HAVE_LOCALTIME_S 1
++#define HAVE__MKGMTIME 1
++#define ICONV_CONST
++#define HAVE_LZ4HC_H 1
++
++#define LIBARCHIVE_VERSION_NUMBER "3007003"
++#define LIBARCHIVE_VERSION_STRING "3.7.3"
++#define SIZEOF_WCHAR_T 2
++#define VERSION "3.7.3"
++
++#define gid_t short
++#define id_t short
++#define mode_t unsigned short
++#define pid_t int
++#define ssize_t int64_t
++#define uid_t short
+diff --git a/libarchive_fe/BUILD.bazel b/libarchive_fe/BUILD.bazel
+new file mode 100644
+index 00000000..8776c21c
+--- /dev/null
++++ b/libarchive_fe/BUILD.bazel
+@@ -0,0 +1,18 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("//bazel:config.bzl", "PLATFORM_LOCAL_DEFINES")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_library(
++    name = "archive_fe",
++    hdrs = glob(["*.h"]),
++    srcs = glob(["*.c"]),
++    defines = PLATFORM_LOCAL_DEFINES,
++    deps = ["//:config"],
++    strip_include_prefix = ".",
++)
++
++alias(
++    name = "libarchive_fe",
++    actual = ":archive_fe",
++)
+diff --git a/tar/BUILD.bazel b/tar/BUILD.bazel
+new file mode 100644
+index 00000000..5068b0c3
+--- /dev/null
++++ b/tar/BUILD.bazel
+@@ -0,0 +1,33 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_binary(
++    name = "bsdtar",
++    srcs = [
++        "bsdtar.c",
++        "bsdtar.h",
++        "bsdtar_platform.h",
++        "cmdline.c",
++        "creation_set.c",
++        "read.c",
++        "subst.c",
++        "util.c",
++        "write.c",
++    ] + select({
++        "@platforms//os:windows": [
++            "bsdtar_windows.c",
++            "bsdtar_windows.h",
++        ],
++        "//conditions:default": [],
++    }),
++    deps = [
++        "//libarchive",
++        "//libarchive_fe",
++    ],
++)
++
++alias(
++    name = "tar",
++    actual = ":bsdtar",
++)
+diff --git a/tar/bsdtar.c b/tar/bsdtar.c
+index 42baab28..95d53097 100644
+--- a/tar/bsdtar.c
++++ b/tar/bsdtar.c
+@@ -1070,7 +1070,11 @@ static const char *long_help_msg =
+ 	"  -c Create  -r Add/Replace  -t List  -u Update  -x Extract\n"
+ 	"Common Options:\n"
+ 	"  -b #  Use # 512-byte records per I/O block\n"
++#ifdef _PATH_DEFTAPE 
+ 	"  -f <filename>  Location of archive (default " _PATH_DEFTAPE ")\n"
++#else
++	"  -f <filename>  Location of archive \n"
++#endif
+ 	"  -v    Verbose\n"
+ 	"  -w    Interactive\n"
+ 	"Create: %p -c [options] [<file> | <dir> | @<archive> | -C <dir> ]\n"
+diff --git a/test_utils/BUILD.bazel b/test_utils/BUILD.bazel
+new file mode 100644
+index 00000000..16b958fc
+--- /dev/null
++++ b/test_utils/BUILD.bazel
+@@ -0,0 +1,24 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("//bazel:config.bzl", "PLATFORM_LOCAL_DEFINES")
++
++package(default_visibility = ["//:__subpackages__"])
++
++exports_files(["test_main.c"])
++
++cc_library(
++    name = "test_utils",
++    strip_include_prefix = ".",
++    hdrs = ["test_utils.h"],
++    srcs = ["test_utils.c"],
++)
++
++cc_library(
++    name = "common",
++    hdrs = ["test_common.h"],
++    defines = PLATFORM_LOCAL_DEFINES,
++    strip_include_prefix = ".",
++    deps = [
++        ":test_utils",
++        "//libarchive:internal_hdrs",
++    ],
++)
+diff --git a/test_utils/test_common.h b/test_utils/test_common.h
+index 8e1ec824..cc452c8b 100644
+--- a/test_utils/test_common.h
++++ b/test_utils/test_common.h
+@@ -30,7 +30,11 @@
+  * The goal of this file (and the matching test.c) is to
+  * simplify the very repetitive test-*.c test programs.
+  */
+-#if defined(HAVE_CONFIG_H)
++
++#if defined(PLATFORM_CONFIG_H)
++/* Use hand-built config.h in environments that need it. */
++#include PLATFORM_CONFIG_H
++#elif defined(HAVE_CONFIG_H)
+ /* Most POSIX platforms use the 'configure' script to build config.h */
+ #include "config.h"
+ #elif defined(__FreeBSD__)
+diff --git a/unzip/BUILD.bazel b/unzip/BUILD.bazel
+new file mode 100644
+index 00000000..7bde5a8f
+--- /dev/null
++++ b/unzip/BUILD.bazel
+@@ -0,0 +1,21 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary")
++
++package(default_visibility = ["//visibility:public"])
++
++cc_binary(
++    name = "unzip",
++    srcs = [
++        "bsdunzip.c",
++        "bsdunzip.h",
++        "bsdunzip_platform.h",
++        "cmdline.c",
++        "la_getline.c",
++        "la_queue.h",
++    ],
++    # TODO: missing fnmatch while building with bazel
++    tags = ["manual"],
++    deps = [
++        "//libarchive",
++        "//libarchive_fe",
++    ],
++)

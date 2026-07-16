@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Alexander Khabarov <alexander.khabarov@arm.com>
+Date: Wed, 25 Oct 2023 17:35:31 +0000
+Subject: [PATCH] Add scope resolution operators for MSVC 2019
+
+In several places MSVC 2019 cannot determine which namespace `llvm`
+refers to. Adding explicit `::` fixes this.
+---
+ llvm/include/llvm/ADT/DenseMap.h            |  2 +-
+ llvm/include/llvm/ADT/bit.h                 | 20 ++++++++++----------
+ llvm/include/llvm/Support/MathExtras.h      |  2 +-
+ llvm/include/llvm/Support/TrailingObjects.h |  2 +-
+ 4 files changed, 13 insertions(+), 13 deletions(-)
+
+diff --git a/llvm/include/llvm/ADT/DenseMap.h b/llvm/include/llvm/ADT/DenseMap.h
+index 3ef6a7cd1..5a0121fd5 100644
+--- a/llvm/include/llvm/ADT/DenseMap.h
++++ b/llvm/include/llvm/ADT/DenseMap.h
+@@ -933,7 +933,7 @@ class SmallDenseMap
+ public:
+   explicit SmallDenseMap(unsigned NumInitBuckets = 0) {
+     if (NumInitBuckets > InlineBuckets)
+-      NumInitBuckets = llvm::bit_ceil(NumInitBuckets);
++      NumInitBuckets = ::llvm::bit_ceil(NumInitBuckets);
+     init(NumInitBuckets);
+   }
+ 
+diff --git a/llvm/include/llvm/ADT/bit.h b/llvm/include/llvm/ADT/bit.h
+index 2840c5f60..8a9832e48 100644
+--- a/llvm/include/llvm/ADT/bit.h
++++ b/llvm/include/llvm/ADT/bit.h
+@@ -96,8 +96,8 @@ template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
+ #elif defined(_MSC_VER) && !defined(_DEBUG)
+     return _byteswap_uint64(UV);
+ #else
+-    uint64_t Hi = llvm::byteswap<uint32_t>(UV);
+-    uint32_t Lo = llvm::byteswap<uint32_t>(UV >> 32);
++    uint64_t Hi = ::llvm::byteswap<uint32_t>(UV);
++    uint32_t Lo = ::llvm::byteswap<uint32_t>(UV >> 32);
+     return (Hi << 32) | Lo;
+ #endif
+   } else {
+@@ -179,7 +179,7 @@ template <typename T> struct TrailingZerosCounter<T, 8> {
+ template <typename T> [[nodiscard]] int countr_zero(T Val) {
+   static_assert(std::is_unsigned_v<T>,
+                 "Only unsigned integral types are allowed.");
+-  return llvm::detail::TrailingZerosCounter<T, sizeof(T)>::count(Val);
++  return ::llvm::detail::TrailingZerosCounter<T, sizeof(T)>::count(Val);
+ }
+ 
+ namespace detail {
+@@ -245,7 +245,7 @@ template <typename T> struct LeadingZerosCounter<T, 8> {
+ template <typename T> [[nodiscard]] int countl_zero(T Val) {
+   static_assert(std::is_unsigned_v<T>,
+                 "Only unsigned integral types are allowed.");
+-  return llvm::detail::LeadingZerosCounter<T, sizeof(T)>::count(Val);
++  return ::llvm::detail::LeadingZerosCounter<T, sizeof(T)>::count(Val);
+ }
+ 
+ /// Count the number of ones from the most significant bit to the first
+@@ -258,7 +258,7 @@ template <typename T> [[nodiscard]] int countl_zero(T Val) {
+ template <typename T> [[nodiscard]] int countl_one(T Value) {
+   static_assert(std::is_unsigned_v<T>,
+                 "Only unsigned integral types are allowed.");
+-  return llvm::countl_zero<T>(~Value);
++  return ::llvm::countl_zero<T>(~Value);
+ }
+ 
+ /// Count the number of ones from the least significant bit to the first
+@@ -271,7 +271,7 @@ template <typename T> [[nodiscard]] int countl_one(T Value) {
+ template <typename T> [[nodiscard]] int countr_one(T Value) {
+   static_assert(std::is_unsigned_v<T>,
+                 "Only unsigned integral types are allowed.");
+-  return llvm::countr_zero<T>(~Value);
++  return ::llvm::countr_zero<T>(~Value);
+ }
+ 
+ /// Returns the number of bits needed to represent Value if Value is nonzero.
+@@ -281,7 +281,7 @@ template <typename T> [[nodiscard]] int countr_one(T Value) {
+ template <typename T> [[nodiscard]] int bit_width(T Value) {
+   static_assert(std::is_unsigned_v<T>,
+                 "Only unsigned integral types are allowed.");
+-  return std::numeric_limits<T>::digits - llvm::countl_zero(Value);
++  return std::numeric_limits<T>::digits - ::llvm::countl_zero(Value);
+ }
+ 
+ /// Returns the largest integral power of two no greater than Value if Value is
+@@ -308,7 +308,7 @@ template <typename T> [[nodiscard]] T bit_ceil(T Value) {
+                 "Only unsigned integral types are allowed.");
+   if (Value < 2)
+     return 1;
+-  return T(1) << llvm::bit_width<T>(Value - 1u);
++  return T(1) << ::llvm::bit_width<T>(Value - 1u);
+ }
+ 
+ namespace detail {
+@@ -363,7 +363,7 @@ template <typename T, typename = std::enable_if_t<std::is_unsigned_v<T>>>
+     return V;
+ 
+   if (R < 0)
+-    return llvm::rotr(V, -R);
++    return ::llvm::rotr(V, -R);
+ 
+   return (V << R) | (V >> (N - R));
+ }
+@@ -376,7 +376,7 @@ template <typename T, typename> [[nodiscard]] constexpr T rotr(T V, int R) {
+     return V;
+ 
+   if (R < 0)
+-    return llvm::rotl(V, -R);
++    return ::llvm::rotl(V, -R);
+ 
+   return (V >> R) | (V << (N - R));
+ }
+diff --git a/llvm/include/llvm/Support/MathExtras.h b/llvm/include/llvm/Support/MathExtras.h
+index dc095941f..f76f042a8 100644
+--- a/llvm/include/llvm/Support/MathExtras.h
++++ b/llvm/include/llvm/Support/MathExtras.h
+@@ -300,7 +300,7 @@ inline bool isShiftedMask_64(uint64_t Value, unsigned &MaskIdx,
+ /// Compile time Log2.
+ /// Valid only for positive powers of two.
+ template <size_t kValue> constexpr inline size_t CTLog2() {
+-  static_assert(kValue > 0 && llvm::isPowerOf2_64(kValue),
++  static_assert(kValue > 0 && ::llvm::isPowerOf2_64(kValue),
+                 "Value is not a valid power of 2");
+   return 1 + CTLog2<kValue / 2>();
+ }
+diff --git a/llvm/include/llvm/Support/TrailingObjects.h b/llvm/include/llvm/Support/TrailingObjects.h
+index f8a546b5c..ab82acd6e 100644
+--- a/llvm/include/llvm/Support/TrailingObjects.h
++++ b/llvm/include/llvm/Support/TrailingObjects.h
+@@ -177,7 +177,7 @@ protected:
+       size_t SizeSoFar, size_t Count1,
+       typename ExtractSecondType<MoreTys, size_t>::type... MoreCounts) {
+     return ParentType::additionalSizeToAllocImpl(
+-        (requiresRealignment() ? llvm::alignTo<alignof(NextTy)>(SizeSoFar)
++        (requiresRealignment() ? ::llvm::alignTo<alignof(NextTy)>(SizeSoFar)
+                                : SizeSoFar) +
+             sizeof(NextTy) * Count1,
+         MoreCounts...);

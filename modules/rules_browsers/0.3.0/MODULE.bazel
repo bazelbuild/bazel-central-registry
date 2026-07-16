@@ -1,0 +1,69 @@
+"""Rules/toolchains to use browsers with Bazel."""
+
+module(
+    name = "rules_browsers",
+    version = "0.3.0",
+)
+
+# Load default browser versions used by targets in `//browsers` for direct consumption. Test rules
+# provided from the module use these repositories transitively. The root module depending on
+# `rules_browsers` can override the version used in its `MODULE.bazel` file.
+browsers = use_extension("//browsers:extensions.bzl", "browsers")
+browsers.chrome()
+browsers.chromedriver()
+browsers.firefox()
+use_repo(
+    browsers,
+    "rules_browsers_chrome_linux",
+    "rules_browsers_chrome_mac",
+    "rules_browsers_chrome_mac_arm",
+    "rules_browsers_chrome_win64",
+    "rules_browsers_chromedriver_linux",
+    "rules_browsers_chromedriver_mac",
+    "rules_browsers_chromedriver_mac_arm",
+    "rules_browsers_chromedriver_win64",
+    "rules_browsers_firefox_linux",
+    "rules_browsers_firefox_mac",
+    "rules_browsers_firefox_mac_arm",
+    "rules_browsers_firefox_win64",
+)
+
+# Miscellaneous dependencies.
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+
+# Manually specify a recent Node.js version.
+bazel_dep(name = "rules_nodejs", version = "6.5.2")
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
+node.toolchain(node_version = "22.18.0")
+
+# JS
+bazel_dep(name = "aspect_rules_js", version = "2.6.2")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm_rules_browsers",
+    data = [
+        "//:package.json",
+        "//:patches/@web__test-runner-chrome@0.18.0.patch",
+    ],
+    npmrc = "//:.npmrc",
+    pnpm_lock = "//:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "npm_rules_browsers")
+
+# TS
+bazel_dep(name = "aspect_rules_ts", version = "3.7.0")
+
+rules_ts_ext = use_extension("@aspect_rules_ts//ts:extensions.bzl", "ext")
+rules_ts_ext.deps(
+    # Specify a name manually to prevent conflicts in consumers that also use
+    # `aspect_rules_ts`. This requires that we override the default for `tsc`,
+    # `tsc_worker` and `validator` on all `ts_project` targets.
+    # Upstream issue: https://github.com/aspect-build/rules_ts/issues/843
+    name = "npm_rules_browsers_typescript",
+    ts_version_from = "//:package.json",
+)
+use_repo(rules_ts_ext, "npm_rules_browsers_typescript")

@@ -1,0 +1,65 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+exports_files(["LICENSE"])
+
+license(
+    name = "license",
+    package_name = "sockpp",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/fpagliughi/sockpp",
+)
+
+expand_template(
+    name = "version_hpp",
+    template = "cmake/version.h.in",
+    substitutions = {
+        "@PROJECT_VERSION@": module_version(),
+        "@PROJECT_VERSION_MAJOR@": module_version().split(".")[0],
+        "@PROJECT_VERSION_MINOR@": module_version().split(".")[1],
+        "@PROJECT_VERSION_PATCH@": module_version().split(".")[2].split("-")[0],
+
+        "#cmakedefine SOCKPP_WITH_OPENSSL": "/* #undef SOCKPP_WITH_OPENSSL */",
+        "#cmakedefine SOCKPP_WITH_MBEDTLS": "/* #undef SOCKPP_WITH_MBEDTLS */",
+    },
+    out = "include_generated/sockpp/version.h",
+)
+
+cc_library(
+    name = "sockpp_version_header",
+    hdrs = [":version_hpp"],
+    includes = ["include_generated"],
+)
+
+cc_library(
+    name = "sockpp",
+    hdrs = glob(["include/sockpp/*.h"]),
+    srcs = glob(["src/*.cpp"]) + select({
+        "@platforms//os:linux": [
+            "src/unix/unix_address.cpp",
+            "src/linux/can_address.cpp",
+            "src/linux/can_socket.cpp",
+        ],
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "src/unix/unix_address.cpp",
+        ],
+    }),
+    includes = ["include"],
+    deps = [":sockpp_version_header"],
+    visibility = ["//visibility:public"],
+    features = select({
+        "@platforms//os:windows": ["windows_export_all_symbols"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": ["-DEFAULTLIB:ws2_32.lib"],
+        "//conditions:default": [],
+    }),
+)

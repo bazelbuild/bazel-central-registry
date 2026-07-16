@@ -1,0 +1,153 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+bool_flag(
+    name = "build_transport_curl",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "build_transport_curl_setting",
+    flag_values = {":build_transport_curl": "true"},
+)
+
+config_setting(
+    name = "not_build_transport_curl_setting",
+    flag_values = {":build_transport_curl": "false"},
+)
+
+# If we're building azure_core_cpp with Curl as a transport, we must ensure curl
+# was built with OpenSSL and not another SSL lib, as azure_core_cpp only
+# supports OpenSSL.
+selects.config_setting_group(
+    name = "build_transport_curl_openssl",
+    match_all = [
+        ":build_transport_curl_setting",
+        "@curl//:use_openssl",
+    ],
+)
+
+bool_flag(
+    name = "build_transport_winhttp",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "build_transport_winhttp_setting",
+    flag_values = {":build_transport_winhttp": "true"},
+)
+
+cc_library(
+    name = "azure_core_cpp",
+    hdrs = glob(
+        ["inc/**/*.hpp"],
+        exclude = [
+            "inc/azure/core/http/curl_transport.hpp",
+            "inc/azure/core/http/win_http_transport.hpp",
+        ],
+    ) + select({
+        ":build_transport_curl_setting": ["inc/azure/core/http/curl_transport.hpp"],
+        "//conditions:default": [],
+    }) + select({
+        ":build_transport_winhttp_setting": ["inc/azure/core/http/win_http_transport.hpp"],
+        "//conditions:default": [],
+    }),
+    features = ["parse_headers"],
+    includes = ["inc"],
+    textual_hdrs = glob(
+        ["src/private/**/*.hpp"]
+    ) + select({
+        ":build_transport_curl_setting": glob(["src/http/curl/**/*.hpp"]),
+        "//conditions:default": [],
+    }) + select({
+        ":build_transport_winhttp_setting": ["src/http/winhttp/win_http_request.hpp"],
+        "//conditions:default": [],
+    }),
+    srcs = glob(
+        ["src/**/*.cpp"],
+        exclude = [
+            "src/http/curl/**/*.cpp",
+            "src/http/winhttp/**/*.cpp",
+        ],
+    ) + select({
+        ":build_transport_curl_setting": glob(["src/http/curl/**/*.cpp"]),
+        "//conditions:default": [],
+    }) + select({
+        ":build_transport_winhttp_setting": glob(["src/http/winhttp/**/*.cpp"]),
+        "//conditions:default": [],
+    }),
+    deps = select({
+        # azure-core-cpp uses bcrypt on Windows and OpenSSL otherwise for
+        # hashing.
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }) + select(
+        {
+            ":build_transport_curl_openssl": ["@curl//:curl"],
+            ":not_build_transport_curl_setting": [],
+        },
+        no_match_error = "azure_core_cpp must be built with --@curl//:ssl_lib=openssl when Curl is enabled as a transport",
+    ) + select({
+        ":build_transport_winhttp_setting": [
+            # TODO: add wil as a dep here when it's in the BCR:
+            # https://github.com/bazelbuild/bazel-central-registry/issues/3807
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": [
+            "bcrypt.lib",
+            "crypt32.lib",
+            "advapi32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "azure_core_cpp_test",
+    srcs = glob(
+        [
+            "test/ut/*.cpp",
+            "test/ut/*.hpp",
+        ],
+        # TODO: exclude tests that fail out of the box for now.
+        exclude = [
+            "test/ut/azure_libcurl_core_main_test.cpp",
+            "test/ut/bodystream_test.cpp",
+            "test/ut/curl_options_test.cpp",
+            "test/ut/retry_policy_test.cpp",
+            "test/ut/telemetry_policy_test.cpp",
+            "test/ut/transport_adapter_base_test.cpp",
+            "test/ut/transport_policy_options.cpp",
+        ] + [
+            # Exclude Curl tests so we only add them in when building with Curl
+            # transport.
+            "test/ut/curl_connection_pool_test.cpp",
+            "test/ut/curl_session_test.hpp",
+            "test/ut/curl_session_test_test.cpp",
+        ],
+    ) + select({
+        ":build_transport_curl_setting": [
+            "test/ut/curl_connection_pool_test.cpp",
+            "test/ut/curl_session_test.hpp",
+            "test/ut/curl_session_test_test.cpp",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["src"],
+    deps = [
+        ":azure_core_cpp",
+        "@googletest//:gtest",
+    ],
+    local_defines = [
+        "_azure_TESTING_BUILD",
+    ],
+)

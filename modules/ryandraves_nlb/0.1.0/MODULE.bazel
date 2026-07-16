@@ -1,0 +1,210 @@
+module(
+    name = "ryandraves_nlb",
+    version = "0.1.0",
+    compatibility_level = 0,
+)
+
+#
+# "Standard" dependencies
+#
+bazel_dep(name = "aspect_bazel_lib", version = "2.10.0")
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "rules_cc", version = "0.1.1")
+bazel_dep(name = "rules_platform", version = "0.1.0")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+#
+# Pico SDK & Picotool
+#
+bazel_dep(name = "pico-sdk", version = "2.1.0")
+register_toolchains(
+    "@pico-sdk//bazel/toolchain:linux-x86_64-rp2040",
+    "@pico-sdk//bazel/toolchain:linux-x86_64-rp2350",
+    "@pico-sdk//bazel/toolchain:linux-aarch64-rp2040",
+    "@pico-sdk//bazel/toolchain:linux-aarch64-rp2350",
+    "@pico-sdk//bazel/toolchain:win-x86_64-rp2040",
+    "@pico-sdk//bazel/toolchain:win-x86_64-rp2350",
+    "@pico-sdk//bazel/toolchain:mac-x86_64-rp2040",
+    "@pico-sdk//bazel/toolchain:mac-x86_64-rp2350",
+    "@pico-sdk//bazel/toolchain:mac-aarch64-rp2040",
+    "@pico-sdk//bazel/toolchain:mac-aarch64-rp2350",
+)
+
+bazel_dep(name = "picotool", version = "2.1.0")
+
+# Pioasm is not yet available in the Pico SDK Bazel build
+# https://github.com/raspberrypi/pico-sdk/tree/master/bazel#known-issues-and-limitations
+# but the binary is distributed in another repo
+http_archive(
+    name = "pioasm-linux-x86",
+    build_file = "//bzl/deps:pioasm.BUILD",
+    integrity = "sha256-pMFMVugwDgGkmCztV4sYGoYeKiN4j84HnEKCw9rVXuk=",
+    url = "https://github.com/raspberrypi/pico-sdk-tools/releases/download/v2.1.0-0/pico-sdk-tools-2.1.0-x86_64-lin.tar.gz",
+)
+http_archive(
+    name = "pioasm-linux-arm",
+    build_file = "//bzl/deps:pioasm.BUILD",
+    integrity = "sha256-kBa73P7E6rVKcHIFysJLQZ2Ldc/LJFwTVxAjqCSFgJM=",
+    url = "https://github.com/raspberrypi/pico-sdk-tools/releases/download/v2.1.0-0/pico-sdk-tools-2.1.0-aarch64-lin.tar.gz",
+)
+
+#
+# Rules Python
+#
+# aspect_rules_py is promising, but its `py_venv` is 3.11+ and
+# rule is either underdocumented or broken.
+bazel_dep(name = "aspect_rules_py", version = "1.0.0")
+
+bazel_dep(name = "rules_python", version = "0.40.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+
+python.toolchain(
+    python_version = "3.12",
+    is_default = True,
+)
+
+use_repo(python, "python_versions")
+use_repo(python, "python_3_12")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+pip.parse(
+    hub_name = "pip",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_lock.txt",
+)
+
+use_repo(pip, "pip")
+
+#
+# py_venv export
+#
+git_repository(
+    name = "rules_pyvenv",
+    commit = "0b03b0d1f5562223d1170c511e548dc0961f0c5f",
+    remote = "https://github.com/cedarai/rules_pyvenv",
+)
+
+#
+# Buildifier
+#
+bazel_dep(
+    name = "buildifier_prebuilt",
+    version = "6.4.0",
+    dev_dependency = True,
+)
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor.git",
+    commit = "0e990032f3c5a866e72615cf67e5ce22186dcb97",
+    # Replace the commit hash (above) with the latest (https://github.com/hedronvision/bazel-compile-commands-extractor/commits/main).
+    # Even better, set up Renovate and let it do the work for you (see "Suggestion: Updates" in the README).
+)
+
+#
+# rules_foreign_cc
+#
+bazel_dep(name = "rules_foreign_cc", version = "0.13.0")
+
+#
+# Pybind11
+#
+bazel_dep(name = "pybind11_bazel", version = "2.12.0")
+
+#
+# Zmq
+#
+bazel_dep(name = "cppzmq", version = "4.10.0")
+bazel_dep(name = "libzmq", version = "4.3.5.bcr.1")
+
+#
+# Google Test
+#
+bazel_dep(name = "googletest", version = "1.15.2")
+
+#
+# Web development
+#
+bazel_dep(name = "aspect_rules_js", version = "2.0.2")
+bazel_dep(name = "aspect_rules_ts", version = "3.1.0")
+bazel_dep(name = "rules_nodejs", version = "6.2.0")
+bazel_dep(name = "aspect_rules_lint", version = "1.0.0-rc4")
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node", dev_dependency = True)
+
+node.toolchain(node_version = "20.13.1")
+
+pnpm = use_extension("@aspect_rules_js//npm:extensions.bzl", "pnpm", dev_dependency = True)
+use_repo(pnpm, "pnpm")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm", dev_dependency = True)
+npm.npm_translate_lock(
+    name = "npm",
+    npmrc = "//:.npmrc",
+    pnpm_lock = "//:pnpm-lock.yaml",
+    public_hoist_packages = {
+        "@next/eslint-plugin-next": ["blog"],
+        "eslint-config-react-app": ["react"],
+        "eslint@8.28.0": ["react"],
+    },
+    verify_node_modules_ignored = "//:.bazelignore",
+    update_pnpm_lock = True,
+    data = [
+        "//:package.json",
+        "//blog:package.json",
+        "//lrb:package.json",
+        "//:pnpm-workspace.yaml",
+    ],
+)
+use_repo(npm, "npm")
+
+rules_ts_ext = use_extension(
+    "@aspect_rules_ts//ts:extensions.bzl",
+    "ext",
+    dev_dependency = True,
+)
+rules_ts_ext.deps()
+use_repo(rules_ts_ext, "npm_typescript")
+
+#
+# Rust
+#
+# Latest release w/ extensions split borked the toolchains
+bazel_dep(name = "rules_rust", version = "0.51.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+)
+use_repo(rust, "rust_toolchains")
+register_toolchains("@rust_toolchains//:all")
+
+wasm_bindgen = use_extension("@rules_rust//wasm_bindgen:extensions.bzl", "wasm_bindgen")
+use_repo(
+    wasm_bindgen,
+)
+register_toolchains(
+    "@rules_rust//wasm_bindgen:default_wasm_bindgen_toolchain",
+    "@rules_rust//rust/private/dummy_cc_toolchain:dummy_cc_wasm32_toolchain",
+)
+
+crate = use_extension(
+    "@rules_rust//crate_universe:extension.bzl",
+    "crate",
+)
+crate.spec(package = "wasm-bindgen", version = "=0.2.92")
+crate.spec(package = "wee_alloc", version = "0.4.5")
+crate.spec(package = "spin", version = "0.9.8")
+crate.spec(package = "lazy_static", version = "1.4", features = ["spin_no_std"])
+crate.spec(package = "console_error_panic_hook", version = "0.1.7")
+crate.spec(package = "web-sys", version = "0.3", features = ["console"])
+crate.from_specs()
+use_repo(crate, "crates")

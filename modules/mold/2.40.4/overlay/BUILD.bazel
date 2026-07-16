@@ -1,0 +1,250 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+config_setting(
+    name = "is_windows_clang_mingw",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang"},
+)
+
+config_setting(
+    name = "is_windows_clang_cl",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang-cl"},
+)
+
+config_setting(
+    name = "is_windows_msvc",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+)
+
+TARGETS = [
+    "X86_64",
+    "I386",
+    "ARM64LE",
+    "ARM64BE",
+    "ARM32LE",
+    "ARM32BE",
+    "RV32LE",
+    "RV32BE",
+    "RV64LE",
+    "RV64BE",
+    "PPC32",
+    "PPC64V1",
+    "PPC64V2",
+    "S390X",
+    "SPARC64",
+    "M68K",
+    "SH4LE",
+    "SH4BE",
+    "LOONGARCH32",
+    "LOONGARCH64",
+]
+
+COMMON_COPTS = [
+    "-std=c++20",
+    "-fno-exceptions",
+    "-fno-unwind-tables",
+    "-fno-asynchronous-unwind-tables",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-Wall",
+    "-Wextra",
+    "-Wno-sign-compare",
+    "-Wno-unused-function",
+    "-Wno-unused-parameter",
+    "-Wno-missing-field-initializers",
+    "-ggnu-pubnames",
+] + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["-pthread"],
+})
+
+TEMPLATE_FILES = [
+    "src/arch-arm32.cc",
+    "src/arch-arm64.cc",
+    "src/arch-i386.cc",
+    "src/arch-loongarch.cc",
+    "src/arch-m68k.cc",
+    "src/arch-ppc32.cc",
+    "src/arch-ppc64v1.cc",
+    "src/arch-ppc64v2.cc",
+    "src/arch-riscv.cc",
+    "src/arch-s390x.cc",
+    "src/arch-sh4.cc",
+    "src/arch-sparc64.cc",
+    "src/arch-x86-64.cc",
+    "src/archive-file.cc",
+    "src/cmdline.cc",
+    "src/error.cc",
+    "src/filetype.cc",
+    "src/gc-sections.cc",
+    "src/gdb-index.cc",
+    "src/icf.cc",
+    "src/input-files.cc",
+    "src/input-sections.cc",
+    "src/linker-script.cc",
+    "src/main.cc",
+    "src/mapfile.cc",
+    "src/output-chunks.cc",
+    "src/passes.cc",
+    "src/relocatable.cc",
+    "src/shrink-sections.cc",
+    "src/thunks.cc",
+    "src/tls.cc",
+] + select({
+    "@platforms//os:windows": [
+        "src/lto-win32.cc",
+        "src/output-file-win32.cc",
+        "src/subprocess-win32.cc",
+    ],
+    "//conditions:default": [
+        "src/lto-unix.cc",
+        "src/output-file-unix.cc",
+        "src/subprocess-unix.cc",
+    ],
+})
+
+MOLD_HDRS = glob([
+    "lib/*.h",
+    "src/*.h",
+    "third-party/rust-demangle/*.h",
+    "third-party/xxhash/*.h",
+]) + [
+    ":config_h",
+    ":mold_git_hash_h",
+]
+
+cc_library(
+    name = "mold_headers",
+    hdrs = MOLD_HDRS,
+    includes = [
+        "lib",
+        "src",
+    ],
+)
+
+cc_library(
+    name = "rust_demangle",
+    srcs = ["third-party/rust-demangle/rust-demangle.c"],
+    hdrs = ["third-party/rust-demangle/rust-demangle.h"],
+)
+
+write_file(
+    name = "config_h",
+    out = "src/config.h",
+    content = [
+        "#define MOLD_VERSION \"2.40.4\"",
+        "#define MOLD_LIBDIR \"\"",
+        "#define MOLD_FIRST_TARGET X86_64",
+        "#define HAVE_MADVISE 0",
+        "#define HAVE_UNAME 0",
+        "#define MOLD_USE_MIMALLOC 0",
+        "#define MOLD_USE_SYSTEM_MIMALLOC 0",
+        "#define HAVE_TARGET_X86_64 1",
+        "#define HAVE_TARGET_I386 1",
+        "#define HAVE_TARGET_ARM64LE 1",
+        "#define HAVE_TARGET_ARM64BE 1",
+        "#define HAVE_TARGET_ARM32LE 1",
+        "#define HAVE_TARGET_ARM32BE 1",
+        "#define HAVE_TARGET_RV32LE 1",
+        "#define HAVE_TARGET_RV32BE 1",
+        "#define HAVE_TARGET_RV64LE 1",
+        "#define HAVE_TARGET_RV64BE 1",
+        "#define HAVE_TARGET_PPC32 1",
+        "#define HAVE_TARGET_PPC64V1 1",
+        "#define HAVE_TARGET_PPC64V2 1",
+        "#define HAVE_TARGET_S390X 1",
+        "#define HAVE_TARGET_SPARC64 1",
+        "#define HAVE_TARGET_M68K 1",
+        "#define HAVE_TARGET_SH4LE 1",
+        "#define HAVE_TARGET_SH4BE 1",
+        "#define HAVE_TARGET_LOONGARCH64 1",
+        "#define HAVE_TARGET_LOONGARCH32 1",
+    ],
+)
+
+write_file(
+    name = "mold_git_hash_h",
+    out = "src/mold-git-hash.h",
+    content = [],
+)
+
+[
+    cc_library(
+        name = "templ_" + target.lower(),
+        srcs = TEMPLATE_FILES + [
+            ":config_h",
+            ":mold_git_hash_h",
+        ],
+        copts = COMMON_COPTS,
+        local_defines = [
+            "MOLD_" + target + "=1",
+            "MOLD_TARGET=" + target,
+        ],
+        deps = [
+            ":mold_headers",
+            "@blake3",
+            "@onetbb//:tbb",
+            "@zlib",
+            "@zstd",
+        ],
+    )
+    for target in TARGETS
+]
+
+cc_binary(
+    name = "mold",
+    srcs = [
+        "lib/aho-corasick.cc",
+        "lib/compress.cc",
+        "lib/crc32.cc",
+        "lib/demangle.cc",
+        "lib/filepath.cc",
+        "lib/glob.cc",
+        "lib/hyperloglog.cc",
+        "lib/perf.cc",
+        "lib/random.cc",
+        "lib/tar.cc",
+        "src/elf.cc",
+        "src/entry.cc",
+    ] + select({
+        "@platforms//os:windows": [
+            "src/jobs-win32.cc",
+            "src/mapped-file-win32.cc",
+            "src/signal-win32.cc",
+        ],
+        "//conditions:default": [
+            "src/jobs-unix.cc",
+            "src/mapped-file-unix.cc",
+            "src/signal-unix.cc",
+        ],
+    }) + [
+        ":config_h",
+        ":mold_git_hash_h",
+    ],
+    copts = COMMON_COPTS,
+    deps = [":templ_" + t.lower() for t in TARGETS] + [
+        ":mold_headers",
+        ":rust_demangle",
+        "@blake3",
+        "@onetbb//:tbb",
+        "@zlib",
+        "@zstd",
+    ],
+    linkopts = select({
+        ":is_windows_clang_cl": [
+            "bcrypt.lib",
+        ],
+        ":is_windows_msvc": [
+            "bcrypt.lib",
+        ],
+        ":is_windows_clang_mingw": [
+            "-lbcrypt",
+        ],
+        "@platforms//os:osx": ["-ldl"],
+        "//conditions:default": ["-ldl", "-lm", "-pthread"],
+    }),
+    visibility = ["//visibility:public"],
+)

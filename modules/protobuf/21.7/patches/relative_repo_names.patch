@@ -1,0 +1,122 @@
+commit aefde16741a6cc56e57e45ee40146de08ad6a8b8
+Author: Ivo List <ilist@google.com>
+Date:   Fri Dec 23 14:15:33 2022 +0100
+
+    Relative labels
+
+diff --git a/BUILD.bazel b/BUILD.bazel
+index 0f6e41e..4fee7dd 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -1061,18 +1061,18 @@ cc_library(
+ proto_lang_toolchain(
+     name = "cc_toolchain",
+     blacklisted_protos = [
+-        "@com_google_protobuf//:any_proto",
+-        "@com_google_protobuf//:api_proto",
+-        "@com_google_protobuf//:compiler_plugin_proto",
+-        "@com_google_protobuf//:descriptor_proto",
+-        "@com_google_protobuf//:duration_proto",
+-        "@com_google_protobuf//:empty_proto",
+-        "@com_google_protobuf//:field_mask_proto",
+-        "@com_google_protobuf//:source_context_proto",
+-        "@com_google_protobuf//:struct_proto",
+-        "@com_google_protobuf//:timestamp_proto",
+-        "@com_google_protobuf//:type_proto",
+-        "@com_google_protobuf//:wrappers_proto",
++        "//:any_proto",
++        "//:api_proto",
++        "//:compiler_plugin_proto",
++        "//:descriptor_proto",
++        "//:duration_proto",
++        "//:empty_proto",
++        "//:field_mask_proto",
++        "//:source_context_proto",
++        "//:struct_proto",
++        "//:timestamp_proto",
++        "//:type_proto",
++        "//:wrappers_proto",
+     ],
+     command_line = "--cpp_out=$(OUT)",
+     runtime = ":protobuf",
+diff --git a/protobuf.bzl b/protobuf.bzl
+index c5b8dab..27a29d0 100644
+--- a/protobuf.bzl
++++ b/protobuf.bzl
+@@ -389,7 +389,7 @@ internal_gen_well_known_protos_java = rule(
+         "_protoc": attr.label(
+             executable = True,
+             cfg = "exec",
+-            default = "@com_google_protobuf//:protoc",
++            default = "//:protoc",
+         ),
+     },
+ )
+@@ -457,7 +457,6 @@ internal_gen_kt_protos = rule(
+ )
+ 
+ 
+-
+ def internal_copied_filegroup(name, srcs, strip_prefix, dest, **kwargs):
+     """Macro to copy files to a different directory and then create a filegroup.
+ 
+@@ -491,6 +490,15 @@ def internal_copied_filegroup(name, srcs, strip_prefix, dest, **kwargs):
+         **kwargs
+     )
+ 
++# When canonical labels are in use, use additional "@" prefix
++_canonical_label_prefix = "@" if str(Label("//:protoc")).startswith("@@") else ""
++
++def _to_label(label_str):
++    """Converts a string to a label using the repository of the calling thread"""
++    if type(label_str) == type(Label("//:foo")):
++        return label_str
++    return Label(_canonical_label_prefix + native.repository_name() + "//" + native.package_name() + ":foo").relative(label_str)
++
+ def py_proto_library(
+         name,
+         srcs = [],
+@@ -498,8 +506,8 @@ def py_proto_library(
+         py_libs = [],
+         py_extra_srcs = [],
+         include = None,
+-        default_runtime = "@com_google_protobuf//:protobuf_python",
+-        protoc = "@com_google_protobuf//:protoc",
++        default_runtime = Label("//:protobuf_python"),
++        protoc = Label("//:protoc"),
+         use_grpc_plugin = False,
+         **kargs):
+     """Bazel rule to create a Python protobuf library from proto source files
+@@ -551,8 +559,12 @@ def py_proto_library(
+         plugin_language = "grpc",
+     )
+ 
+-    if default_runtime and not default_runtime in py_libs + deps:
+-        py_libs = py_libs + [default_runtime]
++    if default_runtime:
++        # Resolve non-local labels
++        labels = [_to_label(lib) for lib in py_libs + deps]
++        if not _to_label(default_runtime) in labels:
++            py_libs = py_libs + [default_runtime]
++
+     py_library(
+         name = name,
+         srcs = outs + py_extra_srcs,
+diff --git a/protobuf_deps.bzl b/protobuf_deps.bzl
+index afb1f1e..91432de 100644
+--- a/protobuf_deps.bzl
++++ b/protobuf_deps.bzl
+@@ -47,11 +47,11 @@ def protobuf_deps():
+     if not native.existing_rule("zlib"):
+         http_archive(
+             name = "zlib",
+-            build_file = "@com_google_protobuf//:third_party/zlib.BUILD",
++            build_file = "//:third_party/zlib.BUILD",
+             sha256 = "629380c90a77b964d896ed37163f5c3a34f6e6d897311f1df2a7016355c45eff",
+             strip_prefix = "zlib-1.2.11",
+             urls = ["https://github.com/madler/zlib/archive/v1.2.11.tar.gz"],
+-        )
++       )
+ 
+     if not native.existing_rule("rules_cc"):
+         _github_archive(

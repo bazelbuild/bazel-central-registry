@@ -1,0 +1,163 @@
+module(
+    name = "rules_coreutils",
+    version = "1.0.0-beta.1",
+    bazel_compatibility = [
+        ">=7.0.0",
+    ],
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "toolchain_utils", version = "1.0.0-beta.9")
+bazel_dep(name = "download_utils", version = "1.0.0-beta.2")
+
+archive = use_repo_rule("@download_utils//download/archive:defs.bzl", "download_archive")
+
+[
+    archive(
+        name = "coreutils-{}".format(triplet),
+        srcs = ["entrypoint"],
+        integrity = integrity,
+        links = {
+            "coreutils.exe" if "windows" in triplet else "coreutils": "entrypoint",
+        },
+        strip_prefix = "coreutils-0.0.23-{}".format(slug),
+        urls = ["https://github.com/uutils/coreutils/releases/download/0.0.23/coreutils-0.0.23-{}.{}".format(
+            slug,
+            "zip" if "windows" in triplet else "tar.gz",
+        )],
+    )
+    for triplet, slug, integrity in (
+        ("arm64-linux-gnu", "aarch64-unknown-linux-gnu", "sha256-8wMVMgAgf8JQ2+2LdoewkyDo416VEsf9RlMJl4jiBjk="),
+        ("amd64-linux-gnu", "x86_64-unknown-linux-gnu", "sha256-u7OMW43Y46aXRRIKULfKdfUW51WJn6G70s5Xxwb6/1g="),
+        ("amd64-windows-msvc", "x86_64-pc-windows-msvc", "sha256-aglIj5JvFGLm2ABwRzWAsZRTTD3X444V3GxHM9pGJS4="),
+        ("arm64-macos-darwin", "aarch64-apple-darwin", "sha256-KP90sjKxtXDbLC+o5f4+gQnvP3Tr7O0RopME4g9QF5E="),
+        ("amd64-macos-darwin", "x86_64-apple-darwin", "sha256-SswetVAuK/hMK1r9uBvNnKj5JpSgD0bzkbsHTxOabCo="),
+    )
+]
+
+select = use_repo_rule("@toolchain_utils//toolchain/local/select:defs.bzl", "toolchain_local_select")
+
+select(
+    name = "coreutils",
+    map = {
+        "amd64-linux-gnu": "@coreutils-amd64-linux-gnu",
+        "arm64-linux-gnu": "@coreutils-arm64-linux-gnu",
+        "amd64-windows": "@coreutils-amd64-windows-msvc",
+        "arm64-macos-darwin": "@coreutils-arm64-macos-darwin",
+        "amd64-macos-darwin": "@coreutils-amd64-macos-darwin",
+    },
+)
+
+export = use_extension("@toolchain_utils//toolchain/export:defs.bzl", "toolchain_export")
+export.symlink(
+    name = "coreutils",
+    target = "@coreutils",
+)
+
+deb = use_repo_rule("@download_utils//download/deb:defs.bzl", "download_deb")
+
+deb(
+    name = "busybox-arm64-linux",
+    srcs = ["busybox"],
+    integrity = "sha256-C0+0zi0/0Woc11BTX5d1ugxC2GOeE9ZjUka6g6DUvc8=",
+    strip_prefix = "bin",
+    urls = ["http://ftp.uk.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+b3_arm64.deb"],
+)
+
+deb(
+    name = "busybox-amd64-linux",
+    srcs = ["busybox"],
+    integrity = "sha256-rMRMIHKVuGEU2kiV71Ouvxhr8839wmmloaCer6xqYNs=",
+    strip_prefix = "bin",
+    urls = ["http://ftp.uk.debian.org/debian/pool/main/b/busybox/busybox-static_1.35.0-4+b3_amd64.deb"],
+)
+
+resolved = use_repo_rule("@toolchain_utils//toolchain/resolved:defs.bzl", "toolchain_resolved")
+
+which = use_repo_rule("@toolchain_utils//toolchain/local/which:defs.bzl", "toolchain_local_which")
+
+[
+    (
+        resolved(
+            name = "resolved-{}".format(tool),
+            basename = tool,
+            toolchain_type = "//coreutils/toolchain/{}:type".format(tool),
+        ),
+        which(
+            name = "which-{}".format(tool),
+            basename = tool,
+        ),
+    )
+    for tool in (
+        "busybox",
+        "coreutils",
+        "arch",
+        "base64",
+        "basename",
+        "cat",
+        "chmod",
+        "chown",
+        "cp",
+        "cut",
+        "date",
+        "dd",
+        "df",
+        "dirname",
+        "du",
+        "echo",
+        "env",
+        "expand",
+        "expr",
+        "factor",
+        "false",
+        "fold",
+        "head",
+        "hostname",
+        "install",
+        "link",
+        "ln",
+        "ls",
+        "md5sum",
+        "mkdir",
+        "mktemp",
+        "more",
+        "mv",
+        "nl",
+        "nproc",
+        "od",
+        "paste",
+        "printf",
+        "pwd",
+        "readlink",
+        "realpath",
+        "rm",
+        "rmdir",
+        "seq",
+        "sha1sum",
+        "sha256sum",
+        "sha3sum",
+        "sha512sum",
+        "shred",
+        "shuf",
+        "sleep",
+        "sort",
+        "sync",
+        "tac",
+        "tail",
+        "tee",
+        "test",
+        "touch",
+        "tr",
+        "true",
+        "truncate",
+        "uname",
+        "unexpand",
+        "uniq",
+        "unlink",
+        "wc",
+        "whoami",
+        "yes",
+    )
+]
+
+register_toolchains("//coreutils/toolchain/...")

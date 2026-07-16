@@ -1,0 +1,358 @@
+module(
+    name = "rules_wasm",
+    version = "2.0.2",
+)
+
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True, repo_name = "buildtools")
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "gazelle", version = "0.47.0")
+bazel_dep(name = "package_metadata", version = "0.0.6")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.14")
+bazel_dep(name = "rules_go", version = "0.59.0", repo_name = "io_bazel_rules_go")
+bazel_dep(name = "rules_license", version = "1.0.0")
+bazel_dep(name = "rules_rust", version = "0.67.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+# The example module (which contains basic tests)
+# is itself referenced by tests in the main module,
+# which verify that some example tests are running properly.
+bazel_dep(name = "example", dev_dependency = True)
+local_path_override(
+    module_name = "example",
+    path = "example",
+)
+
+# Supported execution platforms for pre-built binaries.
+# TODO: Figure out how to dedupe this list with `private.bzl`.
+execution_platforms = [
+    "aarch64-linux",
+    "aarch64-macos",
+    "x86_64-linux",
+    "x86_64-macos",
+]
+
+# https://github.com/WebAssembly/binaryen/releases
+binaryen_version = "125"
+
+# https://pkg.go.dev/go.bytecodealliance.org/cm?tab=versions
+go_cm_version = "0.3.0"
+
+# https://github.com/tinygo-org/tinygo/releases
+tinygo_version = "0.39.0"
+
+# https://github.com/bytecodealliance/wac/releases
+wac_version = "0.8.1"
+
+# ATTOW TinyGo only supports version `0.2.0`:
+# https://github.com/WebAssembly/WASI/releases
+wasi_version = "0.2.0"
+
+# https://github.com/WebAssembly/wasi-sdk/releases
+wasi_sdk_version = "29"
+
+# https://github.com/bytecodealliance/wasmtime/releases
+wasmtime_version = "39.0.0"
+
+# https://github.com/bytecodealliance/wasm-tools/releases
+wasm_tools_version = "1.241.2"
+
+# https://github.com/bytecodealliance/wit-bindgen/releases
+wit_bindgen_version = "0.48.1"
+
+# https://github.com/bytecodealliance/go-modules/releases
+wit_bindgen_go_version = "0.7.0"
+
+# Rust setup: wit-bindgen-generated Rust files depend on the wit-bindgen crate.
+crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+crate.spec(
+    package = "wit-bindgen",
+    version = wit_bindgen_version,
+)
+crate.from_specs(
+    name = "rules-wasm-crates",
+    # Hardcode all supported Rust toolchains to make Cargo splicing more efficient.
+    # https://github.com/bazelbuild/rules_rust/discussions/2259
+    supported_platform_triples = [
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "wasm32-wasip2",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+    ],
+)
+use_repo(crate, "rules-wasm-crates")
+
+# Manually download prebuilt binaries for various dependencies:
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+[http_archive(
+    name = "binaryen-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wasm-opt",
+    actual = "binaryen-version_{version}/bin/wasm-opt",
+    visibility = ["//visibility:public"],
+)
+""".format(version = binaryen_version),
+    integrity = {
+        "aarch64-linux": "sha384-hr2gnlEqLM2lXYeCJCPepHUFu944rceDINqlD2Mp8czhIng56SKwNgDt7OO/Okhq",
+        "aarch64-macos": "sha384-/VyGEnbNCfuWhQdgk0jUZZ5BR6X/jFgUAp9UE704z/1z8TF4Q9TO80RdLwUVYW1C",
+        "x86_64-linux": "sha384-610rBOCcTE/qoOsS9ghQdTaN6z+TIbyjAeEQGuBJN6Xx9d2+pnZtvJiSSxW6UCov",
+        "x86_64-macos": "sha384-j1OKGc5CF6tcBJn0anAijAapE4eGtdMH75jcDXEqzaLFz/obRgkmr9agFRnUVY+D",
+    }[exe_platform],
+    url = "https://github.com/WebAssembly/binaryen/releases/download/version_{version}/binaryen-version_{version}-{platform}.tar.gz".format(
+        platform = {
+            "aarch64-linux": "aarch64-linux",
+            "aarch64-macos": "arm64-macos",
+            "x86_64-linux": "x86_64-linux",
+            "x86_64-macos": "x86_64-macos",
+        }[exe_platform],
+        version = binaryen_version,
+    ),
+) for exe_platform in execution_platforms]
+
+wac_platforms = {
+    "aarch64-linux": "aarch64-unknown-linux-musl",
+    "aarch64-macos": "aarch64-apple-darwin",
+    "x86_64-linux": "x86_64-unknown-linux-musl",
+    "x86_64-macos": "x86_64-apple-darwin",
+}
+
+[http_file(
+    name = "wac-" + exe_platform,
+    executable = True,
+    integrity = {
+        "aarch64-linux": "sha384-IXwdLWoq0jax4B/k6Q3iU1iJCZdAuN1FYL/n3zfpjyIE3gjk7+8pEY9DuwcCegiM",
+        "aarch64-macos": "sha384-xSbymKgHE+ELSmprYedYF5Ak4L6ThqEZF3kllpNqKYXxxpLcNWtzlwdaGtBIk0SB",
+        "x86_64-linux": "sha384-KYJhbk+OszFP0FeoPUd6hH9KQmIIgZ6jmtfYT5CgcwEJOUTdXTAfzTQac/qdpqyb",
+        "x86_64-macos": "sha384-UAjGFeHo77fqwwykTWjOTn8//a3e183bAkGAuc55wTpN10uiNfZLTnK5Xm9OVVZ8",
+    }[exe_platform],
+    url = "https://github.com/bytecodealliance/wac/releases/download/v{version}/wac-cli-{platform}".format(
+        # WAC uses non-canonical platform strings in the URLs:
+        platform = wac_platforms[exe_platform],
+        version = wac_version,
+    ),
+) for exe_platform in execution_platforms]
+
+http_archive(
+    name = "wasi",
+    build_file_content = """
+load(":wasm.bzl", "wasi_packages")
+
+[filegroup(
+    name = package,
+    srcs = glob(["WASI-{version}/preview2/" + package + "/*.wit"]),
+    visibility = ["//visibility:public"],
+) for package in wasi_packages.keys()]
+""".format(version = wasi_version),
+    integrity = "sha384-k5+dIIcSf9AtW/dpJ4wHglf9GCs0OZw5I90Lkd74RZ/X8PMv0Cx9WKFPsTFPCV9H",
+    # Ideally there would be something like `remote_file_urls` for local files
+    # so we can eliminate this redundant patch file
+    # and instead just copy `wasm.bzl` into the remote repo:
+    # https://github.com/bazelbuild/bazel/issues/24499.
+    patches = ["//wasm:wasi.patch"],
+    url = "https://github.com/WebAssembly/WASI/archive/refs/tags/v{version}.tar.gz".format(version = wasi_version),
+)
+
+wasi_sdk_platforms = {
+    "aarch64-linux": "arm64-linux",
+    "aarch64-macos": "arm64-macos",
+    "x86_64-linux": "x86_64-linux",
+    "x86_64-macos": "x86_64-macos",
+}
+
+[http_archive(
+    name = "wasi-sdk-" + exe_platform,
+    # Note: these are symlinks within the HTTP archive:
+    # - clang -> clang-19
+    # - ar -> llvm-ar
+    # - nm -> llvm-nm
+    # - objdump -> llvm-objdump
+    # - strip -> llvm-objcopy
+    build_file_content = """
+load("@bazel_skylib//rules/directory:directory.bzl", "directory")
+load("@bazel_skylib//rules/directory:subdirectory.bzl", "subdirectory")
+
+package(default_visibility=["//visibility:public"])
+
+alias(name = "clang", actual = "wasi-sdk-{version}.0-{platform}/bin/clang")
+alias(name = "wasm-component-ld", actual = "wasi-sdk-{version}.0-{platform}/bin/wasm-component-ld")
+alias(name = "ar", actual = "wasi-sdk-{version}.0-{platform}/bin/ar")
+alias(name = "nm", actual = "wasi-sdk-{version}.0-{platform}/bin/nm")
+alias(name = "objdump", actual = "wasi-sdk-{version}.0-{platform}/bin/objdump")
+alias(name = "strip", actual = "wasi-sdk-{version}.0-{platform}/bin/strip")
+
+directory(
+    name = "lib",
+    srcs = glob(["wasi-sdk-{version}.0-{platform}/lib/**"]),
+)
+subdirectory(
+    name = "include",
+    parent = ":lib",
+    path = "clang/19/include",
+)
+""".format(
+        platform = wasi_sdk_platforms[exe_platform],
+        version = wasi_sdk_version,
+    ),
+    integrity = {
+        "aarch64-linux": "sha384-0/4ZdpmJp6vgPzQTym6YAZXBXOXmIOaqPhntzKKkGqAsqjaV6Y4ykA/ga6Ox3i98",
+        "aarch64-macos": "sha384-ntXb6D5Je2Co93QjlxoCO2cRvU/vGUXsYeJVJL5ZMAI6FcZqK3hWVZefmFAFnX1q",
+        "x86_64-linux": "sha384-pn0lgY+yOddbNJzDHvvEVCJF+ZU/d8J31HF8Jo80mbhZNXa33qegs3ejsrwRJ9OC",
+        "x86_64-macos": "sha384-HBmQLk9vm5d3AMxQb0Awwn6ylOA/uySWd84xGhTlpgSHXb6k/Lk0iIWGg3Q7LkHm",
+    }[exe_platform],
+    url = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-{version}/wasi-sdk-{version}.0-{platform}.tar.gz".format(
+        platform = wasi_sdk_platforms[exe_platform],
+        version = wasi_sdk_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "wasmtime-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wasmtime",
+    actual = "wasmtime-v{version}-{platform}/wasmtime",
+    visibility = ["//visibility:public"],
+)
+""".format(
+        platform = exe_platform,
+        version = wasmtime_version,
+    ),
+    integrity = {
+        "aarch64-linux": "sha384-PkYBhaWuxSlMokqJzuI2BbR28GQaI/BAOzNIOfe3rGF9VU4voKH+uLq4Yv8olwvO",
+        "aarch64-macos": "sha384-vI0krkj0CDAkUWJEsRZDkFL3ihy6VmqmXrBGYmRUxB50x0CukJXlH1+mvGknYo6f",
+        "x86_64-linux": "sha384-ljYSa82I7RJNsWY7qQ0mTb3CwoLW0I+wAyL6aVcZ6q3V7kcsRKRWxpUyzh2cUv88",
+        "x86_64-macos": "sha384-Yy3iQ4+1uGhUUxOvRNajtRFaDrx8CdN1Nsp8zO7j8avdHqQ9UeklTkQJkc5+Srv4",
+    }[exe_platform],
+    url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{version}/wasmtime-v{version}-{platform}.tar.xz".format(
+        platform = exe_platform,
+        version = wasmtime_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "wasm-tools-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wasm-tools",
+    actual = "wasm-tools-{version}-{platform}/wasm-tools",
+    visibility = ["//visibility:public"],
+)
+""".format(
+        platform = exe_platform,
+        version = wasm_tools_version,
+    ),
+    integrity = {
+        "aarch64-linux": "sha384-d/fR/u28naIoiJMdjKSPHaMFZHJJLm7Gwhkp71jXtUgf7Cb+uYx9QeFPsCgTV50v",
+        "aarch64-macos": "sha384-I/3V9d7egNnRRcgRAen5yJ+IZJ2toqzbf+XPcxFWx4q6IFq5fwPc0MqyZUeH8GwJ",
+        "x86_64-linux": "sha384-TOtL6QT2ZgLE35TMTS39WHgWsp8MyKH5d3qBC3zNg4rP25CLhCsOlKq7CUtsFigf",
+        "x86_64-macos": "sha384-zKbb8MReONX3LZ1GfBJRaTzBEE/unyrm9lMMQGOrc2gR2E+lxqTYSGsmZN2JACRS",
+    }[exe_platform],
+    url = "https://github.com/bytecodealliance/wasm-tools/releases/download/v{version}/wasm-tools-{version}-{platform}.tar.gz".format(
+        platform = exe_platform,
+        version = wasm_tools_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "wit-bindgen-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "wit-bindgen",
+    actual = "wit-bindgen-{version}-{platform}/wit-bindgen",
+    visibility = ["//visibility:public"],
+)
+""".format(
+        platform = exe_platform,
+        version = wit_bindgen_version,
+    ),
+    integrity = {
+        "aarch64-linux": "sha384-wEwbZMcjKzwGPEJW8GZN3VG3RTTLPLq06be+MYFangnDuy4i3U5YKO6KrhxXTTxm",
+        "aarch64-macos": "sha384-My+C4rX74yKLYc0F8iN2c1/p89nOF7ftTe//td39IhrOp0OfNfDlB9Rd/Ld7Tftn",
+        "x86_64-linux": "sha384-q3NQYHXLbUDAq7fcny9IjsUVatoHpVLggrywr+nCEnomdvrgICBA7yMgyuueIBio",
+        "x86_64-macos": "sha384-M4hEqP8+Whei2MQHoxZFzaq0L+kE9GLeLcGa0uYWNfL6016TpUhCdmPKBGGUnfRb",
+    }[exe_platform],
+    url = "https://github.com/bytecodealliance/wit-bindgen/releases/download/v{version}/wit-bindgen-{version}-{platform}.tar.gz".format(
+        platform = exe_platform,
+        version = wit_bindgen_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "tinygo-" + exe_platform,
+    build_file_content = """
+alias(
+    name = "tinygo",
+    actual = "tinygo/bin/tinygo",
+    visibility = ["//visibility:public"],
+)
+""",
+    integrity = {
+        "aarch64-linux": "sha384-YzSti1CVRxYGVhn5ihWLgCwGiZnR9M6bSl2AklXxX4XUqQGqsJ8JiLK5AMc+3D54",
+        "aarch64-macos": "sha384-YZywVFCfTar+yd6d7IlWW518PTJUi0n11FUfO8h6fXorFxMxvrL3sW5CDj10Ts6E",
+        "x86_64-linux": "sha384-fv7Q2NWBsZT0YaxwaPsvx8ib/AvVYaS3GanOYZZdl8Koffb0kS/bTHSHVD0OOA7+",
+        "x86_64-macos": "sha384-CPPi8Z0kBo+9zNlya5KUMsMata4czS9VOnkdjHH3iyuS8OxBvhP9nZiIVIkJEAVi",
+    }[exe_platform],
+    url = "https://github.com/tinygo-org/tinygo/releases/download/v{version}/tinygo{version}.{platform}.tar.gz".format(
+        platform = {
+            "aarch64-linux": "linux-arm64",
+            "aarch64-macos": "darwin-arm64",
+            "x86_64-linux": "linux-amd64",
+            "x86_64-macos": "darwin-amd64",
+        }[exe_platform],
+        version = tinygo_version,
+    ),
+) for exe_platform in execution_platforms]
+
+[http_archive(
+    name = "wit-bindgen-go-" + exe_platform,
+    build_file_content = """
+exports_files(
+    ["wit-bindgen-go"],
+    visibility = ["//visibility:public"],
+)
+""",
+    integrity = {
+        "aarch64-linux": "sha384-cbNymuUTUpvyb0jVrN+Fy97NgFYmGyJQ+Ml7QyMa98G4KMKAi/Cbp/nRY/xGhvZX",
+        "aarch64-macos": "sha384-Yn43/bbLp4HKX2oz85ESWZOJgsa0La30Vda+SabuowxtS4604R+9h0ks1n1J0xGV",
+        "x86_64-linux": "sha384-a5R9jT7HdEHxManvsn8qhyP0Qma/kFousmmPVy4j+QHLat0eDh6aTfyXq1W6KyUd",
+        "x86_64-macos": "sha384-WmFNc+tWLOCe8zYuYBcQ/99ffOensY/FN1XmijQpVIWSBqz/KSIsPgDitVx2LJJF",
+    }[exe_platform],
+    url = "https://github.com/bytecodealliance/go-modules/releases/download/v{version}/wit-bindgen-go-{platform}.tgz".format(
+        platform = {
+            "aarch64-linux": "linux-arm64",
+            "aarch64-macos": "darwin-arm64",
+            "x86_64-linux": "linux-amd64",
+            "x86_64-macos": "darwin-amd64",
+        }[exe_platform],
+        version = wit_bindgen_go_version,
+    ),
+) for exe_platform in execution_platforms]
+
+# Temporary crutch until we can build against wasip2 directly.
+http_file(
+    name = "wasi-snapshot-preview1-reactor",
+    integrity = "sha384-lbuu+oHt/78NPSG3HIw7yqyd4m2MUDIxkKVuKNh37voeHlMCRihHmetG6JcIJBcg",
+    url = "https://github.com/bytecodealliance/wasmtime/releases/download/v{version}/wasi_snapshot_preview1.reactor.wasm".format(version = wasmtime_version),
+)
+
+go_repository = use_repo_rule("@gazelle//:deps.bzl", "go_repository")
+
+# The only dependency for generated Go bindings.
+go_repository(
+    name = "go-component-model-utility",
+    importpath = "go.bytecodealliance.org/cm",
+    # The patch expose the `go.mod` file
+    # as well as the Gazelle-generated package info.
+    patches = ["//go:cm.patch"],
+    sum = "h1:VhV+4vjZPUGCozCg9+up+FNL3YU6XR+XKghk7kQ0vFc=",
+    version = "v{}".format(go_cm_version),
+)
+
+register_toolchains("//:wasm32-wasi-toolchain")

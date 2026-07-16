@@ -1,0 +1,274 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+
+# src/util package
+go_library(
+    name = "util",
+    srcs = [
+        "src/util/atexit.go",
+        "src/util/atomicbool.go",
+        "src/util/chars.go",
+        "src/util/concurrent_set.go",
+        "src/util/eventbox.go",
+        "src/util/slab.go",
+        "src/util/util.go",
+    ] + select({
+        "@platforms//os:windows": ["src/util/util_windows.go"],
+        "//conditions:default": ["src/util/util_unix.go"],
+    }),
+    importpath = "github.com/junegunn/fzf/src/util",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_junegunn_go_shellwords//:go-shellwords",
+        "@com_github_mattn_go_isatty//:go-isatty",
+        "@com_github_rivo_uniseg//:uniseg",
+    ] + select({
+        "@platforms//os:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [
+            "@org_golang_x_sys//unix",
+        ],
+    }),
+)
+
+go_test(
+    name = "util_test",
+    srcs = [
+        "src/util/atexit_test.go",
+        "src/util/atomicbool_test.go",
+        "src/util/chars_test.go",
+        "src/util/eventbox_test.go",
+        "src/util/util_test.go",
+    ],
+    embed = [":util"],
+    deps = [
+        "@com_github_rivo_uniseg//:uniseg",
+    ],
+)
+
+# src/algo package
+go_library(
+    name = "algo",
+    srcs = [
+        "src/algo/algo.go",
+        "src/algo/normalize.go",
+    ] + select({
+        "@platforms//cpu:x86_64": [
+            "src/algo/indexbyte2_amd64.go",
+            "src/algo/indexbyte2_amd64.s",
+        ],
+        "@platforms//cpu:aarch64": [
+            "src/algo/indexbyte2_arm64.go",
+            "src/algo/indexbyte2_arm64.s",
+        ],
+        "//conditions:default": ["src/algo/indexbyte2_other.go"],
+    }),
+    importpath = "github.com/junegunn/fzf/src/algo",
+    visibility = ["//visibility:public"],
+    deps = [":util"],
+)
+
+go_test(
+    name = "algo_test",
+    srcs = [
+        "src/algo/algo_test.go",
+        "src/algo/indexbyte2_test.go",
+    ],
+    embed = [":algo"],
+    deps = [":util"],
+)
+
+# src/tui package
+go_library(
+    name = "tui",
+    srcs = [
+        "src/tui/dummy.go",
+        "src/tui/eventtype_string.go",
+        "src/tui/light.go",
+        "src/tui/tcell.go",
+        "src/tui/tui.go",
+    ] + select({
+        "@platforms//os:windows": [
+            "src/tui/light_windows.go",
+            "src/tui/ttyname_windows.go",
+        ],
+        "//conditions:default": [
+            "src/tui/light_unix.go",
+            "src/tui/ttyname_unix.go",
+        ],
+    }),
+    importpath = "github.com/junegunn/fzf/src/tui",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":util",
+        "@com_github_gdamore_tcell_v2//:tcell",
+        "@com_github_gdamore_tcell_v2//encoding",
+        "@com_github_mattn_go_isatty//:go-isatty",
+        "@com_github_rivo_uniseg//:uniseg",
+        "@org_golang_x_sys//unix",
+        "@org_golang_x_term//:term",
+    ] + select({
+        "@platforms//os:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "tui_test",
+    srcs = [
+        "src/tui/light_test.go",
+        "src/tui/tcell_test.go",
+        "src/tui/tui_test.go",
+    ],
+    embed = [":tui"],
+    deps = [":util"],
+)
+
+# src/protector package
+go_library(
+    name = "protector",
+    srcs = [
+        "src/protector/protector.go",
+    ] + select({
+        "@platforms//os:openbsd": ["src/protector/protector_openbsd.go"],
+        "//conditions:default": [],
+    }),
+    importpath = "github.com/junegunn/fzf/src/protector",
+    visibility = ["//visibility:public"],
+    deps = select({
+        "@platforms//os:openbsd": [
+            "@org_golang_x_sys//unix",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# src package
+go_library(
+    name = "src",
+    srcs = [
+        "src/actiontype_string.go",
+        "src/ansi.go",
+        "src/cache.go",
+        "src/chunklist.go",
+        "src/constants.go",
+        "src/core.go",
+        "src/functions.go",
+        "src/history.go",
+        "src/item.go",
+        "src/matcher.go",
+        "src/merger.go",
+        "src/options.go",
+        "src/options_no_pprof.go",
+        "src/pattern.go",
+        "src/proxy.go",
+        "src/reader.go",
+        "src/result.go",
+        "src/server.go",
+        "src/terminal.go",
+        "src/tmux.go",
+        "src/tokenizer.go",
+        "src/zellij.go",
+    ] + select({
+        "@platforms//os:windows": [
+            "src/options_pprof.go",
+            "src/proxy_windows.go",
+            "src/terminal_windows.go",
+            "src/winpty.go",
+            "src/winpty_windows.go",
+        ],
+        "//conditions:default": [
+            "src/options_pprof.go",
+            "src/proxy_unix.go",
+            "src/terminal_unix.go",
+            "src/winpty.go",
+        ],
+    }) + select({
+        # result_x86.go: optimized for 386, amd64, arm64 (per //go:build 386 || amd64 || arm64)
+        "@platforms//cpu:x86_32": ["src/result_x86.go"],
+        "@platforms//cpu:x86_64": ["src/result_x86.go"],
+        "@platforms//cpu:aarch64": ["src/result_x86.go"],
+        # result_others.go: s390x, ppc64le, riscv64, arm (32-bit), mips64, etc.
+        "//conditions:default": ["src/result_others.go"],
+    }),
+    importpath = "github.com/junegunn/fzf/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":algo",
+        ":tui",
+        ":util",
+        "@com_github_charlievieth_fastwalk//:fastwalk",
+        "@com_github_junegunn_go_shellwords//:go-shellwords",
+        "@com_github_rivo_uniseg//:uniseg",
+        "@org_golang_x_sys//unix",
+    ] + select({
+        "@platforms//os:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "src_test",
+    srcs = [
+        "src/ansi_test.go",
+        "src/cache_test.go",
+        "src/chunklist_test.go",
+        "src/history_test.go",
+        "src/item_test.go",
+        "src/merger_test.go",
+        "src/options_test.go",
+        "src/pattern_test.go",
+        "src/reader_test.go",
+        "src/result_test.go",
+        "src/tokenizer_test.go",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "src/options_pprof_test.go",
+            "src/terminal_test.go",
+        ],
+    }),
+    embed = [":src"],
+    deps = [
+        ":algo",
+        ":tui",
+        ":util",
+        "@com_github_rivo_uniseg//:uniseg",
+    ],
+)
+
+# Main binary
+go_library(
+    name = "fzf_lib",
+    srcs = ["main.go"],
+    embedsrcs = [
+        "shell/key-bindings.bash",
+        "shell/completion.bash",
+        "shell/key-bindings.zsh",
+        "shell/completion.zsh",
+        "shell/key-bindings.fish",
+        "shell/completion.fish",
+        "man/man1/fzf.1",
+    ],
+    importpath = "github.com/junegunn/fzf",
+    visibility = ["//visibility:private"],
+    deps = [
+        ":protector",
+        ":src",
+    ],
+)
+
+go_binary(
+    name = "fzf",
+    embed = [":fzf_lib"],
+    visibility = ["//visibility:public"],
+    x_defs = {
+        "main.version": "{STABLE_VERSION}",
+        "main.revision": "{STABLE_REVISION}",
+    },
+)

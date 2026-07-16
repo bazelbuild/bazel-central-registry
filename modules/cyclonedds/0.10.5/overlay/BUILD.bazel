@@ -1,0 +1,575 @@
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package_metadata(
+    name = "package_metadata",
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:EPL-2.0",
+    text = "LICENSE",
+)
+
+cmake_configure_file(
+    name = "dds_config_h",
+    src = "src/ddsrt/include/dds/config.h.in",
+    out = "src/ddsrt/include/dds/config.h",
+    defines = [
+        "DDSRT_HAVE_DYNLIB",
+        "DDSRT_HAVE_FILESYSTEM",
+        "DDSRT_HAVE_NETSTAT",
+        "DDSRT_HAVE_RUSAGE",
+        "DDSRT_HAVE_IPV6",
+        "DDSRT_HAVE_DNS",
+        "DDSRT_HAVE_GETADDRINFO",
+        "DDSRT_HAVE_INET_NTOP",
+        "DDSRT_HAVE_INET_PTON",
+    ] + select({
+        "@platforms//os:linux": ["DDSRT_HAVE_GETHOSTBYNAME_R"],
+        "//conditions:default": [],
+    }),
+    undefines = [
+        "DDSRT_WITH_LWIP",
+        "DDSRT_WITH_FREERTOS",
+    ],
+)
+
+cmake_configure_file(
+    name = "dds_features_h",
+    src = "src/ddsrt/include/dds/features.h.in",
+    out = "src/ddsrt/include/dds/features.h",
+    defines = [
+        "DDS_HAS_LIFESPAN",
+        "DDS_HAS_DEADLINE_MISSED",
+        "DDS_HAS_NETWORK_PARTITIONS",
+        "DDS_HAS_SSM",
+        "DDS_HAS_TYPE_DISCOVERY",
+        "DDS_HAS_TOPIC_DISCOVERY",
+    ],
+    undefines = [
+        "DDS_HAS_SECURITY",
+        "DDS_HAS_SSL",
+        "DDS_HAS_SHM",
+    ],
+)
+
+cmake_configure_file(
+    name = "dds_version_h",
+    src = "src/ddsrt/include/dds/version.h.in",
+    out = "src/ddsrt/include/dds/version.h",
+    defines = [
+        "PROJECT_NAME=CycloneDDS",
+        "CycloneDDS_VERSION=" + module_version(),
+        "CycloneDDS_VERSION_MAJOR=" + module_version().split(".")[0],
+        "CycloneDDS_VERSION_MINOR=" + module_version().split(".")[1],
+        "CycloneDDS_VERSION_PATCH=" + module_version().split(".")[2],
+        "CycloneDDS_VERSION_TWEAK=0",
+    ] + select({
+        "@platforms//os:macos": [
+            "CMAKE_HOST_SYSTEM_NAME=Darwin",
+            "CMAKE_SYSTEM_NAME=Darwin",
+        ],
+        "//conditions:default": [
+            "CMAKE_HOST_SYSTEM_NAME=Linux",
+            "CMAKE_SYSTEM_NAME=Linux",
+        ],
+    }),
+)
+
+cmake_configure_file(
+    name = "idl_version_h",
+    src = "src/idl/include/idl/version.h.in",
+    out = "src/idl/include/idl/version.h",
+    defines = [
+        "CycloneDDS_VERSION=" + module_version(),
+        "CycloneDDS_VERSION_MAJOR=" + module_version().split(".")[0],
+        "CycloneDDS_VERSION_MINOR=" + module_version().split(".")[1],
+        "CycloneDDS_VERSION_PATCH=" + module_version().split(".")[2],
+        "CycloneDDS_VERSION_TWEAK=0",
+    ],
+)
+
+cmake_configure_file(
+    name = "idlc_config_h",
+    src = "src/tools/idlc/src/config.h.in",
+    out = "src/tools/idlc/src/config.h",
+    defines = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["HAVE_GETOPT_H"],
+    }),
+)
+
+cmake_configure_file(
+    name = "idlpp_configed_h",
+    src = "src/tools/idlpp/src/configed.H.in",
+    out = "src/tools/idlpp/src/configed.H",
+    defines = [
+        "idlpp_include_dir=.",
+        "idlpp_system_version=ignored",
+        "idlpp_gcc_major_version_define=#define GCC_MAJOR_VERSION \"0\"",
+        "idlpp_gcc_minor_version_define=#define GCC_MINOR_VERSION \"0\"",
+        "idlpp_have_intmax_t=1",
+        "idlpp_have_inttypes_h=1",
+        "idlpp_have_long_long=1",
+        "idlpp_have_stdint_h=1",
+        "idlpp_ll_form=j",
+        "idlpp_host_compiler=GNUC",
+        "idlpp_host_cmp_name=Clang",
+    ] + select({
+        "@platforms//os:linux": [
+            "idlpp_system=SYS_LINUX",
+            "idlpp_host_system=SYS_LINUX",
+            "idlpp_have_stpcpy=1",
+            "idlpp_have_strlcpy=0",
+            "idlpp_have_strlcat=0",
+        ],
+        "@platforms//os:macos": [
+            "idlpp_system=SYS_MAC",
+            "idlpp_host_system=SYS_MAC",
+            "idlpp_have_stpcpy=1",
+            "idlpp_have_strlcpy=1",
+            "idlpp_have_strlcat=1",
+        ],
+        "//conditions:default": [
+            "idlpp_system=SYS_LINUX",
+            "idlpp_host_system=SYS_LINUX",
+            "idlpp_have_stpcpy=0",
+            "idlpp_have_strlcpy=0",
+            "idlpp_have_strlcat=0",
+        ],
+    }),
+)
+
+genrule(
+    name = "dds_export_h",
+    outs = ["src/ddsrt/include/dds/export.h"],
+    cmd = """
+cat >"$@" <<'EOF'
+#ifndef DDS_EXPORT_H
+#define DDS_EXPORT_H
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+# ifdef DDS_BUILD_SHARED
+#  define DDS_EXPORT __declspec(dllexport)
+# else
+#  define DDS_EXPORT __declspec(dllimport)
+# endif
+# define DDS_NO_EXPORT
+#else
+# define DDS_EXPORT __attribute__((visibility("default")))
+# define DDS_NO_EXPORT __attribute__((visibility("hidden")))
+#endif
+
+#define DDS_INLINE_EXPORT DDS_EXPORT
+#define DDS_DEPRECATED __attribute__((__deprecated__))
+#define DDS_DEPRECATED_EXPORT DDS_EXPORT DDS_DEPRECATED
+#define DDS_DEPRECATED_NO_EXPORT DDS_NO_EXPORT DDS_DEPRECATED
+
+#endif /* DDS_EXPORT_H */
+EOF
+""",
+)
+
+genrule(
+    name = "idl_export_h",
+    outs = ["src/idl/include/idl/export.h"],
+    cmd = """
+cat >"$@" <<'EOF'
+#ifndef IDL_EXPORT_H
+#define IDL_EXPORT_H
+
+#if defined(_WIN32) || defined(__CYGWIN__)
+# ifdef IDL_BUILD_SHARED
+#  define IDL_EXPORT __declspec(dllexport)
+# else
+#  define IDL_EXPORT __declspec(dllimport)
+# endif
+# define IDL_NO_EXPORT
+#else
+# define IDL_EXPORT __attribute__((visibility("default")))
+# define IDL_NO_EXPORT __attribute__((visibility("hidden")))
+#endif
+
+#define IDL_INLINE_EXPORT IDL_EXPORT
+#define IDL_DEPRECATED __attribute__((__deprecated__))
+#define IDL_DEPRECATED_EXPORT IDL_EXPORT IDL_DEPRECATED
+#define IDL_DEPRECATED_NO_EXPORT IDL_NO_EXPORT IDL_DEPRECATED
+
+#endif /* IDL_EXPORT_H */
+EOF
+""",
+)
+
+genrule(
+    name = "idl_attributes_h",
+    srcs = ["src/ddsrt/include/dds/ddsrt/attributes.h"],
+    outs = ["src/idl/include/idl/attributes.h"],
+    cmd = "sed -e 's/DDSRT_/IDL_/g' -e 's/ddsrt_/idl_/g' \"$<\" > \"$@\"",
+)
+
+genrule(
+    name = "idl_misc_h",
+    srcs = ["src/ddsrt/include/dds/ddsrt/misc.h"],
+    outs = ["src/idl/include/idl/misc.h"],
+    cmd = "sed -e 's/DDSRT_/IDL_/g' -e 's/ddsrt_/idl_/g' \"$<\" > \"$@\"",
+)
+
+genrule(
+    name = "idl_md5_h",
+    outs = ["src/idl/include/idl/md5.h"],
+    cmd = """
+cat >"$@" <<'EOF'
+#ifndef IDL_MD5_H
+#define IDL_MD5_H
+
+#include "dds/ddsrt/md5.h"
+
+typedef ddsrt_md5_byte_t idl_md5_byte_t;
+typedef ddsrt_md5_word_t idl_md5_word_t;
+typedef ddsrt_md5_state_t idl_md5_state_t;
+
+#define idl_md5_init ddsrt_md5_init
+#define idl_md5_append ddsrt_md5_append
+#define idl_md5_finish ddsrt_md5_finish
+
+#endif /* IDL_MD5_H */
+EOF
+""",
+)
+
+DDSRT_COMMON_SRCS = [
+    "src/ddsrt/src/atomics.c",
+    "src/ddsrt/src/avl.c",
+    "src/ddsrt/src/bswap.c",
+    "src/ddsrt/src/io.c",
+    "src/ddsrt/src/log.c",
+    "src/ddsrt/src/retcode.c",
+    "src/ddsrt/src/strtod.c",
+    "src/ddsrt/src/strtol.c",
+    "src/ddsrt/src/mh3.c",
+    "src/ddsrt/src/environ.c",
+    "src/ddsrt/src/expand_vars.c",
+    "src/ddsrt/src/fibheap.c",
+    "src/ddsrt/src/hopscotch.c",
+    "src/ddsrt/src/circlist.c",
+    "src/ddsrt/src/threads.c",
+    "src/ddsrt/src/string.c",
+    "src/ddsrt/src/sockets.c",
+    "src/ddsrt/src/md5.c",
+    "src/ddsrt/src/xmlparser.c",
+    "src/ddsrt/src/ifaddrs.c",
+    "src/ddsrt/src/cdtors.c",
+    "src/ddsrt/src/random.c",
+    "src/ddsrt/src/time.c",
+    "src/ddsrt/src/ifaddrs/posix/ifaddrs.c",
+    "src/ddsrt/src/sockets/posix/socket.c",
+    "src/ddsrt/src/sockets/posix/gethostname.c",
+    "src/ddsrt/src/heap/posix/heap.c",
+    "src/ddsrt/src/dynlib/posix/dynlib.c",
+    "src/ddsrt/src/environ/posix/environ.c",
+    "src/ddsrt/src/filesystem/posix/filesystem.c",
+    "src/ddsrt/src/process/posix/process.c",
+    "src/ddsrt/src/random/posix/random.c",
+    "src/ddsrt/src/sync/posix/sync.c",
+    "src/ddsrt/src/threads/posix/threads.c",
+]
+
+DDSRT_PLATFORM_SRCS = select({
+    "@platforms//os:macos": [
+        "src/ddsrt/src/netstat/darwin/netstat.c",
+        "src/ddsrt/src/time/darwin/time.c",
+        "src/ddsrt/src/rusage/posix/rusage.c",
+    ],
+    "//conditions:default": [
+        "src/ddsrt/src/netstat/linux/netstat.c",
+        "src/ddsrt/src/time/posix/time.c",
+        "src/ddsrt/src/rusage/posix/rusage.c",
+    ],
+})
+
+DDSC_SRCS = [
+    "src/core/ddsc/src/dds_alloc.c",
+    "src/core/ddsc/src/dds_builtin.c",
+    "src/core/ddsc/src/dds_coherent.c",
+    "src/core/ddsc/src/dds_participant.c",
+    "src/core/ddsc/src/dds_reader.c",
+    "src/core/ddsc/src/dds_writer.c",
+    "src/core/ddsc/src/dds_init.c",
+    "src/core/ddsc/src/dds_publisher.c",
+    "src/core/ddsc/src/dds_rhc.c",
+    "src/core/ddsc/src/dds_rhc_default.c",
+    "src/core/ddsc/src/dds_domain.c",
+    "src/core/ddsc/src/dds_instance.c",
+    "src/core/ddsc/src/dds_qos.c",
+    "src/core/ddsc/src/dds_handles.c",
+    "src/core/ddsc/src/dds_entity.c",
+    "src/core/ddsc/src/dds_matched.c",
+    "src/core/ddsc/src/dds_querycond.c",
+    "src/core/ddsc/src/dds_topic.c",
+    "src/core/ddsc/src/dds_listener.c",
+    "src/core/ddsc/src/dds_read.c",
+    "src/core/ddsc/src/dds_waitset.c",
+    "src/core/ddsc/src/dds_readcond.c",
+    "src/core/ddsc/src/dds_guardcond.c",
+    "src/core/ddsc/src/dds_statistics.c",
+    "src/core/ddsc/src/dds_subscriber.c",
+    "src/core/ddsc/src/dds_write.c",
+    "src/core/ddsc/src/dds_whc.c",
+    "src/core/ddsc/src/dds_whc_builtintopic.c",
+    "src/core/ddsc/src/dds_serdata_builtintopic.c",
+    "src/core/ddsc/src/dds_sertype_builtintopic.c",
+    "src/core/ddsc/src/dds_data_allocator.c",
+    "src/core/ddsc/src/dds_loan.c",
+]
+
+DDSI_SRCS = [
+    "src/core/ddsi/src/ddsi_eth.c",
+    "src/core/ddsi/src/ddsi_ssl.c",
+    "src/core/ddsi/src/ddsi_tcp.c",
+    "src/core/ddsi/src/ddsi_tran.c",
+    "src/core/ddsi/src/ddsi_udp.c",
+    "src/core/ddsi/src/ddsi_raweth.c",
+    "src/core/ddsi/src/ddsi_vnet.c",
+    "src/core/ddsi/src/ddsi_ipaddr.c",
+    "src/core/ddsi/src/ddsi_mcgroup.c",
+    "src/core/ddsi/src/ddsi_security_util.c",
+    "src/core/ddsi/src/ddsi_security_omg.c",
+    "src/core/ddsi/src/ddsi_portmapping.c",
+    "src/core/ddsi/src/ddsi_handshake.c",
+    "src/core/ddsi/src/ddsi_serdata.c",
+    "src/core/ddsi/src/ddsi_serdata_default.c",
+    "src/core/ddsi/src/ddsi_serdata_pserop.c",
+    "src/core/ddsi/src/ddsi_serdata_plist.c",
+    "src/core/ddsi/src/ddsi_sertype.c",
+    "src/core/ddsi/src/ddsi_sertype_default.c",
+    "src/core/ddsi/src/ddsi_sertype_pserop.c",
+    "src/core/ddsi/src/ddsi_sertype_plist.c",
+    "src/core/ddsi/src/ddsi_sertopic.c",
+    "src/core/ddsi/src/ddsi_statistics.c",
+    "src/core/ddsi/src/ddsi_iid.c",
+    "src/core/ddsi/src/ddsi_tkmap.c",
+    "src/core/ddsi/src/ddsi_vendor.c",
+    "src/core/ddsi/src/ddsi_threadmon.c",
+    "src/core/ddsi/src/ddsi_rhc.c",
+    "src/core/ddsi/src/ddsi_pmd.c",
+    "src/core/ddsi/src/ddsi_entity_index.c",
+    "src/core/ddsi/src/ddsi_deadline.c",
+    "src/core/ddsi/src/ddsi_lifespan.c",
+    "src/core/ddsi/src/ddsi_deliver_locally.c",
+    "src/core/ddsi/src/ddsi_plist.c",
+    "src/core/ddsi/src/ddsi_cdrstream.c",
+    "src/core/ddsi/src/ddsi_config.c",
+    "src/core/ddsi/src/ddsi_time.c",
+    "src/core/ddsi/src/ddsi_ownip.c",
+    "src/core/ddsi/src/ddsi_acknack.c",
+    "src/core/ddsi/src/ddsi_list_genptr.c",
+    "src/core/ddsi/src/ddsi_wraddrset.c",
+    "src/core/ddsi/src/ddsi_typelib.c",
+    "src/core/ddsi/src/ddsi_xt_typeinfo.c",
+    "src/core/ddsi/src/ddsi_xt_typelookup.c",
+    "src/core/ddsi/src/ddsi_xt_typemap.c",
+    "src/core/ddsi/src/ddsi_typelookup.c",
+    "src/core/ddsi/src/ddsi_typewrap.c",
+    "src/core/ddsi/src/ddsi_typebuilder.c",
+    "src/core/ddsi/src/ddsi_entity.c",
+    "src/core/ddsi/src/ddsi_entity_match.c",
+    "src/core/ddsi/src/ddsi_participant.c",
+    "src/core/ddsi/src/ddsi_proxy_participant.c",
+    "src/core/ddsi/src/ddsi_topic.c",
+    "src/core/ddsi/src/ddsi_endpoint.c",
+    "src/core/ddsi/src/ddsi_proxy_endpoint.c",
+    "src/core/ddsi/src/q_addrset.c",
+    "src/core/ddsi/src/q_bitset_inlines.c",
+    "src/core/ddsi/src/q_bswap.c",
+    "src/core/ddsi/src/q_ddsi_discovery.c",
+    "src/core/ddsi/src/q_debmon.c",
+    "src/core/ddsi/src/q_gc.c",
+    "src/core/ddsi/src/q_init.c",
+    "src/core/ddsi/src/q_lat_estim.c",
+    "src/core/ddsi/src/q_lease.c",
+    "src/core/ddsi/src/q_misc.c",
+    "src/core/ddsi/src/q_pcap.c",
+    "src/core/ddsi/src/q_qosmatch.c",
+    "src/core/ddsi/src/q_radmin.c",
+    "src/core/ddsi/src/q_receive.c",
+    "src/core/ddsi/src/q_sockwaitset.c",
+    "src/core/ddsi/src/q_thread.c",
+    "src/core/ddsi/src/q_transmit.c",
+    "src/core/ddsi/src/q_inverse_uint32_set.c",
+    "src/core/ddsi/src/q_whc.c",
+    "src/core/ddsi/src/q_xevent.c",
+    "src/core/ddsi/src/q_xmsg.c",
+    "src/core/ddsi/src/q_freelist.c",
+    "src/core/ddsi/src/sysdeps.c",
+    "src/core/ddsi/defconfig.c",
+]
+
+DDS_HDRS = glob([
+    "src/ddsrt/include/**/*.h",
+    "src/ddsrt/src/**/*.h",
+    "src/core/ddsc/include/**/*.h",
+    "src/core/ddsc/src/**/*.h",
+    "src/core/ddsi/include/**/*.h",
+    "src/core/ddsi/src/**/*.h",
+]) + [
+    ":dds_config_h",
+    ":dds_export_h",
+    ":dds_features_h",
+    ":dds_version_h",
+]
+
+cc_library(
+    name = "ddsc",
+    srcs = DDSRT_COMMON_SRCS + DDSRT_PLATFORM_SRCS + DDSC_SRCS + DDSI_SRCS,
+    hdrs = DDS_HDRS,
+    includes = [
+        "src/core/ddsc/include",
+        "src/core/ddsc/src",
+        "src/core/ddsi/include",
+        "src/core/ddsi/src",
+        "src/ddsrt/include",
+        "src/ddsrt/src",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": ["-lpthread"],
+        "//conditions:default": [
+            "-ldl",
+            "-lpthread",
+        ],
+    }),
+    textual_hdrs = [
+        "src/core/ddsi/src/ddsi_cdrstream_keys.part.c",
+        "src/core/ddsi/src/ddsi_cdrstream_write.part.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "cyclonedds",
+    actual = ":ddsc",
+    visibility = ["//visibility:public"],
+)
+
+IDL_SRCS = [
+    "src/idl/src/symbol.c",
+    "src/idl/src/directive.c",
+    "src/idl/src/expression.c",
+    "src/idl/src/file.c",
+    "src/idl/src/processor.c",
+    "src/idl/src/scanner.c",
+    "src/idl/src/string.c",
+    "src/idl/src/annotation.c",
+    "src/idl/src/scope.c",
+    "src/idl/src/tree.c",
+    "src/idl/src/visit.c",
+    "src/idl/src/print.c",
+    "src/idl/src/keylist.c",
+    "src/idl/src/hashid.c",
+    "src/idl/src/parser.c",
+]
+
+cc_library(
+    name = "idl",
+    srcs = IDL_SRCS,
+    hdrs = glob([
+        "src/idl/include/idl/*.h",
+        "src/idl/src/*.h",
+    ]) + [
+        ":idl_attributes_h",
+        ":idl_export_h",
+        ":idl_md5_h",
+        ":idl_misc_h",
+        ":idl_version_h",
+    ],
+    includes = [
+        "src/idl/include",
+        "src/idl/src",
+    ],
+    deps = [":ddsc"],
+)
+
+IDLPP_SRCS = [
+    "src/tools/idlpp/src/directive.c",
+    "src/tools/idlpp/src/eval.c",
+    "src/tools/idlpp/src/expand.c",
+    "src/tools/idlpp/src/main.c",
+    "src/tools/idlpp/src/mbchar.c",
+    "src/tools/idlpp/src/support.c",
+    "src/tools/idlpp/src/system.c",
+]
+
+genrule(
+    name = "idlpp_mcpp_export_h",
+    outs = ["src/tools/idlpp/src/mcpp_export.h"],
+    cmd = """
+cat >"$@" <<'EOF'
+#ifndef MCPP_EXPORT_H
+#define MCPP_EXPORT_H
+
+/* Generated for Bazel; equivalent to CMake static-library export header. */
+#define MCPP_EXPORT
+#define MCPP_NO_EXPORT
+#define MCPP_DEPRECATED __attribute__((__deprecated__))
+#define MCPP_DEPRECATED_EXPORT MCPP_EXPORT MCPP_DEPRECATED
+#define MCPP_DEPRECATED_NO_EXPORT MCPP_NO_EXPORT MCPP_DEPRECATED
+
+#endif /* MCPP_EXPORT_H */
+EOF
+""",
+)
+
+cc_library(
+    name = "idlpp",
+    srcs = IDLPP_SRCS,
+    hdrs = [
+        "src/tools/idlpp/src/internal.H",
+        "src/tools/idlpp/src/mcpp_lib.h",
+        "src/tools/idlpp/src/mcpp_out.h",
+        "src/tools/idlpp/src/system.H",
+        ":idlpp_configed_h",
+        ":idlpp_mcpp_export_h",
+    ],
+    copts = ["-DHAVE_CONFIG_H=1"],
+    includes = ["src/tools/idlpp/src"],
+)
+
+IDLC_SRCS = [
+    "src/tools/idlc/src/idlc.c",
+    "src/tools/idlc/src/plugin.c",
+    "src/tools/idlc/src/options.c",
+    "src/tools/idlc/src/generator.c",
+    "src/tools/idlc/src/descriptor.c",
+    "src/tools/idlc/src/types.c",
+    "src/tools/idlc/src/descriptor_type_meta.c",
+]
+
+cc_binary(
+    name = "idlc",
+    srcs = IDLC_SRCS + glob([
+        "src/tools/idlc/include/idlc/*.h",
+        "src/tools/idlc/src/*.h",
+    ]) + [":idlc_config_h"],
+    includes = [
+        "src/tools/idlc/include",
+        "src/tools/idlc/src",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ddsc",
+        ":idl",
+        ":idlpp",
+    ],
+)

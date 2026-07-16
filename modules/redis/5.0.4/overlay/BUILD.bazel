@@ -1,0 +1,205 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+cc_library(
+    name = "linenoise",
+    srcs = glob(["deps/linenoise/*.c"]),
+    hdrs = glob(["deps/linenoise/*.h"]),
+    strip_include_prefix = "deps/linenoise",
+)
+
+cc_library(
+    name = "hiredis",
+    srcs = glob(
+        ["deps/hiredis/*.c"],
+        exclude = [
+            "deps/hiredis/dict.c",
+            "deps/hiredis/test.c",
+        ],
+    ),
+    hdrs = glob(["deps/hiredis/*.h"]),
+    strip_include_prefix = "deps/hiredis",
+    textual_hdrs = ["deps/hiredis/dict.c"],
+)
+
+cc_library(
+    name = "lua",
+    srcs = glob(
+        ["deps/lua/src/*.c"],
+        exclude = [
+            "deps/lua/src/lua.c",
+            "deps/lua/src/luac.c",
+            "deps/lua/src/print.c",
+        ],
+    ) + ["src/solarisfixes.h"],
+    hdrs = glob(["deps/lua/src/*.h"]),
+    strip_include_prefix = "deps/lua/src",
+    local_defines = ["ENABLE_CJSON_GLOBAL"],
+    copts = ["-Wno-deprecated-declarations"],
+)
+
+sh_binary(
+    name = "mkreleasehdr",
+    srcs = ["src/mkreleasehdr.sh"],
+)
+
+genrule(
+    name = "generate_release_header",
+    outs = ["release.h"],
+    cmd = "$(location mkreleasehdr) && mv release.h $@",
+    tools = [":mkreleasehdr"],
+)
+
+cc_library(
+    name = "redis_lib",
+    srcs = [
+        "src/adlist.c",
+        "src/ae.c",
+        "src/anet.c",
+        "src/aof.c",
+        "src/bio.c",
+        "src/bitops.c",
+        "src/blocked.c",
+        "src/childinfo.c",
+        "src/cluster.c",
+        "src/config.c",
+        "src/crc16.c",
+        "src/crc64.c",
+        "src/db.c",
+        "src/debug.c",
+        "src/defrag.c",
+        "src/dict.c",
+        "src/endianconv.c",
+        "src/evict.c",
+        "src/expire.c",
+        "src/geo.c",
+        "src/geohash.c",
+        "src/geohash_helper.c",
+        "src/hyperloglog.c",
+        "src/intset.c",
+        "src/latency.c",
+        "src/lazyfree.c",
+        "src/listpack.c",
+        "src/localtime.c",
+        "src/lolwut.c",
+        "src/lolwut5.c",
+        "src/lzf_c.c",
+        "src/lzf_d.c",
+        "src/memtest.c",
+        "src/module.c",
+        "src/multi.c",
+        "src/networking.c",
+        "src/notify.c",
+        "src/object.c",
+        "src/pqsort.c",
+        "src/pubsub.c",
+        "src/quicklist.c",
+        "src/rand.c",
+        "src/rax.c",
+        "src/rdb.c",
+        "src/redis-check-aof.c",
+        "src/redis-check-rdb.c",
+        "src/release.c",
+        "src/replication.c",
+        "src/rio.c",
+        "src/scripting.c",
+        "src/sds.c",
+        "src/sentinel.c",
+        "src/server.c",
+        "src/setproctitle.c",
+        "src/sha1.c",
+        "src/siphash.c",
+        "src/slowlog.c",
+        "src/sort.c",
+        "src/sparkline.c",
+        "src/syncio.c",
+        "src/t_hash.c",
+        "src/t_list.c",
+        "src/t_set.c",
+        "src/t_stream.c",
+        "src/t_string.c",
+        "src/t_zset.c",
+        "src/util.c",
+        "src/ziplist.c",
+        "src/zipmap.c",
+        "src/zmalloc.c",
+    ] + glob(["src/*.h"]) + ["release.h"],
+    textual_hdrs = glob(["src/ae_*.c"]),
+    includes = ["src"],
+    copts = select({
+        "@platforms//os:linux": ["-fcommon"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":hiredis",
+        ":lua",
+    ],
+)
+
+cc_library(
+    name = "redis_cli_lib",
+    srcs = [
+        "src/adlist.c",
+        "src/ae.c",
+        "src/anet.c",
+        "src/crc16.c",
+        "src/crc64.c",
+        "src/dict.c",
+        "src/redis-cli.c",
+        "src/release.c",
+        "src/siphash.c",
+        "src/zmalloc.c",
+    ] + glob(["src/*.h"]) + ["release.h"],
+    textual_hdrs = glob(["src/ae_*.c"]),
+    includes = ["src"],
+    copts = select({
+        "@platforms//os:linux": ["-fcommon"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":hiredis",
+        ":linenoise",
+        ":lua",
+    ],
+)
+
+cc_binary(
+    name = "redis-server",
+    deps = [":redis_lib"],
+    visibility = ["//visibility:public"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lm",
+            "-lpthread",
+        ],
+        "@platforms//os:osx": [
+            "-lm",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "redis-cli",
+    deps = [":redis_cli_lib"],
+    visibility = ["//visibility:public"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+        ],
+        "@platforms//os:osx": [
+            "-lm",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+filegroup(
+    name = "redis",
+    srcs = [
+        ":redis-server",
+        ":redis-cli",
+    ],
+    visibility = ["//visibility:public"],
+)

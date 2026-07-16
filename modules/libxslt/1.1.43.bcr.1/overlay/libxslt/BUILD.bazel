@@ -1,0 +1,46 @@
+load("@aspect_bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@aspect_bazel_lib//lib:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+expand_template(
+    name = "xsltconfig",
+    out = "libxslt/xsltconfig.h",
+    substitutions = {
+        "@VERSION@": "1.1.43",
+        "@LIBXSLT_VERSION_NUMBER@": "101043",
+        "@LIBXSLT_VERSION_EXTRA@": "71be7a32637760d769b193d95e0c745ecb86b679",
+        "@WITH_XSLT_DEBUG@": "0",
+        "@XSLT_NEED_TRIO@": "0",
+        "@WITH_TRIO@": "0",
+        "@WITH_DEBUGGER@": "0",
+        "@WITH_PROFILER@": "1",
+        "@WITH_MODULES@": "0",
+    },
+    template = "xsltconfig.h.in",
+)
+
+# Arrange the code the way the library expects.
+# If we defined this target at the module root it wouldn't be necessary, but rules_cc doesn't allow it.
+# See https://bazelbuild.slack.com/archives/CGA9QFQ8H/p1754145239223169
+# Note that the library used both quoted and angled includes, so we need to copy sources as well as headers.
+[
+    copy_file(
+        name = "copy_" + f,
+        src = f,
+        out = "libxslt/" + f,
+        allow_symlink = True,
+    )
+    for f in glob(["*.c", "*.h"])
+]
+
+cc_library(
+    name = "libxslt",
+    hdrs = ["libxslt/" + f for f in glob(["*.h"])] + ["libxslt/xsltconfig.h"],
+    srcs = ["libxslt/" + f for f in glob(["*.c"])],
+    deps = [
+        "//:config",
+        "@libxml2",
+    ],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)

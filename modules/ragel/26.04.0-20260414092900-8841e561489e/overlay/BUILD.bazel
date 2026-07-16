@@ -1,0 +1,539 @@
+# Bazel build for the Ragel state machine compiler.
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# Common compiler flags for colm compiler sources (builddir.cc, main.cc).
+#
+# INCLUDEDIR / LIBDIR are used by main.cc to build gcc flags when colm
+# compiles a .lm into a runnable binary.  We only use colm in -c mode
+# (code-gen only) so the values are never referenced at runtime.
+# ABS_TOP_BUILDDIR / ABS_BUILDDIR are used by builddir.cc to detect
+# "running from source tree", which is irrelevant inside Bazel's sandbox.
+# All four must be defined as string literals for compilation to succeed.
+_COLM_COPTS = [
+    "-Wno-unused-parameter",
+    "-Wno-unused-but-set-variable",
+    '-DINCLUDEDIR=\\"\\"',
+    '-DLIBDIR=\\"\\"',
+    '-DABS_TOP_BUILDDIR=\\"\\"',
+    '-DABS_BUILDDIR=\\"\\"',
+]
+
+genrule(
+    name = "gen_config_h",
+    outs = ["_gen/config/config.h"],
+    cmd = """cat > $@ << 'HEREDOC'
+#define HAVE_DLFCN_H 1
+#define HAVE_FOPENCOOKIE 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_STDIO_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRINGS_H 1
+#define HAVE_STRING_H 1
+#define HAVE_SYS_MMAN_H 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_WAIT_H 1
+#define HAVE_UNISTD_H 1
+#define LT_OBJDIR ".libs/"
+#define PACKAGE "colm"
+#define PACKAGE_BUGREPORT ""
+#define PACKAGE_NAME "colm"
+#define PACKAGE_STRING "colm 0.14.7"
+#define PACKAGE_TARNAME "colm"
+#define PACKAGE_URL ""
+#define PACKAGE_VERSION "0.14.7"
+#define PUBDATE "February 2021"
+#define SIZEOF_INT 4
+#define SIZEOF_LONG 8
+#define SIZEOF_UNSIGNED_LONG 8
+#define SIZEOF_UNSIGNED_LONG_LONG 8
+#define SIZEOF_VOID_P 8
+#define STDC_HEADERS 1
+#define VERSION "0.14.7"
+HEREDOC
+""",
+)
+
+genrule(
+    name = "gen_defs_h",
+    outs = ["_gen/config/defs.h"],
+    cmd = """cat > $@ << 'HEREDOC'
+#ifndef _COLM_DEFS_H
+#define _COLM_DEFS_H
+#define SIZEOF_LONG 8
+#define SIZEOF_UNSIGNED_LONG 8
+#define SIZEOF_UNSIGNED_LONG_LONG 8
+#define SIZEOF_VOID_P 8
+#endif /* _COLM_DEFS_H */
+HEREDOC
+""",
+)
+
+cc_library(
+    name = "config",
+    hdrs = [
+        ":gen_config_h",
+        ":gen_defs_h",
+    ],
+    includes = ["_gen/config"],
+)
+
+# Version headers -- colm and ragel each have their own version.h, kept in
+# separate include directories so the right one is found per target.
+genrule(
+    name = "gen_colm_version_h",
+    outs = ["_gen/colm/version.h"],
+    cmd = """cat > $@ << 'HEREDOC'
+#define VERSION "0.14.7"
+#define PUBDATE "February 2021"
+HEREDOC
+""",
+)
+
+cc_library(
+    name = "colm_version",
+    hdrs = [":gen_colm_version_h"],
+    includes = ["_gen/colm"],
+)
+
+genrule(
+    name = "gen_ragel_version_h",
+    outs = ["_gen/ragel/version.h"],
+    cmd = """cat > $@ << 'HEREDOC'
+#define RAGEL_VERSION "7.0.4"
+#define RAGEL_PUBDATE "February 2021"
+HEREDOC
+""",
+)
+
+cc_library(
+    name = "ragel_version",
+    hdrs = [":gen_ragel_version_h"],
+    includes = ["_gen/ragel"],
+)
+
+# Colm public headers (for #include <colm/*.h>)
+_COLM_PUBLIC_HDRS = [
+    "bytecode.h",
+    "colm.h",
+    "colmex.h",
+    "debug.h",
+    "input.h",
+    "internal.h",
+    "map.h",
+    "pdarun.h",
+    "pool.h",
+    "program.h",
+    "struct.h",
+    "tree.h",
+    "type.h",
+]
+
+[genrule(
+    name = "colm_include_" + h.replace(".", "_"),
+    srcs = ["src/" + h],
+    outs = ["include/colm/" + h],
+    cmd = "cp $< $@",
+) for h in _COLM_PUBLIC_HDRS]
+
+genrule(
+    name = "colm_include_config_h",
+    srcs = [":gen_config_h"],
+    outs = ["include/colm/config.h"],
+    cmd = "cp $< $@",
+)
+
+genrule(
+    name = "colm_include_defs_h",
+    srcs = [":gen_defs_h"],
+    outs = ["include/colm/defs.h"],
+    cmd = "cp $< $@",
+)
+
+cc_library(
+    name = "colm_public_headers",
+    hdrs = ["include/colm/" + h for h in _COLM_PUBLIC_HDRS] + [
+        "include/colm/config.h",
+        "include/colm/defs.h",
+    ],
+    includes = ["include"],
+    deps = [":config"],
+)
+
+# AAPL -- header-only C++ template library (AVL trees, vectors, etc.)
+cc_library(
+    name = "aapl",
+    hdrs = glob(["src/aapl/*.h"]),
+    includes = ["src/aapl"],
+)
+
+# colm_hdrs -- all source headers under src/ (excludes autotools artifacts).
+# includes = ["src"] adds src/ to -I so that angle-bracket includes like
+# <fsmgraph.h> and <libfsm/ragel.h> resolve correctly.
+cc_library(
+    name = "colm_hdrs",
+    hdrs = glob(
+        ["src/*.h"],
+        exclude = [
+            "src/config.h",
+            "src/defs.h",
+            "src/version.h",
+        ],
+    ),
+    includes = ["src"],
+    deps = [
+        ":aapl",
+        ":colm_public_headers",
+        ":config",
+    ],
+)
+
+# libcolm -- Colm C runtime (parser driver, tree ops, bytecode VM, etc.)
+cc_library(
+    name = "libcolm",
+    srcs = [
+        "src/bytecode.c",
+        "src/codevect.c",
+        "src/commit.c",
+        "src/debug.c",
+        "src/input.c",
+        "src/iter.c",
+        "src/list.c",
+        "src/map.c",
+        "src/pdarun.c",
+        "src/pool.c",
+        "src/print.c",
+        "src/program.c",
+        "src/stream.c",
+        "src/string.c",
+        "src/struct.c",
+        "src/tree.c",
+    ],
+    copts = ["-Wno-unused-parameter"],
+    linkopts = ["-ldl"],
+    deps = [":colm_hdrs"],
+)
+
+# libprog -- Colm C++ compiler library (FSM, PDA, code gen, etc.)
+cc_library(
+    name = "libprog",
+    srcs = [
+        "src/closure.cc",
+        "src/codegen.cc",
+        "src/compiler.cc",
+        "src/ctinput.cc",
+        "src/declare.cc",
+        "src/dotgen.cc",
+        "src/exports.cc",
+        "src/fsmap.cc",
+        "src/fsmattach.cc",
+        "src/fsmbase.cc",
+        "src/fsmcodegen.cc",
+        "src/fsmexec.cc",
+        "src/fsmgraph.cc",
+        "src/fsmmin.cc",
+        "src/fsmstate.cc",
+        "src/lookup.cc",
+        "src/parser.cc",
+        "src/parsetree.cc",
+        "src/pcheck.cc",
+        "src/pdabuild.cc",
+        "src/pdacodegen.cc",
+        "src/pdagraph.cc",
+        "src/redbuild.cc",
+        "src/redfsm.cc",
+        "src/reduce.cc",
+        "src/resolve.cc",
+        "src/synthesis.cc",
+    ],
+    copts = _COLM_COPTS,
+    deps = [
+        ":colm_hdrs",
+        ":libcolm",
+    ],
+)
+
+# loadfinal.cc is textually #included by loadboot2.cc and loadcolm.cc.
+cc_library(
+    name = "loadfinal",
+    textual_hdrs = ["src/loadfinal.cc"],
+)
+
+# Bootstrap chain: bootstrap0 -> bootstrap1 -> bootstrap2 -> colm
+# bootstrap0: grammar hard-coded in C++ (consinit.cc, no input file)
+cc_binary(
+    name = "bootstrap0",
+    srcs = [
+        "src/builddir.cc",
+        "src/consinit.cc",
+        "src/consinit.h",
+        "src/main.cc",
+    ],
+    copts = _COLM_COPTS + ["-DCONS_INIT"],
+    deps = [
+        ":colm_hdrs",
+        ":colm_version",
+        ":libcolm",
+        ":libprog",
+    ],
+)
+
+# The colm -x flag generates a .cc file that #includes the -e header path
+# verbatim. Bazel's $(location) expands to the full output tree path (e.g.
+# bazel-out/.../external/ragel+/gen/if1.h), and that absolute-looking path
+# won't resolve at compile time. Work around this by passing bare filenames
+# to -e/-x/-p so the generated #include uses just the basename, then move
+# the outputs to the locations Bazel expects.
+genrule(
+    name = "gen_parse1",
+    outs = [
+        "gen/if1.cc",
+        "gen/if1.h",
+        "gen/parse1.c",
+    ],
+    cmd = "OUTDIR=$$(dirname $(location gen/if1.h)) && " +
+          "$(location :bootstrap0) -c" +
+          " -p parse1.c" +
+          " -e if1.h" +
+          " -x if1.cc" +
+          " no-input && " +
+          "mv parse1.c if1.h if1.cc $$OUTDIR/",
+    tools = [":bootstrap0"],
+)
+
+# bootstrap1: parses most colm syntax (loadinit.cc)
+cc_binary(
+    name = "bootstrap1",
+    srcs = [
+        "gen/if1.cc",
+        "gen/if1.h",
+        "gen/parse1.c",
+        "src/builddir.cc",
+        "src/loadinit.cc",
+        "src/loadinit.h",
+        "src/main.cc",
+    ],
+    copts = _COLM_COPTS + ["-DLOAD_INIT"],
+    deps = [
+        ":colm_hdrs",
+        ":colm_version",
+        ":libcolm",
+        ":libprog",
+    ],
+)
+
+# See gen_parse1 comment for why we use bare filenames and mv.
+genrule(
+    name = "gen_parse2",
+    srcs = ["src/colm.lm"],
+    outs = [
+        "gen/if2.cc",
+        "gen/if2.h",
+        "gen/parse2.c",
+    ],
+    cmd = "OUTDIR=$$(dirname $(location gen/if2.h)) && " +
+          "$(location :bootstrap1) -c" +
+          " -p parse2.c" +
+          " -e if2.h" +
+          " -x if2.cc" +
+          " $(location src/colm.lm) && " +
+          "mv parse2.c if2.h if2.cc $$OUTDIR/",
+    tools = [":bootstrap1"],
+)
+
+# bootstrap2: parses full colm programs (loadboot2.cc)
+cc_binary(
+    name = "bootstrap2",
+    srcs = [
+        "gen/if2.cc",
+        "gen/if2.h",
+        "gen/parse2.c",
+        "src/builddir.cc",
+        "src/loadboot2.cc",
+        "src/loadfinal.h",
+        "src/main.cc",
+    ],
+    copts = _COLM_COPTS + ["-DLOAD_COLM"],
+    deps = [
+        ":colm_hdrs",
+        ":colm_version",
+        ":libcolm",
+        ":libprog",
+        ":loadfinal",
+    ],
+)
+
+# See gen_parse1 comment for why we use bare filenames and mv.
+genrule(
+    name = "gen_parse3",
+    srcs = [
+        "src/colm.lm",
+        "src/prog.lm",
+    ],
+    outs = [
+        "gen/if3.cc",
+        "gen/if3.h",
+        "gen/parse3.c",
+    ],
+    cmd = "OUTDIR=$$(dirname $(location gen/if3.h)) && " +
+          "$(location :bootstrap2) -c" +
+          " -p parse3.c" +
+          " -e if3.h" +
+          " -x if3.cc" +
+          " -I$$(dirname $(location src/colm.lm))" +
+          " $(location src/prog.lm) && " +
+          "mv parse3.c if3.h if3.cc $$OUTDIR/",
+    tools = [":bootstrap2"],
+)
+
+# colm: final compiler (used as build tool for ragel)
+cc_binary(
+    name = "colm",
+    srcs = [
+        "gen/if3.cc",
+        "gen/if3.h",
+        "gen/parse3.c",
+        "src/builddir.cc",
+        "src/loadcolm.cc",
+        "src/loadfinal.h",
+        "src/main.cc",
+    ],
+    copts = _COLM_COPTS + ["-DLOAD_COLM"],
+    deps = [
+        ":colm_hdrs",
+        ":colm_version",
+        ":libcolm",
+        ":libprog",
+        ":loadfinal",
+    ],
+)
+
+# libfsm -- FSM construction and code generation backends
+cc_library(
+    name = "libfsm",
+    srcs = [
+        "src/libfsm/actexp.cc",
+        "src/libfsm/actloop.cc",
+        "src/libfsm/allocgen.cc",
+        "src/libfsm/asm.cc",
+        "src/libfsm/binary.cc",
+        "src/libfsm/binbreak.cc",
+        "src/libfsm/bingoto.cc",
+        "src/libfsm/binvar.cc",
+        "src/libfsm/codegen.cc",
+        "src/libfsm/dot.cc",
+        "src/libfsm/flat.cc",
+        "src/libfsm/flatbreak.cc",
+        "src/libfsm/flatgoto.cc",
+        "src/libfsm/flatvar.cc",
+        "src/libfsm/fsmap.cc",
+        "src/libfsm/fsmattach.cc",
+        "src/libfsm/fsmbase.cc",
+        "src/libfsm/fsmcond.cc",
+        "src/libfsm/fsmgraph.cc",
+        "src/libfsm/fsmmin.cc",
+        "src/libfsm/fsmnfa.cc",
+        "src/libfsm/fsmstate.cc",
+        "src/libfsm/gendata.cc",
+        "src/libfsm/goto.cc",
+        "src/libfsm/gotoexp.cc",
+        "src/libfsm/gotoloop.cc",
+        "src/libfsm/idbase.cc",
+        "src/libfsm/ipgoto.cc",
+        "src/libfsm/redfsm.cc",
+        "src/libfsm/switch.cc",
+        "src/libfsm/switchbreak.cc",
+        "src/libfsm/switchgoto.cc",
+        "src/libfsm/switchvar.cc",
+        "src/libfsm/tabbreak.cc",
+        "src/libfsm/tabgoto.cc",
+        "src/libfsm/tables.cc",
+        "src/libfsm/tabvar.cc",
+    ],
+    hdrs = glob(["src/libfsm/*.h"]),
+    copts = [
+        "-Wno-sign-compare",
+        "-Wno-unused-parameter",
+    ],
+    includes = ["src/libfsm"],
+    deps = [
+        ":aapl",
+        ":config",
+    ],
+)
+
+# Generate ragel parser from .lm files using colm
+genrule(
+    name = "gen_ragel_parser",
+    srcs = [
+        "src/ragel/ragel.lm",
+        "src/ragel/rlparse.lm",
+        "src/ragel/rlreduce.lm",
+    ],
+    outs = [
+        "gen/ragel/parse.c",
+        "gen/ragel/rlreduce.cc",
+    ],
+    cmd = "$(location :colm) -c" +
+          " -b rlparseC" +
+          " -I$$(dirname $(location src/ragel/rlparse.lm))" +
+          " -p $(location gen/ragel/parse.c)" +
+          " -m $(location gen/ragel/rlreduce.cc)" +
+          " $(location src/ragel/rlparse.lm)",
+    tools = [":colm"],
+)
+
+# libragel -- ragel parsing support library
+cc_library(
+    name = "libragel",
+    srcs = [
+        "src/ragel/allocgen.cc",
+        "src/ragel/inputdata.cc",
+        "src/ragel/load.cc",
+        "src/ragel/longest.cc",
+        "src/ragel/ncommon.cc",
+        "src/ragel/parsedata.cc",
+        "src/ragel/parsetree.cc",
+        "src/ragel/reducer.cc",
+    ],
+    hdrs = glob(
+        ["src/ragel/*.h"],
+        exclude = ["src/ragel/version.h"],
+    ),
+    copts = [
+        "-Wno-sign-compare",
+        "-Wno-unused-parameter",
+        '-DBINDIR=\\"/usr/local/bin\\"',
+    ],
+    includes = ["src/ragel"],
+    deps = [
+        ":aapl",
+        ":colm_hdrs",
+        ":colm_public_headers",
+        ":config",
+        ":libcolm",
+        ":libfsm",
+        ":ragel_version",
+    ],
+)
+
+# ragel -- the Ragel state machine compiler
+cc_binary(
+    name = "ragel",
+    srcs = [
+        "src/ragel/main.cc",
+        ":gen_ragel_parser",
+    ],
+    copts = ["-Wno-unused-parameter"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":colm_hdrs",
+        ":colm_public_headers",
+        ":config",
+        ":libcolm",
+        ":libfsm",
+        ":libragel",
+    ],
+)

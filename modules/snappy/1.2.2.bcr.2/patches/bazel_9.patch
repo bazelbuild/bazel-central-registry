@@ -1,0 +1,104 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+index e6622ff..1a3c3f9 100644
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -26,10 +26,20 @@
+ # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ 
++load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
++load("@bazel_skylib//rules:write_file.bzl", "write_file")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
++
+ package(default_visibility = ["//visibility:public"])
+ 
+ licenses(["notice"])
+ 
++exports_files([
++    "COPYING",
++    "COPYING.notestdata",
++])
++
+ SNAPPY_VERSION = (1, 2, 2)
+ 
+ config_setting(
+@@ -133,10 +143,10 @@ cc_test(
+ )
+ 
+ # Generate a config.h similar to what cmake would produce.
+-genrule(
++write_file(
+     name = "config_h",
+-    outs = ["config.h"],
+-    cmd = """cat <<EOF >$@
++    out = "config.h",
++    content = """\
+ #define HAVE_STDDEF_H 1
+ #define HAVE_STDINT_H 1
+ #ifdef __has_builtin
+@@ -193,19 +203,17 @@ genrule(
+ #    define SNAPPY_IS_BIG_ENDIAN 1
+ #  endif
+ #endif
+-EOF
+-""",
++""".splitlines(),
+ )
+ 
+-genrule(
++expand_template(
+     name = "snappy_stubs_public_h",
+-    srcs = ["snappy-stubs-public.h.in"],
+-    outs = ["snappy-stubs-public.h"],
+-    # Assume sys/uio.h is available on non-Windows.
+-    # Set the version numbers.
+-    cmd = ("""sed -e 's/$${HAVE_SYS_UIO_H_01}/!_WIN32/g' \
+-           -e 's/$${PROJECT_VERSION_MAJOR}/%d/g' \
+-           -e 's/$${PROJECT_VERSION_MINOR}/%d/g' \
+-           -e 's/$${PROJECT_VERSION_PATCH}/%d/g' \
+-    $< >$@""" % SNAPPY_VERSION),
++    out = "snappy-stubs-public.h",
++    substitutions = {
++        "${HAVE_SYS_UIO_H_01}": "!_WIN32",
++        "${PROJECT_VERSION_MAJOR}": str(SNAPPY_VERSION[0]),
++        "${PROJECT_VERSION_MINOR}": str(SNAPPY_VERSION[1]),
++        "${PROJECT_VERSION_PATCH}": str(SNAPPY_VERSION[2]),
++    },
++    template = "snappy-stubs-public.h.in",
+ )
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 4f80d95..4a46da3 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -1,23 +1,26 @@
+ module(
+     name = "snappy",
+-    version = "1.2.2",
++    version = "1.2.2.bcr.2",
+     compatibility_level = 1,
+ )
+ 
++bazel_dep(name = "rules_cc", version = "0.2.4")
++bazel_dep(name = "bazel_skylib", version = "1.8.2")
++
+ bazel_dep(
+     name = "googletest",
+-    version = "1.14.0.bcr.1",
++    version = "1.17.0.bcr.2",
+     dev_dependency = True,
+     repo_name = "com_google_googletest",
+ )
+ bazel_dep(
+     name = "google_benchmark",
+-    version = "1.9.0",
++    version = "1.9.5",
+     dev_dependency = True,
+     repo_name = "com_google_benchmark",
+ )
+ 
+ bazel_dep(
+     name = "platforms",
+-    version = "0.0.9",
++    version = "1.0.0",
+ )

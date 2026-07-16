@@ -1,0 +1,57 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+cc_library(
+    name = "azure_identity_cpp",
+    hdrs = glob(
+        ["inc/**/*.hpp"],
+    ),
+    features = ["parse_headers"],
+    includes = ["inc"],
+    srcs = glob([
+        "src/**/*.cpp",
+        "src/**/*.hpp",
+    ]),
+    deps = [
+        "@azure-core-cpp//:azure_core_cpp",
+    ] + select({
+        "@platforms//os:windows": [
+            # TODO: add wil here when it's in the BCR.
+            # https://github.com/bazelbuild/bazel-central-registry/issues/3807
+        ],
+        "//conditions:default": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "azure_identity_cpp_test",
+    srcs = glob(
+        [
+            "test/ut/*.cpp",
+            "test/ut/*.hpp",
+        ],
+        # TODO: exclude tests that fail out of the box for now.
+        exclude = [
+            # Requires download assets and a test proxy to be running:
+            # https://github.com/Azure/azure-sdk-for-cpp/blob/main/doc/TestProxy.md
+            "test/ut/azure_cli_credential_test.cpp",
+            "test/ut/token_cache_test.cpp",
+            "test/ut/token_credential_test.cpp",
+        ] + [
+            # Fails on Bazel CI.
+            "test/ut/managed_identity_credential_test.cpp",
+        ],
+    ),
+    includes = ["src"],
+    deps = [
+        ":azure_identity_cpp",
+        "@azure-core-test-cpp//:azure_core_test_cpp",
+        "@googletest//:gtest_main",
+    ],
+    local_defines = [
+        "_azure_TESTING_BUILD",
+    ],
+)

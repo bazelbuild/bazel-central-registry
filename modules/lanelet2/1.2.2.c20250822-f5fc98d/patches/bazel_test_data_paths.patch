@@ -1,0 +1,135 @@
+diff --git a/lanelet2_io/test/TestBinHandler.cpp b/lanelet2_io/test/TestBinHandler.cpp
+index c9868ab..2d13a34 100644
+--- a/lanelet2_io/test/TestBinHandler.cpp
++++ b/lanelet2_io/test/TestBinHandler.cpp
+@@ -2,11 +2,15 @@
+ #include <boost/archive/binary_oarchive.hpp>
+ #include <cstdio>
+ #include <fstream>
++#include <string>
+ 
+ #include "TestSetup.h"
+ #include "gtest/gtest.h"
+ #include "lanelet2_io/Io.h"
+ #include "lanelet2_io/io_handlers/Serialize.h"
++#include "tools/cpp/runfiles/runfiles.h"
++
++using bazel::tools::cpp::runfiles::Runfiles;
+ 
+ using namespace lanelet;
+ 
+@@ -114,8 +118,9 @@ TEST(BinHandler, explicitIO) {  // NOLINT
+ }
+ 
+ TEST(BinHandler, fullMap) {
++  std::unique_ptr<Runfiles> runfiles = test_setup::CreateRunfilesOrDie();
+   Origin origin({49, 8.4, 0});
+-  std::string filenameIn = "../../lanelet2_maps/res/mapping_example.osm";
++  std::string filenameIn = runfiles->Rlocation("lanelet2/lanelet2_maps/res/mapping_example.osm");
+   auto map = lanelet::load(filenameIn, origin);
+   auto llt = map->laneletLayer.find(44968);
+   writeAndLoad(*llt);
+diff --git a/lanelet2_io/test/TestSetup.h b/lanelet2_io/test/TestSetup.h
+index 67652af..ad02019 100644
+--- a/lanelet2_io/test/TestSetup.h
++++ b/lanelet2_io/test/TestSetup.h
+@@ -6,6 +6,9 @@
+ #include <boost/filesystem.hpp>
+ #include <fstream>
+ 
++#include "gtest/gtest.h"
++#include "tools/cpp/runfiles/runfiles.h"
++
+ namespace fs = boost::filesystem;
+ 
+ namespace lanelet {
+@@ -52,8 +55,8 @@ inline bool operator==(const PrimitiveLayer<T>& rhs, const PrimitiveLayer<T>& lh
+ }
+ 
+ template <>
+-inline bool operator==<RegulatoryElementPtr>(const PrimitiveLayer<RegulatoryElementPtr>& rhs,
+-                                             const PrimitiveLayer<RegulatoryElementPtr>& lhs) {
++inline bool operator== <RegulatoryElementPtr>(const PrimitiveLayer<RegulatoryElementPtr>& rhs,
++                                              const PrimitiveLayer<RegulatoryElementPtr>& lhs) {
+   return rhs.size() == lhs.size() && std::all_of(rhs.begin(), rhs.end(), [&lhs](auto& v1) {
+            return *v1->constData() == *(*lhs.find(v1->id()))->constData();
+          });
+@@ -121,6 +124,17 @@ inline Area setUpArea(int& num, const std::string& type = AttributeValueString::
+               AttributeMap{{AttributeNamesString::Subtype, type}}, {regelem});
+ }
+ 
++using bazel::tools::cpp::runfiles::Runfiles;
++
++inline std::unique_ptr<Runfiles> CreateRunfilesOrDie() {
++  std::string error;
++  std::unique_ptr<Runfiles> runfiles{Runfiles::Create("TestBinHandler", BAZEL_CURRENT_REPOSITORY, &error)};
++  if (runfiles == nullptr) {
++    throw std::runtime_error{"Error creating runfiles: " + error};
++  }
++  return runfiles;
++}
++
+ class Tempfile {
+  public:
+   explicit Tempfile(std::string name) {
+diff --git a/lanelet2_io/test/TestSimpleUsage.cpp b/lanelet2_io/test/TestSimpleUsage.cpp
+index 792f69d..54713da 100644
+--- a/lanelet2_io/test/TestSimpleUsage.cpp
++++ b/lanelet2_io/test/TestSimpleUsage.cpp
+@@ -1,11 +1,15 @@
+ #include "TestSetup.h"
+ #include "gtest/gtest.h"
+ #include "lanelet2_io/Io.h"
++#include "tools/cpp/runfiles/runfiles.h"
++
++using bazel::tools::cpp::runfiles::Runfiles;
+ 
+ TEST(lanelet2_io, exampleUsage) {  // NOLINT
+   using namespace lanelet;
++  std::unique_ptr<Runfiles> runfiles = lanelet::test_setup::CreateRunfilesOrDie();
+   Origin origin({49, 8.4, 0});
+-  std::string filenameIn = "../../lanelet2_maps/res/mapping_example.osm";
++  std::string filenameIn = runfiles->Rlocation("lanelet2/lanelet2_maps/res/mapping_example.osm");
+   LaneletMapPtr laneletMap = lanelet::load(filenameIn, origin);
+ 
+   lanelet::test_setup::Tempfile file("file.osm");
+diff --git a/lanelet2_validation/test/lanelet2_validation.cpp b/lanelet2_validation/test/lanelet2_validation.cpp
+index 3e30df4..6f66cd4 100644
+--- a/lanelet2_validation/test/lanelet2_validation.cpp
++++ b/lanelet2_validation/test/lanelet2_validation.cpp
+@@ -7,9 +7,23 @@
+ 
+ #include "lanelet2_validation/Cli.h"
+ #include "lanelet2_validation/Validation.h"
++#include "tools/cpp/runfiles/runfiles.h"
++
++using bazel::tools::cpp::runfiles::Runfiles;
++
++std::unique_ptr<Runfiles> CreateRunfilesOrDie() {
++  std::string error;
++  std::unique_ptr<Runfiles> runfiles{Runfiles::Create("TestBinHandler", BAZEL_CURRENT_REPOSITORY, &error)};
++  if (runfiles == nullptr) {
++    throw std::runtime_error{"Error creating runfiles: " + error};
++  }
++  return runfiles;
++}
+ 
+ TEST(TestAllValidators, onExampleMap) {  // NOLINT
+-  const char* args[] = {"validator",      "../../lanelet2_maps/res/mapping_example.osm",
++  std::unique_ptr<Runfiles> runfiles = CreateRunfilesOrDie();
++  const std::string osm_file = runfiles->Rlocation("lanelet2/lanelet2_maps/res/mapping_example.osm");
++  const char* args[] = {"validator",      osm_file.c_str(),
+                         "--participants", "vehicle",
+                         "--participants", "pedestrian",
+                         "--lat",          "49",
+@@ -32,8 +46,9 @@ TEST(Validator, pointsTooClose) {  // NOLINT
+ }
+ 
+ TEST(Validator, curvatureTooBig) {  // NOLINT
+-  std::string exampleMapPath = "../../lanelet2_maps/res/mapping_example.osm";
+   using namespace lanelet;
++  std::unique_ptr<Runfiles> runfiles = CreateRunfilesOrDie();
++  std::string exampleMapPath = runfiles->Rlocation("lanelet2/lanelet2_maps/res/mapping_example.osm");
+   projection::UtmProjector projector(Origin({49, 8.4}));
+   LaneletMapPtr map = load(exampleMapPath, projector);
+   lanelet::validation::ValidationConfig config;

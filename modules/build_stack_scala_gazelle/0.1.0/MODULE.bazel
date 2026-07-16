@@ -1,0 +1,191 @@
+module(
+    name = "build_stack_scala_gazelle",
+    version = "0.1.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "build_stack_rules_proto", version = "4.2.0")
+bazel_dep(name = "gazelle", version = "0.47.0", repo_name = "bazel_gazelle")
+bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_go", version = "0.59.0", repo_name = "io_bazel_rules_go")
+bazel_dep(name = "rules_java", version = "9.3.0")
+bazel_dep(name = "rules_jvm_external", version = "6.9")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "rules_scala", version = "7.1.5", repo_name = "io_bazel_rules_scala")
+
+# -------------------------------------------------------------------
+# Configuration: Go
+# -------------------------------------------------------------------
+
+go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(go_mod = "//:go.mod")
+
+# Known to exist since it is instantiated by rules_go itself.
+use_repo(
+    go_sdk,
+    go_sdk = "go_default_sdk",
+)
+
+go_deps = use_extension("@bazel_gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_amenzhinsky_go_memexec",
+    "com_github_bazelbuild_buildtools",
+    "com_github_bmatcuk_doublestar_v4",
+    "com_github_davecgh_go_spew",
+    "com_github_dghubble_trie",
+    "com_github_google_go_cmp",
+    "com_github_pcj_mobyprogress",
+    "com_github_rs_zerolog",
+    "com_github_stretchr_testify",
+    "net_starlark_go",
+    "org_golang_google_grpc",
+    "org_golang_google_protobuf",
+)
+
+# -------------------------------------------------------------------
+# Configuration: Scala
+# -------------------------------------------------------------------
+
+# Selects the Scala version and other configuration parameters.
+#
+# 2.12 is the default version. Use other versions by passing them explicitly, as
+# illustrated below.
+scala_config = use_extension(
+    "@io_bazel_rules_scala//scala/extensions:config.bzl",
+    "scala_config",
+)
+scala_config.settings(
+    enable_compiler_dependency_tracking = True,
+    scala_version = "2.13.17",
+)
+
+scala_deps = use_extension(
+    "@io_bazel_rules_scala//scala/extensions:deps.bzl",
+    "scala_deps",
+)
+scala_deps.scala()
+
+# -------------------------------------------------------------------
+# Configuration: Maven Deps
+# -------------------------------------------------------------------
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "maven",
+    # these artifacts are specified only to disambiguate versions between
+    # multiple contributing modules (bazel mod warnings)
+    artifacts = [
+        "com.google.code.gson:gson:2.8.9",
+        "com.google.errorprone:error_prone_annotations:2.11.0",
+        "com.google.guava:guava:30.1.1-jre",
+    ],
+    known_contributing_modules = [
+        "build_stack_rules_proto",
+        "build_stack_scala_gazelle",
+        "grpc-java",
+        "protobuf",
+    ],
+)
+use_repo(
+    maven,
+    "maven",
+)
+
+# -------------------------------------------------------------------
+# Configuration: misc jars
+# -------------------------------------------------------------------
+
+http_jar = use_repo_rule("@rules_java//java:http_jar.bzl", "http_jar")
+
+http_jar(
+    name = "classgraph_jar",
+    sha256 = "ece8abfe1277450a8b95e57fc56991dca1fd42ffefdad88f65fe171ac576f604",
+    url = "https://repo1.maven.org/maven2/io/github/classgraph/classgraph/4.8.149/classgraph-4.8.149.jar",
+)
+
+http_jar(
+    name = "plantuml_jar",
+    sha256 = "5a8dc3b37fe133a4744e55be80caf6080a70350aba716d95400a0f0cbd79e846",
+    url = "https://github.com/plantuml/plantuml/releases/download/v1.2024.6/plantuml-1.2024.6.jar",
+)
+
+# -------------------------------------------------------------------
+# Configuration: Node
+# -------------------------------------------------------------------
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "scalameta_parsers",
+    build_file_content = """
+filegroup(
+name = "module",
+srcs = ["main.js"],
+visibility = ["//visibility:public"],
+)
+    """,
+    sha256 = "c419383f9fe63da14104416cfc4ba3200d52ad6bddc1d0a9a2058c2a4349f691",
+    strip_prefix = "package",
+    urls = ["https://registry.npmjs.org/scalameta-parsers/-/scalameta-parsers-4.13.4.tgz"],
+)
+
+# see https://nodejs.org/dist/ to update
+versions = {
+    "linux-x64": {
+        "executable": "bin/node",
+        "sha256": "1a42a67beb3e07289da2ad22a58717801c6ab80d09668e2da6b1c537b2a80a5e",
+        "type": "tar.gz",
+        "version": "v19.1.0",
+    },
+    "darwin-arm64": {
+        "executable": "bin/node",
+        "sha256": "d05a4a3c9f081c7fbab131f447714fa708328c5c1634c278716adfbdbae0ff26",
+        "type": "tar.gz",
+        "version": "v19.1.0",
+    },
+    "darwin-x64": {
+        "executable": "bin/node",
+        "sha256": "63f4284fa1474b779f0e4fa93985ddc2efa227484476f33d923ae44922637080",
+        "type": "tar.gz",
+        "version": "v19.1.0",
+    },
+    "win-x64": {
+        "executable": "node.exe",
+        "sha256": "9ca998da2063fd5b374dc889ee1937ada5a1e1f4fb50b5f989412dda7c6bb357",
+        "type": "zip",
+        "version": "v19.1.0",
+    },
+}
+
+[
+    http_archive(
+        name = "node_bin_" + os_arch,
+        build_file_content = """
+filegroup(
+name = "node",
+srcs = ["{executable}"],
+visibility = ["//visibility:public"],
+)
+        """.format(executable = data["executable"]),
+        sha256 = data["sha256"],
+        strip_prefix = "node-{version}-{os_arch}".format(
+            os_arch = os_arch,
+            version = data["version"],
+        ),
+        type = data["type"],
+        urls = ["https://nodejs.org/dist/{version}/node-{version}-{os_arch}.{type}".format(
+            os_arch = os_arch,
+            type = data["type"],
+            version = data["version"],
+        )],
+    )
+    for os_arch, data in versions.items()
+]
+
+# -------------------------------------------------------------------
+# Toolchains
+# -------------------------------------------------------------------
+
+register_toolchains("@build_stack_rules_proto//toolchain:standard")

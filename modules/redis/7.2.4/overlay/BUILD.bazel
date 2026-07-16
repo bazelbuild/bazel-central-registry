@@ -1,0 +1,252 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+cc_library(
+    name = "fpconv",
+    srcs = glob(["deps/fpconv/*.c"]),
+    hdrs = glob(["deps/fpconv/*.h"]),
+    strip_include_prefix = "deps/fpconv",
+)
+
+cc_library(
+    name = "hdr_histogram",
+    srcs = glob(["deps/hdr_histogram/*.c"]),
+    hdrs = glob(["deps/hdr_histogram/*.h"]),
+    strip_include_prefix = "deps/hdr_histogram",
+    local_defines = ['HDR_MALLOC_INCLUDE=\\"hdr_redis_malloc.h\\"'],
+)
+
+cc_library(
+    name = "linenoise",
+    srcs = glob(["deps/linenoise/*.c"]),
+    hdrs = glob(["deps/linenoise/*.h"]),
+    strip_include_prefix = "deps/linenoise",
+)
+
+cc_library(
+    name = "hiredis",
+    srcs = glob(
+        [
+            "deps/hiredis/*.c",
+        ],
+        exclude = [
+            "deps/hiredis/dict.c",
+            "deps/hiredis/test.c",
+            "deps/hiredis/ssl.*",
+        ],
+    ),
+    hdrs = glob(["deps/hiredis/*.h"]),
+    strip_include_prefix = "deps/hiredis",
+    textual_hdrs = ["deps/hiredis/dict.c"],
+)
+
+cc_library(
+    name = "lua",
+    srcs = glob(
+        ["deps/lua/src/*.c"],
+        exclude = [
+            "deps/lua/src/lua.c",
+            "deps/lua/src/luac.c",
+        ],
+    ) + ["src/solarisfixes.h"],
+    hdrs = glob(["deps/lua/src/*.h"]),
+    local_defines = ["ENABLE_CJSON_GLOBAL"],
+    copts = ["-Wno-deprecated-declarations"],
+    strip_include_prefix = "deps/lua/src",
+)
+
+sh_binary(
+    name = "mkreleasehdr",
+    srcs = ["src/mkreleasehdr.sh"],
+)
+
+genrule(
+    name = "generate_release_header",
+    outs = ["release.h"],
+    cmd = "$(location mkreleasehdr) && mv release.h $@",
+    tools = [":mkreleasehdr"],
+)
+
+cc_library(
+    name = "redis_lib",
+    srcs = [
+        "src/acl.c",
+        "src/adlist.c",
+        "src/ae.c",
+        "src/anet.c",
+        "src/aof.c",
+        "src/bio.c",
+        "src/bitops.c",
+        "src/blocked.c",
+        "src/call_reply.c",
+        "src/childinfo.c",
+        "src/cluster.c",
+        "src/commands.c",
+        "src/config.c",
+        "src/connection.c",
+        "src/crc16.c",
+        "src/crc64.c",
+        "src/crcspeed.c",
+        "src/db.c",
+        "src/debug.c",
+        "src/defrag.c",
+        "src/dict.c",
+        "src/endianconv.c",
+        "src/eval.c",
+        "src/evict.c",
+        "src/expire.c",
+        "src/function_lua.c",
+        "src/functions.c",
+        "src/geo.c",
+        "src/geohash.c",
+        "src/geohash_helper.c",
+        "src/hyperloglog.c",
+        "src/intset.c",
+        "src/latency.c",
+        "src/lazyfree.c",
+        "src/listpack.c",
+        "src/localtime.c",
+        "src/logreqres.c",
+        "src/lolwut.c",
+        "src/lolwut5.c",
+        "src/lolwut6.c",
+        "src/lzf_c.c",
+        "src/lzf_d.c",
+        "src/memtest.c",
+        "src/module.c",
+        "src/monotonic.c",
+        "src/mt19937-64.c",
+        "src/multi.c",
+        "src/networking.c",
+        "src/notify.c",
+        "src/object.c",
+        "src/pqsort.c",
+        "src/pubsub.c",
+        "src/quicklist.c",
+        "src/rand.c",
+        "src/rax.c",
+        "src/rdb.c",
+        "src/redis-check-aof.c",
+        "src/redis-check-rdb.c",
+        "src/release.c",
+        "src/replication.c",
+        "src/resp_parser.c",
+        "src/rio.c",
+        "src/script.c",
+        "src/script_lua.c",
+        "src/sds.c",
+        "src/sentinel.c",
+        "src/server.c",
+        "src/setcpuaffinity.c",
+        "src/setproctitle.c",
+        "src/sha1.c",
+        "src/sha256.c",
+        "src/siphash.c",
+        "src/slowlog.c",
+        "src/socket.c",
+        "src/sort.c",
+        "src/sparkline.c",
+        "src/strl.c",
+        "src/syncio.c",
+        "src/syscheck.c",
+        "src/t_hash.c",
+        "src/t_list.c",
+        "src/t_set.c",
+        "src/t_stream.c",
+        "src/t_string.c",
+        "src/t_zset.c",
+        "src/timeout.c",
+        "src/tls.c",
+        "src/tracking.c",
+        "src/unix.c",
+        "src/util.c",
+        "src/ziplist.c",
+        "src/zipmap.c",
+        "src/zmalloc.c",
+    ] + glob(["src/*.h"]) + [
+        "release.h",
+    ],
+    textual_hdrs = select({
+        "@platforms//os:linux": ["src/ae_epoll.c"],
+        "@platforms//os:osx": ["src/ae_kqueue.c"],
+    }) + [
+        "src/commands.def",
+    ],
+    includes = [
+        "src",
+    ],
+    copts = ["-Wno-implicit-const-int-float-conversion"],
+    deps = [
+        ":fpconv",
+        ":hdr_histogram",
+        ":hiredis",
+        ":lua",
+    ],
+)
+
+cc_library(
+    name = "redis_cli_lib",
+    srcs = [
+        "src/anet.c",
+        "src/adlist.c",
+        "src/dict.c",
+        "src/redis-cli.c",
+        "src/zmalloc.c",
+        "src/release.c",
+        "src/ae.c",
+        "src/redisassert.c",
+        "src/crcspeed.c",
+        "src/crc64.c",
+        "src/siphash.c",
+        "src/crc16.c",
+        "src/monotonic.c",
+        "src/cli_common.c",
+        "src/mt19937-64.c",
+        "src/strl.c",
+        "src/cli_commands.c",
+    ] + glob(["src/*.h"]) + [
+        "release.h",
+    ],
+    includes = [
+        "src",
+    ],
+    textual_hdrs = select({
+        "@platforms//os:linux": ["src/ae_epoll.c"],
+        "@platforms//os:osx": ["src/ae_kqueue.c"],
+    }) + [
+        "src/commands.def",
+    ],
+    deps = [
+        ":hiredis",
+        ":linenoise",
+        ":lua",
+    ],
+)
+
+cc_binary(
+    name = "redis-cli",
+    deps = ["redis_cli_lib"],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "redis-server",
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+        ],
+        "@platforms//os:osx": [],
+    }),
+    deps = [":redis_lib"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "redis",
+    srcs = [
+        ":redis-server",
+        ":redis-cli",
+    ],
+    visibility = ["//visibility:public"],
+)
