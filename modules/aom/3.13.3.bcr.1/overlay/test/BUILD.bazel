@@ -1,0 +1,336 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+_COPTS = select({
+    "@platforms//os:windows": [
+        "/w",
+        "/std:c++17",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=gnu++17",
+    ],
+})
+
+# test_libaom.cc provides main() with RTCD initialization (runtime CPU
+# dispatch table setup) — required before any SIMD-optimized function
+# pointers can be called.
+_TEST_MAIN = ["test_libaom.cc"]
+
+_TEST_DEPS = [
+    ":test_utils",
+    "@aom",
+    "@googletest//:gtest",
+]
+
+cc_library(
+    name = "test_utils",
+    testonly = True,
+    srcs = [
+        "av1_txfm_test.cc",
+        "decode_test_driver.cc",
+        "encode_test_driver.cc",
+        "hiprec_convolve_test_util.cc",
+        "test_vectors.cc",
+        "warp_filter_test_util.cc",
+    ],
+    hdrs = [
+        "acm_random.h",
+        "av1_txfm_test.h",
+        "codec_factory.h",
+        "datarate_test.h",
+        "decode_test_driver.h",
+        "encode_test_driver.h",
+        "function_equivalence_test.h",
+        "hiprec_convolve_test_util.h",
+        "i420_video_source.h",
+        "ivf_video_source.h",
+        "register_state_check.h",
+        "simd_cmp_impl.inc",
+        "simd_impl.h",
+        "test_vectors.h",
+        "transform_test_base.h",
+        "util.h",
+        "video_source.h",
+        "warp_filter_test_util.h",
+        "yuv_video_source.h",
+    ],
+    copts = _COPTS,
+    include_prefix = "test",
+    deps = [
+        "@aom",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "simd_cmp_sse2",
+    testonly = True,
+    srcs = ["simd_cmp_sse2.cc"],
+    copts = _COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-msse2"],
+    }),
+    tags = ["manual"],
+    deps = [
+        ":test_utils",
+        "@aom",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "simd_cmp_ssse3",
+    testonly = True,
+    srcs = ["simd_cmp_ssse3.cc"],
+    copts = _COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-mssse3"],
+    }),
+    tags = ["manual"],
+    deps = [
+        ":test_utils",
+        "@aom",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "simd_cmp_sse4_1",
+    testonly = True,
+    srcs = ["simd_cmp_sse4.cc"],
+    copts = _COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-msse4.1"],
+    }),
+    tags = ["manual"],
+    deps = [
+        ":test_utils",
+        "@aom",
+        "@googletest//:gtest",
+    ],
+)
+
+cc_library(
+    name = "simd_cmp_avx2",
+    testonly = True,
+    srcs = ["simd_cmp_avx2.cc"],
+    copts = _COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX2"],
+        "//conditions:default": ["-mavx2"],
+    }),
+    tags = ["manual"],
+    deps = [
+        ":test_utils",
+        "@aom",
+        "@googletest//:gtest",
+    ],
+)
+
+# =========================================================================
+# Individual test targets
+# =========================================================================
+
+# -- Common unit tests -----------------------------------------------------
+
+_COMMON_TESTS = [
+    "aom_image_test",
+    "aom_integer_test",
+    "aom_mem_test",
+    "av1_common_int_test",
+    "av1_key_value_api_test",
+    "bitwriter_buffer_test",
+    "filterintra_test",
+    "hiprec_convolve_test",
+    "intrabc_test",
+    "intrapred_test",
+    "log2_test",
+    "scan_test",
+    "selfguided_filter_test",
+]
+
+# -- Common (encoder + decoder) tests -------------------------------------
+
+_CODEC_TESTS = [
+    "binary_codes_test",
+    "boolcoder_test",
+    "coding_path_sync",
+    "divu_small_test",
+    "dr_prediction_test",
+    "ec_test",
+    "noise_model_test",
+    "rd_test",
+    "segment_binarization_sync",
+    "temporal_filter_test",
+    "tpl_model_test",
+]
+
+# -- Encoder unit tests ----------------------------------------------------
+
+_ENCODER_TESTS = [
+    "av1_convolve_scale_test",
+    "av1_fwd_txfm1d_test",
+    "av1_get_qmlevel_test",
+    "av1_horz_only_frame_superres_test",
+    "av1_inv_txfm1d_test",
+    "av1_k_means_test",
+    "av1_nn_predict_test",
+    "av1_round_shift_array_test",
+    "av1_softmax_test",
+    "avg_test",
+    "blend_a64_mask_1d_test",
+    "blend_a64_mask_test",
+    "encode_api_test",
+    "encode_large_width_height_test",
+    "encode_small_width_height_test",
+    "encodemb_test",
+    "encodetxb_test",
+    "error_block_test",
+    "fdct4x4_test",
+    "fft_test",
+    "firstpass_test",
+    "frame_resize_test",
+    "fwht4x4_test",
+    "hadamard_test",
+    "hash_test",
+    "horver_correlation_test",
+    "intra_edge_test",
+    "masked_sad_test",
+    "masked_variance_test",
+    "minmax_test",
+    "obmc_sad_test",
+    "obmc_variance_test",
+    "pickrst_test",
+    "reconinter_test",
+    "screen_content_detection_mode_2_test",
+    "sse_sum_test",
+    "subtract_test",
+    "sum_squares_test",
+    "time_stamp_test",
+    "wiener_test",
+]
+
+[
+    cc_test(
+        name = test,
+        size = "large",
+        srcs = _TEST_MAIN + [test + ".cc"],
+        copts = _COPTS,
+        deps = _TEST_DEPS,
+    )
+    for test in _COMMON_TESTS + _CODEC_TESTS + _ENCODER_TESTS
+]
+
+selects.config_setting_group(
+    name = "gcc_aarch64",
+    match_all = [
+        "@rules_cc//cc/compiler:gcc",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+# GCC -O2 miscompiles cfl_predict_lbd_neon for 32-wide blocks on aarch64
+# (GCC 11.x register allocation bug with NEON intrinsics).
+cc_test(
+    name = "cfl_test",
+    size = "large",
+    srcs = _TEST_MAIN + ["cfl_test.cc"],
+    copts = _COPTS,
+    target_compatible_with = select({
+        ":gcc_aarch64": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = _TEST_DEPS,
+)
+
+# -- Sharded tests (heavily parameterized, need parallel shards) -----------
+
+_SHARDED_TESTS = [
+    "av1_convolve_test",
+    "av1_fwd_txfm2d_test",
+    "av1_highbd_iht_test",
+    "av1_inv_txfm2d_test",
+    "av1_wedge_utils_test",
+    "cdef_test",
+    "cnn_test",
+    "comp_mask_pred_test",
+    "convolve_test",
+    "frame_size_tests",
+    "lpf_test",
+    "quantize_func_test",
+    "sad_test",
+    "variance_test",
+    "warp_filter_test",
+]
+
+[
+    cc_test(
+        name = test,
+        size = "enormous",
+        timeout = "long",
+        srcs = _TEST_MAIN + [test + ".cc"],
+        copts = _COPTS,
+        shard_count = 10,
+        deps = _TEST_DEPS,
+    )
+    for test in _SHARDED_TESTS
+]
+
+# -- x86_64 SSE4.1 intrinsic tests ----------------------------------------
+
+[
+    cc_test(
+        name = test,
+        size = "large",
+        srcs = _TEST_MAIN + [test + ".cc"],
+        copts = _COPTS + select({
+            "@platforms//os:windows": [],
+            "//conditions:default": ["-msse4.1"],
+        }),
+        target_compatible_with = ["@platforms//cpu:x86_64"],
+        deps = _TEST_DEPS,
+    )
+    for test in [
+        "av1_quantize_test",
+        "corner_match_test",
+    ]
+]
+
+# -- x86_64 SIMD comparison tests -----------------------------------------
+
+cc_test(
+    name = "simd_sse2_test",
+    size = "large",
+    srcs = _TEST_MAIN + ["simd_sse2_test.cc"],
+    copts = _COPTS,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = _TEST_DEPS + [":simd_cmp_sse2"],
+)
+
+cc_test(
+    name = "simd_ssse3_test",
+    size = "large",
+    srcs = _TEST_MAIN + ["simd_ssse3_test.cc"],
+    copts = _COPTS,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = _TEST_DEPS + [":simd_cmp_ssse3"],
+)
+
+cc_test(
+    name = "simd_sse4_test",
+    size = "large",
+    srcs = _TEST_MAIN + ["simd_sse4_test.cc"],
+    copts = _COPTS,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = _TEST_DEPS + [":simd_cmp_sse4_1"],
+)
+
+cc_test(
+    name = "simd_avx2_test",
+    size = "large",
+    srcs = _TEST_MAIN + ["simd_avx2_test.cc"],
+    copts = _COPTS,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = _TEST_DEPS + [":simd_cmp_avx2"],
+)
