@@ -1,0 +1,63 @@
+bcr_test_module:
+  module_path: test
+  matrix:
+    # Currently does not build in Windows due to SIMD dispatch flags not taking into account cl.exe
+    # Also, for HighGUI on Linux, a GTK3 is needed, which should be provided via @opencv//:gtk3 label flag.
+    # This is tested only on Ubuntu, where test module installs the GTK3 with system's package manager and
+    # then imports it to the workspace.
+    ubuntu_with_gtk3:
+    - ubuntu2204
+    - ubuntu2004_arm64
+    # Qt6 support is provided via rules_qt, which publishes a prebuilt
+    # linux x86_64 Qt SDK. It also publishes a mac aarch64 and windows
+    # x86_64, buthe the sha256 checksums are empty. So, for safety lets
+    # just prove out Linux in the first instance.
+    ubuntu_with_qt6:
+    - ubuntu2204
+    platform:
+    - rockylinux8
+    - debian11
+    - ubuntu2204
+    - ubuntu2004_arm64
+    - macos
+    - macos_arm64
+    bazel:
+    - 7.x
+    - 8.x
+    - 9.x
+  tasks:
+    verify_targets:
+      name: Verify build targets
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+      - '@opencv//:opencv'
+    verify_targets_gtk3:
+      name: Verify build targets on Ubuntu with system GTK3
+      platform: ${{ ubuntu_with_gtk3 }}
+      bazel: 8.x
+      shell_commands:
+        - sudo apt update && sudo apt install -y libgtk-3-dev
+      build_flags:
+        - "--@opencv//:gtk3=@ubuntu-gtk-deps//:gtk3"
+        - "--@opencv//:with_gtk3=True"
+      build_targets:
+      - '@opencv//:opencv'
+    verify_targets_qt6:
+      name: Verify build targets on Ubuntu with Qt6
+      platform: ${{ ubuntu_with_qt6 }}
+      bazel: 8.x
+      build_flags:
+        - "--@opencv//:with_qt=True"
+      build_targets:
+      - '@opencv//:opencv'
+    run_qt6_smoke_test:
+      name: Run Qt6 highgui smoke test on Ubuntu
+      platform: ${{ ubuntu_with_qt6 }}
+      bazel: 8.x
+      shell_commands:
+        - sudo apt update && sudo apt install -y libx11-6 libxcb1 libxau6 libxdmcp6 libfontconfig1 libfreetype6 libgl1 libxkbcommon0
+      test_flags:
+        - "--@opencv//:with_qt=True"
+      test_targets:
+      - '//:qt6_smoke_test'
