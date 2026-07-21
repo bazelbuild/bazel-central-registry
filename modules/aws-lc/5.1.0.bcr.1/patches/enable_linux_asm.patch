@@ -1,0 +1,69 @@
+diff --git a/crypto/fipsmodule/bn/montgomery.c b/crypto/fipsmodule/bn/montgomery.c
+--- crypto/fipsmodule/bn/montgomery.c
++++ crypto/fipsmodule/bn/montgomery.c
+@@ -40,6 +40,9 @@ OPENSSL_INLINE int montgomery_use_s2n_bignum(unsigned int num) {
+          S2NBIGNUM_KMUL_16_32_TEMP_NWORDS <= S2NBIGNUM_KMUL_32_64_TEMP_NWORDS);
+   assert(BN_BITS2 == 64);
+-  return !CRYPTO_is_ARMv8_wide_multiplier_capable() &&
++  const int use_wide_multiplier =
++      CRYPTO_is_ARMv8_wide_multiplier_capable() ||
++      (OPENSSL_armcap_P & ARMV8_NEOVERSE_N2) != 0;
++  return !use_wide_multiplier &&
+           (num % 8 == 0) &&
+           CRYPTO_is_NEON_capable();
+ }
+diff --git a/crypto/fipsmodule/cpucap/cpu_aarch64_linux.c b/crypto/fipsmodule/cpucap/cpu_aarch64_linux.c
+--- crypto/fipsmodule/cpucap/cpu_aarch64_linux.c
++++ crypto/fipsmodule/cpucap/cpu_aarch64_linux.c
+@@ -77,6 +77,9 @@ void OPENSSL_cpuid_setup(void) {
+     if (MIDR_IS_CPU_MODEL(OPENSSL_arm_midr, ARM_CPU_IMP_ARM, ARM_CPU_PART_N1)) {
+       OPENSSL_armcap_P |= ARMV8_NEOVERSE_N1;
+     }
++    if (MIDR_IS_CPU_MODEL(OPENSSL_arm_midr, ARM_CPU_IMP_ARM, ARM_CPU_PART_N2)) {
++      OPENSSL_armcap_P |= ARMV8_NEOVERSE_N2;
++    }
+     if (MIDR_IS_CPU_MODEL(OPENSSL_arm_midr, ARM_CPU_IMP_ARM, ARM_CPU_PART_V1)) {
+       OPENSSL_armcap_P |= ARMV8_NEOVERSE_V1;
+       // CPU capabilities of N1 are a subset of CPU capabilities of V1
+diff --git a/include/openssl/arm_arch.h b/include/openssl/arm_arch.h
+--- include/openssl/arm_arch.h
++++ include/openssl/arm_arch.h
+@@ -41,14 +41,15 @@ extern uint32_t OPENSSL_armcap_P;
+-// The Neoverse N1, V1, V2, and Apple M1 micro-architectures are detected to
+-// allow selecting the fasted implementations for SHA3/SHAKE and AES-GCM.
+-// Combination of all CPU indicator bits: 0x7080
++// The Neoverse N1, N2, V1, V2, and Apple M1 micro-architectures are detected
++// to allow selecting optimized implementations for BN, SHA3/SHAKE, and AES-GCM.
++// Combination of all CPU indicator bits: 0x47080
+ // NOTE: If you add further CPU indicator bits, adjust
+ // "Test algorithm dispatch without CPU indicator bits" in util/all_tests.json.
+ #define ARMV8_NEOVERSE_N1 (1 << 7)
+ #define ARMV8_NEOVERSE_V1 (1 << 12)
+ #define ARMV8_APPLE_M (1 << 13)
+ #define ARMV8_NEOVERSE_V2 (1 << 14)
++#define ARMV8_NEOVERSE_N2 (1 << 18)
+ 
+-// Combination of CPU indicator bits and Armv8 Neon extension bits: 0x78fc
++// Combination of CPU indicator bits and Armv8 Neon extension bits: 0x478fc
+ 
+ // ARMV8_DIT indicates support for the Data-Independent Timing (DIT) flag.
+ #define ARMV8_DIT (1 << 15)
+@@ -76,6 +77,7 @@ extern uint32_t OPENSSL_armcap_P;
+ 
+ # define ARM_CPU_PART_CORTEX_A72   0xD08
+ # define ARM_CPU_PART_N1           0xD0C
++# define ARM_CPU_PART_N2           0xD49
+ # define ARM_CPU_PART_V1           0xD40
+ # define ARM_CPU_PART_V2           0xD4F
+ 
+diff --git a/include/openssl/boringssl_prefix_symbols_asm.h b/include/openssl/boringssl_prefix_symbols_asm.h
+--- include/openssl/boringssl_prefix_symbols_asm.h
++++ include/openssl/boringssl_prefix_symbols_asm.h
+@@ -1,5 +1,5 @@
+ // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ // SPDX-License-Identifier: Apache-2.0 OR ISC
+ 
+-// This file is intentionally empty, were AWS-LC installed with symbol prefixes, this file would contain
+-// macro definitions for the prefixed symbols.
++// Keep assembly symbol references in the same namespace as C symbols.
++#include <openssl/boringssl_prefix_symbols.h>
