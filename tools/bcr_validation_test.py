@@ -14,10 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import io
+import os
+import tarfile
+import tempfile
 import unittest
+
+import zstandard
+
 from registry import RegistryClient
+from tools import bcr_validation
 from tools.bcr_validation import BcrValidator, BcrValidationException, is_ref_in_original_repo
 
+from unittest import mock
 from unittest.mock import MagicMock
 
 
@@ -64,6 +73,39 @@ class TestBcrValidation(unittest.TestCase):
             "pull/1234/merge",
         ):
             self.assertFalse(is_ref_in_original_repo("fake/repo", ref), ref)
+
+    def _make_malicious_tar(self, mode):
+        # A tar archive whose only member uses a '..' path-traversal name.
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode=mode) as tar:
+            info = tarfile.TarInfo("../escaped.txt")
+            data = b"owned"
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        return buf.getvalue()
+
+    def _assert_extraction_is_contained(self, filename, archive_bytes):
+        extraction_parent = tempfile.mkdtemp()
+        output_dir = os.path.join(extraction_parent, "source_root")
+        os.makedirs(output_dir)
+
+        def fake_download_file(url, dest):
+            with open(dest, "wb") as f:
+                f.write(archive_bytes)
+
+        with mock.patch.object(bcr_validation, "download_file", fake_download_file):
+            # The PEP 706 'data' filter must reject the traversing member.
+            with self.assertRaises(Exception):
+                self.bcr_validator._download_source_archive({"url": "https://example.com/%s" % filename}, output_dir)
+        # Nothing may be written outside the extraction directory.
+        self.assertFalse(os.path.exists(os.path.join(extraction_parent, "escaped.txt")))
+
+    def test_source_archive_extraction_rejects_traversal_tar_gz(self):
+        self._assert_extraction_is_contained("evil.tar.gz", self._make_malicious_tar("w:gz"))
+
+    def test_source_archive_extraction_rejects_traversal_tar_zst(self):
+        raw = self._make_malicious_tar("w")
+        self._assert_extraction_is_contained("evil.tar.zst", zstandard.ZstdCompressor().compress(raw))
 
 
 if __name__ == "__main__":

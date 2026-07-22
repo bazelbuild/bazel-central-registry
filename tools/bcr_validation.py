@@ -497,10 +497,9 @@ class BcrValidator:
         if archive_type in ("tar.zst", "tzst"):
             with open(archive_file, "rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as reader:
                 with tarfile.open(fileobj=reader, mode="r|") as tar:
-                    if sys.version_info >= (3, 12):
-                        tar.extractall(output_dir, filter="data")
-                    else:
-                        tar.extractall(output_dir)
+                    # The PEP 706 'data' filter rejects members that escape the
+                    # destination (absolute paths, '..', unsafe symlinks/links).
+                    tar.extractall(output_dir, filter="data")
             return
         format = {
             "tar.gz": "gztar",
@@ -513,11 +512,15 @@ class BcrValidator:
             "war": "zip",
             "aar": "zip",
         }.get(archive_type)
-        # Use PEP 706 safe extraction if available (Python 3.12+)
-        if sys.version_info >= (3, 12) and format != "zip":
+        # Apply the PEP 706 'data' filter to tar-based archives. The `filter`
+        # parameter was backported to tarfile.extractall / shutil.unpack_archive
+        # in 3.9.17, 3.10.12, 3.11.4 and 3.12, so it is available on the pinned
+        # 3.11 toolchain; gating it on `sys.version_info >= (3, 12)` left the
+        # safe path unreachable in production. zip archives are excluded because
+        # zipfile (which has no `filter` kwarg) already normalizes member paths.
+        if format != "zip":
             shutil.unpack_archive(str(archive_file), output_dir, format=format, filter="data")
         else:
-            # Fallback for older Python versions. Since CI is 3.12+, this handles local dev compatibility.
             shutil.unpack_archive(str(archive_file), output_dir, format=format)
 
     @staticmethod
@@ -924,10 +927,7 @@ class BcrValidator:
         if source_uri not in gh_source_uris:
             self.report(
                 BcrValidationResult.FAILED,
-                (
-                    f"{module_name}@{version}: Expected source URI {source_uri}, "
-                    f"but got {', '.join(gh_source_uris)}."
-                ),
+                (f"{module_name}@{version}: Expected source URI {source_uri}, but got {', '.join(gh_source_uris)}."),
             )
             return
 
