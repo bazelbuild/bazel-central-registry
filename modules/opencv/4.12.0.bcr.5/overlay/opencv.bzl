@@ -7,7 +7,10 @@ OPENCV_COPTS = [
     "-D__STDC_CONSTANT_MACROS",
     "-D__STDC_FORMAT_MACROS",
     "-D__STDC_LIMIT_MACROS",
-]
+] + select({
+    "@platforms//os:macos": ["-Wno-implicit-function-declaration"],
+    "//conditions:default": [],
+})
 
 OPENCV_OPTIMIZATION_COPTS = select({
     "//:debug_build": [],
