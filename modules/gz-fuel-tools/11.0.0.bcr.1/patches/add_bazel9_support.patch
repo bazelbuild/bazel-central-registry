@@ -1,0 +1,181 @@
+diff --git BUILD.bazel BUILD.bazel
+index b7d14c7..e020c79 100644
+--- BUILD.bazel
++++ BUILD.bazel
+@@ -1,3 +1,5 @@
++load("@buildifier_prebuilt//:rules.bzl", "buildifier", "buildifier_test")
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+ load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header", "gz_export_header")
+ load("@rules_license//rules:license.bzl", "license")
+ 
+@@ -63,13 +65,13 @@ cc_library(
+         # https://github.com/open-source-parsers/jsoncpp/blob/89e2973c754a9c02a49974d839779b151e95afd6/BUILD.bazel#L26
+         "JSON_USE_EXCEPTION=0",
+     ],
+-    includes = ["include"],
+-    visibility = ["//visibility:public"],
+     features = [
+         # Layering check fails due to use of rules_foreign_cc//cmake in @libzip.
+         # See related https://github.com/bazel-contrib/rules_foreign_cc/issues/1221
+         "-layering_check",
+     ],
++    includes = ["include"],
++    visibility = ["//visibility:public"],
+     deps = [
+         "@com_google_protobuf//:protobuf",
+         "@curl",
+@@ -109,3 +111,19 @@ test_sources = glob(
+         "@gz-utils//:ExtraTestMacros",
+     ],
+ ) for src in test_sources]
++
++buildifier(
++    name = "buildifier.fix",
++    exclude_patterns = ["./.git/*"],
++    lint_mode = "fix",
++    mode = "fix",
++)
++
++buildifier_test(
++    name = "buildifier.test",
++    exclude_patterns = ["./.git/*"],
++    lint_mode = "warn",
++    mode = "diff",
++    no_sandbox = True,
++    workspace = "//:MODULE.bazel",
++)
+diff --git MODULE.bazel MODULE.bazel
+index b59a759..2cd51b0 100644
+--- MODULE.bazel
++++ MODULE.bazel
+@@ -1,45 +1,23 @@
+-## MODULE.bazel
+ module(
+     name = "gz-fuel-tools",
+-    repo_name = "org_gazebosim_gz-fuel-tools",
++    version = "11.0.0.bcr.1",
++    compatibility_level = 10,
+ )
+ 
+-bazel_dep(name = "curl", version = "8.8.0.bcr.3")
+-bazel_dep(name = "googletest", version = "1.15.2")
+-bazel_dep(name = "jsoncpp", version = "1.9.6")
++bazel_dep(name = "buildifier_prebuilt", version = "8.2.1")
++bazel_dep(name = "curl", version = "8.12.0.bcr.1")
++bazel_dep(name = "googletest", version = "1.17.0.bcr.2")
++bazel_dep(name = "jsoncpp", version = "1.9.6.bcr.2")
+ bazel_dep(name = "libyaml", version = "0.2.5")
+ bazel_dep(name = "libzip", version = "1.11.4")
+-bazel_dep(name = "protobuf", version = "29.4", repo_name = "com_google_protobuf")
++bazel_dep(name = "protobuf", version = "30.1", repo_name = "com_google_protobuf")
++bazel_dep(name = "rules_cc", version = "0.2.14")
+ bazel_dep(name = "rules_license", version = "1.0.0")
+ bazel_dep(name = "tinyxml2", version = "10.0.0")
+ 
+ # Gazebo Dependencies
+-bazel_dep(name = "rules_gazebo", version = "0.0.3")
+-bazel_dep(name = "gz-common")
+-bazel_dep(name = "gz-math")
+-bazel_dep(name = "gz-msgs")
+-bazel_dep(name = "gz-utils")
+-
+-archive_override(
+-    module_name = "gz-common",
+-    strip_prefix = "gz-common-gz-common7",
+-    urls = ["https://github.com/gazebosim/gz-common/archive/refs/heads/gz-common7.tar.gz"],
+-)
+-
+-archive_override(
+-    module_name = "gz-math",
+-    strip_prefix = "gz-math-gz-math9",
+-    urls = ["https://github.com/gazebosim/gz-math/archive/refs/heads/gz-math9.tar.gz"],
+-)
+-
+-archive_override(
+-    module_name = "gz-msgs",
+-    strip_prefix = "gz-msgs-gz-msgs12",
+-    urls = ["https://github.com/gazebosim/gz-msgs/archive/refs/heads/gz-msgs12.tar.gz"],
+-)
+-
+-archive_override(
+-    module_name = "gz-utils",
+-    strip_prefix = "gz-utils-gz-utils4",
+-    urls = ["https://github.com/gazebosim/gz-utils/archive/refs/heads/gz-utils4.tar.gz"],
+-)
++bazel_dep(name = "rules_gazebo", version = "0.0.6")
++bazel_dep(name = "gz-common", version = "7.2.0")
++bazel_dep(name = "gz-math", version = "9.2.0")
++bazel_dep(name = "gz-msgs", version = "12.0.2")
++bazel_dep(name = "gz-utils", version = "4.0.0.bcr.1")
+diff --git src/FuelClient.cc src/FuelClient.cc
+index edff1f4..020f158 100644
+--- src/FuelClient.cc
++++ src/FuelClient.cc
+@@ -766,7 +766,12 @@ Result FuelClient::ModelDependencies(const ModelIdentifier &_id,
+       if (foundMetadataPath)
+       {
+         // Parse the file into the fuel metadata message
+-        google::protobuf::TextFormat::ParseFromString(inputStr, &meta);
++        if (!google::protobuf::TextFormat::ParseFromString(inputStr, &meta))
++        {
++          gzerr << "Unable to parse fuel metadata message ["
++                << modelPath << "]" << std::endl;
++          return Result(ResultType::FETCH_ERROR);
++        }
+       }
+       else
+       {
+@@ -1706,7 +1711,12 @@ bool FuelClientPrivate::FillModelForm(const std::string &_pathToModelDir,
+         std::istreambuf_iterator<char>());
+ 
+     // Parse the file into the fuel metadata message
+-    google::protobuf::TextFormat::ParseFromString(inputStr, &meta);
++    if (!google::protobuf::TextFormat::ParseFromString(inputStr, &meta))
++    {
++      gzerr << "Unable to parse fuel metadata message [" << filePath << ']'
++            << std::endl;
++      return false;
++    }
+   }
+   else if (common::exists(common::joinPaths(_pathToModelDir, "model.config")))
+   {
+diff --git src/Interface.cc src/Interface.cc
+index 828109a..a06ec9c 100644
+--- src/Interface.cc
++++ src/Interface.cc
+@@ -111,7 +111,8 @@ namespace gz::fuel_tools
+       if (foundMetadataPath)
+       {
+         // Parse the file into the fuel metadata message
+-        google::protobuf::TextFormat::ParseFromString(inputStr, &meta);
++        if (!google::protobuf::TextFormat::ParseFromString(inputStr, &meta))
++          return "";
+       }
+       else
+       {
+diff --git src/gz.cc src/gz.cc
+index 02f0e94..14d1349 100644
+--- src/gz.cc
++++ src/gz.cc
+@@ -803,7 +803,11 @@ extern "C" GZ_FUEL_TOOLS_VISIBLE int pbtxt2Config(const char *_path)
+       std::istreambuf_iterator<char>());
+ 
+   // Parse the file into the fuel metadata message
+-  google::protobuf::TextFormat::ParseFromString(inputStr, &meta);
++  if (!google::protobuf::TextFormat::ParseFromString(inputStr, &meta))
++  {
++    std::cerr << "Unable to parse Fuel metadata from [" << _path << "]\n";
++    return 0;
++  }
+ 
+   std::string modelConfig;
+   if (!gz::msgs::ConvertFuelMetadata(meta, modelConfig))
+diff --git test/BUILD.bazel test/BUILD.bazel
+index d624a7c..3797dee 100644
+--- test/BUILD.bazel
++++ test/BUILD.bazel
+@@ -1,3 +1,4 @@
++load("@rules_cc//cc:defs.bzl", "cc_test")
+ load("@rules_gazebo//gazebo:headers.bzl", "gz_configure_header")
+ 
+ package(
