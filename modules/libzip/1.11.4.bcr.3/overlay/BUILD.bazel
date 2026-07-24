@@ -1,0 +1,570 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+    default_visibility = ["//visibility:private"],
+)
+
+license(
+    name = "license",
+    package_name = "libzip",
+    license_text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "all_srcs",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_openssl",  # Per upstream ENABLE_OPENSSL.
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+label_flag(
+    name = "openssl_library",
+    build_setting_default = "@boringssl//:crypto",
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_bzip2",  # Per upstream ENABLE_BZIP2.
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_lzma",  # Per upstream ENABLE_LZMA.
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_zstd",  # Per upstream ENABLE_ZSTD.
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "openssl_enabled",
+    flag_values = {":enable_openssl": "true"},
+)
+
+config_setting(
+    name = "bzip2_enabled",
+    flag_values = {":enable_bzip2": "true"},
+)
+
+config_setting(
+    name = "lzma_enabled",
+    flag_values = {":enable_lzma": "true"},
+)
+
+config_setting(
+    name = "zstd_enabled",
+    flag_values = {":enable_zstd": "true"},
+)
+
+# We'll be using rules_cc_autoconf to sense platform-specific details, which
+# means we'll need an autoconf-flavored config.h (instead of CMake-flavored).
+expand_template(
+    name = "autoconf_template",
+    out = "autoconf_config.h.in",
+    substitutions = {
+        # Provide the CMake project name and version.
+        "@CMAKE_PROJECT_NAME@": "libzip",
+        "@CMAKE_PROJECT_VERSION@": module_version(),
+        # Re-spell from CMake-flavored to autoconf-flavored.
+        "#cmakedefine": "#undef",
+        " ${SIZEOF_OFF_T}": "",
+        " ${SIZEOF_SIZE_T}": "",
+    },
+    template = "config.h.in",
+)
+
+autoconf(
+    name = "config_checks",
+    checks = [
+        # These checks match the top-level CMakeLists.txt.
+        checks.AC_CHECK_FUNC(
+            "fileno",
+            define = "HAVE_FILENO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_close",
+            define = "HAVE__CLOSE",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_dup",
+            define = "HAVE__DUP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_fdopen",
+            define = "HAVE__FDOPEN",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_fileno",
+            define = "HAVE__FILENO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_fseeki64",
+            define = "HAVE__FSEEKI64",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_fstat64",
+            define = "HAVE__FSTAT64",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_setmode",
+            define = "HAVE__SETMODE",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_stat64",
+            define = "HAVE__STAT64",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_snprintf",
+            define = "HAVE__SNPRINTF",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_snprintf_s",
+            define = "HAVE__SNPRINTF_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_snwprintf_s",
+            define = "HAVE__SNWPRINTF_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_strdup",
+            define = "HAVE__STRDUP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_stricmp",
+            define = "HAVE__STRICMP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_strtoi64",
+            define = "HAVE__STRTOI64",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_strtoui64",
+            define = "HAVE__STRTOUI64",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_unlink",
+            define = "HAVE__UNLINK",
+        ),
+        checks.AC_CHECK_FUNC(
+            "arc4random",
+            define = "HAVE_ARC4RANDOM",
+        ),
+        checks.AC_CHECK_FUNC(
+            "clonefile",
+            define = "HAVE_CLONEFILE",
+        ),
+        checks.AC_CHECK_FUNC(
+            "explicit_bzero",
+            define = "HAVE_EXPLICIT_BZERO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "explicit_memset",
+            define = "HAVE_EXPLICIT_MEMSET",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fchmod",
+            define = "HAVE_FCHMOD",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fileno",
+            define = "HAVE_FILENO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fseeko",
+            define = "HAVE_FSEEKO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "ftello",
+            define = "HAVE_FTELLO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getprogname",
+            define = "HAVE_GETPROGNAME",
+        ),
+        checks.AC_CHECK_FUNC(
+            "GetSecurityInfo",
+            define = "HAVE_GETSECURITYINFO",
+        ),
+        checks.AC_CHECK_FUNC(
+            "localtime_r",
+            define = "HAVE_LOCALTIME_R",
+        ),
+        checks.AC_CHECK_FUNC(
+            "localtime_s",
+            define = "HAVE_LOCALTIME_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "memcpy_s",
+            define = "HAVE_MEMCPY_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "random",
+            define = "HAVE_RANDOM",
+        ),
+        checks.AC_CHECK_FUNC(
+            "setmode",
+            define = "HAVE_SETMODE",
+        ),
+        checks.AC_CHECK_FUNC(
+            "snprintf",
+            define = "HAVE_SNPRINTF",
+        ),
+        checks.AC_CHECK_FUNC(
+            "snprintf_s",
+            define = "HAVE_SNPRINTF_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strcasecmp",
+            define = "HAVE_STRCASECMP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strdup",
+            define = "HAVE_STRDUP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strerror_s",
+            define = "HAVE_STRERROR_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strerrorlen_s",
+            define = "HAVE_STRERRORLEN_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "stricmp",
+            define = "HAVE_STRICMP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strncpy_s",
+            define = "HAVE_STRNCPY_S",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strtoll",
+            define = "HAVE_STRTOLL",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strtoull",
+            define = "HAVE_STRTOULL",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fts_open",
+            define = "HAVE_FTS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdbool.h",
+            define = "HAVE_STDBOOL_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "strings.h",
+            define = "HAVE_STRINGS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "unistd.h",
+            define = "HAVE_UNISTD_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "inttypes.h",
+            define = "HAVE_INTTYPES_H_LIBZIP",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdint.h",
+            define = "HAVE_STDINT_H_LIBZIP",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/types.h",
+            define = "HAVE_SYS_TYPES_H_LIBZIP",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "off_t",
+            define = "SIZEOF_OFF_T",
+            includes = ["#include <sys/types.h>"],
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "size_t",
+            define = "SIZEOF_SIZE_T",
+            includes = ["#include <stddef.h>"],
+        ),
+        checks.AC_CHECK_DECL(
+            "FICLONERANGE",
+            includes = [
+                "#include <linux/fs.h>",
+                "#include <sys/ioctl.hz>",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_FICLONERANGE",
+            condition = "ac_cv_have_decl_ficlonerange",
+            if_false = None,
+            if_true = "1",
+        ),
+        checks.AC_FAIL("WORDS_BIGENDIAN"),
+    ] + select({
+        ":openssl_enabled": [
+            checks.AC_DEFINE("HAVE_CRYPTO"),
+            checks.AC_DEFINE("HAVE_OPENSSL"),
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+autoconf_hdr(
+    name = "config",
+    out = "lib/config.h",
+    template = ":autoconf_template",
+    deps = [":config_checks"],
+)
+
+expand_template(
+    name = "zipconf",
+    out = "lib/zipconf.h",
+    substitutions = {
+        # Pass along the version number from our MODULE.bazel.
+        "${libzip_VERSION}": module_version(),
+        "${libzip_VERSION_MAJOR}": module_version().split(".")[0],
+        "${libzip_VERSION_MINOR}": module_version().split(".")[1],
+        "${libzip_VERSION_PATCH}": module_version().split(".")[2],
+        # We're not building a dll.
+        "#cmakedefine ZIP_STATIC": "#define ZIP_STATIC 1",
+        # Use standard integers.
+        "${LIBZIP_TYPES_INCLUDE}": "#include <stdint.h>",
+        "${ZIP_INT16_T}": "int16_t",
+        "${ZIP_INT32_T}": "int32_t",
+        "${ZIP_INT64_T}": "int64_t",
+        "${ZIP_INT8_T}": "int8_t",
+        "${ZIP_UINT16_T}": "uint16_t",
+        "${ZIP_UINT32_T}": "uint32_t",
+        "${ZIP_UINT64_T}": "uint64_t",
+        "${ZIP_UINT8_T}": "uint8_t",
+    },
+    template = "zipconf.h.in",
+)
+
+# Per upstream lib/CMakeLists.txt.
+ZIP_SOURCES = [
+    "lib/zip_add.c",
+    "lib/zip_add_dir.c",
+    "lib/zip_add_entry.c",
+    "lib/zip_algorithm_deflate.c",
+    "lib/zip_buffer.c",
+    "lib/zip_close.c",
+    "lib/zip_delete.c",
+    "lib/zip_dir_add.c",
+    "lib/zip_dirent.c",
+    "lib/zip_discard.c",
+    "lib/zip_entry.c",
+    "lib/zip_error.c",
+    "lib/zip_error_clear.c",
+    "lib/zip_error_get.c",
+    "lib/zip_error_get_sys_type.c",
+    "lib/zip_error_strerror.c",
+    "lib/zip_error_to_str.c",
+    "lib/zip_extra_field.c",
+    "lib/zip_extra_field_api.c",
+    "lib/zip_fclose.c",
+    "lib/zip_fdopen.c",
+    "lib/zip_file_add.c",
+    "lib/zip_file_error_clear.c",
+    "lib/zip_file_error_get.c",
+    "lib/zip_file_get_comment.c",
+    "lib/zip_file_get_external_attributes.c",
+    "lib/zip_file_get_offset.c",
+    "lib/zip_file_rename.c",
+    "lib/zip_file_replace.c",
+    "lib/zip_file_set_comment.c",
+    "lib/zip_file_set_encryption.c",
+    "lib/zip_file_set_external_attributes.c",
+    "lib/zip_file_set_mtime.c",
+    "lib/zip_file_strerror.c",
+    "lib/zip_fopen.c",
+    "lib/zip_fopen_encrypted.c",
+    "lib/zip_fopen_index.c",
+    "lib/zip_fopen_index_encrypted.c",
+    "lib/zip_fread.c",
+    "lib/zip_fseek.c",
+    "lib/zip_ftell.c",
+    "lib/zip_get_archive_comment.c",
+    "lib/zip_get_archive_flag.c",
+    "lib/zip_get_encryption_implementation.c",
+    "lib/zip_get_file_comment.c",
+    "lib/zip_get_name.c",
+    "lib/zip_get_num_entries.c",
+    "lib/zip_get_num_files.c",
+    "lib/zip_hash.c",
+    "lib/zip_io_util.c",
+    "lib/zip_libzip_version.c",
+    "lib/zip_memdup.c",
+    "lib/zip_name_locate.c",
+    "lib/zip_new.c",
+    "lib/zip_open.c",
+    "lib/zip_pkware.c",
+    "lib/zip_progress.c",
+    "lib/zip_realloc.c",
+    "lib/zip_rename.c",
+    "lib/zip_replace.c",
+    "lib/zip_set_archive_comment.c",
+    "lib/zip_set_archive_flag.c",
+    "lib/zip_set_default_password.c",
+    "lib/zip_set_file_comment.c",
+    "lib/zip_set_file_compression.c",
+    "lib/zip_set_name.c",
+    "lib/zip_source_accept_empty.c",
+    "lib/zip_source_begin_write.c",
+    "lib/zip_source_begin_write_cloning.c",
+    "lib/zip_source_buffer.c",
+    "lib/zip_source_call.c",
+    "lib/zip_source_close.c",
+    "lib/zip_source_commit_write.c",
+    "lib/zip_source_compress.c",
+    "lib/zip_source_crc.c",
+    "lib/zip_source_error.c",
+    "lib/zip_source_file_common.c",
+    "lib/zip_source_file_stdio.c",
+    "lib/zip_source_free.c",
+    "lib/zip_source_function.c",
+    "lib/zip_source_get_dostime.c",
+    "lib/zip_source_get_file_attributes.c",
+    "lib/zip_source_is_deleted.c",
+    "lib/zip_source_layered.c",
+    "lib/zip_source_open.c",
+    "lib/zip_source_pass_to_lower_layer.c",
+    "lib/zip_source_pkware_decode.c",
+    "lib/zip_source_pkware_encode.c",
+    "lib/zip_source_read.c",
+    "lib/zip_source_remove.c",
+    "lib/zip_source_rollback_write.c",
+    "lib/zip_source_seek.c",
+    "lib/zip_source_seek_write.c",
+    "lib/zip_source_stat.c",
+    "lib/zip_source_supports.c",
+    "lib/zip_source_tell.c",
+    "lib/zip_source_tell_write.c",
+    "lib/zip_source_window.c",
+    "lib/zip_source_write.c",
+    "lib/zip_source_zip.c",
+    "lib/zip_source_zip_new.c",
+    "lib/zip_stat.c",
+    "lib/zip_stat_index.c",
+    "lib/zip_stat_init.c",
+    "lib/zip_strerror.c",
+    "lib/zip_string.c",
+    "lib/zip_unchange.c",
+    "lib/zip_unchange_all.c",
+    "lib/zip_unchange_archive.c",
+    "lib/zip_unchange_data.c",
+    "lib/zip_utf-8.c",
+    "gen/zip_err_str.c",
+] + select({
+    "@platforms//os:windows": [
+        "lib/zip_source_file_win32.c",
+        "lib/zip_source_file_win32_named.c",
+        "lib/zip_source_file_win32_utf16.c",
+        "lib/zip_source_file_win32_utf8.c",
+        "lib/zip_source_file_win32_ansi.c",
+        "lib/zip_random_win32.c",
+    ],
+    "//conditions:default": [
+        "lib/zip_source_file_stdio_named.c",
+        "lib/zip_random_unix.c",
+    ],
+}) + select({
+    ":openssl_enabled": [
+        "lib/zip_crypto_openssl.c",
+        "lib/zip_winzip_aes.c",
+        "lib/zip_source_winzip_aes_decode.c",
+        "lib/zip_source_winzip_aes_encode.c",
+    ],
+    "//conditions:default": [],
+}) + select({
+    ":bzip2_enabled": ["lib/zip_algorithm_bzip2.c"],
+    "//conditions:default": [],
+}) + select({
+    ":lzma_enabled": ["lib/zip_algorithm_xz.c"],
+    "//conditions:default": [],
+}) + select({
+    ":zstd_enabled": ["lib/zip_algorithm_zstd.c"],
+    "//conditions:default": [],
+})
+
+cc_library(
+    name = "private_hdrs",
+    hdrs = glob(
+        ["lib/*.h"],
+        exclude = ["lib/zip.h"],
+    ) + [
+        ":lib/config.h",
+    ],
+    strip_include_prefix = "lib",
+)
+
+cc_library(
+    name = "libzip",
+    srcs = ZIP_SOURCES,
+    hdrs = [
+        "lib/zip.h",
+        ":lib/zipconf.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    implementation_deps = [
+        ":private_hdrs",
+        "@zlib",
+    ] + select({
+        ":openssl_enabled": [":openssl_library"],
+        "//conditions:default": [],
+    }) + select({
+        ":bzip2_enabled": ["@bzip2//:bz2"],
+        "//conditions:default": [],
+    }) + select({
+        ":lzma_enabled": ["@xz//:lzma"],
+        "//conditions:default": [],
+    }) + select({
+        ":zstd_enabled": ["@zstd"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": [
+            "advapi32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "lib",
+    visibility = ["//visibility:public"],
+)
+
+exports_files(
+    [
+        "regress/zip64.zip",
+    ],
+    visibility = ["//examples:__pkg__"],
+)
+
+# Users should treat these files as private (don't use these files from downstream projects).
+exports_files(
+    [
+        "cmake/GenerateZipErrorStrings.cmake",
+        "lib/zip.h",
+        "lib/zipint.h",
+        "gen/zip_err_str.c",
+    ],
+    # TODO(jwnimmer-tri) Limit visibility to only the @verify_generated_code bcr_test_module, somehow.
+    visibility = ["//visibility:public"],
+)
