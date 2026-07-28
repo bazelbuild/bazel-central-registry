@@ -84,7 +84,9 @@ string_flag(
     name = "enable_float128",
     build_setting_default = "auto",
     values = [
-        "yes",
+        "yes",  # Alias for yes_std
+        "yes_std",  # _Float128
+        "yes_gnu",  # __float128
         "no",
         "auto",
     ],
@@ -178,6 +180,16 @@ config_setting(
 config_setting(
     name = "float128_yes",
     flag_values = {":enable_float128": "yes"},
+)
+
+config_setting(
+    name = "float128_yes_std",
+    flag_values = {":enable_float128": "yes_std"},
+)
+
+config_setting(
+    name = "float128_yes_gnu",
+    flag_values = {":enable_float128": "yes_gnu"},
 )
 
 config_setting(
@@ -477,18 +489,75 @@ int main() { double x = nearbyint(1.5); return (int)x; }
             ],
         }) +
         # -- _Float128 auto-detection vs explicit --
-        select({
+        [
+            checks.AC_TRY_COMPILE(
+                # Standard _Float128 type
+                code = "int main() { volatile _Float128 x = 0x1.fp+16383f128; return x == 0; }",
+                define = "MPFR_WANT_FLOAT128_STD",
+            ),
+            checks.AC_TRY_COMPILE(
+                # GNU C extension __float128 type
+                code = "int main() { volatile __float128 x = 0x1.fp+16383q; return x == 0; }",
+                define = "MPFR_WANT_FLOAT128_GNU",
+                # requires = ["!MPFR_WANT_FLOAT128_STD"],
+            ),
+        ] + select({
             ":float128_no": [],
             ":float128_yes": [
+                # checks.AC_TRY_COMPILE(
+                #     # Standard _Float128 type
+                #     code = "int main() { volatile _Float128 x = 0x1.fp+16383f128; return x == 0; }",
+                #     define = "MPFR_WANT_FLOAT128_STD",
+                # ),
+                checks.AC_DEFINE(
+                    condition = "MPFR_WANT_FLOAT128_STD",
+                    define = "MPFR_WANT_FLOAT128",
+                    if_false = "2",  # MPFR_WANT_FLOAT128_GNU
+                    if_true = "1",  # MPFR_WANT_FLOAT128_STD
+                ),
+            ],
+            ":float128_yes_std": [
                 checks.AC_DEFINE(
                     "MPFR_WANT_FLOAT128",
                     value = "1",
                 ),
             ],
+            ":float128_yes_gnu": [
+                checks.AC_DEFINE(
+                    "MPFR_WANT_FLOAT128",
+                    value = "2",
+                ),
+            ],
             "//conditions:default": [
+                # checks.AC_TRY_COMPILE(
+                #     # Standard _Float128 type
+                #     code = "int main() { volatile _Float128 x = 0x1.fp+16383f128; return x == 0; }",
+                #     define = "MPFR_WANT_FLOAT128_STD",
+                # ),
+                # checks.AC_TRY_COMPILE(
+                #     # GNU C extension __float128 type
+                #     code = "int main() { volatile __float128 x = 0x1.fp+16383q; return x == 0; }",
+                #     define = "MPFR_WANT_FLOAT128_GNU",
+                #     # requires = ["!MPFR_WANT_FLOAT128_STD"],
+                # ),
                 checks.AC_TRY_COMPILE(
-                    code = "int main() { volatile _Float128 x = 0x1.fp+16383f128; return x == 0; }",
+                    code = """
+                        #if !defined(MPFR_WANT_FLOAT128_STD) && !defined(MPFR_WANT_FLOAT128_GNU)
+                        #error "Neither float128 works"
+                        #endif
+                        """,
+                    compile_defines = [
+                        "MPFR_WANT_FLOAT128_STD",
+                        "MPFR_WANT_FLOAT128_GNU",
+                    ],
+                    define = "MPFR_WANT_FLOAT128_EITHER",
+                ),
+                checks.AC_DEFINE(
+                    condition = "MPFR_WANT_FLOAT128_STD",
                     define = "MPFR_WANT_FLOAT128",
+                    if_false = "2",  # MPFR_WANT_FLOAT128_GNU
+                    if_true = "1",  # MPFR_WANT_FLOAT128_STD
+                    requires = ["MPFR_WANT_FLOAT128_EITHER"],
                 ),
             ],
         }) +
