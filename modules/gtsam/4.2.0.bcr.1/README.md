@@ -16,11 +16,9 @@ SLAM.
 
 * `--@gtsam//:allow_deprecated_since_v42` - Defines `GTSAM_ALLOW_DEPRECATED_SINCE_V42`,
 exposing the APIs GTSAM deprecated in 4.2 (`Values::iterator`, `Values::filter`, the legacy
-`Pose3`/`Rot3`/`SimpleCamera` overloads, ...). Defaults to off, which is how this module has
-always built; upstream's own CMake option defaults to on. Set it in `.bazelrc` if a dependency
-still uses those APIs. It must be set here rather than as a `-D` on a consumer, because the
-guard spans 15 `.cpp` files and 24 headers -- defining it only downstream would leave gtsam
-and its consumers with different definitions of `Values`, `Pose3` and `Rot3`.
+`Pose3`/`Rot3`/`SimpleCamera` overloads, ...). Defaults to on, matching upstream's own CMake
+option. Add `common --@gtsam//:allow_deprecated_since_v42=False` to your `.bazelrc` to build
+without them.
 
 ### Configuration Headers
 
