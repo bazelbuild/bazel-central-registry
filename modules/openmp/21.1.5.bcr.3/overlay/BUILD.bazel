@@ -15,7 +15,7 @@
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_python//python:defs.bzl", "py_binary")
+load(":exec_py_toolchain.bzl", "exec_py_toolchain")
 
 cc_library(
     name = "openmp",
@@ -136,37 +136,38 @@ copy_file(
     out = "runtime/src/include/omp-tools.h",
 )
 
-# Wrapped in a py_binary rather than invoked via $(PYTHON3) so that it is built
-# in the exec configuration. current_py_toolchain resolves against the target
-# platform, which handed cross-compiling builds an interpreter for the target
-# architecture and tried to run it on the host.
-py_binary(
-    name = "message_converter",
-    srcs = [
-        "runtime/tools/libomputils.py",
-        "runtime/tools/message-converter.py",
-    ],
-    main = "runtime/tools/message-converter.py",
-    # message-converter.py does a flat `from libomputils import ...`, so its
-    # directory must be on the Python path. Running the script directly puts it
-    # there implicitly, but py_binary uses the runfiles root instead.
-    imports = ["runtime/tools"],
+# Resolves the interpreter against the execution platform. Using
+# @rules_python//python:current_py_toolchain directly resolves it against the
+# target platform, which handed cross-compiling builds an interpreter for the
+# target architecture and then tried to run it on the host.
+exec_py_toolchain(
+    name = "exec_py_toolchain",
 )
 
 genrule(
     name = "default_i18n",
     srcs = ["runtime/src/i18n/en_US.txt"],
     outs = ["runtime/src/kmp_i18n_default.inc"],
-    cmd = "$(execpath :message_converter) --default=$@ $<",
-    tools = [":message_converter"],
+    cmd = "$(PYTHON3) $(location runtime/tools/message-converter.py) " +
+          "--default=$@ $<",
+    toolchains = [":exec_py_toolchain"],
+    tools = [
+        "runtime/tools/libomputils.py",
+        "runtime/tools/message-converter.py",
+    ],
 )
 
 genrule(
     name = "id_i18n",
     srcs = ["runtime/src/i18n/en_US.txt"],
     outs = ["runtime/src/kmp_i18n_id.inc"],
-    cmd = "$(execpath :message_converter) --enum=$@ $<",
-    tools = [":message_converter"],
+    cmd = "$(PYTHON3) $(location runtime/tools/message-converter.py) " +
+          "--enum=$@ $<",
+    toolchains = [":exec_py_toolchain"],
+    tools = [
+        "runtime/tools/libomputils.py",
+        "runtime/tools/message-converter.py",
+    ],
 )
 
 # Extract defines with
