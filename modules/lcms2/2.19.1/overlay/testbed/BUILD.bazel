@@ -1,0 +1,45 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+# Upstream's `make check` program, verbatim: testcms_SOURCES from
+# testbed/Makefile.am plus the shipped .icc corpus it opens by relative path.
+# The zoo tests are compiled in but default-off, matching upstream; the speed
+# tests are hard-enabled by upstream and account for most of the ~12s runtime,
+# which is why this is "medium" rather than "small" (small's 60s timeout would
+# hold today, but leaves no headroom for slow CI workers).
+cc_test(
+    name = "testcms",
+    size = "medium",
+    srcs = [
+        "testcms2.c",
+        "testcms2.h",
+        "testplugin.c",
+        "zoo_icc.c",
+    ],
+    # The binary reads its .icc corpus and writes/removes scratch .icc files
+    # relative to CWD, so it chdirs into its own runfiles subdirectory. A
+    # cc_test starts in the runfiles root of the MAIN workspace, so the bare
+    # "testbed" path resolves only when lcms2 is the root module — the one
+    # supported way to run this target. From a consumer workspace the data
+    # lands under an external-repo prefix instead and the run would fail; no
+    # consumer runs another module's internal testsuite, so that is left
+    # unhandled rather than papered over with runfiles discovery upstream
+    # doesn't do.
+    args = [
+        "--chdir",
+        "testbed",
+    ],
+    # new.icc is excluded: it is a stray artifact of an upstream test run
+    # checked into the upstream tree (testbed/Makefile.am's EXTRA_DIST omits
+    # it, and `make check` deletes copied *.ic? afterwards). CheckMetaTag
+    # writes new.icc fresh before reading it back; shipping it as data would
+    # make that fopen("wb") go through a runfiles symlink to a read-only
+    # source file and fail under sandboxing.
+    data = glob(
+        ["*.icc"],
+        exclude = ["new.icc"],
+    ),
+    deps = [
+        "//:lcms2",
+        "//:lcms2_internal_hdrs",
+    ],
+)
