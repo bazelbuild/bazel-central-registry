@@ -2,9 +2,14 @@
 
 ## BCR Maintainer Notes
 
+* This version of gtsam requires at least C++17. Add this to your .bazelrc:
+    build --cxxopt=-std=c++17
+    build --host_cxxopt=-std=c++17
+
 ### Known Issues
 
 * Currently, python binding for gtsam is not supported on bzlmod.
+* Eigen 3.4.1 is the newest version supported.
 
 ### Libraries
 
