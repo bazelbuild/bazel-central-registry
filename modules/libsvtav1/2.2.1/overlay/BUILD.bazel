@@ -214,6 +214,54 @@ cc_library(
 )
 
 cc_library(
+    name = "libsvtav1_neon",
+    srcs = glob(
+        [
+            "Source/Lib/ASM_NEON/*.c",
+            "Source/Lib/ASM_NEON/*.S",
+        ],
+        # Stray file not referenced by upstream's own
+        # Source/Lib/ASM_NEON/CMakeLists.txt: an older, unused variant of
+        # highbd_jnt_convolve_neon.c that references a header
+        # (EbDefinitions.h) that no longer exists in this version.
+        exclude = ["Source/Lib/ASM_NEON/highbd_jnt_convolve_neon_y.c"],
+    ),
+    hdrs = glob(["Source/Lib/ASM_NEON/*.h"]),
+    copts = [
+        "-DARCH_AARCH64=1",
+        "-DEXCLUDE_HASH=1",
+        "-DREPRODUCIBLE_BUILDS=1",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":libsvtav1_headers",
+    ],
+)
+
+# Arm's Neon optimizations (Source/Lib/ASM_NEON) are ported from dav1d and
+# include hand-written GAS assembly (.S); Neon is baseline on aarch64 so,
+# unlike x86, no extra -march flag is needed. Other targets (e.g. riscv)
+# fall back to the plain-C implementation upstream already supports via its
+# own ARCH_X86_64/ARCH_AARCH64-gated code paths (see e.g.
+# Source/Lib/Codec/aom_dsp_rtcd.c).
+_ARCH_COPTS = select({
+    "@platforms//cpu:x86_64": [
+        "-DARCH_X86_64=1",
+        "-DEN_AVX512_SUPPORT=1",
+    ],
+    "@platforms//cpu:aarch64": [
+        "-DARCH_AARCH64=1",
+        "-DHAVE_NEON=1",
+        "-DHAVE_ARM_CRC32=0",
+        "-DHAVE_NEON_DOTPROD=0",
+        "-DHAVE_NEON_I8MM=0",
+        "-DHAVE_SVE=0",
+        "-DHAVE_SVE2=0",
+    ],
+    "//conditions:default": [],
+})
+
+cc_library(
     name = "SvtAv1Enc",
     srcs = glob([
         "third_party/fastfeat/*.c",
@@ -222,9 +270,7 @@ cc_library(
         "Source/Lib/C_DEFAULT/*.c",
     ]),
     hdrs = glob(["Source/API/*.h"]),
-    copts = [
-        "-DARCH_X86_64=1",
-        "-DEN_AVX512_SUPPORT=1",
+    copts = _ARCH_COPTS + [
         "-DEXCLUDE_HASH=1",
         "-DREPRODUCIBLE_BUILDS=1",
     ],
@@ -236,14 +282,21 @@ cc_library(
         "-lm",
     ],
     deps = [
-        ":libsvtav1_avx2",
-        ":libsvtav1_avx512",
         ":libsvtav1_headers",
-        ":libsvtav1_sse2",
-        ":libsvtav1_sse4_1",
-        ":libsvtav1_ssse3",
         "@cpuinfo",
-    ],
+    ] + select({
+        "@platforms//cpu:x86_64": [
+            ":libsvtav1_avx2",
+            ":libsvtav1_avx512",
+            ":libsvtav1_sse2",
+            ":libsvtav1_sse4_1",
+            ":libsvtav1_ssse3",
+        ],
+        "@platforms//cpu:aarch64": [
+            ":libsvtav1_neon",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 cc_binary(
@@ -252,9 +305,7 @@ cc_binary(
         "Source/App/*.c",
         "Source/App/*.h",
     ]),
-    copts = [
-        "-DARCH_X86_64=1",
-        "-DEN_AVX512_SUPPORT=1",
+    copts = _ARCH_COPTS + [
         "-DEXCLUDE_HASH=1",
         "-DREPRODUCIBLE_BUILDS=1",
     ],
