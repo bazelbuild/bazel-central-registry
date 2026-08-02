@@ -22,11 +22,7 @@ def main() -> None:
     manager = app.get_extension_manager()
 
     enabled = [ext for ext in manager.get_extensions() if ext.get("enabled")]
-    isaacsim_exts = sorted(
-        ext.get("id") or ext["name"]
-        for ext in enabled
-        if ext["name"].startswith("isaacsim.")
-    )
+    isaacsim_exts = sorted(ext.get("id") or ext["name"] for ext in enabled if ext["name"].startswith("isaacsim."))
     for ext_id in isaacsim_exts:
         print(f"  enabled: {ext_id}")
 
@@ -46,8 +42,7 @@ def main() -> None:
         return
 
     print(
-        f"{_SENTINEL} isaacsim_extensions_enabled={len(isaacsim_exts)} "
-        f"extensions_enabled={len(enabled)}",
+        f"{_SENTINEL} isaacsim_extensions_enabled={len(isaacsim_exts)} extensions_enabled={len(enabled)}",
     )
     app.post_quit(0)
 

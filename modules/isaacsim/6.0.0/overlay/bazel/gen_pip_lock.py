@@ -92,8 +92,7 @@ def requirements(toml: str) -> list[tuple[str, str | None]]:
             wanted.append((name.split("[")[0], None))
         else:
             raise SystemExit(
-                f"{name} is constrained rather than pinned or left open; "
-                "this prebundle needs a resolver",
+                f"{name} is constrained rather than pinned or left open; this prebundle needs a resolver",
             )
     return wanted
 
@@ -132,9 +131,7 @@ def _python_ok(filename: str) -> bool:
         return True
     # No extension modules of its own, or ones loaded through ctypes: usable if
     # any tag names Python 3.
-    return abi_tag == "none" and any(
-        tag.startswith(("py3", "cp3", "p3")) for tag in python_tags
-    )
+    return abi_tag == "none" and any(tag.startswith(("py3", "cp3", "p3")) for tag in python_tags)
 
 
 def wheels_for(name: str, version: str | None) -> tuple[str, list[dict]]:
@@ -167,9 +164,7 @@ def wheels_for(name: str, version: str | None) -> tuple[str, list[dict]]:
     entries = []
     for platform, arch in _PLATFORMS.items():
         candidates = [
-            f for f in wheels
-            if "manylinux" in f["filename"] and arch in f["filename"]
-            and _python_ok(f["filename"])
+            f for f in wheels if "manylinux" in f["filename"] and arch in f["filename"] and _python_ok(f["filename"])
         ]
         if not candidates:
             raise SystemExit(
@@ -196,8 +191,7 @@ def main() -> int:
     toml = pathlib.Path(workspace_relative(args.toml)).read_text(encoding="utf-8")
     if _NO_INDEX in toml:
         raise SystemExit(
-            f"{args.toml} installs from a local package directory "
-            f"({_NO_INDEX}), so its wheels are not on PyPI",
+            f"{args.toml} installs from a local package directory ({_NO_INDEX}), so its wheels are not on PyPI",
         )
 
     target = _TARGET.search(toml)

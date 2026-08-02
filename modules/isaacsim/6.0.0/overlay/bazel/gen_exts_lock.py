@@ -174,8 +174,7 @@ def main() -> int:
     if missing:
         print(
             f"WARNING: {len(missing)} extension(s) not in the registry index "
-            f"(kernel-bundled or locally built): {', '.join(missing[:5])}"
-            + (" ..." if len(missing) > 5 else ""),
+            f"(kernel-bundled or locally built): {', '.join(missing[:5])}" + (" ..." if len(missing) > 5 else ""),
             file=sys.stderr,
         )
 

@@ -63,15 +63,13 @@ def declared_modules_present(toml: str, files: set[str]) -> bool:
     """Whether every [[python.module]] the manifest declares exists in source."""
     for module in _PY_MODULE.findall(toml):
         as_path = module.replace(".", "/")
-        if any(
-            f == f"{as_path}/__init__.py" or f.startswith(f"{as_path}/")
-            for f in files
-        ):
+        if any(f == f"{as_path}/__init__.py" or f.startswith(f"{as_path}/") for f in files):
             continue
         if any(f.startswith("python/") for f in files):
             continue
         return False
     return True
+
 
 _ENTRY = re.compile(r"^[^/]+/source/(extensions|deprecated)/([^/]+)/(.*)$")
 
@@ -135,6 +133,7 @@ def premake_mapping(premake: str) -> tuple[dict[str, str], dict[str, str]]:
             continue
         mapping[src] = dest.lstrip("/")
     return mapping, external
+
 
 # Each extension's premake5.lua is the authoritative source->destination mapping,
 # and it differs per extension: isaacsim.core.experimental.utils, for instance,
@@ -281,11 +280,7 @@ def classify(tarball: str) -> dict[str, dict]:
                         fh.read().decode("utf-8", "replace"),
                     )
                     info["mapping"] = mapping
-                    info["payloads"] = {
-                        name: dest
-                        for name, dest in external.items()
-                        if name in _BUILDABLE_PAYLOADS
-                    }
+                    info["payloads"] = {name: dest for name, dest in external.items() if name in _BUILDABLE_PAYLOADS}
                     # A prebundle this build can produce only settles the
                     # extension that takes the whole of it. Two others copy a
                     # subdirectory of the same packman package somewhere else
@@ -293,9 +288,8 @@ def classify(tarball: str) -> dict[str, dict]:
                     # isaac_newton_prebundle/newton_usd_schemas into its own
                     # package), and pip_prebundle does not describe that.
                     info["external_payload"] = any(
-                        not (name in _BUILDABLE_PREBUNDLES and
-                             dest == "pip_prebundle") and
-                        name not in _BUILDABLE_PAYLOADS
+                        not (name in _BUILDABLE_PREBUNDLES and dest == "pip_prebundle")
+                        and name not in _BUILDABLE_PAYLOADS
                         for name, dest in external.items()
                     )
             if member.isfile():
@@ -370,9 +364,9 @@ ISAACSIM_SOURCE_EXTS = {
 # The extensions with C++ sources. Their layout is described the same way, but
 # assembling one also needs a build recipe for its plugin; //bazel:native_exts.bzl
 # says which of them have one.
-_NATIVE_HEADER = '''
+_NATIVE_HEADER = """
 ISAACSIM_NATIVE_EXTS = {
-'''
+"""
 
 
 def main() -> int:
@@ -398,8 +392,7 @@ def main() -> int:
     out = workspace_relative(args.out)
     pathlib.Path(out).write_text(_HEADER + body)
     print(
-        f"wrote {out}: {len(pure)} source-buildable extensions, "
-        f"{len(native)} native ones described",
+        f"wrote {out}: {len(pure)} source-buildable extensions, {len(native)} native ones described",
         file=sys.stderr,
     )
     return 0
@@ -426,15 +419,11 @@ def _render(exts: dict) -> str:
             ogn = info["ogn_info"]
             chunks.append('        "ogn": {\n')
             chunks.append('            "module": "%s",\n' % ogn["module"])
-            chunks.append('            "node_dirs": [%s],\n' % ", ".join(
-                '"%s"' % d for d in ogn["node_dirs"]
-            ))
+            chunks.append('            "node_dirs": [%s],\n' % ", ".join('"%s"' % d for d in ogn["node_dirs"]))
             # Where the .ogn files actually are. A glob over a directory that
             # does not exist is an error, and which of python/nodes and nodes/
             # an extension uses is not something the premake rules say.
-            chunks.append('            "src_dirs": [%s],\n' % ", ".join(
-                '"%s"' % d for d in sorted(info["ogn_dirs"])
-            ))
+            chunks.append('            "src_dirs": [%s],\n' % ", ".join('"%s"' % d for d in sorted(info["ogn_dirs"])))
             chunks.append("        },\n")
         chunks.append("    },\n")
     return "".join(chunks) + "}\n"
