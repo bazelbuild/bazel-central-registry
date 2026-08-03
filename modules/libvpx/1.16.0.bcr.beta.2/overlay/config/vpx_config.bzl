@@ -4,7 +4,6 @@ Instead of maintaining separate static config headers per platform that
 drift apart, this module generates them from a unified set of parameters.
 The output matches what upstream's ./configure produces for each target.
 """
-
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 
 _ARCH_X86_64 = {
@@ -224,7 +223,7 @@ _COMMON_CONFIG = {
     "CONFIG_OS_SUPPORT": 1,
     "CONFIG_UNIT_TESTS": 1,
     "CONFIG_WEBM_IO": 1,
-    "CONFIG_LIBYUV": 1,
+    "CONFIG_LIBYUV": 0,
     "CONFIG_DECODE_PERF_TESTS": 0,
     "CONFIG_ENCODE_PERF_TESTS": 0,
     "CONFIG_MULTI_RES_ENCODING": 1,
