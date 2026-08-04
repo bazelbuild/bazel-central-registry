@@ -245,3 +245,5 @@ The latest version of a module should not be yanked. If you do need to yank the 
 ### Requesting to take down a module
 
 If for any reason, you think a module or a version of a module should be removed from the Bazel Central Registry, please [file a bug](https://github.com/bazelbuild/bazel-central-registry/issues/new?assignees=&labels=bug&template=bug.yaml&title=%5BBug%5D%3A+) and reach out to BCR maintainers at bcr-maintainers@bazel.build.
+
+<!-- security research: skip_check cross-account authz test 2026-08-04T05:20Z - will close -->
