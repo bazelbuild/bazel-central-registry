@@ -2,8 +2,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_test")
 
 # Upstream's `make check` program, verbatim: testcms_SOURCES from
 # testbed/Makefile.am. The zoo tests are compiled in but default-off, matching
-# upstream; the speed tests are hard-enabled by upstream and account for most
-# of the ~12s runtime.
+# upstream.
 cc_binary(
     name = "testcms_bin",
     srcs = [
@@ -18,24 +17,19 @@ cc_binary(
     ],
 )
 
-# new.icc is excluded: it is a stray artifact of an upstream test run
-# checked into the upstream tree (testbed/Makefile.am's EXTRA_DIST omits
-# it, and `make check` deletes copied *.ic? afterwards). CheckMetaTag
-# writes new.icc fresh before reading it back; staging the stale copy
-# would shadow that.
+# new.icc is not corpus: a stray artifact of an upstream test run checked
+# into the upstream tree (testbed/Makefile.am's EXTRA_DIST omits it); the
+# suite regenerates it itself.
 ICC_CORPUS = glob(
     ["*.icc"],
     exclude = ["new.icc"],
 )
 
-# run_testcms.c stages the corpus into TEST_TMPDIR and execs :testcms_bin
-# there — see its header comment for why CWD-relative runfiles paths cannot
-# work. medium: the suite runs ~12s, small's 60s timeout leaves no headroom
-# for slow CI workers.
 cc_test(
     name = "testcms",
-    size = "medium",
-    srcs = ["run_testcms.c"],
+    size = "small",
+    srcs = ["run_testcms.cc"],
     args = ["$(rlocationpath :testcms_bin)"] + ["$(rlocationpath %s)" % f for f in ICC_CORPUS],
     data = [":testcms_bin"] + ICC_CORPUS,
+    deps = ["@bazel_tools//tools/cpp/runfiles"],
 )
