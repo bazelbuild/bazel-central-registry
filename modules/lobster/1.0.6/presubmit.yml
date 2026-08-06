@@ -1,0 +1,92 @@
+incompatible_flags:
+  "--incompatible_config_setting_private_default_visibility":
+    - 8.x
+  "--incompatible_disable_starlark_host_transitions":
+    - 8.x
+  "--incompatible_disable_native_repo_rules":
+    - 8.x
+  "--incompatible_strict_action_env":
+    - 8.x
+
+matrix:
+  platform:
+    - ubuntu2204
+    - macos
+  bazel:
+    - 8.x
+  python_version:
+    - "3.9"
+    - "3.10"
+    - "3.11"
+    - "3.12"
+
+# Verify all lobster module entry points build correctly across all supported platforms and Python versions before release.
+tasks:
+  run_test_module:
+    name: "Verify lobster (Python ${{ python_version }})"
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_flags:
+      - "--@@rules_python+//python/config_settings:python_version=${{ python_version }}"  # explicit Python version
+    build_targets:
+      - "@lobster//:lobster"
+    test_flags:
+      - "--@@rules_python+//python/config_settings:python_version=${{ python_version }}"  # explicit Python version
+    test_targets:
+      - "@lobster//tests_unit/..."
+      - "@lobster//tests_system/..."
+      - "@lobster//tests_integration/..."
+      # cpp_focus:fruit_test is an intentionally-failing gtest fixture used only to
+      # generate LOBSTER tracing metadata (upstream runs it with "|| true"). Its
+      # BasketTest.ClearBasket case asserts an empty basket while the clearing code
+      # is commented out, so it must be excluded from the presubmit test run.
+      - "-@lobster//tests_integration/projects/cpp_focus:fruit_test"
+      # projects/basic:traceability renders an HTML report with lobster-html-report,
+      # which requires the Graphviz "dot" binary. Graphviz is not part of the BCR CI
+      # images, so this test fails with "please install Graphviz".
+      - "-@lobster//tests_integration/projects/basic:traceability"
+      # projects/sphinx_rst_report:test_sphinx_build runs a full Sphinx build with
+      # warnings-as-errors; the rst_report tool / sphinx.ext.graphviz also need the
+      # Graphviz "dot" binary, which is likewise absent from the BCR CI images.
+      - "-@lobster//tests_integration/projects/sphinx_rst_report:test_sphinx_build"
+      # The lobster_codebeamer system tests stand up a Flask HTTPS mock server on
+      # localhost; they depend on lobster's own provisioned CI environment and do not
+      # run reliably in the sandboxed BCR test environment.
+      - "-@lobster//tests_system/lobster_codebeamer/..."
+
+  # Windows needs its own task because lobster's shared requirements_lock.txt is not
+  # universal, so the lobster_pip_hub_dependencies hub is missing Windows-only marker
+  # dependencies. Two of them break analysis (which aborts the whole build) on Windows:
+  #   * Sphinx requires `colorama`  -> breaks tests_unit/sphinx_extension
+  #   * Selenium (via trio) needs `cffi` -> breaks tests_system/lobster_html_report
+  # Both target trees are therefore additionally excluded on Windows only.
+  run_test_module_windows:
+    name: "Verify lobster on Windows (Python ${{ python_version }})"
+    platform: windows
+    bazel: ${{ bazel }}
+    build_flags:
+      - "--@@rules_python+//python/config_settings:python_version=${{ python_version }}"  # explicit Python version
+    build_targets:
+      - "@lobster//:lobster"
+    test_flags:
+      - "--@@rules_python+//python/config_settings:python_version=${{ python_version }}"  # explicit Python version
+    test_targets:
+      - "@lobster//tests_unit/..."
+      - "@lobster//tests_system/..."
+      - "@lobster//tests_integration/..."
+      # Keep the exclusions in sync with the run_test_module task above.
+      - "-@lobster//tests_integration/projects/cpp_focus:fruit_test"
+      - "-@lobster//tests_integration/projects/basic:traceability"
+      - "-@lobster//tests_integration/projects/sphinx_rst_report:test_sphinx_build"
+      - "-@lobster//tests_system/lobster_codebeamer/..."
+      # Windows-only: the shared pip hub has no `colorama`, which Sphinx requires on
+      # Windows, so the Sphinx extension tests cannot be analyzed here.
+      - "-@lobster//tests_unit/sphinx_extension/..."
+      # Windows-only: the shared pip hub has no `cffi`, which Selenium (via trio)
+      # requires on Windows, so the html-report tests cannot be analyzed here.
+      - "-@lobster//tests_system/lobster_html_report/..."
+      # Windows-only: the online-report tool converts filesystem paths to GitHub URLs,
+      # and these tests compare against golden files/strings that assume POSIX path
+      # separators ("/") and LF line endings, so they fail on Windows only.
+      - "-@lobster//tests_unit/lobster_online_report/..."
+      - "-@lobster//tests_system/lobster_online_report/..."
