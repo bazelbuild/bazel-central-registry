@@ -1,0 +1,181 @@
+module(
+    name = "rules_ml_toolchain",
+    version = "0.4.0-20260506-398d613",
+    bazel_compatibility = [">=7.2.1"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "protobuf", version = "32.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "pybind11_bazel", version = "2.13.6")
+bazel_dep(name = "rules_cc", version = "0.2.0")
+bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "gtest")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_python", version = "1.8.5")
+
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//third_party/protobuf:protobuf_arena.patch"],
+    version = "32.1",
+)
+
+python_version_ext = use_extension("//extensions:python_version.bzl", "python_version_ext")
+use_repo(python_version_ext, "python_version_repo")
+
+##############################################################
+# Python toolchain and pypi dependencies
+
+single_version_override(
+    module_name = "rules_python",
+    patch_strip = 1,
+    patches = [
+        "//third_party/rules_python:rules_python_scope.patch",
+        "//third_party/rules_python:rules_python_freethreaded.patch",
+        "//third_party/rules_python:rules_python_versions.patch",
+        "//third_party/rules_python:rules_python_pip_version.patch",
+    ],
+    version = "1.8.5",
+)
+
+### Toolchains
+
+# TODO: Support HERMETIC_PYTHON_URL, etc to allow specifying a custom built
+DEFAULT_PYTHON_VERSION = "3.11"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.defaults(
+    # The environment variable takes precedence if set.
+    python_version = DEFAULT_PYTHON_VERSION,
+    python_version_env = "HERMETIC_PYTHON_VERSION",
+)
+python.toolchain(python_version = "3.11")
+python.toolchain(python_version = "3.12")
+python.toolchain(python_version = "3.13")
+python.toolchain(python_version = "3.14")
+
+### Pypi
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+[pip.parse(
+    extra_hub_aliases = {
+        "numpy": ["numpy_headers"],
+    },
+    hub_name = "rules_ml_toolchain_pypi",
+    python_version = python_version,
+    requirements_lock = "//build:requirements_lock_{}.txt".format(python_version.replace(".", "_")),
+    whl_modifications = {
+        "//build:numpy.json": "numpy",  # @pypi_mods is defined in XLA's MODULE.bazel
+    },
+) for python_version in [
+    "3.11",
+    "3.12",
+    "3.13",
+    "3.14",
+]]
+
+use_repo(pip, "pypi_mods", pypi = "rules_ml_toolchain_pypi")
+
+### Pybind
+pybind11_internal_configure = use_extension(
+    "@pybind11_bazel//:internal_configure.bzl",
+    "internal_configure_extension",
+)
+use_repo(pybind11_internal_configure, "pybind11")
+
+##############################################################
+# CUDA
+
+cuda_configure_ext = use_extension("//extensions:cuda_configure.bzl", "cuda_configure_ext")
+use_repo(cuda_configure_ext, "local_config_cuda")
+
+cuda_json_ext = use_extension("//extensions:cuda_json.bzl", "cuda_json_ext")
+use_repo(cuda_json_ext, "cuda_redist_json")
+
+cuda_redist_init_ext = use_extension("//extensions:cuda_redist_init.bzl", "cuda_redist_init_ext")
+use_repo(
+    cuda_redist_init_ext,
+    "cuda_cccl",
+    "cuda_crt",
+    "cuda_cublas",
+    "cuda_cudart",
+    "cuda_cudnn",
+    "cuda_cufft",
+    "cuda_cupti",
+    "cuda_curand",
+    "cuda_cusolver",
+    "cuda_cusparse",
+    "cuda_driver",
+    "cuda_nvcc",
+    "cuda_nvdisasm",
+    "cuda_nvjitlink",
+    "cuda_nvml",
+    "cuda_nvptxcompiler",
+    "cuda_nvrtc",
+    "cuda_nvtx",
+    "cuda_nvvm",
+    "cuda_profiler_api",
+)
+
+##############################################################
+# NCCL configuration
+
+nccl_redist = use_extension("//extensions:nccl_redist.bzl", "nccl_redist_ext")
+use_repo(nccl_redist, "cuda_nccl")
+
+nccl_configure = use_extension("//extensions:nccl_configure.bzl", "nccl_configure_ext")
+use_repo(nccl_configure, "local_config_nccl")
+
+##############################################################
+# NVSHMEM configuration
+
+nvshmem_json_ext = use_extension("//extensions:nvshmem_json.bzl", "nvshmem_json_ext")
+use_repo(nvshmem_json_ext, "nvshmem_redist_json")
+
+nvshmem_redist_ext = use_extension("//extensions:nvshmem_redist.bzl", "nvshmem_redist_ext")
+use_repo(nvshmem_redist_ext, "nvidia_nvshmem")
+
+##############################################################
+# SYCL configuration
+
+sycl_configure = use_extension("//extensions:sycl_configure.bzl", "sycl_configure_ext")
+use_repo(sycl_configure, "local_config_sycl", "oneapi", "level_zero", "zero_loader")
+
+##############################################################
+# ROCm configuration
+
+hipcc_configure = use_extension("//extensions:hipcc_configure.bzl", "hipcc_configure_ext")
+use_repo(hipcc_configure, "config_rocm_hipcc")
+
+##############################################################
+# Hermetic toolchain configuration
+
+toolchain = use_extension("//extensions:toolchain.bzl", "toolchain_ext")
+use_repo(
+    toolchain,
+    "llvm18_linux_aarch64",
+    "llvm18_linux_x86_64",
+    "llvm19_linux_x86_64",
+    "llvm20_linux_aarch64",
+    "llvm20_linux_x86_64",
+    "llvm21_linux_x86_64",
+    "llvm_darwin_aarch64",
+    "llvm_linux_aarch64",
+    "llvm_linux_x86_64",
+    "sysroot_darwin_aarch64",
+    "sysroot_linux_aarch64",
+    "sysroot_linux_aarch64_glibc_2_27",
+    "sysroot_linux_aarch64_glibc_2_31",
+    "sysroot_linux_x86_64",
+    "sysroot_linux_x86_64_glibc_2_27",
+    "sysroot_linux_x86_64_glibc_2_31",
+    "tar",
+    "xz",
+)
+
+##############################################################
+# Local sysroot configuration
+
+local_sysroot = use_extension("//extensions:local_sysroot_configure.bzl", "local_sysroot_ext")
+use_repo(local_sysroot, "local_sysroot_config")
