@@ -498,8 +498,20 @@ alias(
     visibility = ["//visibility:private"],
 )
 
+# libvpx's dependency direction is inverted relative to its symbol direction:
+# :vpx depends on the per-ISA libraries below, but their code calls symbols
+# defined in :vpx's own srcs (the nasm objects, plus C tables such as
+# vp8_bilinear_filters and vpx_rv). Bazel links a library's objects inside
+# -Wl,--start-lib/--end-lib, where an object is pulled in only if it resolves an
+# already-pending undefined symbol, and it emits :vpx's objects before its deps'.
+# Those definitions are therefore skipped as unneeded and then referenced too
+# late, breaking any consumer that links libvpx statically:
+#   x86_64_avx2/...o: undefined reference to 'vpx_filter_block1d16_h2_ssse3'
+# alwayslink keeps every object in the link regardless of order, which is what
+# upstream's single monolithic libvpx.a does anyway.
 cc_library(
     name = "vpx",
+    alwayslink = True,
     srcs = _PLATFORM_BASE_SRCS + select({
         "@platforms//cpu:x86_32": [":x86_asm"],
         "@platforms//cpu:x86_64": [":x86_64_asm"],
