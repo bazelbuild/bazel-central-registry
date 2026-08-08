@@ -1,0 +1,915 @@
+"""Isaac Sim as a Bazel module.
+
+  bazel run @isaacsim//:isaacsim                 # the stock app, GUI
+  bazel run @isaacsim//:isaacsim -- --no-window  # headless
+  bazel build @isaacsim//:extensions             # just the Apache-2.0 half
+
+`//:extensions` is every isaacsim.* extension that can be built from this source
+tree, laid out the way premake would, in one directory that Kit accepts as an
+--ext-folder. Building it downloads nothing.
+
+`//:isaacsim` additionally needs the closed Kit runtime underneath Isaac Sim --
+the kernel plus the omni.* extension closure, ~8 GB, pinned in
+//bazel:exts_lock.json -- and an RTX GPU to render on.
+"""
+
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+load(
+    "//bazel:cc.bzl",
+    "isaacsim_cc_plugin",
+    "isaacsim_cc_python_module",
+    "isaacsim_interface_headers",
+    "isaacsim_ogn_cpp_headers",
+    "isaacsim_version_header",
+)
+load(
+    "//bazel:defs.bzl",
+    "KIT_PYTHON",
+    "KIT_PYTHON_RUNTIME",
+    "OGN_CONFIG",
+    "OGN_TOOLCHAIN",
+    "isaacsim_kit_binary",
+    "isaacsim_kit_test",
+    "isaacsim_source_extensions",
+)
+
+package(default_package_metadata = [":package_metadata"])
+
+exports_files(
+    ["LICENSE"],
+    visibility = ["//visibility:private"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# Isaac Sim's own app configurations, used as they ship rather than reimplemented.
+exports_files(glob(
+    ["source/apps/*.kit"],
+))
+
+filegroup(
+    name = "app_configs",
+    srcs = glob(
+        ["source/apps/*.kit"],
+    ),
+)
+
+# One target per source-built extension, named after the extension itself
+# (@isaacsim//:isaacsim.core.version), plus :extensions holding all of them.
+isaacsim_source_extensions()
+
+# --------------------------------------------------------------------------
+# The C++ half: carbonite plugins, built against the headers the Kit kernel
+# package ships. See //bazel:cc.bzl.
+# --------------------------------------------------------------------------
+
+# Version stamps the plugins report. Isaac Sim's premake derives these from git;
+# a source release has no git, so the VERSION file decides.
+isaacsim_version_header(
+    name = "version_header",
+    version = "6.0.0",
+)
+
+# Header-only, and the base every native extension includes. Its conversion
+# helpers are written against PhysX's math types, so the SDK headers come with
+# it -- from source, not from the prebuilt NVIDIA also publishes.
+cc_library(
+    name = "core_includes",
+    hdrs = glob(
+        ["source/extensions/isaacsim.core.includes/include/**"],
+    ),
+    includes = ["source/extensions/isaacsim.core.includes/include"],
+    deps = [
+        "@cuda",
+        "@cuda//:cuda_runtime_static",
+        "@cuda//:nvcc_headers",
+        "@isaacsim_omni_physics//:headers",
+        # Headers only: Kit's own PhysX is already in the process.
+        "@physx//:headers",
+    ],
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.core.api.plugin",
+    srcs = glob(["source/deprecated/isaacsim.core.api/plugins/**/*.cpp"]),
+    extension_name = "isaacsim.core.api",
+    deps = [
+        ":core_includes",
+        ":version_header",
+    ],
+)
+
+# The USD libraries isaacsim.core.utils' premake5.lua names, and the ones they
+# pull in. Linked against by name so the module records a dependency on what it
+# actually calls.
+USD_LIBS = [
+    "@isaacsim_kit_exts_omni_usd_libs//:" + lib
+    for lib in [
+        "usd_arch",
+        "usd_gf",
+        "usd_pcp",
+        "usd_python",
+        "usd_sdf",
+        "usd_tf",
+        "usd_ts",
+        "usd_usd",
+        "usd_usdGeom",
+        "usd_usdPhysics",
+        "usd_usdUtils",
+        "usd_vt",
+    ]
+]
+
+# The USD headers the native extensions compile against: the same OpenUSD 25.11
+# NVIDIA builds, from the registry. Only the headers -- what gets loaded at run
+# time is the prebuilt build, and a second USD in the process would be fatal.
+cc_library(
+    name = "usd_headers",
+    deps = [
+        "@openusd//:headers",
+        "@openusd//:pxr_headers",
+    ],
+)
+
+# Interface headers other extensions compile against.
+isaacsim_interface_headers(
+    name = "iface_core_simulation_manager",
+    extension_name = "isaacsim.core.simulation_manager",
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.core.utils.bindings",
+    srcs = glob(
+        [
+            "source/deprecated/isaacsim.core.utils/bindings/**/*.cpp",
+            "source/deprecated/isaacsim.core.utils/include/**/*.h",
+            "source/deprecated/isaacsim.core.utils/plugins/**/*.cpp",
+        ],
+    ),
+    includes = ["source/deprecated/isaacsim.core.utils/include"],
+    module_name = "_isaac_utils",
+    deps = [
+        ":core_includes",
+        ":iface_core_simulation_manager",
+        ":iface_kit_loop_isaac",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+    ] + USD_LIBS,
+)
+
+isaacsim_interface_headers(
+    name = "iface_core_cloner",
+    extension_name = "isaacsim.core.cloner",
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.core.cloner.bindings",
+    srcs = glob(
+        [
+            "source/extensions/isaacsim.core.cloner/bindings/**/*.cpp",
+            "source/extensions/isaacsim.core.cloner/plugins/**/*.cpp",
+        ],
+    ),
+    defines = ["ISAACSIM_CORE_CLONER_EXPORT"],
+    module_name = "_isaac_cloner",
+    deps = [
+        ":core_includes",
+        ":iface_core_cloner",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdUtils",
+        "@isaacsim_kit_exts_usdrt_scenegraph//:headers",
+    ],
+)
+
+isaacsim_interface_headers(
+    name = "iface_core_experimental_prims",
+    extension_name = "isaacsim.core.experimental.prims",
+)
+
+# isaacsim.robot.schema is header-only: the USD tokens and helpers that describe
+# a robot, with no plugin of its own.
+isaacsim_interface_headers(
+    name = "iface_robot_schema",
+    extension_name = "isaacsim.robot.schema",
+    deps = [":usd_headers"],
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.core.experimental.prims.plugin",
+    srcs = glob(
+        ["source/extensions/isaacsim.core.experimental.prims/plugins/**/*.cpp"],
+    ),
+    extension_name = "isaacsim.core.experimental.prims",
+    deps = [
+        ":core_includes",
+        ":iface_core_experimental_prims",
+        ":usd_headers",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.core.experimental.prims.bindings",
+    srcs = glob(
+        ["source/extensions/isaacsim.core.experimental.prims/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/core/experimental/prims/bindings",
+    module_name = "_prims_reader",
+    deps = [
+        ":core_includes",
+        ":iface_core_experimental_prims",
+        ":isaacsim.core.experimental.prims.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# omni.kit.loop-isaac is Isaac Sim's replacement for Kit's run loop; it lives in
+# this repository and publishes the header its users include.
+isaacsim_interface_headers(
+    name = "iface_kit_loop_isaac",
+    extension_name = "omni.kit.loop-isaac",
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.core.simulation_manager.plugin",
+    srcs = glob(
+        ["source/extensions/isaacsim.core.simulation_manager/plugins/**/*.cpp"],
+    ),
+    defines = ["ISAACSIM_CORE_SIMULATION_MANAGER_EXPORT"],
+    extension_name = "isaacsim.core.simulation_manager",
+    deps = [
+        ":core_includes",
+        ":iface_core_simulation_manager",
+        ":iface_kit_loop_isaac",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdPhysics",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdUtils",
+        "@isaacsim_kit_exts_omni_usd_schema_physx//:physxSchema",
+        "@physx//:physx_schema",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.core.simulation_manager.bindings",
+    srcs = glob(
+        ["source/extensions/isaacsim.core.simulation_manager/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/core/simulation_manager/bindings",
+    module_name = "_simulation_manager",
+    deps = [
+        ":core_includes",
+        ":iface_core_simulation_manager",
+        ":isaacsim.core.simulation_manager.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+isaacsim_interface_headers(
+    name = "iface_robot_wheeled_robots",
+    extension_name = "isaacsim.robot.wheeled_robots",
+    subdir = "deprecated",
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.robot.wheeled_robots.plugin",
+    srcs = glob(
+        ["source/deprecated/isaacsim.robot.wheeled_robots/plugins/**/*.cpp"],
+    ),
+    extension_name = "isaacsim.robot.wheeled_robots",
+    deps = [
+        ":core_includes",
+        ":iface_robot_wheeled_robots",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.robot.wheeled_robots.bindings",
+    srcs = glob(
+        ["source/deprecated/isaacsim.robot.wheeled_robots/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/robot/wheeled_robots/bindings",
+    module_name = "_isaacsim_robot_wheeled_robots",
+    deps = [
+        ":core_includes",
+        ":iface_robot_wheeled_robots",
+        ":isaacsim.robot.wheeled_robots.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# An extension whose OmniGraph nodes are C++: the node implementations are
+# hand-written and include a generated database header each.
+WHEELED_ROBOTS_NODES = "source/extensions/isaacsim.robot.wheeled_robots.nodes"
+
+isaacsim_ogn_cpp_headers(
+    name = "ogn_robot_wheeled_robots_nodes",
+    config = OGN_CONFIG,
+    extension_name = "isaacsim.robot.wheeled_robots.nodes",
+    module = "isaacsim/robot/wheeled_robots/nodes",
+    node_srcs = glob(
+        [WHEELED_ROBOTS_NODES + "/nodes/**"],
+    ),
+    ogn_files = glob(
+        [WHEELED_ROBOTS_NODES + "/nodes/*.ogn"],
+    ),
+    python = KIT_PYTHON,
+    python_runtime = KIT_PYTHON_RUNTIME,
+    toolchain = OGN_TOOLCHAIN,
+)
+
+isaacsim_interface_headers(
+    name = "iface_robot_wheeled_robots_nodes",
+    extension_name = "isaacsim.robot.wheeled_robots.nodes",
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.robot.wheeled_robots.nodes.plugin",
+    srcs = glob(
+        [
+            WHEELED_ROBOTS_NODES + "/plugins/**/*.cpp",
+            WHEELED_ROBOTS_NODES + "/nodes/**/*.cpp",
+        ],
+    ) + ["@isaacsim_kit_kernel//:kit/dev/ogn/__LinuxStaticLibWorkaround.cpp"],
+    extension_name = "isaacsim.robot.wheeled_robots.nodes",
+    deps = [
+        ":core_includes",
+        ":iface_robot_wheeled_robots",
+        ":iface_robot_wheeled_robots_nodes",
+        ":ogn_robot_wheeled_robots_nodes",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.robot.wheeled_robots.nodes.bindings",
+    srcs = glob(
+        [WHEELED_ROBOTS_NODES + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/robot/wheeled_robots/nodes/bindings",
+    module_name = "_wheeled_robots_nodes",
+    deps = [
+        ":core_includes",
+        ":iface_robot_wheeled_robots_nodes",
+        ":isaacsim.robot.wheeled_robots.nodes.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+isaacsim_cc_plugin(
+    name = "isaacsim.core.experimental.primdata.plugin",
+    # plugins/ holds two projects here: the extension's own and a doctest one
+    # that only the test runner loads.
+    srcs = glob(
+        [
+            "source/extensions/isaacsim.core.experimental.primdata/plugins/isaacsim.core.experimental.primdata/**/*.cpp",
+            "source/extensions/isaacsim.core.experimental.primdata/plugins/isaacsim.core.experimental.primdata/**/*.h",
+        ],
+    ),
+    extension_name = "isaacsim.core.experimental.primdata",
+    # premake puts a plugin's own directory on the include path.
+    includes = ["source/extensions/isaacsim.core.experimental.primdata/plugins/isaacsim.core.experimental.primdata"],
+    deps = [
+        ":core_includes",
+        ":iface_core_experimental_prims",
+        ":iface_core_simulation_manager",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdPhysics",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdUtils",
+        "@isaacsim_kit_exts_omni_usd_schema_physx//:physxSchema",
+        "@physx//:physx_schema",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+PHYSICS_SENSOR_NODES = "source/extensions/isaacsim.sensors.physics.nodes"
+
+isaacsim_ogn_cpp_headers(
+    name = "ogn_sensors_physics_nodes",
+    config = OGN_CONFIG,
+    extension_name = "isaacsim.sensors.physics.nodes",
+    module = "isaacsim/sensors/physics/nodes",
+    node_srcs = glob(
+        [PHYSICS_SENSOR_NODES + "/nodes/**"],
+    ),
+    ogn_files = glob(
+        [PHYSICS_SENSOR_NODES + "/nodes/*.ogn"],
+    ),
+    python = KIT_PYTHON,
+    python_runtime = KIT_PYTHON_RUNTIME,
+    toolchain = OGN_TOOLCHAIN,
+)
+
+isaacsim_interface_headers(
+    name = "iface_sensors_experimental_physics",
+    extension_name = "isaacsim.sensors.experimental.physics",
+)
+
+isaacsim_interface_headers(
+    name = "iface_sensors_physics_nodes",
+    extension_name = "isaacsim.sensors.physics.nodes",
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.sensors.physics.nodes.plugin",
+    srcs = glob(
+        [
+            PHYSICS_SENSOR_NODES + "/plugins/**/*.cpp",
+            PHYSICS_SENSOR_NODES + "/nodes/**/*.cpp",
+        ],
+    ) + ["@isaacsim_kit_kernel//:kit/dev/ogn/__LinuxStaticLibWorkaround.cpp"],
+    extension_name = "isaacsim.sensors.physics.nodes",
+    deps = [
+        ":core_includes",
+        ":iface_sensors_experimental_physics",
+        ":iface_sensors_physics_nodes",
+        ":ogn_sensors_physics_nodes",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.sensors.physics.nodes.bindings",
+    srcs = glob(
+        [PHYSICS_SENSOR_NODES + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/sensors/physics/nodes/bindings",
+    module_name = "_physics_sensor_nodes",
+    deps = [
+        ":core_includes",
+        ":iface_sensors_physics_nodes",
+        ":isaacsim.sensors.physics.nodes.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+EXPERIMENTAL_PHYSICS_SENSORS = "source/extensions/isaacsim.sensors.experimental.physics"
+
+isaacsim_cc_plugin(
+    name = "isaacsim.sensors.experimental.physics.plugin",
+    # plugins/ holds the extension's own project and a doctest one beside it.
+    srcs = glob(
+        [
+            EXPERIMENTAL_PHYSICS_SENSORS + "/plugins/isaacsim.sensors.experimental.physics/**/*.cpp",
+            EXPERIMENTAL_PHYSICS_SENSORS + "/plugins/isaacsim.sensors.experimental.physics/**/*.h",
+        ],
+    ),
+    extension_name = "isaacsim.sensors.experimental.physics",
+    includes = [EXPERIMENTAL_PHYSICS_SENSORS + "/plugins/isaacsim.sensors.experimental.physics"],
+    deps = [
+        ":core_includes",
+        ":iface_core_experimental_prims",
+        ":iface_core_simulation_manager",
+        ":iface_robot_schema",
+        ":iface_sensors_experimental_physics",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdPhysics",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdUtils",
+        "@isaacsim_kit_exts_omni_usd_schema_physx//:physxSchema",
+        "@physx//:physx_schema",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.sensors.experimental.physics.bindings",
+    srcs = glob(
+        [EXPERIMENTAL_PHYSICS_SENSORS + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/sensors/experimental/physics/bindings",
+    module_name = "_physics_sensors",
+    deps = [
+        ":core_includes",
+        ":iface_sensors_experimental_physics",
+        ":isaacsim.sensors.experimental.physics.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+KIT_LOOP_ISAAC = "source/extensions/omni.kit.loop-isaac"
+
+isaacsim_cc_plugin(
+    name = "omni.kit.loop-isaac.plugin",
+    srcs = glob(
+        [
+            KIT_LOOP_ISAAC + "/plugins/**/*.cpp",
+            KIT_LOOP_ISAAC + "/plugins/**/*.h",
+        ],
+    ),
+    extension_name = "omni.kit.loop-isaac",
+    deps = [
+        ":core_includes",
+        ":iface_kit_loop_isaac",
+        ":usd_headers",
+        "@fmt",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "omni.kit.loop-isaac.bindings",
+    srcs = glob(
+        [KIT_LOOP_ISAAC + "/bindings/**/*.cpp"],
+    ),
+    destination = "omni/kit/loop/bindings",
+    module_name = "_loop",
+    deps = [
+        ":core_includes",
+        ":iface_kit_loop_isaac",
+        ":omni.kit.loop-isaac.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+SURFACE_GRIPPER = "source/extensions/isaacsim.robot.surface_gripper"
+
+# isaacsim.core.nodes' plugin is not built yet, but its interface headers are
+# what other extensions compile against, and those are here.
+isaacsim_interface_headers(
+    name = "iface_core_nodes",
+    extension_name = "isaacsim.core.nodes",
+    deps = [":usd_headers"],
+)
+
+isaacsim_interface_headers(
+    name = "iface_robot_surface_gripper",
+    extension_name = "isaacsim.robot.surface_gripper",
+    deps = [":usd_headers"],
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.robot.surface_gripper.plugin",
+    srcs = glob(
+        [SURFACE_GRIPPER + "/plugins/**/*.cpp"],
+    ),
+    extension_name = "isaacsim.robot.surface_gripper",
+    deps = [
+        ":core_includes",
+        ":iface_core_nodes",
+        ":iface_robot_schema",
+        ":iface_robot_surface_gripper",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdPhysics",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdUtils",
+        "@isaacsim_kit_exts_omni_usd_schema_physx//:physicsSchemaTools",
+        "@isaacsim_kit_exts_omni_usd_schema_physx//:physxSchema",
+        "@isaacsim_kit_exts_usdrt_scenegraph//:headers",
+        "@physx//:physics_schema_tools",
+        "@physx//:physx_schema",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.robot.surface_gripper.bindings",
+    srcs = glob(
+        [SURFACE_GRIPPER + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/robot/surface_gripper/bindings",
+    module_name = "_surface_gripper",
+    deps = [
+        ":core_includes",
+        ":iface_robot_schema",
+        ":iface_robot_surface_gripper",
+        ":isaacsim.robot.surface_gripper.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+CORE_NODES = "source/extensions/isaacsim.core.nodes"
+
+# The one CUDA translation unit in the tree: the camera kernels this extension's
+# nodes launch.
+#
+# Building this needs --features=external_include_paths, so that the CUDA
+# headers reach nvcc as system includes. Without it they arrive as -I, and a
+# host glibc new enough to declare the C23 rsqrt/cospi family conflicts with
+# CUDA's own declarations of them. The flag cannot be set here: rules_cuda takes
+# features from the configuration, not from the package or the target, so it is
+# the consuming build that has to pass it -- see ../presubmit.yml, which does.
+cuda_library(
+    name = "core_nodes_cuda",
+    srcs = glob(
+        [CORE_NODES + "/cuda/**/*.cu"],
+    ),
+    deps = [":core_includes"],
+)
+
+isaacsim_ogn_cpp_headers(
+    name = "ogn_core_nodes",
+    config = OGN_CONFIG,
+    extension_name = "isaacsim.core.nodes",
+    module = "isaacsim/core/nodes",
+    node_srcs = glob(
+        [CORE_NODES + "/nodes/**"],
+    ),
+    ogn_files = glob(
+        [CORE_NODES + "/nodes/*.ogn"],
+    ),
+    python = KIT_PYTHON,
+    python_runtime = KIT_PYTHON_RUNTIME,
+    toolchain = OGN_TOOLCHAIN,
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.core.nodes.plugin",
+    srcs = glob(
+        [
+            CORE_NODES + "/plugins/**/*.cpp",
+            CORE_NODES + "/nodes/**/*.cpp",
+        ],
+    ) + ["@isaacsim_kit_kernel//:kit/dev/ogn/__LinuxStaticLibWorkaround.cpp"],
+    # premake turns these off for this extension rather than fixing the sources.
+    copts = [
+        "-Wno-error=narrowing",
+        "-Wno-error=unused-but-set-variable",
+        "-Wno-error=unused-variable",
+    ],
+    extension_name = "isaacsim.core.nodes",
+    deps = [
+        ":core_includes",
+        ":core_nodes_cuda",
+        ":iface_core_experimental_prims",
+        ":iface_core_nodes",
+        ":iface_core_simulation_manager",
+        ":iface_robot_schema",
+        ":ogn_core_nodes",
+        ":usd_headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdPhysics",
+        "@isaacsim_kit_exts_usdrt_scenegraph//:headers",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.core.nodes.bindings",
+    srcs = glob(
+        [CORE_NODES + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/core/nodes/bindings",
+    module_name = "_isaacsim_core_nodes",
+    deps = [
+        ":core_includes",
+        ":iface_core_nodes",
+        ":isaacsim.core.nodes.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+SENSORS_PHYSX = "source/deprecated/isaacsim.sensors.physx"
+
+isaacsim_interface_headers(
+    name = "iface_sensors_physx",
+    extension_name = "isaacsim.sensors.physx",
+    subdir = "deprecated",
+    deps = [":usd_headers"],
+)
+
+isaacsim_ogn_cpp_headers(
+    name = "ogn_sensors_physx",
+    config = OGN_CONFIG,
+    extension_name = "isaacsim.sensors.physx",
+    module = "isaacsim/sensors/physx",
+    node_srcs = glob(
+        [SENSORS_PHYSX + "/nodes/**"],
+    ),
+    ogn_files = glob(
+        [SENSORS_PHYSX + "/nodes/*.ogn"],
+    ),
+    python = KIT_PYTHON,
+    python_runtime = KIT_PYTHON_RUNTIME,
+    toolchain = OGN_TOOLCHAIN,
+)
+
+# The OmniGraph nodes are part of the plugin here, not an extension of their
+# own, so their implementations compile in alongside it.
+isaacsim_cc_plugin(
+    name = "isaacsim.sensors.physx.plugin",
+    srcs = glob(
+        [
+            SENSORS_PHYSX + "/plugins/**/*.cpp",
+            SENSORS_PHYSX + "/plugins/**/*.h",
+            SENSORS_PHYSX + "/nodes/**/*.cpp",
+        ],
+    ) + ["@isaacsim_kit_kernel//:kit/dev/ogn/__LinuxStaticLibWorkaround.cpp"],
+    extension_name = "isaacsim.sensors.physx",
+    includes = [SENSORS_PHYSX + "/plugins/isaacsim.sensors.physx"],
+    deps = [
+        ":core_includes",
+        ":iface_robot_schema",
+        ":iface_sensors_physx",
+        ":ogn_sensors_physx",
+        ":usd_headers",
+        "@isaacsim_kit_exts_isaacsim_util_debug_draw//:headers",
+        "@isaacsim_kit_exts_isaacsim_util_debug_draw//:isaacsim.util.debug_draw.primitive_drawing",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdPhysics",
+        "@isaacsim_kit_exts_usdrt_scenegraph//:headers",
+        "@physx",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.sensors.physx.bindings",
+    srcs = glob(
+        [SENSORS_PHYSX + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/sensors/physx/bindings",
+    module_name = "_range_sensor",
+    deps = [
+        ":core_includes",
+        ":iface_sensors_physx",
+        ":isaacsim.sensors.physx.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+
+SENSORS_RTX = "source/deprecated/isaacsim.sensors.rtx"
+
+isaacsim_interface_headers(
+    name = "iface_sensors_rtx",
+    extension_name = "isaacsim.sensors.rtx",
+    subdir = "deprecated",
+    deps = [":usd_headers"],
+)
+
+isaacsim_ogn_cpp_headers(
+    name = "ogn_sensors_rtx",
+    config = OGN_CONFIG,
+    extension_name = "isaacsim.sensors.rtx",
+    module = "isaacsim/sensors/rtx",
+    node_srcs = glob(
+        [SENSORS_RTX + "/nodes/**"],
+    ),
+    ogn_files = glob(
+        [SENSORS_RTX + "/nodes/*.ogn"],
+    ),
+    python = KIT_PYTHON,
+    python_runtime = KIT_PYTHON_RUNTIME,
+    toolchain = OGN_TOOLCHAIN,
+)
+
+isaacsim_cc_plugin(
+    name = "isaacsim.sensors.rtx.plugin",
+    srcs = glob(
+        [
+            SENSORS_RTX + "/plugins/**/*.cpp",
+            SENSORS_RTX + "/nodes/**/*.cpp",
+            SENSORS_RTX + "/nodes/**/*.h",
+        ],
+    ) + ["@isaacsim_kit_kernel//:kit/dev/ogn/__LinuxStaticLibWorkaround.cpp"],
+    extension_name = "isaacsim.sensors.rtx",
+    deps = [
+        ":core_includes",
+        ":iface_core_nodes",
+        ":iface_sensors_rtx",
+        ":ogn_sensors_rtx",
+        ":usd_headers",
+        "@isaacsim_generic_model_output//:headers",
+        "@isaacsim_kit_exts_omni_usd_core//:omni.usd",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_ts",
+        "@isaacsim_kit_exts_omni_usd_libs//:usd_usdGeom",
+        "@isaacsim_sensor_checker//:headers",
+        "@rapidjson",
+    ],
+)
+
+isaacsim_cc_python_module(
+    name = "isaacsim.sensors.rtx.bindings",
+    srcs = glob(
+        [SENSORS_RTX + "/bindings/**/*.cpp"],
+    ),
+    destination = "isaacsim/sensors/rtx/bindings",
+    module_name = "_isaacsim_sensors_rtx",
+    deps = [
+        ":core_includes",
+        ":iface_sensors_rtx",
+        ":isaacsim.sensors.rtx.plugin.lib",
+        ":usd_headers",
+    ],
+)
+
+# --------------------------------------------------------------------------
+# Running Isaac Sim.
+# --------------------------------------------------------------------------
+
+# The stock isaacsim.exp.base.kit app, from both extension folders: the 94
+# isaacsim.* extensions built from source here, and the pinned prebuilts. The
+# two sets do not overlap -- the lock holds only what cannot be built from
+# source (27 isaacsim.* extensions) plus the omni.* closure underneath.
+isaacsim_kit_binary(
+    name = "isaacsim",
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)
+
+# Resolves the app's extension closure against the live registries, which is how
+# //bazel:exts_lock.json is regenerated. Manual: it is the one target that
+# deliberately reaches the network at run time.
+isaacsim_kit_binary(
+    name = "precache",
+    kit_args = [
+        "--no-window",
+        "--ext-precache-mode",
+    ],
+    merge_configs = [
+        "//bazel:deps.kit",
+        "//bazel:registry.kit",
+    ],
+    prebuilts = False,
+    tags = ["manual"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)
+
+# --------------------------------------------------------------------------
+# Tests.
+# --------------------------------------------------------------------------
+
+# Kit itself, on the kernel alone, reading every extension built from source:
+# they have to be discoverable and their manifests parseable. This is the part
+# of "does Isaac Sim start" that needs neither a GPU nor the 8 GB of prebuilts,
+# so it is what CI can answer.
+isaacsim_kit_test(
+    name = "extensions_test",
+    size = "medium",
+    app = "//bazel:kernel_only.kit",
+    expect_output = "isaacsim.core.version",
+    kit_args = [
+        "--no-window",
+        "--list-exts",
+    ],
+    merge_configs = [],
+    prebuilts = False,
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)
+
+# The real thing: the stock app, headless, asserting from inside Kit that the
+# isaacsim.* extensions came up. Needs an RTX GPU and the full prebuilt closure,
+# so it is `manual` -- shared CI cannot run it.
+isaacsim_kit_test(
+    name = "launch_test",
+    size = "enormous",
+    exec_script = "//bazel:launch_smoke.py",
+    expect_output = "ISAACSIM_LAUNCH_OK",
+    kit_args = ["--no-window"],
+    reject_output = "[Error]",
+    tags = [
+        "manual",
+        "requires-gpu",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)

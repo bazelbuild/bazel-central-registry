@@ -1,0 +1,219 @@
+"""The NVIDIA PhysX SDK.
+
+Upstream builds with CMake. The translation is deliberately literal -- one
+target per CMake target, same sources, same defines -- so that it can be read
+against `physx/source/compiler/cmake/*.cmake`. See //bazel:physx.bzl for how the
+source lists and the preprocessor configuration are derived, and for why that
+configuration is not free to change.
+
+The libraries are static, which is how PhysX is meant to be embedded and how
+every Omniverse consumer links it: `omni.physx` and each Kit extension that
+touches physics carries its own copy and exports none of its symbols.
+"""
+
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:physx.bzl", "physx_component")
+
+package(default_package_metadata = [":package_metadata"])
+
+exports_files(
+    ["LICENSE.md"],
+    visibility = ["//visibility:private"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:BSD-3-Clause",
+    text = "LICENSE.md",
+    visibility = ["//visibility:public"],
+)
+
+# The public API: PxPhysicsAPI.h and everything it reaches, including the
+# foundation math types (PxVec3, PxQuat, PxTransform) that show up in the
+# interfaces of anything embedding PhysX.
+#
+# Separate from the compiled libraries on purpose. Code that only names PhysX
+# types in its own interfaces -- which is most code reaching PhysX through a
+# host application that already loaded it -- wants exactly this and must not
+# also pull in a second PhysX.
+cc_library(
+    name = "headers",
+    hdrs = glob(
+        ["physx/include/**/*.h"],
+    ),
+    # Both spellings are in use: `#include <PxActor.h>` when the SDK's include
+    # directory is on the path, and `#include <physx/include/PxActor.h>` when
+    # the directory holding the SDK is. The packman layout consumers build
+    # against supports the second, so both are offered.
+    includes = [
+        ".",
+        "physx/include",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# --------------------------------------------------------------------------
+# The SDK.
+# --------------------------------------------------------------------------
+
+physx_component(
+    name = "physx_foundation",
+    dirs = ["physx/source/foundation"],
+)
+
+physx_component(
+    name = "physx_task",
+    dirs = ["physx/source/task"],
+    deps = [":physx_foundation"],
+)
+
+physx_component(
+    name = "physx_pvd_sdk",
+    dirs = ["physx/source/pvd"],
+    deps = [":physx_foundation"],
+)
+
+# PhysXCommon is geomutils plus the handful of Cm* files beside it.
+physx_component(
+    name = "physx_common",
+    dirs = [
+        "physx/source/common/src",
+        "physx/source/geomutils",
+    ],
+    deps = [
+        ":physx_foundation",
+        ":physx_pvd_sdk",
+    ],
+)
+
+# The five object libraries CMake folds into PhysX rather than shipping.
+physx_component(
+    name = "low_level",
+    dirs = ["physx/source/lowlevel"],
+    deps = [
+        ":physx_common",
+        ":physx_task",
+    ],
+)
+
+physx_component(
+    name = "low_level_aabb",
+    dirs = ["physx/source/lowlevelaabb"],
+    deps = [":low_level"],
+)
+
+physx_component(
+    name = "low_level_dynamics",
+    dirs = ["physx/source/lowleveldynamics/src"],
+    deps = [":low_level"],
+)
+
+physx_component(
+    name = "scene_query",
+    dirs = ["physx/source/scenequery/src"],
+    deps = [":physx_common"],
+)
+
+physx_component(
+    name = "simulation_controller",
+    dirs = ["physx/source/simulationcontroller/src"],
+    deps = [
+        ":low_level",
+        ":low_level_aabb",
+        ":low_level_dynamics",
+    ],
+)
+
+physx_component(
+    name = "physx_core",
+    dirs = [
+        "physx/source/immediatemode/src",
+        "physx/source/physx/src",
+        "physx/source/physxmetadata/core/src",
+    ],
+    deps = [
+        ":physx_pvd_sdk",
+        ":scene_query",
+        ":simulation_controller",
+    ],
+)
+
+physx_component(
+    name = "physx_cooking",
+    dirs = ["physx/source/physxcooking/src"],
+    deps = [":physx_common"],
+)
+
+physx_component(
+    name = "physx_extensions",
+    dirs = [
+        "physx/source/physxextensions/src",
+        "physx/source/physxmetadata/extensions/src",
+    ],
+    deps = [
+        ":physx_cooking",
+        ":physx_core",
+    ],
+)
+
+# What upstream's `links { PhysXExtensions_static_64, PhysX_static_64, ... }`
+# amounts to: the whole SDK, as one thing to depend on.
+cc_library(
+    name = "physx",
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":physx_extensions",
+    ],
+)
+
+# --------------------------------------------------------------------------
+# The USD schemas that ship alongside.
+# --------------------------------------------------------------------------
+
+# The helpers that go with those schemas: unit conversion and the USD path
+# encoding PhysX uses to name a body on a stage. A separate library upstream,
+# and a separate shared library at run time, so a separate target here.
+cc_library(
+    name = "physics_schema_tools",
+    hdrs = glob(
+        ["omni/schema/source/physicsSchemaTools/**/*.h"],
+    ),
+    includes = ["omni/schema/source"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@openusd//:headers",
+        "@openusd//:pxr_headers",
+    ],
+)
+
+# The USD schemas for PhysX -- PhysxSceneAPI and friends, the types that carry
+# physics settings on a USD stage. They are generated from the schema
+# definitions in this repository and checked in alongside them, so they need no
+# code generation here, only OpenUSD to compile against.
+cc_library(
+    name = "physx_schema",
+    hdrs = glob(
+        ["omni/schema/source/physxSchema/**/*.h"],
+    ),
+    includes = ["omni/schema/source"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@openusd//:headers",
+        "@openusd//:pxr_headers",
+    ],
+)
