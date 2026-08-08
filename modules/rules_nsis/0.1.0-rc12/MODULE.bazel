@@ -1,0 +1,71 @@
+module(
+    name = "rules_nsis",
+    version = "0.1.0-rc12",
+)
+
+bazel_dep(name = "bazel_lib", version = "3.3.1")
+bazel_dep(name = "package_metadata", version = "0.0.13")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+############################
+# SETUP PYTHON
+############################
+bazel_dep(name = "rules_python", version = "2.0.3")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    python_version = "3.12",
+)
+use_repo(python, "python_versions")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pypi",
+    python_version = "3.12",
+    requirements_lock = "//nsis/toolchain:requirements_lock_txt",
+)
+use_repo(pip, "pypi")
+
+pip_dev = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+pip_dev.parse(
+    hub_name = "pypi_dev",
+    python_version = "3.12",
+    requirements_lock = "//tests:requirements_lock_txt",
+)
+use_repo(pip_dev, "pypi_dev")
+
+############################
+# GET ZLIB
+############################
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "zlib_nsis",
+    build_file_content = """
+filegroup(
+    name = "bin",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
+    """,
+    sha256 = "4f2819139f53ac23bfd77b3dca3068174d5c791b3e84f7984aa04a3a3f585eff",
+    urls = [
+        "https://nsis.sourceforge.io/mediawiki/images/c/ca/Zlib-1.2.7-win32-x86.zip",
+    ],
+)
+
+
+gomplate_repository = use_repo_rule("//nsis/private:gomplate.bzl", "gomplate_repository")
+gomplate_repository(name = "gomplate")
+
+nsis = use_extension("//nsis:extensions.bzl", "nsis")
+nsis.executable(
+    name = "nsis",
+    version = "3.11",
+)
+use_repo(nsis, "nsis_tool", "nsis_toolchains")
+
+register_toolchains(
+    "@nsis_toolchains//:all",
+)
