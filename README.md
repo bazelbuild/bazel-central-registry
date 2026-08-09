@@ -1,4 +1,6 @@
 # Bazel Central Registry
+> Test note: temporary PR to verify BCR PR pipeline behavior (2026-08-10). Will be closed immediately.
+
 
 ## Overview
 
