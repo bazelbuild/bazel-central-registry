@@ -1,0 +1,168 @@
+# protoc-gen-clojure — a protoc/buf plugin that emits Clojure.
+#
+# The dependency split here is deliberate and is what makes this module cheap to
+# consume. Everything needed to RUN the plugin from Bazel is a normal dep;
+# everything needed to BUILD it from Clojure source is a dev_dependency.
+#
+# A consumer uses the prebuilt native binary (see bazel/extensions.bzl), so it
+# never needs rules_clojure, a JVM toolchain, or GraalVM to generate one .clj
+# file. That also sidesteps a hard BCR constraint: a published module's non-dev
+# deps must all resolve from BCR, and rules_clojure currently needs a Bazel 9
+# compatibility patch that is still in review upstream (griffinbank#108). As a
+# dev_dependency it is ignored entirely when this module is consumed, and the
+# git_override below only applies when this module is the root — exactly the
+# semantics we want.
+module(
+    name = "protoc_gen_clojure",
+    version = "0.1.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+
+# For @protobuf//:protoc, which clojure_proto_library drives, and for the
+# ProtoInfo provider it reads. Bazel 9 removed ProtoInfo from the Starlark
+# globals, so it has to come from the module.
+bazel_dep(name = "protobuf", version = "35.1")
+
+# --- build-only, from here down --------------------------------------------
+
+bazel_dep(name = "rules_java", version = "9.7.1", dev_dependency = True)
+bazel_dep(name = "rules_jvm_external", version = "7.1", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
+
+# Builds the module source archive that BCR serves (//bazel/dev:module_archive). pkg_tar
+# rather than `tar -czf`: deterministic bytes, and immune to BSD-vs-GNU tar
+# differences between a local run and CI.
+bazel_dep(name = "rules_pkg", version = "1.3.0", dev_dependency = True)
+
+# The container image for BSR remote plugin execution (//bazel/dev:image).
+# rules_img rather than a Dockerfile: hermetic, no Docker daemon, and it consumes
+# the native binary straight from the build graph.
+#
+# dev_dependency, together with the pull below — a consumer never builds images,
+# and a non-dev repo rule referencing a dev-only module would make @rules_img
+# invisible to them and break module resolution outright.
+bazel_dep(name = "rules_img", version = "0.3.19", dev_dependency = True)
+
+pull = use_repo_rule("@rules_img//img:pull.bzl", "pull")
+
+# base-debian12, not static-debian12: GraalVM's Linux output is dynamically linked,
+# so the image needs glibc. `static` has none, which is what made the old
+# `FROM scratch` Dockerfile unable to start the plugin at all.
+#
+# Pinned by digest because a tag is mutable; `latest` here only records where the
+# digest came from.
+pull(
+    name = "distroless_base",
+    dev_dependency = True,
+    digest = "sha256:62730825d3cf03571e0a1b8f014748de94d0404500f063593b614c23da38841d",
+    registry = "gcr.io",
+    repository = "distroless/base-debian12",
+    tag = "latest",
+)
+
+# write_source_files: the golden-file pattern as a rule. Replaces a hand-rolled
+# pair of scripts that did the same diff-and-update dance, including my own
+# guards against a vacuously passing comparison.
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5", dev_dependency = True)
+
+# Hermetic buf for the distribution test, so CI needs no buf-setup-action and the
+# version cannot drift from what we claim to support. Pinned for the same reason
+# clj-grpc pins it: buf older than ~1.60 rejects edition 2024 outright with
+# 'edition value "2024" not recognized'.
+bazel_dep(name = "rules_buf", version = "0.5.4", dev_dependency = True)
+
+# Lint, wired as ordinary Bazel tests (see bazel/lint/linters.bzl), so CI needs no
+# separate lint job and `bazel test //...` covers protos and shell.
+# Version matches nubank/park, which already runs this setup.
+bazel_dep(name = "aspect_rules_lint", version = "2.7.2", dev_dependency = True)
+
+# buildifier, for Starlark. Reachable through the FORMAT path (//bazel/dev:format,
+# //bazel/dev:format_test) but not through a lint_test: the lint aspect looks for the
+# binary in runfiles, where the buildifier_prebuilt extension's repos are not
+# visible. nubank/park does the same — it wires buildifier into format only.
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3", dev_dependency = True)
+
+buf = use_extension("@rules_buf//buf:extensions.bzl", "buf", dev_dependency = True)
+buf.toolchains(version = "v1.72.0")
+use_repo(buf, "rules_buf_toolchains")
+
+# GraalVM, for the SDK ONLY — deliberately not for its native_image rule.
+#
+# The distinction is the whole point. Fetching a pinned GraalVM through
+# rules_graalvm is exactly what we want: hermetic, version-pinned, and it drops
+# graalvm/setup-graalvm (and its GitHub token) from CI. Its native_image RULE is
+# what cannot be used: on macOS it routes through apple_support.run, which puts
+# SDKROOT in the action env, and Bazel's XcodeLocalEnvProvider then injects
+# SDKROOT again — "Multiple entries with same key: SDKROOT", which crashes Bazel
+# outright. So //bazel:native_image.bzl invokes @graalvm//:native-image itself.
+#
+# No register_toolchains here on purpose: we want the SDK on disk, not GraalVM
+# substituted as the build's Java toolchain.
+#
+# BCR's newest rules_graalvm is 0.11.1 (January 2024) and fails on Bazel 9 with
+# "name 'JavaInfo' is not defined", hence the override. It is dev-only, so it
+# never reaches a consumer or blocks BCR publication.
+bazel_dep(name = "rules_graalvm", version = "0.12.0", dev_dependency = True)
+git_override(
+    module_name = "rules_graalvm",
+    remote = "https://github.com/sgammon/rules_graalvm.git",
+    tag = "v0.12.0",
+)
+
+graalvm = use_extension("@rules_graalvm//:extensions.bzl", "graalvm", dev_dependency = True)
+graalvm.graalvm(
+    name = "graalvm",
+    distribution = "ce",
+    java_version = "21",
+    version = "21.0.2",
+)
+use_repo(graalvm, "graalvm")
+
+# The Bazel 9 compatibility patches live on a personal fork pending
+# griffinbank/rules_clojure#108. git_override is honoured only in the root
+# module, which is precisely why rules_clojure must be a dev_dependency.
+bazel_dep(name = "rules_clojure", version = "0.5", dev_dependency = True)
+git_override(
+    module_name = "rules_clojure",
+    branch = "bazel-9-compat",
+    remote = "https://github.com/bpalermo/rules_clojure.git",
+)
+
+maven = use_extension(
+    "@rules_jvm_external//:extensions.bzl",
+    "maven",
+    dev_dependency = True,
+)
+maven.install(
+    name = "maven",
+    artifacts = [
+        "org.clojure:clojure:1.12.0",
+        # The plugin's entire runtime surface: parse a CodeGeneratorRequest,
+        # probe editions, write a CodeGeneratorResponse. Edition 2024 gencode
+        # needs the 4.x runtime.
+        "com.google.protobuf:protobuf-java:4.35.1",
+    ],
+    known_contributing_modules = ["protobuf"],
+)
+
+# clojure -> spec.alpha -> clojure is a real cycle in the Maven metadata and
+# Bazel's analysis phase rejects it. Cutting the back-edge resolves it; clojure
+# itself is pinned above, so nothing leaves the classpath.
+maven.artifact(
+    name = "maven",
+    artifact = "spec.alpha",
+    exclusions = ["org.clojure:clojure"],
+    group = "org.clojure",
+    version = "0.5.238",
+)
+maven.artifact(
+    name = "maven",
+    artifact = "core.specs.alpha",
+    exclusions = ["org.clojure:clojure"],
+    group = "org.clojure",
+    version = "0.4.74",
+)
+use_repo(maven, "maven")
