@@ -2,7 +2,7 @@
 
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
-def boost_test_suite(name, srcs, deps):
+def boost_test_suite(name, srcs, deps, target_compatible_with = []):
     tests = []
     for src in srcs:
         test_name = src.removeprefix("test_").removesuffix(".cpp")
@@ -14,6 +14,7 @@ def boost_test_suite(name, srcs, deps):
                 "@platforms//os:windows": ["/std:c++17"],
                 "//conditions:default": ["-std=c++17"],
             }),
+            target_compatible_with = target_compatible_with,
             deps = deps,
         )
     native.test_suite(name = name, tests = tests)
