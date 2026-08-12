@@ -1,0 +1,50 @@
+# Platforms are constrained by what the released binaries can actually run on, not
+# by what BCR offers.
+#
+# The test module executes the prebuilt plugin, and the Linux binaries are
+# dynamically linked. Their floor is measured rather than assumed: the release
+# workflow prints it, and v0.1.0-rc1 reported GLIBC_2.34 on both x86_64 and
+# aarch64 — lower than the ubuntu-24.04 runner's own 2.39, because GraalVM links
+# against older symbol versions than the build host provides.
+#
+# ubuntu2204 (glibc 2.35) therefore belongs here: it clears 2.34, and is the oldest
+# image BCR offers that does. debian11 (2.31) does not, and would fail with
+# "GLIBC_2.34 not found" — a pull request failing its own presubmit. Static linking
+# (issue #17) is what would reach back that far.
+#
+# arm64 is included deliberately: it is the only place the linux_aarch64 and
+# darwin_arm64 release assets, and the toolchain's platform selection between them,
+# get exercised at all.
+#
+# bazel is 9.x only. The module has never been built with Bazel 8, and claiming
+# support that fails here would block publication rather than merely disappoint.
+matrix:
+  platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos", "macos_arm64"]
+  bazel: ["9.x"]
+
+tasks:
+  verify_targets:
+    name: the rule and toolchain type load
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@protoc_gen_clojure//clojure:toolchain_type"
+
+# The real test: a module that depends on this one, registers the toolchain, and
+# generates Clojure from a .proto with no Clojure, JVM or GraalVM of its own. That
+# claim is untestable anywhere else, because the toolchain downloads a binary from a
+# published release.
+bcr_test_module:
+  module_path: "examples/bzlmod"
+  matrix:
+    platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos", "macos_arm64"]
+    bazel: ["9.x"]
+  tasks:
+    run_tests:
+      name: generate Clojure through the prebuilt plugin
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - "//:hello_clj"
+      test_targets:
+        - "//:generated_test"
