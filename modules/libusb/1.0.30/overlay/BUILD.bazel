@@ -1,0 +1,275 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+exports_files(["COPYING"])
+
+# ---- Autoconf-driven config.h -----------------------------------------------
+#
+# Mirrors what upstream's `configure.ac` does: run AC_CHECK_HEADERS /
+# AC_CHECK_FUNCS / AC_CHECK_DECLS / AC_CHECK_TYPES against the resolved cc
+# toolchain, plus a fixed AC_DEFINE block for values `configure.ac` sets
+# unconditionally (PLATFORM_*, DEFAULT_VISIBILITY, PRINTF_FORMAT, package
+# metadata, _WIN32_WINNT on Windows).
+
+package_info(
+    name = "_package",
+    aliases = {
+        # `configure.ac` sets `VERSION` to the same value as `PACKAGE_VERSION`;
+        # mirror instead of hand-defining, so bumping the module version
+        # updates both in one place.
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "//:MODULE.bazel",
+    package_bugreport = "libusb-devel@lists.sourceforge.net",
+    package_url = "http://libusb.info",
+    strip_bcr_version = True,
+)
+
+# Always-on defines / checks that don't come from a gnulib module.
+# (The stdlib header block + STDC_HEADERS + _GNU_SOURCE et al. come from the
+# `@rules_cc_autoconf//gnulib/m4/extensions` dep on `:_autoconf` below.)
+_COMMON_CHECKS = macros.AC_CHECK_HEADERS([
+    "dlfcn.h",
+    "sys/time.h",
+]) + [
+    checks.AC_DEFINE("ENABLE_LOGGING"),
+    # Upstream `PACKAGE` differs from `PACKAGE_NAME` ("libusb-1.0" vs
+    # "libusb"), so it needs its own define — package_info can't alias it.
+    checks.AC_DEFINE(
+        "PACKAGE",
+        value = "\"libusb-1.0\"",
+    ),
+    checks.AC_DEFINE(
+        "LT_OBJDIR",
+        value = "\".libs/\"",
+    ),
+]
+
+_POSIX_ONLY = [
+    checks.AC_DEFINE("PLATFORM_POSIX"),
+] + macros.AC_CHECK_FUNCS([
+    "clock_gettime",
+    "pipe2",
+    "pthread_condattr_setclock",
+]) + macros.AC_CHECK_TYPES(
+    ["nfds_t"],
+    includes = ["#include <poll.h>"],
+)
+
+_LINUX_ONLY = macros.AC_CHECK_FUNCS([
+    "pthread_setname_np",
+    "syslog",
+    "eventfd",
+]) + [
+    # Upstream defines HAVE_TIMERFD (no _CREATE suffix) when timerfd_create is
+    # available, so rename the auto-generated define to match.
+    checks.AC_CHECK_FUNC(
+        "timerfd_create",
+        define = "HAVE_TIMERFD",
+    ),
+] + macros.AC_CHECK_HEADERS([
+    "asm/types.h",
+    "sys/eventfd.h",
+    "sys/timerfd.h",
+]) + macros.AC_CHECK_DECLS(
+    [
+        "EFD_NONBLOCK",
+        "EFD_CLOEXEC",
+    ],
+    includes = ["#include <sys/eventfd.h>"],
+) + macros.AC_CHECK_DECLS(
+    [
+        "TFD_NONBLOCK",
+        "TFD_CLOEXEC",
+    ],
+    includes = ["#include <sys/timerfd.h>"],
+) + [
+    checks.AC_DEFINE("USE_SYSTEM_LOGGING_FACILITY"),
+]
+
+_DARWIN_ONLY = macros.AC_CHECK_FUNCS([
+    "pthread_threadid_np",
+]) + macros.AC_CHECK_HEADERS([
+    "IOKit/usb/IOUSBHostFamilyDefinitions.h",
+])
+
+_WINDOWS_ONLY = [
+    checks.AC_DEFINE("PLATFORM_WINDOWS"),
+    # `_WIN32_WINNT_VISTA` is 0x0600 in <sdkddkver.h>. Setting the numeric
+    # literal keeps the check hermetic (no dependency on Windows SDK headers
+    # being reachable to autoconf).
+    checks.AC_DEFINE(
+        "_WIN32_WINNT",
+        value = "0x0600",
+    ),
+] + macros.AC_CHECK_TYPES(
+    ["struct timespec"],
+    includes = ["#include <time.h>"],
+)
+
+# GCC / clang understand these attributes; MSVC's cl.exe treats them as
+# syntax errors. Expand both to nothing on the MSVC family, matching
+# upstream's `msvc/config.h`.
+_GCC_ATTR_CHECKS = [
+    checks.AC_DEFINE(
+        "DEFAULT_VISIBILITY",
+        value = "__attribute__ ((visibility (\"default\")))",
+    ),
+    checks.AC_DEFINE(
+        "PRINTF_FORMAT(a, b)",
+        value = "__attribute__ ((__format__ (__printf__, a, b)))",
+    ),
+]
+
+_MSVC_ATTR_CHECKS = [
+    checks.AC_DEFINE(
+        "DEFAULT_VISIBILITY",
+        value = "",
+    ),
+    checks.AC_DEFINE(
+        "PRINTF_FORMAT(a, b)",
+        value = "",
+    ),
+]
+
+autoconf(
+    name = "_autoconf",
+    checks = _COMMON_CHECKS + select({
+        "@rules_cc//cc/compiler:clang-cl": _MSVC_ATTR_CHECKS,
+        "@rules_cc//cc/compiler:msvc-cl": _MSVC_ATTR_CHECKS,
+        "//conditions:default": _GCC_ATTR_CHECKS,
+    }) + select({
+        "@platforms//os:macos": _POSIX_ONLY + _DARWIN_ONLY,
+        "@platforms//os:windows": _WINDOWS_ONLY,
+        "//conditions:default": _POSIX_ONLY + _LINUX_ONLY,
+    }),
+    deps = [
+        ":_package",
+        "@rules_cc_autoconf//gnulib/m4/extensions",
+    ],
+)
+
+autoconf_hdr(
+    name = "_config_h",
+    out = "libusb/config.h",
+    template = "//:config.h.in",
+    deps = [":_autoconf"],
+)
+
+cc_library(
+    name = "_common_config",
+    hdrs = [":_config_h"],
+    strip_include_prefix = "libusb",
+    visibility = ["//tests:__pkg__"],
+)
+
+cc_library(
+    name = "_msvc_config",
+    hdrs = ["msvc/config.h"],
+    strip_include_prefix = "msvc",
+    visibility = ["//tests:__pkg__"],
+)
+
+alias(
+    name = "_config",
+    actual = select({
+        "@rules_cc//cc/compiler:clang-cl": ":_msvc_config",
+        "@rules_cc//cc/compiler:msvc-cl": ":_msvc_config",
+        "//conditions:default": ":_common_config",
+    }),
+    visibility = ["//tests:__pkg__"],
+)
+
+# ---- libusb library ---------------------------------------------------------
+
+_COMMON_SRCS = [
+    "libusb/core.c",
+    "libusb/descriptor.c",
+    "libusb/hotplug.c",
+    "libusb/io.c",
+    "libusb/libusbi.h",
+    "libusb/strerror.c",
+    "libusb/sync.c",
+    "libusb/version.h",
+    "libusb/version_nano.h",
+]
+
+# POSIX event / thread backend shared by Linux and macOS.
+_POSIX_BACKEND_SRCS = [
+    "libusb/os/events_posix.c",
+    "libusb/os/events_posix.h",
+    "libusb/os/threads_posix.c",
+    "libusb/os/threads_posix.h",
+]
+
+_LINUX_SRCS = _POSIX_BACKEND_SRCS + [
+    # No-udev backend: netlink (the alternative, `linux_udev.c`, would drag in
+    # libudev, which is not in BCR).
+    "libusb/os/linux_netlink.c",
+    "libusb/os/linux_usbfs.c",
+    "libusb/os/linux_usbfs.h",
+]
+
+_MACOS_SRCS = _POSIX_BACKEND_SRCS + [
+    "libusb/os/darwin_usb.c",
+    "libusb/os/darwin_usb.h",
+]
+
+_WINDOWS_SRCS = [
+    "libusb/os/events_windows.c",
+    "libusb/os/events_windows.h",
+    "libusb/os/threads_windows.c",
+    "libusb/os/threads_windows.h",
+    "libusb/os/windows_common.c",
+    "libusb/os/windows_common.h",
+    "libusb/os/windows_usbdk.c",
+    "libusb/os/windows_usbdk.h",
+    "libusb/os/windows_winusb.c",
+    "libusb/os/windows_winusb.h",
+]
+
+_MSVC_COPTS = [
+    "/utf-8",
+    "/w",
+]
+
+_GCC_COPTS = [
+    "-w",
+]
+
+cc_library(
+    name = "usb",
+    srcs = _COMMON_SRCS + select({
+        "@platforms//os:macos": _MACOS_SRCS,
+        "@platforms//os:windows": _WINDOWS_SRCS,
+        "//conditions:default": _LINUX_SRCS,
+    }),
+    hdrs = ["libusb/libusb.h"],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": _MSVC_COPTS,
+        "@rules_cc//cc/compiler:msvc-cl": _MSVC_COPTS,
+        "//conditions:default": _GCC_COPTS,
+    }),
+    implementation_deps = [":_config"],
+    includes = ["libusb"],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework Foundation",
+            "-framework IOKit",
+            "-framework Security",
+        ],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    strip_include_prefix = "libusb",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libusb",
+    actual = ":usb",
+    visibility = ["//visibility:public"],
+)
