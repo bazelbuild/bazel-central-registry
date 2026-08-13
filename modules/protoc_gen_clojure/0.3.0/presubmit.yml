@@ -1,0 +1,65 @@
+# Platforms are constrained by what the released binaries can actually run on, not
+# by what BCR offers.
+#
+# The test module executes the prebuilt plugin, so what it can run on is set by how
+# those binaries are linked — and the two Linux arches now differ.
+#
+# linux_x86_64 is fully static and has no libc dependency, so it imposes no
+# constraint here at all.
+#
+# linux_aarch64 is dynamic, because native-image cannot produce an arm64 musl binary:
+# it demands x86_64-linux-musl-gcc even on arm64 (issue #17). Its floor is measured
+# rather than assumed — the release workflow prints it, and it is GLIBC_2.34, lower
+# than the ubuntu-24.04 runner's own 2.39 because GraalVM links against older symbol
+# versions than the build host provides.
+#
+# So the arm64 image here must clear 2.34, which ubuntu2404_arm64 does. debian11
+# (2.31) would not, and is the reason it is absent; ubuntu2204 stays because it is
+# still the oldest x86_64 image BCR offers and there is no reason to stop covering it.
+#
+# arm64 is included deliberately: it is the only place the linux_aarch64 and
+# darwin_arm64 release assets, and the toolchain's platform selection between them,
+# get exercised at all.
+#
+# `macos` is NOT here, at a BCR maintainer's request on the 0.2.0 entry
+# (bazelbuild/bazel-central-registry#10035): that platform still runs Intel Macs, and
+# the registry would rather not spend them. The cost is ours to know rather than
+# theirs: darwin_x86_64 is then the one released asset no presubmit executes. It is
+# still built, checksummed and attested by the release, and //test:distribution_test
+# covers the same binary shape on an Intel runner in this repo — but nothing verifies
+# the toolchain FETCHING it. If GitHub's Intel image disappears in Fall 2027 as
+# scheduled, that asset needs a cross-build or dropping, and this is where the gap
+# will be felt first.
+#
+# bazel is 9.x only. The module has never been built with Bazel 8, and claiming
+# support that fails here would block publication rather than merely disappoint.
+matrix:
+  platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos_arm64"]
+  bazel: ["9.x"]
+
+tasks:
+  verify_targets:
+    name: the rule and toolchain type load
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@protoc_gen_clojure//clojure:toolchain_type"
+
+# The real test: a module that depends on this one, registers the toolchain, and
+# generates Clojure from a .proto with no Clojure, JVM or GraalVM of its own. That
+# claim is untestable anywhere else, because the toolchain downloads a binary from a
+# published release.
+bcr_test_module:
+  module_path: "examples/bzlmod"
+  matrix:
+    platform: ["ubuntu2204", "ubuntu2404", "ubuntu2404_arm64", "macos_arm64"]
+    bazel: ["9.x"]
+  tasks:
+    run_tests:
+      name: generate Clojure through the prebuilt plugin
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - "//:hello_clj"
+      test_targets:
+        - "//:generated_test"
