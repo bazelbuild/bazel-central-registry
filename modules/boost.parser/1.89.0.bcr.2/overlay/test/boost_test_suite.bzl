@@ -3,7 +3,11 @@
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 COPTS = select({
-    "@platforms//os:windows": ["/std:c++17"],
+    "@platforms//os:windows": [
+        "/std:c++17",
+        "/source-charset:utf-8",
+        "/bigobj",
+    ],
     "//conditions:default": ["-std=c++17"],
 })
 
