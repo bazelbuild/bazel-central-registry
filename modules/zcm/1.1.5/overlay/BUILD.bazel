@@ -12,40 +12,48 @@ cc_library(
     includes = ["."],
 )
 
+# Core runtime without transport backends
 cc_library(
-    name = "zcm",
-    srcs = glob(
-        [
-            "zcm/**/*.c",
-            "zcm/**/*.cpp",
-        ],
-        exclude = [
-            "zcm/java/**",
-            "zcm/js/**",
-            "zcm/julia/**",
-            "zcm/python/**",
-            "zcm/tools/**",
-            "zcm/transport/third-party/**",
-            "zcm/transport/transport_can.cpp",
-            "zcm/util/test/**",
-        ],
-    ),
-    hdrs = glob(
-        [
-            "zcm/**/*.h",
-            "zcm/**/*.hpp",
-            "util/**/*.hpp",
-        ],
-        exclude = [
-            "zcm/java/**",
-            "zcm/js/**",
-            "zcm/julia/**",
-            "zcm/python/**",
-            "zcm/tools/**",
-            "zcm/transport/third-party/**",
-            "zcm/util/test/**",
-        ],
-    ),
+    name = "zcm-core",
+    srcs = [
+        "zcm/blocking.cpp",
+        "zcm/eventlog.c",
+        "zcm/json/jsoncpp.cpp",
+        "zcm/nonblocking.c",
+        "zcm/transport_registrar.c",
+        "zcm/url.cpp",
+        "zcm/util/debug.cpp",
+        "zcm/util/lockfile.cpp",
+        "zcm/util/topology.cpp",
+        "zcm/zcm.c",
+    ],
+    hdrs = [
+        "util/FileUtil.hpp",
+        "util/StringUtil.hpp",
+        "util/TimeUtil.hpp",
+        "util/Types.hpp",
+        "zcm/blocking.h",
+        "zcm/eventlog.h",
+        "zcm/message_tracker.hpp",
+        "zcm/nonblocking.h",
+        "zcm/transport.h",
+        "zcm/transport_register.hpp",
+        "zcm/transport_registrar.h",
+        "zcm/url.h",
+        "zcm/zcm-cpp-impl.hpp",
+        "zcm/zcm-cpp.hpp",
+        "zcm/zcm.h",
+        "zcm/zcm_coretypes.h",
+        "zcm/zcm_private.h",
+    ] + glob([
+        "zcm/json/*.h",
+        "zcm/transport/*.h",
+        "zcm/transport/udpm/*.hpp",
+        "zcm/util/*.h",
+        "zcm/util/*.hpp",
+    ], exclude = [
+        "zcm/util/test/**",
+    ]),
     defines = [
         "USING_TRANS_FILE",
         "USING_TRANS_INPROC",
@@ -62,9 +70,104 @@ cc_library(
         "-lpthread",
         "-lrt",
     ],
+    deps = [":zcm-coretypes"],
+)
+
+# ==============================================================================
+# Modular Transports
+# ==============================================================================
+
+cc_library(
+    name = "zcm-transport-file",
+    srcs = ["zcm/transport/transport_file.cpp"],
+    defines = ["USING_TRANS_FILE"],
+    includes = [
+        ".",
+        "zcm",
+    ],
+    deps = [":zcm-core"],
+)
+
+cc_library(
+    name = "zcm-transport-inproc",
+    srcs = ["zcm/transport/transport_inproc.cpp"],
+    defines = ["USING_TRANS_INPROC"],
+    includes = [
+        ".",
+        "zcm",
+    ],
+    deps = [":zcm-core"],
+)
+
+cc_library(
+    name = "zcm-transport-ipc",
+    srcs = ["zcm/transport/transport_zmq_local.cpp"],
+    defines = [
+        "USING_TRANS_IPC",
+        "USING_ZMQ",
+    ],
+    includes = [
+        ".",
+        "zcm",
+    ],
     deps = [
-        ":zcm-coretypes",
+        ":zcm-core",
         "@libzmq",
+    ],
+)
+
+cc_library(
+    name = "zcm-transport-serial",
+    srcs = [
+        "zcm/transport/generic_serial_circ_buff.c",
+        "zcm/transport/generic_serial_transport.c",
+        "zcm/transport/transport_serial.cpp",
+    ],
+    defines = ["USING_TRANS_SERIAL"],
+    includes = [
+        ".",
+        "zcm",
+    ],
+    deps = [":zcm-core"],
+)
+
+cc_library(
+    name = "zcm-transport-udpm",
+    srcs = [
+        "zcm/transport/udpm/buffers.cpp",
+        "zcm/transport/udpm/mempool.cpp",
+        "zcm/transport/udpm/udpm.cpp",
+        "zcm/transport/udpm/udpmsocket.cpp",
+    ],
+    defines = ["USING_TRANS_UDPM"],
+    includes = [
+        ".",
+        "zcm",
+    ],
+    deps = [":zcm-core"],
+)
+
+cc_library(
+    name = "zcm-transport-can",
+    srcs = ["zcm/transport/transport_can.cpp"],
+    defines = ["USING_TRANS_CAN"],
+    includes = [
+        ".",
+        "zcm",
+    ],
+    deps = [":zcm-core"],
+)
+
+# Composite default library aggregating core + default transports
+cc_library(
+    name = "zcm",
+    deps = [
+        ":zcm-core",
+        ":zcm-transport-file",
+        ":zcm-transport-inproc",
+        ":zcm-transport-ipc",
+        ":zcm-transport-serial",
+        ":zcm-transport-udpm",
     ],
 )
 
@@ -74,16 +177,21 @@ cc_library(
 
 cc_binary(
     name = "zcm-gen",
-    srcs = glob(
-        [
-            "gen/**/*.c",
-            "gen/**/*.cpp",
-            "gen/**/*.h",
-            "gen/**/*.hpp",
-            "util/**/*.hpp",
-        ],
-        exclude = ["gen/disabled/**"],
-    ),
+    srcs = [
+        "gen/Common.hpp",
+        "gen/GetOpt.cpp",
+        "gen/GetOpt.hpp",
+        "gen/Main.cpp",
+        "gen/ZCMGen.cpp",
+        "gen/ZCMGen.hpp",
+        "gen/tokenize.c",
+        "gen/tokenize.h",
+        "gen/version.h",
+    ] + glob([
+        "gen/emit/*.cpp",
+        "gen/emit/*.hpp",
+        "util/*.hpp",
+    ]),
     includes = [
         ".",
         "gen",
@@ -185,22 +293,6 @@ cc_binary(
         ".",
         "tools/cpp",
         "tools/cpp/logplayer",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-    ],
-)
-
-cc_binary(
-    name = "repeater",
-    srcs = ["tools/cpp/repeater/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/repeater",
         "zcm",
     ],
     deps = [
