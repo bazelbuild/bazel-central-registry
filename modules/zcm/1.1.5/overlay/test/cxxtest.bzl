@@ -17,7 +17,6 @@ def cxxtest_test(name, src, extra_srcs = [], copts = [], env = {}, deps = [], **
 
     test_env = {
         "ZCM_LOCK_DIR": "/tmp",
-        "ZCM_DEFAULT_URL": "ipc",
     }
     test_env.update(env)
 
