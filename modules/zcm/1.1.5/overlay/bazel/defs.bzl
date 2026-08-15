@@ -7,13 +7,14 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # ==============================================================================
 
 def _zcm_c_library_srcs_impl(ctx):
+    type_names = ctx.attr.types if ctx.attr.types else [src.basename[:-4] for src in ctx.files.srcs]
     out_hdrs = [
-        ctx.actions.declare_file(src.basename[:-4] + ".h")
-        for src in ctx.files.srcs
+        ctx.actions.declare_file(t + ".h")
+        for t in type_names
     ]
     out_srcs = [
-        ctx.actions.declare_file(src.basename[:-4] + ".c")
-        for src in ctx.files.srcs
+        ctx.actions.declare_file(t + ".c")
+        for t in type_names
     ]
 
     hpath = (
@@ -45,6 +46,7 @@ zcm_c_library_srcs = rule(
     implementation = _zcm_c_library_srcs_impl,
     attrs = {
         "srcs": attr.label_list(allow_files = [".zcm"], mandatory = True),
+        "types": attr.string_list(default = []),
         "unpackaged": attr.bool(default = False),
         "_zcm_gen": attr.label(
             default = Label("//:zcm-gen"),
@@ -54,12 +56,13 @@ zcm_c_library_srcs = rule(
     },
 )
 
-def zcm_c_library(name, srcs = [], deps = [], unpackaged = False, includes = [], visibility = None, **kwargs):
+def zcm_c_library(name, srcs = [], types = [], deps = [], unpackaged = False, includes = [], visibility = None, **kwargs):
     """Convenience macro generating a cc_library with generated ZCM C sources and headers."""
     srcs_target = "%s_gen_srcs" % name
     zcm_c_library_srcs(
         name = srcs_target,
         srcs = srcs,
+        types = types,
         unpackaged = unpackaged,
         visibility = ["//visibility:private"],
     )
@@ -79,9 +82,10 @@ def zcm_c_library(name, srcs = [], deps = [], unpackaged = False, includes = [],
 # ==============================================================================
 
 def _zcm_cc_library_srcs_impl(ctx):
+    type_names = ctx.attr.types if ctx.attr.types else [src.basename[:-4] for src in ctx.files.srcs]
     out_hdrs = [
-        ctx.actions.declare_file(src.basename[:-4] + ".hpp")
-        for src in ctx.files.srcs
+        ctx.actions.declare_file(t + ".hpp")
+        for t in type_names
     ]
 
     hpath = (
@@ -109,6 +113,7 @@ zcm_cc_library_srcs = rule(
     implementation = _zcm_cc_library_srcs_impl,
     attrs = {
         "srcs": attr.label_list(allow_files = [".zcm"], mandatory = True),
+        "types": attr.string_list(default = []),
         "unpackaged": attr.bool(default = False),
         "_zcm_gen": attr.label(
             default = Label("//:zcm-gen"),
@@ -118,12 +123,13 @@ zcm_cc_library_srcs = rule(
     },
 )
 
-def zcm_cc_library(name, srcs = [], deps = [], unpackaged = False, includes = [], visibility = None, **kwargs):
+def zcm_cc_library(name, srcs = [], types = [], deps = [], unpackaged = False, includes = [], visibility = None, **kwargs):
     """Convenience macro generating a cc_library with generated ZCM C++ headers."""
     srcs_target = "%s_gen_srcs" % name
     zcm_cc_library_srcs(
         name = srcs_target,
         srcs = srcs,
+        types = types,
         unpackaged = unpackaged,
         visibility = ["//visibility:private"],
     )
