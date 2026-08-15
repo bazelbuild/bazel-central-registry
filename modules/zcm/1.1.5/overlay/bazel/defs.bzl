@@ -17,11 +17,10 @@ def _zcm_c_library_srcs_impl(ctx):
         for t in type_names
     ]
 
-    hpath = (
-        ctx.bin_dir.path
-        if not ctx.attr.unpackaged
-        else (ctx.bin_dir.path + "/" + ctx.label.package if ctx.label.package else ctx.bin_dir.path)
-    )
+    ws = ctx.label.workspace_root
+    pkg = ctx.label.package
+    pkg_path = (ws + "/" + pkg) if ws else pkg
+    hpath = (ctx.bin_dir.path + "/" + pkg_path) if pkg_path else ctx.bin_dir.path
 
     args = ctx.actions.args()
     args.add("--c")
@@ -88,11 +87,10 @@ def _zcm_cc_library_srcs_impl(ctx):
         for t in type_names
     ]
 
-    hpath = (
-        ctx.bin_dir.path
-        if not ctx.attr.unpackaged
-        else (ctx.bin_dir.path + "/" + ctx.label.package if ctx.label.package else ctx.bin_dir.path)
-    )
+    ws = ctx.label.workspace_root
+    pkg = ctx.label.package
+    pkg_path = (ws + "/" + pkg) if ws else pkg
+    hpath = (ctx.bin_dir.path + "/" + pkg_path) if pkg_path else ctx.bin_dir.path
 
     args = ctx.actions.args()
     args.add("--cpp")
