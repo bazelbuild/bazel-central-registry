@@ -2,10 +2,7 @@ load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
-# ==============================================================================
 # Core Types & Runtime Library
-# ==============================================================================
-
 cc_library(
     name = "zcm-coretypes",
     hdrs = ["zcm/zcm_coretypes.h"],
@@ -27,33 +24,19 @@ cc_library(
         "zcm/util/topology.cpp",
         "zcm/zcm.c",
     ],
-    hdrs = [
-        "util/FileUtil.hpp",
-        "util/StringUtil.hpp",
-        "util/TimeUtil.hpp",
-        "util/Types.hpp",
-        "zcm/blocking.h",
-        "zcm/eventlog.h",
-        "zcm/message_tracker.hpp",
-        "zcm/nonblocking.h",
-        "zcm/transport.h",
-        "zcm/transport_register.hpp",
-        "zcm/transport_registrar.h",
-        "zcm/url.h",
-        "zcm/zcm-cpp-impl.hpp",
-        "zcm/zcm-cpp.hpp",
-        "zcm/zcm.h",
-        "zcm/zcm_coretypes.h",
-        "zcm/zcm_private.h",
-    ] + glob([
-        "zcm/json/*.h",
-        "zcm/transport/*.h",
-        "zcm/transport/udpm/*.hpp",
-        "zcm/util/*.h",
-        "zcm/util/*.hpp",
-    ], exclude = [
-        "zcm/util/test/**",
-    ]),
+    hdrs = glob(
+        [
+            "util/*.hpp",
+            "zcm/*.h",
+            "zcm/*.hpp",
+            "zcm/json/*.h",
+            "zcm/transport/*.h",
+            "zcm/transport/udpm/*.hpp",
+            "zcm/util/*.h",
+            "zcm/util/*.hpp",
+        ],
+        exclude = ["zcm/util/test/**"],
+    ),
     defines = [
         "USING_TRANS_FILE",
         "USING_TRANS_INPROC",
@@ -66,103 +49,76 @@ cc_library(
         ".",
         "zcm",
     ],
-    linkopts = [
-        "-lpthread",
-        "-lrt",
-    ],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": ["-lpthread"],
+    }),
     deps = [":zcm-coretypes"],
 )
 
-# ==============================================================================
 # Modular Transports
-# ==============================================================================
-
-cc_library(
-    name = "zcm-transport-file",
-    srcs = ["zcm/transport/transport_file.cpp"],
-    alwayslink = True,
-    defines = ["USING_TRANS_FILE"],
-    includes = [
-        ".",
-        "zcm",
-    ],
-    deps = [":zcm-core"],
-)
-
-cc_library(
-    name = "zcm-transport-inproc",
-    srcs = ["zcm/transport/transport_inproc.cpp"],
-    alwayslink = True,
-    defines = ["USING_TRANS_INPROC"],
-    includes = [
-        ".",
-        "zcm",
-    ],
-    deps = [":zcm-core"],
-)
-
-cc_library(
-    name = "zcm-transport-ipc",
-    srcs = ["zcm/transport/transport_zmq_local.cpp"],
-    alwayslink = True,
-    defines = [
-        "USING_TRANS_IPC",
-        "USING_ZMQ",
-    ],
-    includes = [
-        ".",
-        "zcm",
-    ],
-    deps = [
-        ":zcm-core",
-        "@libzmq",
-    ],
-)
-
-cc_library(
-    name = "zcm-transport-serial",
-    srcs = [
-        "zcm/transport/generic_serial_circ_buff.c",
-        "zcm/transport/generic_serial_transport.c",
-        "zcm/transport/transport_serial.cpp",
-    ],
-    alwayslink = True,
-    defines = ["USING_TRANS_SERIAL"],
-    includes = [
-        ".",
-        "zcm",
-    ],
-    deps = [":zcm-core"],
-)
-
-cc_library(
-    name = "zcm-transport-udpm",
-    srcs = [
-        "zcm/transport/udpm/buffers.cpp",
-        "zcm/transport/udpm/mempool.cpp",
-        "zcm/transport/udpm/udpm.cpp",
-        "zcm/transport/udpm/udpmsocket.cpp",
-    ],
-    alwayslink = True,
-    defines = ["USING_TRANS_UDPM"],
-    includes = [
-        ".",
-        "zcm",
-    ],
-    deps = [":zcm-core"],
-)
-
-cc_library(
-    name = "zcm-transport-can",
-    srcs = ["zcm/transport/transport_can.cpp"],
-    alwayslink = True,
-    defines = ["USING_TRANS_CAN"],
-    includes = [
-        ".",
-        "zcm",
-    ],
-    deps = [":zcm-core"],
-)
+[
+    cc_library(
+        name = "zcm-transport-%s" % name,
+        srcs = srcs,
+        defines = defines,
+        deps = [":zcm-core"] + deps,
+        alwayslink = True,
+    )
+    for name, srcs, defines, deps in [
+        (
+            "file",
+            ["zcm/transport/transport_file.cpp"],
+            ["USING_TRANS_FILE"],
+            [],
+        ),
+        (
+            "inproc",
+            ["zcm/transport/transport_inproc.cpp"],
+            ["USING_TRANS_INPROC"],
+            [],
+        ),
+        (
+            "ipc",
+            ["zcm/transport/transport_zmq_local.cpp"],
+            [
+                "USING_TRANS_IPC",
+                "USING_ZMQ",
+            ],
+            ["@libzmq"],
+        ),
+        (
+            "serial",
+            [
+                "zcm/transport/generic_serial_circ_buff.c",
+                "zcm/transport/generic_serial_transport.c",
+                "zcm/transport/transport_serial.cpp",
+            ],
+            ["USING_TRANS_SERIAL"],
+            [],
+        ),
+        (
+            "udpm",
+            [
+                "zcm/transport/udpm/buffers.cpp",
+                "zcm/transport/udpm/mempool.cpp",
+                "zcm/transport/udpm/udpm.cpp",
+                "zcm/transport/udpm/udpmsocket.cpp",
+            ],
+            ["USING_TRANS_UDPM"],
+            [],
+        ),
+        (
+            "can",
+            ["zcm/transport/transport_can.cpp"],
+            ["USING_TRANS_CAN"],
+            [],
+        ),
+    ]
+]
 
 # Composite default library aggregating core + default transports
 cc_library(
@@ -177,23 +133,14 @@ cc_library(
     ],
 )
 
-# ==============================================================================
 # Code Generator Binary
-# ==============================================================================
-
 cc_binary(
     name = "zcm-gen",
-    srcs = [
-        "gen/Common.hpp",
-        "gen/GetOpt.cpp",
-        "gen/GetOpt.hpp",
-        "gen/Main.cpp",
-        "gen/ZCMGen.cpp",
-        "gen/ZCMGen.hpp",
-        "gen/tokenize.c",
-        "gen/tokenize.h",
-        "gen/version.h",
-    ] + glob([
+    srcs = glob([
+        "gen/*.c",
+        "gen/*.cpp",
+        "gen/*.h",
+        "gen/*.hpp",
         "gen/emit/*.cpp",
         "gen/emit/*.hpp",
         "util/*.hpp",
@@ -205,21 +152,24 @@ cc_binary(
     deps = [":zcm-coretypes"],
 )
 
-# ==============================================================================
-# Tools Shared Utility Library
-# ==============================================================================
-
+# Tools Shared Utility Library & Binaries
 cc_library(
     name = "zcm-tools-util",
-    srcs = glob([
-        "tools/cpp/util/**/*.cpp",
-        "zcm/tools/**/*.cpp",
-    ]),
-    hdrs = glob([
-        "tools/cpp/util/**/*.hpp",
-        "zcm/tools/**/*.hpp",
-        "util/**/*.hpp",
-    ]),
+    srcs = glob(
+        [
+            "tools/cpp/util/**/*.cpp",
+            "zcm/tools/**/*.cpp",
+        ],
+        allow_empty = True,
+    ),
+    hdrs = glob(
+        [
+            "tools/cpp/util/**/*.hpp",
+            "zcm/tools/**/*.hpp",
+            "util/**/*.hpp",
+        ],
+        allow_empty = True,
+    ),
     includes = [
         ".",
         "tools/cpp",
@@ -227,168 +177,33 @@ cc_library(
     ],
     deps = [
         ":zcm",
-        ":zcm-coretypes",
         "@elfutils//:elf",
     ],
 )
 
-# ==============================================================================
-# C++ Tools Suite (tools/cpp/*)
-# ==============================================================================
-
-cc_binary(
-    name = "zcm-bridge",
-    srcs = ["tools/cpp/bridge/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/bridge",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-        "@elfutils//:elf",
-    ],
-)
-
-cc_binary(
-    name = "zcm-indexer",
-    srcs = glob([
-        "tools/cpp/indexer/**/*.cpp",
-        "tools/cpp/indexer/**/*.hpp",
-    ]),
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/indexer",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-        "@elfutils//:elf",
-    ],
-)
-
-cc_binary(
-    name = "zcm-logger",
-    srcs = [
-        "tools/cpp/logger/main.cpp",
-        "tools/cpp/logger/platform.hpp",
-    ],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/logger",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-    ],
-)
-
-cc_binary(
-    name = "zcm-logplayer",
-    srcs = ["tools/cpp/logplayer/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/logplayer",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-    ],
-)
-
-cc_binary(
-    name = "zcm-repeater",
-    srcs = ["tools/cpp/repeater/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/repeater",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-    ],
-)
-
-cc_binary(
-    name = "zcm-spy-lite",
-    srcs = glob([
-        "tools/cpp/spy-lite/**/*.cpp",
-        "tools/cpp/spy-lite/**/*.hpp",
-    ]),
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/spy-lite",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-        "@ncurses//:ncurses",
-    ],
-)
-
-cc_binary(
-    name = "zcm-spy-peek",
-    srcs = ["tools/cpp/spy-peek/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/spy-peek",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-    ],
-)
-
-cc_binary(
-    name = "zcm-topology-visualizer",
-    srcs = ["tools/cpp/topology-visualizer/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/topology-visualizer",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-    ],
-)
-
-cc_binary(
-    name = "zcm-transcoder",
-    srcs = ["tools/cpp/transcoder/main.cpp"],
-    includes = [
-        ".",
-        "tools/cpp",
-        "tools/cpp/transcoder",
-        "zcm",
-    ],
-    deps = [
-        ":zcm",
-        ":zcm-coretypes",
-        ":zcm-tools-util",
-        "@elfutils//:elf",
-    ],
-)
+[
+    cc_binary(
+        name = "zcm-%s" % tool,
+        srcs = glob(
+            [
+                "tools/cpp/%s/**" % tool,
+            ],
+            exclude = [
+                "**/wscript*",
+                "**/*.py",
+            ],
+        ),
+        deps = [":zcm-tools-util"] + (["@ncurses//:ncurses"] if tool == "spy-lite" else []),
+    )
+    for tool in [
+        "bridge",
+        "indexer",
+        "logger",
+        "logplayer",
+        "repeater",
+        "spy-lite",
+        "spy-peek",
+        "topology-visualizer",
+        "transcoder",
+    ]
+]

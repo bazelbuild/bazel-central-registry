@@ -2,142 +2,68 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-# ==============================================================================
-# C Message Generation
-# ==============================================================================
-
-def _zcm_c_library_srcs_impl(ctx):
-    type_names = ctx.attr.types if ctx.attr.types else [src.basename[:-4] for src in ctx.files.srcs]
-    out_hdrs = [
-        ctx.actions.declare_file(t + ".h")
-        for t in type_names
-    ]
-    out_srcs = [
-        ctx.actions.declare_file(t + ".c")
-        for t in type_names
-    ]
-
-    ws = ctx.label.workspace_root
-    pkg = ctx.label.package
-    pkg_path = (ws + "/" + pkg) if ws else pkg
-    hpath = (ctx.bin_dir.path + "/" + pkg_path) if pkg_path else ctx.bin_dir.path
+def _zcm_srcs_impl(ctx):
+    types = ctx.attr.types or [s.basename[:-4] for s in ctx.files.srcs]
+    pkg_parts = [ctx.bin_dir.path, ctx.label.workspace_root, ctx.label.package] if ctx.attr.unpackaged else [ctx.bin_dir.path, ctx.label.workspace_root]
+    hpath = "/".join([p for p in pkg_parts if p])
 
     args = ctx.actions.args()
-    args.add("--c")
-    args.add("--c-hpath", hpath)
-    args.add("--c-cpath", hpath)
+    if ctx.attr.lang == "c":
+        outs = [ctx.actions.declare_file(t + ext) for t in types for ext in [".h", ".c"]]
+        args.add("--c")
+        args.add("--c-hpath", hpath)
+        args.add("--c-cpath", hpath)
+        mnemonic = "ZcmGenC"
+    else:
+        outs = [ctx.actions.declare_file(t + ".hpp") for t in types]
+        args.add("--cpp")
+        args.add("--cpp-hpath", hpath)
+        mnemonic = "ZcmGenCpp"
     args.add_all(ctx.files.srcs)
 
     ctx.actions.run(
         inputs = ctx.files.srcs,
-        outputs = out_hdrs + out_srcs,
+        outputs = outs,
         executable = ctx.executable._zcm_gen,
         arguments = [args],
-        mnemonic = "ZcmGenC",
-        progress_message = "Generating ZCM C sources for %s" % ctx.label,
+        mnemonic = mnemonic,
+        progress_message = "Generating ZCM %s sources for %s" % (ctx.attr.lang.upper(), ctx.label),
     )
-    return [
-        DefaultInfo(files = depset(out_srcs + out_hdrs)),
-        OutputGroupInfo(hdrs = out_hdrs, srcs = out_srcs),
-    ]
+    return [DefaultInfo(files = depset(outs))]
 
-zcm_c_library_srcs = rule(
-    implementation = _zcm_c_library_srcs_impl,
+_zcm_srcs = rule(
+    implementation = _zcm_srcs_impl,
     attrs = {
         "srcs": attr.label_list(allow_files = [".zcm"], mandatory = True),
-        "types": attr.string_list(default = []),
+        "types": attr.string_list(),
+        "lang": attr.string(values = ["c", "cpp"], mandatory = True),
         "unpackaged": attr.bool(default = False),
-        "_zcm_gen": attr.label(
-            default = Label("//:zcm-gen"),
-            executable = True,
-            cfg = "exec",
-        ),
+        "_zcm_gen": attr.label(default = Label("//:zcm-gen"), executable = True, cfg = "exec"),
     },
 )
 
-def zcm_c_library(name, srcs = [], types = [], deps = [], unpackaged = False, includes = [], visibility = None, **kwargs):
+def _zcm_library(name, lang, default_dep, srcs = [], types = [], unpackaged = False, deps = [], **kwargs):
+    srcs_target = "%s_gen_srcs" % name
+    _zcm_srcs(
+        name = srcs_target,
+        srcs = srcs,
+        types = types,
+        lang = lang,
+        unpackaged = unpackaged,
+        visibility = ["//visibility:private"],
+    )
+    cc_library(
+        name = name,
+        srcs = [":" + srcs_target] if lang == "c" else [],
+        hdrs = [":" + srcs_target],
+        deps = [default_dep] + deps,
+        **kwargs
+    )
+
+def zcm_c_library(name, **kwargs):
     """Convenience macro generating a cc_library with generated ZCM C sources and headers."""
-    srcs_target = "%s_gen_srcs" % name
-    zcm_c_library_srcs(
-        name = srcs_target,
-        srcs = srcs,
-        types = types,
-        unpackaged = unpackaged,
-        visibility = ["//visibility:private"],
-    )
+    _zcm_library(name = name, lang = "c", default_dep = Label("//:zcm"), **kwargs)
 
-    cc_library(
-        name = name,
-        srcs = [":" + srcs_target],
-        hdrs = [":" + srcs_target],
-        includes = includes,
-        deps = [Label("//:zcm")] + deps,
-        visibility = visibility,
-        **kwargs
-    )
-
-# ==============================================================================
-# C++ Message Generation
-# ==============================================================================
-
-def _zcm_cc_library_srcs_impl(ctx):
-    type_names = ctx.attr.types if ctx.attr.types else [src.basename[:-4] for src in ctx.files.srcs]
-    out_hdrs = [
-        ctx.actions.declare_file(t + ".hpp")
-        for t in type_names
-    ]
-
-    ws = ctx.label.workspace_root
-    pkg = ctx.label.package
-    pkg_path = (ws + "/" + pkg) if ws else pkg
-    hpath = (ctx.bin_dir.path + "/" + pkg_path) if pkg_path else ctx.bin_dir.path
-
-    args = ctx.actions.args()
-    args.add("--cpp")
-    args.add("--cpp-hpath", hpath)
-    args.add_all(ctx.files.srcs)
-
-    ctx.actions.run(
-        inputs = ctx.files.srcs,
-        outputs = out_hdrs,
-        executable = ctx.executable._zcm_gen,
-        arguments = [args],
-        mnemonic = "ZcmGenCpp",
-        progress_message = "Generating ZCM C++ headers for %s" % ctx.label,
-    )
-    return [DefaultInfo(files = depset(out_hdrs))]
-
-zcm_cc_library_srcs = rule(
-    implementation = _zcm_cc_library_srcs_impl,
-    attrs = {
-        "srcs": attr.label_list(allow_files = [".zcm"], mandatory = True),
-        "types": attr.string_list(default = []),
-        "unpackaged": attr.bool(default = False),
-        "_zcm_gen": attr.label(
-            default = Label("//:zcm-gen"),
-            executable = True,
-            cfg = "exec",
-        ),
-    },
-)
-
-def zcm_cc_library(name, srcs = [], types = [], deps = [], unpackaged = False, includes = [], visibility = None, **kwargs):
+def zcm_cc_library(name, **kwargs):
     """Convenience macro generating a cc_library with generated ZCM C++ headers."""
-    srcs_target = "%s_gen_srcs" % name
-    zcm_cc_library_srcs(
-        name = srcs_target,
-        srcs = srcs,
-        types = types,
-        unpackaged = unpackaged,
-        visibility = ["//visibility:private"],
-    )
-
-    cc_library(
-        name = name,
-        srcs = [":" + srcs_target],
-        hdrs = [":" + srcs_target],
-        includes = includes,
-        deps = [Label("//:zcm-coretypes")] + deps,
-        visibility = visibility,
-        **kwargs
-    )
+    _zcm_library(name = name, lang = "cpp", default_dep = Label("//:zcm-coretypes"), **kwargs)

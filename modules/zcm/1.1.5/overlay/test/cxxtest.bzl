@@ -10,15 +10,10 @@ def cxxtest_test(name, src, extra_srcs = [], copts = [], env = {}, deps = [], **
         outs = ["%s.cpp" % runner_name],
         cmd = (
             "$(execpath @cxxtest//:cxxtestgen) --error-printer -o $@ $< && " +
-            "sed -i 's|#include \".*/\\(.*\\.hpp\\)\"|#include \"\\1\"|g' $@"
+            "sed 's|#include \".*/\\(.*\\.hpp\\)\"|#include \"\\1\"|g' $@ > $@.tmp && mv $@.tmp $@"
         ),
         tools = ["@cxxtest//:cxxtestgen"],
     )
-
-    test_env = {
-        "ZCM_LOCK_DIR": "/tmp",
-    }
-    test_env.update(env)
 
     cc_test(
         name = name,
@@ -30,11 +25,10 @@ def cxxtest_test(name, src, extra_srcs = [], copts = [], env = {}, deps = [], **
             "-I.",
             "-Izcm",
         ] + copts,
-        env = test_env,
+        env = dict(ZCM_LOCK_DIR = "/tmp", **env),
         deps = [
             "@cxxtest//:cxxtest",
             "@zcm//:zcm",
-            "@zcm//:zcm-coretypes",
         ] + deps,
         **kwargs
     )
