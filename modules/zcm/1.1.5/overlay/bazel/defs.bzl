@@ -62,7 +62,7 @@ def _zcm_library(name, lang, default_dep, srcs = [], types = [], unpackaged = Fa
 
 def zcm_c_library(name, **kwargs):
     """Convenience macro generating a cc_library with generated ZCM C sources and headers."""
-    _zcm_library(name = name, lang = "c", default_dep = Label("//:zcm"), **kwargs)
+    _zcm_library(name = name, lang = "c", default_dep = Label("//:zcm-core"), **kwargs)
 
 def zcm_cc_library(name, **kwargs):
     """Convenience macro generating a cc_library with generated ZCM C++ headers."""
