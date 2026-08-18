@@ -1,0 +1,135 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+_BACKENDS = [
+    "addr2line",
+    "auto",
+    "basic",
+    "libbacktrace",
+    "noop",
+    "windbg",
+    "windbg_cached",
+]
+
+# Select with --@boost.stacktrace//:backend=<backend>. The default leaves
+# Boost.Stacktrace's platform-specific backend selection unchanged.
+string_flag(
+    name = "backend",
+    build_setting_default = "auto",
+    values = _BACKENDS,
+    visibility = ["//visibility:public"],
+)
+
+[
+    config_setting(
+        name = backend,
+        flag_values = {":backend": backend},
+    )
+    for backend in _BACKENDS
+]
+
+config_setting(
+    name = "linux",
+    constraint_values = ["@platforms//os:linux"],
+)
+
+config_setting(
+    name = "windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+selects.config_setting_group(
+    name = "uses_dl",
+    match_any = [
+        ":addr2line",
+        ":auto",
+        ":basic",
+        ":libbacktrace",
+    ],
+)
+
+selects.config_setting_group(
+    name = "uses_dl_on_linux",
+    match_all = [
+        ":linux",
+        ":uses_dl",
+    ],
+)
+
+selects.config_setting_group(
+    name = "auto_on_windows",
+    match_all = [
+        ":auto",
+        ":windows",
+    ],
+)
+
+selects.config_setting_group(
+    name = "uses_windbg",
+    match_any = [
+        ":auto_on_windows",
+        ":windbg",
+        ":windbg_cached",
+    ],
+)
+
+cc_library(
+    name = "boost.stacktrace",
+    hdrs = glob(
+        [
+            "include/**/*.hpp",
+            "include/**/*.h",
+            "include/**/*.ipp",
+        ],
+        exclude = [
+            "include/boost/stacktrace.hpp",
+            "include/boost/stacktrace/detail/**",
+            "include/boost/stacktrace/frame.hpp",
+            "include/boost/stacktrace/safe_dump_to.hpp",
+            "include/boost/stacktrace/stacktrace.hpp",
+            "include/boost/stacktrace/this_thread.hpp",
+        ],
+    ),
+    defines = select({
+        ":addr2line": ["BOOST_STACKTRACE_USE_ADDR2LINE"],
+        ":libbacktrace": ["BOOST_STACKTRACE_USE_BACKTRACE"],
+        ":noop": ["BOOST_STACKTRACE_USE_NOOP"],
+        ":windbg": ["BOOST_STACKTRACE_USE_WINDBG"],
+        ":windbg_cached": ["BOOST_STACKTRACE_USE_WINDBG_CACHED"],
+        "//conditions:default": [],
+    }),
+    features = ["parse_headers"],
+    includes = ["include"],
+    linkopts = select({
+        ":uses_dl_on_linux": ["-ldl"],
+        "//conditions:default": [],
+    }) + select({
+        ":uses_windbg": [
+            "-DEFAULTLIB:dbgeng",
+            "-DEFAULTLIB:ole32",
+        ],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "include/boost/stacktrace.hpp",
+        "include/boost/stacktrace/frame.hpp",
+        "include/boost/stacktrace/safe_dump_to.hpp",
+        "include/boost/stacktrace/stacktrace.hpp",
+        "include/boost/stacktrace/this_thread.hpp",
+    ] + glob([
+        "include/boost/stacktrace/detail/**",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.assert",
+        "@boost.config",
+        "@boost.container_hash",
+        "@boost.core",
+        "@boost.predef",
+        "@boost.winapi",
+    ] + select({
+        ":libbacktrace": ["@libbacktrace//:libbacktrace"],
+        "//conditions:default": [],
+    }),
+)
