@@ -42,6 +42,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ucred.h>
+#include <sys/un.h>
 
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__) || defined(__OpenBSD__) || defined(__NetBSD__)
 
@@ -80,6 +81,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ucred.h>
+#include <sys/un.h>
 
 #elif defined(__linux__) || defined(__ANDROID__)
 
