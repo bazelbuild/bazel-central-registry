@@ -1,0 +1,262 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# -- Feature flags --
+
+bool_flag(
+    name = "enable_logging",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "logging_enabled",
+    flag_values = {":enable_logging": "True"},
+)
+
+# -- Package info (AC_INIT equivalent) --
+
+package_info(
+    name = "package",
+    aliases = {
+        "PACKAGE": "PACKAGE_NAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "mpc-discuss@inria.fr",
+    package_url = "https://www.multiprecision.org/mpc/",
+    strip_bcr_version = True,
+)
+
+# -- Autoconf checks (mirrors configure.ac) --
+
+autoconf(
+    name = "configure",
+    checks =
+        macros.AC_CHECK_HEADERS([
+            "dlfcn.h",
+            "inttypes.h",
+            "stdint.h",
+            "stdio.h",
+            "stdlib.h",
+            "string.h",
+            "strings.h",
+            "sys/stat.h",
+            "sys/time.h",
+            "sys/types.h",
+            "unistd.h",
+        ]) + macros.AC_CHECK_FUNCS([
+            "dup",
+            "dup2",
+            "getrusage",
+            "gettimeofday",
+            "localeconv",
+            "setlocale",
+        ]) + macros.AC_CHECK_TYPES([
+            "intptr_t",
+        ]) + [
+            # MPC_HAVE_COMPLEX_H: try-link for complex.h usability (creal/cimag/I)
+            # Used as @MPC_HAVE_COMPLEX_H@ substitution in mpc.h.in and mpc-impl.h.in
+            checks.AC_TRY_LINK(
+                name = "ac_cv_mpc_have_complex_h",
+                code = """\
+#include <complex.h>
+int main(void) {
+#ifdef _MSC_VER
+    _Dcomplex z = 1.0 + 2.0 * I;
+#else
+    complex double z = 1.0 + 2.0 * I;
+#endif
+    return (int)(creal(z) + cimag(z));
+}
+""",
+                define = "MPC_HAVE_COMPLEX_H_INTERNAL",
+                subst = "MPC_HAVE_COMPLEX_H",
+            ),
+            # MPC_NO_STREAM_REDIRECTION: defined when dup or dup2 is not available
+            # (affects test framework's stdout redirection capability)
+            checks.AC_DEFINE(
+                "MPC_NO_STREAM_REDIRECTION",
+                condition = "!HAVE_DUP || !HAVE_DUP2",
+                if_false = None,
+                if_true = 1,
+            ),
+            checks.AC_DEFINE("STDC_HEADERS"),
+        ] + select({
+            ":logging_enabled": [
+                checks.AC_DEFINE("HAVE_LIBDL"),
+            ],
+            "//conditions:default": [],
+        }),
+    deps = [":package"],
+)
+
+# -- Header generation --
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":configure"],
+)
+
+autoconf_hdr(
+    name = "mpc_h",
+    out = "src/mpc.h",
+    mode = "subst",
+    template = "src/mpc.h.in",
+    deps = [":configure"],
+)
+
+autoconf_hdr(
+    name = "mpc_impl_h",
+    out = "src/mpc-impl.h",
+    mode = "subst",
+    template = "src/mpc-impl.h.in",
+    deps = [":configure"],
+)
+
+# -- Internal headers --
+
+cc_library(
+    name = "_mpc_hdrs",
+    hdrs = [
+        ":config_h",
+        ":mpc_h",
+        ":mpc_impl_h",
+    ],
+    includes = [
+        ".",
+        "src",
+    ],
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        "@gmp",
+        "@mpfr",
+    ],
+)
+
+_MPC_COPTS = ["-DHAVE_CONFIG_H"] + select({
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# -- Main library --
+
+cc_library(
+    name = "mpc",
+    srcs = [
+        "src/abs.c",
+        "src/acos.c",
+        "src/acosh.c",
+        "src/add.c",
+        "src/add_fr.c",
+        "src/add_si.c",
+        "src/add_ui.c",
+        "src/agm.c",
+        "src/arg.c",
+        "src/asin.c",
+        "src/asinh.c",
+        "src/atan.c",
+        "src/atanh.c",
+        "src/balls.c",
+        "src/clear.c",
+        "src/cmp.c",
+        "src/cmp_abs.c",
+        "src/cmp_si_si.c",
+        "src/conj.c",
+        "src/cos.c",
+        "src/cosh.c",
+        "src/div.c",
+        "src/div_2si.c",
+        "src/div_2ui.c",
+        "src/div_fr.c",
+        "src/div_ui.c",
+        "src/dot.c",
+        "src/eta.c",
+        "src/exp.c",
+        "src/exp10.c",
+        "src/exp2.c",
+        "src/fma.c",
+        "src/fr_div.c",
+        "src/fr_sub.c",
+        "src/get_prec.c",
+        "src/get_prec2.c",
+        "src/get_version.c",
+        "src/get_x.c",
+        "src/imag.c",
+        "src/init2.c",
+        "src/init3.c",
+        "src/inp_str.c",
+        "src/log.c",
+        "src/log10.c",
+        "src/log2.c",
+        "src/mem.c",
+        "src/mul.c",
+        "src/mul_2si.c",
+        "src/mul_2ui.c",
+        "src/mul_fr.c",
+        "src/mul_i.c",
+        "src/mul_si.c",
+        "src/mul_ui.c",
+        "src/neg.c",
+        "src/norm.c",
+        "src/out_str.c",
+        "src/pow.c",
+        "src/pow_d.c",
+        "src/pow_fr.c",
+        "src/pow_ld.c",
+        "src/pow_si.c",
+        "src/pow_ui.c",
+        "src/pow_z.c",
+        "src/proj.c",
+        "src/radius.c",
+        "src/real.c",
+        "src/rootofunity.c",
+        "src/set.c",
+        "src/set_prec.c",
+        "src/set_str.c",
+        "src/set_x.c",
+        "src/set_x_x.c",
+        "src/sin.c",
+        "src/sin_cos.c",
+        "src/sinh.c",
+        "src/sqr.c",
+        "src/sqrt.c",
+        "src/strtoc.c",
+        "src/sub.c",
+        "src/sub_fr.c",
+        "src/sub_ui.c",
+        "src/sum.c",
+        "src/swap.c",
+        "src/tan.c",
+        "src/tanh.c",
+        "src/uceil_log2.c",
+        "src/ui_div.c",
+        "src/ui_ui_sub.c",
+        "src/urandom.c",
+    ] + select({
+        ":logging_enabled": ["src/logging.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = [":mpc_h"],
+    copts = _MPC_COPTS,
+    implementation_deps = [":_mpc_hdrs"],
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }) + select({
+        ":logging_enabled": ["-ldl"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@gmp",
+        "@mpfr",
+    ],
+)

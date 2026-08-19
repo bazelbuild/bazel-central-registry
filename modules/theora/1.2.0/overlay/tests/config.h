@@ -1,0 +1,1 @@
+/* Dummy config.h for Bazel build */

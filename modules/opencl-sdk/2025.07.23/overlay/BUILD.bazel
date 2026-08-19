@@ -1,0 +1,474 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# =============================================================================
+# ICD Loader
+# =============================================================================
+
+bool_flag(
+    name = "ENABLE_OPENCL_LAYERS",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "layers_enabled",
+    flag_values = {":ENABLE_OPENCL_LAYERS": "True"},
+)
+
+bool_flag(
+    name = "ENABLE_OPENCL_LOADER_MANAGED_DISPATCH",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "managed_dispatch_enabled",
+    flag_values = {":ENABLE_OPENCL_LOADER_MANAGED_DISPATCH": "True"},
+)
+
+# =============================================================================
+# Extension Loader
+# =============================================================================
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_SINGLE_PLATFORM_ONLY",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "single_platform_only_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_SINGLE_PLATFORM_ONLY": "True"},
+)
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_INCLUDE_GL",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ext_include_gl_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_INCLUDE_GL": "True"},
+)
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_INCLUDE_EGL",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ext_include_egl_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_INCLUDE_EGL": "True"},
+)
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_INCLUDE_DX9",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ext_include_dx9_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_INCLUDE_DX9": "True"},
+)
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_INCLUDE_D3D10",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ext_include_d3d10_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_INCLUDE_D3D10": "True"},
+)
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_INCLUDE_D3D11",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ext_include_d3d11_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_INCLUDE_D3D11": "True"},
+)
+
+bool_flag(
+    name = "OPENCL_EXTENSION_LOADER_INCLUDE_VA_API",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ext_include_va_api_enabled",
+    flag_values = {":OPENCL_EXTENSION_LOADER_INCLUDE_VA_API": "True"},
+)
+
+# =============================================================================
+# Generated headers
+# =============================================================================
+
+write_file(
+    name = "gen_icd_cmake_config_h",
+    out = "icd_cmake_config.h",
+    content = [
+        "#ifndef ICD_CMAKE_CONFIG_H",
+        "#define ICD_CMAKE_CONFIG_H",
+        "#endif",
+    ],
+)
+
+cc_library(
+    name = "icd_cmake_config",
+    hdrs = [":gen_icd_cmake_config_h"],
+    include_prefix = "",
+)
+
+write_file(
+    name = "gen_opencl_utils_export_h",
+    out = "OpenCLUtils_Export.h",
+    content = [
+        "#ifndef OPENCL_UTILS_EXPORT_H",
+        "#define OPENCL_UTILS_EXPORT_H",
+        "#define UTILS_EXPORT",
+        "#define UTILS_NO_EXPORT",
+        "#endif",
+    ],
+)
+
+write_file(
+    name = "gen_opencl_utils_cpp_export_h",
+    out = "OpenCLUtilsCpp_Export.h",
+    content = [
+        "#ifndef OPENCL_UTILS_CPP_EXPORT_H",
+        "#define OPENCL_UTILS_CPP_EXPORT_H",
+        "#define UTILSCPP_EXPORT",
+        "#define UTILSCPP_NO_EXPORT",
+        "#endif",
+    ],
+)
+
+# On macOS, CLHPP includes <OpenCL/opencl.h> (Apple framework convention)
+# instead of <CL/opencl.h>. Provide a forwarding header so the Khronos
+# headers are found instead of Apple's system OpenCL 1.2 headers.
+write_file(
+    name = "gen_opencl_framework_header",
+    out = "OpenCL/opencl.h",
+    content = ["#include <CL/opencl.h>"],
+)
+
+# =============================================================================
+# OpenCL Headers (header-only)
+# =============================================================================
+
+cc_library(
+    name = "opencl_headers",
+    hdrs = glob(["external/OpenCL-Headers/CL/**/*.h"]) + [
+        ":gen_opencl_framework_header",
+    ],
+    includes = [
+        ".",
+        "external/OpenCL-Headers",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# OpenCL C++ Headers (header-only)
+# =============================================================================
+
+cc_library(
+    name = "opencl_headers_cpp",
+    hdrs = glob(["external/OpenCL-CLHPP/include/CL/**/*.hpp"]),
+    includes = ["external/OpenCL-CLHPP/include"],
+    visibility = ["//visibility:public"],
+    deps = [":opencl_headers"],
+)
+
+# =============================================================================
+# OpenCL ICD Loader
+# =============================================================================
+
+alias(
+    name = "icd_loader",
+    actual = ":opencl_icd_loader",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "opencl_icd_loader",
+    srcs = [
+        "external/OpenCL-ICD-Loader/loader/icd.c",
+        "external/OpenCL-ICD-Loader/loader/icd_dispatch.c",
+        "external/OpenCL-ICD-Loader/loader/icd_dispatch_generated.c",
+    ] + select({
+        "@platforms//os:windows": [
+            "external/OpenCL-ICD-Loader/loader/windows/icd_windows.c",
+            "external/OpenCL-ICD-Loader/loader/windows/icd_windows_apppackage.c",
+            "external/OpenCL-ICD-Loader/loader/windows/icd_windows_dxgk.c",
+            "external/OpenCL-ICD-Loader/loader/windows/icd_windows_envvars.c",
+            "external/OpenCL-ICD-Loader/loader/windows/icd_windows_hkr.c",
+        ],
+        "//conditions:default": [
+            "external/OpenCL-ICD-Loader/loader/linux/icd_linux.c",
+            "external/OpenCL-ICD-Loader/loader/linux/icd_linux_envvars.c",
+        ],
+    }),
+    hdrs = glob(
+        [
+            "external/OpenCL-ICD-Loader/loader/*.h",
+            "external/OpenCL-ICD-Loader/loader/windows/*.h",
+            "external/OpenCL-ICD-Loader/include/**/*.h",
+        ],
+        allow_empty = True,
+    ),
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-std=c99"],
+    }),
+    includes = [
+        "external/OpenCL-ICD-Loader/include",
+        "external/OpenCL-ICD-Loader/loader",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:advapi32.lib",
+            "-DEFAULTLIB:cfgmgr32.lib",
+            "-DEFAULTLIB:ole32.lib",
+            "-DEFAULTLIB:runtimeobject.lib",
+        ],
+        "//conditions:default": [
+            "-lpthread",
+            "-ldl",
+        ],
+    }),
+    local_defines = [
+        "CL_TARGET_OPENCL_VERSION=300",
+        "CL_NO_NON_ICD_DISPATCH_EXTENSION_PROTOTYPES",
+        "OPENCL_ICD_LOADER_VERSION_MAJOR=3",
+        "OPENCL_ICD_LOADER_VERSION_MINOR=0",
+        "OPENCL_ICD_LOADER_VERSION_REV=7",
+    ] + select({
+        ":layers_enabled": ["CL_ENABLE_LAYERS"],
+        "//conditions:default": [],
+    }) + select({
+        ":managed_dispatch_enabled": ["CL_ENABLE_LOADER_MANAGED_DISPATCH"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:linux": ["HAVE_SECURE_GETENV"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":icd_cmake_config",
+        ":opencl_headers",
+    ],
+)
+
+# =============================================================================
+# whereami (private dependency for Utils)
+# =============================================================================
+
+cc_library(
+    name = "whereami",
+    srcs = ["build/_deps/whereami-external-src/src/whereami.c"],
+    hdrs = ["build/_deps/whereami-external-src/src/whereami.h"],
+    includes = ["build/_deps/whereami-external-src/src"],
+)
+
+# =============================================================================
+# OpenCL Utils (C)
+# =============================================================================
+
+alias(
+    name = "utils",
+    actual = ":opencl_utils",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "opencl_utils",
+    srcs = ["lib/src/Utils/Utils.c"],
+    hdrs = glob(
+        ["lib/include/CL/Utils/**/*.h"],
+        exclude = [
+            "lib/include/CL/Utils/OpenCLUtils_Export.h",
+            "lib/include/CL/Utils/OpenCLUtilsCpp_Export.h",
+        ],
+    ) + [
+        ":gen_opencl_utils_export_h",
+    ],
+    defines = ["CL_HPP_ENABLE_EXCEPTIONS"],
+    includes = ["lib/include"],
+    local_defines = ["CL_TARGET_OPENCL_VERSION=300"],
+    textual_hdrs = glob(
+        ["lib/src/Utils/*.c"],
+        exclude = ["lib/src/Utils/Utils.c"],
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":opencl_headers",
+        ":opencl_icd_loader",
+        ":whereami",
+    ],
+)
+
+# =============================================================================
+# OpenCL Utils C++
+# =============================================================================
+
+alias(
+    name = "utils_cpp",
+    actual = ":opencl_utils_cpp",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "opencl_utils_cpp",
+    srcs = ["lib/src/Utils/Utils.cpp"],
+    hdrs = glob(["lib/include/CL/Utils/**/*.hpp"]) + [
+        ":gen_opencl_utils_cpp_export_h",
+    ],
+    defines = ["CL_HPP_ENABLE_EXCEPTIONS"],
+    includes = ["lib/include"],
+    local_defines = ["CL_HPP_TARGET_OPENCL_VERSION=300"],
+    textual_hdrs = glob(
+        ["lib/src/Utils/*.cpp"],
+        exclude = ["lib/src/Utils/Utils.cpp"],
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":opencl_headers_cpp",
+        ":opencl_icd_loader",
+        ":opencl_utils",
+    ],
+)
+
+# =============================================================================
+# OpenCL Extension Loader
+# =============================================================================
+
+alias(
+    name = "extension_loader",
+    actual = ":opencl_extension_loader",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "opencl_extension_loader",
+    srcs = ["lib/src/Extensions/src/openclext.cpp"],
+    copts = select({
+        "@platforms//os:windows": [
+            "/EHs-",
+            "/EHc-",
+        ],
+        "//conditions:default": ["-fno-exceptions"],
+    }),
+    local_defines = [
+        "CL_TARGET_OPENCL_VERSION=300",
+        "CL_ENABLE_BETA_EXTENSIONS",
+    ] + select({
+        ":single_platform_only_enabled": ["CLEXT_SINGLE_PLATFORM_ONLY"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_gl_enabled": ["CLEXT_INCLUDE_GL"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_egl_enabled": ["CLEXT_INCLUDE_EGL"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_dx9_enabled": ["CLEXT_INCLUDE_DX9"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_d3d10_enabled": ["CLEXT_INCLUDE_D3D10"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_d3d11_enabled": ["CLEXT_INCLUDE_D3D11"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_va_api_enabled": ["CLEXT_INCLUDE_VA_API"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":opencl_headers",
+        ":opencl_icd_loader",
+    ],
+)
+
+# =============================================================================
+# Tests — OpenCL Header smoke tests
+# =============================================================================
+
+[
+    cc_test(
+        name = test_name,
+        srcs = [test_src],
+        defines = ["CL_TARGET_OPENCL_VERSION=300"],
+        deps = [":opencl_headers"],
+    )
+    for test_name, test_src in [
+        ("test_cl_h", "external/OpenCL-Headers/tests/test_cl.h.c"),
+        ("test_cl_ext_h", "external/OpenCL-Headers/tests/test_cl_ext.h.c"),
+        ("test_cl_gl_h", "external/OpenCL-Headers/tests/test_cl_gl.h.c"),
+        ("test_cl_half_h", "external/OpenCL-Headers/tests/test_cl_half.h.c"),
+        ("test_cl_platform_h", "external/OpenCL-Headers/tests/test_cl_platform.h.c"),
+        ("test_cl_version_h", "external/OpenCL-Headers/tests/test_cl_version.h.c"),
+        ("test_opencl_h", "external/OpenCL-Headers/tests/test_opencl.h.c"),
+        ("test_headers", "external/OpenCL-Headers/tests/test_headers.c"),
+        ("test_ext_headers", "external/OpenCL-Headers/tests/test_ext_headers.c"),
+    ]
+]
+
+# =============================================================================
+# Tests — Extension Loader link test
+# =============================================================================
+
+cc_library(
+    name = "extension_loader_test_hdrs",
+    testonly = True,
+    hdrs = [
+        "lib/src/Extensions/tests/dx_sharing_prototypes.h",
+        "lib/src/Extensions/tests/loader_info_prototypes.h",
+    ],
+    textual_hdrs = ["lib/src/Extensions/tests/call_all.c"],
+    deps = [":opencl_headers"],
+)
+
+cc_test(
+    name = "test_extension_loader",
+    srcs = ["lib/src/Extensions/tests/test_extension_loader.c"],
+    defines = ["CL_TARGET_OPENCL_VERSION=300"] + select({
+        ":ext_include_gl_enabled": ["CLEXT_INCLUDE_GL"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_egl_enabled": ["CLEXT_INCLUDE_EGL"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_dx9_enabled": ["CLEXT_INCLUDE_DX9"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_d3d10_enabled": ["CLEXT_INCLUDE_D3D10"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_d3d11_enabled": ["CLEXT_INCLUDE_D3D11"],
+        "//conditions:default": [],
+    }) + select({
+        ":ext_include_va_api_enabled": ["CLEXT_INCLUDE_VA_API"],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":extension_loader_test_hdrs",
+        ":opencl_extension_loader",
+    ],
+)

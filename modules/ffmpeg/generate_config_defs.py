@@ -46,7 +46,6 @@ CONFIG_ENABLED = {
     "faan",
     "fast_unaligned",
     "iamf",
-    "network",
     # Features
     "runtime_cpudetect",
     "safe_bitstream_reader",
@@ -83,6 +82,14 @@ CONFIG_ENABLED = {
     "show_metadata_example",
     "transcode_aac_example",
     "transcode_example",
+}
+
+CONFIG_DERIVED = {
+    "gmp",
+    "mbedtls",
+    "network",
+    "openssl",
+    "protocols",
 }
 
 # Standard C99/POSIX math functions checked via AC_CHECK_LIB in the Bazel
@@ -376,7 +383,7 @@ def generate_config_h_in(
     # --- Static CONFIG_* defines ---
     lines.append("")
     static_configs = sorted(
-        (c for c in config_list if c not in AUTOCONF_DETECTED_CONFIGS),
+        (c for c in config_list if c not in AUTOCONF_DETECTED_CONFIGS and c not in CONFIG_DERIVED),
         key=lambda x: x.upper(),
     )
     for item in static_configs:

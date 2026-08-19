@@ -1,0 +1,756 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_ada//ada:defs.bzl", "ada_binary", "ada_library", "ada_shared_library")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+load("//bazel:ghdl_utils.bzl", "ghdl_with_backend", "version_script", "vhdl_std_libs")
+load("//bazel:llvm_utils.bzl", "cc_stdcc17_transitioned_library")
+
+# C++17 flag selection based on the active C++ compiler. MSVC and clang-cl
+# use the `/std:` form; GCC and clang use `-std=`. Keep this aligned with
+# bazel/llvm_utils.bzl's _CXX_OPTS — that one is platform-keyed (Windows
+# implies MSVC ABI) and is correct for the LLVM transition.
+_CXX17_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/std:c++17"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+# ===========================================================================
+# Backend selection
+#
+# string_flag "backend" selects the ortho code generation backend:
+#   mcode    (default) — custom x86 JIT code generator (x86-only)
+#   llvm-jit — LLVM-based JIT via MCJIT (cross-architecture)
+#
+# Use the transition targets (ghdl_mcode, ghdl_llvm_jit) to build with
+# a specific backend without passing flags on the command line.
+#
+# mcode emits x86 machine code at runtime, so on non-x86_64 CPUs we silently
+# fall back to llvm-jit even when `--//:backend=mcode` is set (the keys below
+# encode that: `_mcode_on_x86_64` requires both the flag AND the CPU; the
+# generic `use_mcode` is kept for human reference but the build never reads
+# it in a select). The mcode-only build targets are marked
+# `target_compatible_with = ["@platforms//cpu:x86_64"]` so wildcard builds
+# (`@ghdl//...`) skip them cleanly on arm64 / other CPUs.
+# ===========================================================================
+
+string_flag(
+    name = "backend",
+    build_setting_default = "mcode",
+    values = [
+        "llvm-jit",
+        "mcode",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_mcode",
+    flag_values = {":backend": "mcode"},
+)
+
+config_setting(
+    name = "use_llvm_jit",
+    flag_values = {":backend": "llvm-jit"},
+)
+
+# Real key used by the alias / linkopts selects: backend=mcode AND CPU=x86_64.
+# On any other CPU this never matches, so the build silently uses llvm-jit
+# even with the default flag value.
+config_setting(
+    name = "_mcode_on_x86_64",
+    constraint_values = ["@platforms//cpu:x86_64"],
+    flag_values = {":backend": "mcode"},
+)
+
+# ===========================================================================
+# Generated Ada files (shared by both backends)
+# ===========================================================================
+
+expand_template(
+    name = "version_mcode_ads",
+    out = "mcode_gen/version.ads",
+    substitutions = {
+        "@DESC@": "mcode",
+        "@HASH@": "unknown",
+        "@REF@": "bazel",
+        "@VER@": "6.0.0",
+    },
+    template = "src/version.in",
+)
+
+expand_template(
+    name = "version_llvm_ads",
+    out = "llvm_gen/version.ads",
+    substitutions = {
+        "@DESC@": "llvm",
+        "@HASH@": "unknown",
+        "@REF@": "bazel",
+        "@VER@": "6.0.0",
+    },
+    template = "src/version.in",
+)
+
+expand_template(
+    name = "default_paths_mcode_ads",
+    out = "mcode_gen/default_paths.ads",
+    substitutions = {
+        "@COMPILER_DEBUG@": "",
+        "@COMPILER_GCC@": "",
+        "@COMPILER_LLVM@": "",
+        "@COMPILER_MCODE@": "ghdl",
+        "@EXEEXT@": "",
+        "@INCDIR_SUFFIX@": "include",
+        "@INSTALL_PREFIX@": "",
+        "@LIBDIR_SUFFIX@": "lib",
+        "@LIBGHDLDIR_SUFFIX@": "lib/ghdl",
+        "@POST_PROCESSOR@": "",
+        "@SOEXT@": ".so",
+        "@backend_version@": "mcode",
+        "@default_pic@": "false",
+    },
+    template = "default_paths.ads.in",
+)
+
+expand_template(
+    name = "default_paths_llvm_ads",
+    out = "llvm_gen/default_paths.ads",
+    substitutions = {
+        "@COMPILER_DEBUG@": "",
+        "@COMPILER_GCC@": "",
+        "@COMPILER_LLVM@": "ghdl",
+        "@COMPILER_MCODE@": "",
+        "@EXEEXT@": "",
+        "@INCDIR_SUFFIX@": "include",
+        "@INSTALL_PREFIX@": "",
+        "@LIBDIR_SUFFIX@": "lib",
+        "@LIBGHDLDIR_SUFFIX@": "lib/ghdl",
+        "@POST_PROCESSOR@": "",
+        "@SOEXT@": ".so",
+        "@backend_version@": "llvm",
+        "@default_pic@": "false",
+    },
+    template = "default_paths.ads.in",
+)
+
+write_file(
+    name = "ghdlsynth_maybe_ads",
+    out = "ghdlsynth_maybe.ads",
+    content = [
+        "with Ghdlsynth;",
+        "package Ghdlsynth_Maybe renames Ghdlsynth;",
+    ],
+)
+
+write_file(
+    name = "grt_readline_ads",
+    out = "grt-readline.ads",
+    content = [
+        "with Grt.Readline_None;",
+        "package Grt.Readline renames Grt.Readline_None;",
+    ],
+)
+
+write_file(
+    name = "grt_backtraces_impl_ads",
+    out = "grt-backtraces-impl.ads",
+    content = [
+        "with Grt.Backtraces.Jit;",
+        "package Grt.Backtraces.Impl renames Grt.Backtraces.Jit;",
+    ],
+)
+
+_GENERATED_COMMON = [
+    ":ghdlsynth_maybe_ads",
+    ":grt_backtraces_impl_ads",
+    ":grt_readline_ads",
+]
+
+# ===========================================================================
+# Generated Ada files (mcode backend only)
+# ===========================================================================
+
+write_file(
+    name = "elf_arch_ads",
+    out = "elf_arch.ads",
+    content = [
+        "with Elf_Arch64;",
+        "package Elf_Arch renames Elf_Arch64;",
+    ],
+)
+
+write_file(
+    name = "ortho_flags_ads",
+    out = "ortho_code-x86-flags.ads",
+    content = select({
+        "@platforms//os:macos": [
+            "with Ortho_Code.X86.Flags_Macosx64;",
+            "package Ortho_Code.X86.Flags renames Ortho_Code.X86.Flags_Macosx64;",
+        ],
+        "//conditions:default": [
+            "with Ortho_Code.X86.Flags_Linux64;",
+            "package Ortho_Code.X86.Flags renames Ortho_Code.X86.Flags_Linux64;",
+        ],
+    }),
+)
+
+# ===========================================================================
+# C libraries
+# ===========================================================================
+
+cc_library(
+    name = "grt_c",
+    srcs = [
+        "src/grt/grt-cdynload.c",
+        "src/grt/grt-cgnatrts.c",
+        "src/grt/grt-cstdio.c",
+        "src/grt/grt-cvhpi.c",
+        "src/grt/grt-cvpi.c",
+        "src/grt/grt-no_sundials_c.c",
+    ] + select({
+        "@platforms//os:linux": [
+            "src/grt/config/jumps.c",
+            "src/grt/config/times.c",
+        ],
+        "@platforms//os:macos": [
+            "src/grt/config/jumps.c",
+            "src/grt/config/times.c",
+        ],
+    }),
+    hdrs = glob(["src/grt/**/*.h"]),
+    includes = [
+        "src/grt",
+        "src/grt/fst",
+    ],
+    local_defines = ["WITH_GNAT_RUN_TIME"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "fst",
+    srcs = [
+        "src/grt/fst/fastlz.c",
+        "src/grt/fst/fstapi.c",
+        "src/grt/fst/lz4.c",
+    ],
+    hdrs = glob(["src/grt/fst/*.h"]),
+    includes = ["src/grt/fst"],
+    deps = ["@zlib"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "mcode_c",
+    srcs = ["src/ortho/mcode/memsegs_c.c"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "_llvm_cbindings_raw",
+    srcs = ["src/ortho/llvm6/llvm-cbindings.cpp"],
+    copts = _CXX17_COPTS,
+    # Only build through the C++17 transition wrapper below — building this
+    # raw target (e.g. via wildcards) would compile the LLVM closure with the
+    # toolchain default C++ standard, which is too old for LLVM 17+.
+    tags = ["manual"],
+    deps = [
+        "@llvm-project//llvm:AllTargetsCodeGens",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:BitWriter",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:ExecutionEngine",
+        "@llvm-project//llvm:MCJIT",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+    ],
+)
+
+# Force the entire LLVM dependency closure to be built with C++17.
+# LLVM 17+ source uses `std::string_view` etc. which requires C++17,
+# and the default toolchain on many platforms still picks C++14, so we
+# transition rather than relying on a user-supplied --cxxopt.
+cc_stdcc17_transitioned_library(
+    name = "llvm_cbindings",
+    target = ":_llvm_cbindings_raw",
+)
+
+# ===========================================================================
+# Common Ada sources shared between backends
+# ===========================================================================
+
+_COMMON_SRCS = glob(
+    [
+        "src/*.ads",
+        "src/*.adb",
+        "src/ghdldrv/*.ads",
+        "src/ghdldrv/*.adb",
+        "src/grt/*.ads",
+        "src/grt/*.adb",
+        "src/psl/*.ads",
+        "src/psl/*.adb",
+        "src/simul/*.ads",
+        "src/simul/*.adb",
+        "src/synth/*.ads",
+        "src/synth/*.adb",
+        "src/verilog/*.ads",
+        "src/verilog/*.adb",
+        "src/vhdl/*.ads",
+        "src/vhdl/*.adb",
+        "src/vhdl/translate/*.ads",
+        "src/vhdl/translate/*.adb",
+    ],
+    exclude = [
+        # ----------------------------------------------------------------- #
+        # Alternate driver mains. Each `ghdl_<backend>.adb` is a separate
+        # program entry compiled into its own `ghdl` binary; including more
+        # than one in a single Ada library duplicates `main`, alternative
+        # entry symbols, and (for ghdl_rust) `__gnat_version`. We only build
+        # ghdl_jit, so all other driver mains and their specs are excluded.
+        # ----------------------------------------------------------------- #
+        "src/ghdldrv/ghdl_gcc.adb",
+        "src/ghdldrv/ghdl_gcc.ads",
+        "src/ghdldrv/ghdl_jit.adb",
+        "src/ghdldrv/ghdl_llvm.adb",
+        "src/ghdldrv/ghdl_rust.adb",
+        "src/ghdldrv/ghdl_rust.ads",
+        "src/ghdldrv/ghdl_simul.adb",
+        "src/ghdldrv/ghdlsimul.adb",
+        "src/ghdldrv/ghdlsimul.ads",
+        # ----------------------------------------------------------------- #
+        # Alternate library entry points that re-export `__gnat_version`
+        # via `pragma Export`. Including them in a binary library collides
+        # with the gnatbind-generated `__gnat_version` in the binder file.
+        # libghdlsynth in particular is only used as a standalone shared
+        # library entry, not by the ghdl driver.
+        # ----------------------------------------------------------------- #
+        "src/synth/libghdlsynth.adb",
+        "src/synth/libghdlsynth.ads",
+        # ----------------------------------------------------------------- #
+        # Standalone-simulator program entry. `grt/main.adb` defines `main`
+        # and would clash with the binder's `main`; it only exists for the
+        # bare-grt simulator build, not the JIT driver.
+        # ----------------------------------------------------------------- #
+        "src/grt/ghdl_main.adb",
+        "src/grt/ghdl_main.ads",
+        "src/grt/main.adb",
+        "src/grt/main.ads",
+        # ----------------------------------------------------------------- #
+        # libbacktrace-based backtraces. We select `Grt.Backtraces.Jit` via
+        # the generated `grt-backtraces-impl.ads` alias, so the gcc variant
+        # is unused — but if its `.adb` is compiled into the library, the
+        # final link pulls in `backtrace_create_state` / `backtrace_pcinfo`
+        # from libbacktrace, which we don't link.
+        # ----------------------------------------------------------------- #
+        "src/grt/grt-backtraces-gcc.adb",
+        "src/grt/grt-backtraces-gcc.ads",
+        # ----------------------------------------------------------------- #
+        # Analog-solver stub. `Simul.Vhdl_Simul` exports the real
+        # `grt__analog_solver__*` symbols via `pragma Export`, and is
+        # required transitively by `ghdlrun`. The stub in
+        # `grt-no_analog_solver.adb` would collide on those symbols, and is
+        # only `with`-ed by `ghdl_main.adb` (already excluded).
+        # ----------------------------------------------------------------- #
+        "src/grt/grt-no_analog_solver.adb",
+        "src/grt/grt-no_analog_solver.ads",
+        # ----------------------------------------------------------------- #
+        # Misc files upstream excludes from the GHDL driver build.
+        # ----------------------------------------------------------------- #
+        "src/dyn_htables.adb",
+        "src/dyn_htables.ads",
+        "src/grt/grt-rtis_binding.ads",
+        "src/psl/psl-tprint.adb",
+        "src/psl/psl-tprint.ads",
+        "src/vhdl/translate/trans-preelab.adb",
+        "src/vhdl/translate/trans-preelab.ads",
+        "src/vhdl/vhdl-scanner-directive_protect.adb",
+        "src/vhdl/vhdl-scanner-scan_literal.adb",
+    ],
+)
+
+_COMPILE_DATA = [
+    "src/grt/grt-rtis_binding.ads",
+    "src/vhdl/vhdl-scanner-directive_protect.adb",
+    "src/vhdl/vhdl-scanner-scan_literal.adb",
+]
+
+_ORTHO_COMMON = [
+    "src/ortho/ortho_front.ads",
+    "src/ortho/ortho_jit.ads",
+]
+
+# ===========================================================================
+# Mcode backend library (monolithic: common + ortho/mcode)
+# ===========================================================================
+
+# The Ada static archives are reused by both the `ghdl` binary and the
+# `libghdl` shared library, so they must be PIC. Some platforms (e.g. Debian
+# 12 with the bundled GNAT 15.1.0) default to non-PIC and the shared-library
+# link fails with `relocation R_X86_64_PC32 ... can not be used when making a
+# shared object`. Other platforms (e.g. Ubuntu 22.04 with a recent system
+# GCC) happen to enable PIE/PIC by default and the link succeeds without
+# the flag, but adding it explicitly avoids relying on that default.
+_ADA_LIB_COPTS = [
+    "-gnat12",
+    "-fPIC",
+]
+
+ada_library(
+    name = "ghdl_mcode_lib",
+    srcs = _COMMON_SRCS + glob(
+        [
+            "src/ortho/mcode/*.ads",
+            "src/ortho/mcode/*.adb",
+        ],
+        exclude = [
+            "src/ortho/mcode/coffdump.adb",
+            "src/ortho/mcode/elfdump.adb",
+            "src/ortho/mcode/ortho_code_main.adb",
+            "src/ortho/mcode/ortho_mcode.private.ads",
+        ],
+    ) + _ORTHO_COMMON + _GENERATED_COMMON + [
+        ":default_paths_mcode_ads",
+        ":elf_arch_ads",
+        ":ortho_flags_ads",
+        ":version_mcode_ads",
+    ],
+    compile_data = _COMPILE_DATA,
+    copts = _ADA_LIB_COPTS,
+    # mcode emits x86 instructions directly; building it for any other CPU
+    # is meaningless, and wildcard builds on arm64 should skip it cleanly.
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = [
+        ":fst",
+        ":grt_c",
+        ":mcode_c",
+    ],
+)
+
+# ===========================================================================
+# LLVM backend library (monolithic: common + ortho/llvm6)
+# ===========================================================================
+
+ada_library(
+    name = "ghdl_llvm_jit_lib",
+    srcs = _COMMON_SRCS + glob(
+        [
+            "src/ortho/llvm6/*.ads",
+            "src/ortho/llvm6/*.adb",
+        ],
+        exclude = [
+            "src/ortho/llvm6/ortho_code_main.adb",
+            "src/ortho/llvm6/ortho_llvm.private.ads",
+        ],
+    ) + _ORTHO_COMMON + _GENERATED_COMMON + [
+        ":default_paths_llvm_ads",
+        ":version_llvm_ads",
+    ],
+    compile_data = _COMPILE_DATA,
+    copts = _ADA_LIB_COPTS,
+    deps = [
+        ":fst",
+        ":grt_c",
+        ":llvm_cbindings",
+    ],
+)
+
+# ===========================================================================
+# Backend alias — selects the active backend library
+# ===========================================================================
+
+alias(
+    name = "ghdl_lib",
+    actual = select({
+        ":_mcode_on_x86_64": ":ghdl_mcode_lib",
+        # Covers backend=llvm-jit on any CPU and backend=mcode on non-x86_64.
+        "//conditions:default": ":ghdl_llvm_jit_lib",
+    }),
+)
+
+# ===========================================================================
+# ghdl binary (JIT — works with both mcode and LLVM backends)
+# ===========================================================================
+
+# Match upstream Makefile (src/grt/Makefile.inc:46) which links the ghdl
+# binary with `-Wl,--export-dynamic` so VPI/VHPI entry points are visible
+# in the dynamic symbol table for VPI plugins (e.g. cocotb's
+# libcocotbvpi_ghdl.so) to resolve at dlopen time. `grt.ver` narrows the
+# exported set to just the documented vpi_*/vhpi_* surface.
+version_script(
+    name = "_grt_version_script",
+    script = "src/grt/grt.ver",
+)
+
+ada_binary(
+    name = "ghdl",
+    srcs = ["src/ghdldrv/ghdl_jit.adb"],
+    copts = ["-gnat12"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lm",
+            "-shared-libgcc",
+            "-Wl,--export-dynamic",
+        ],
+        "@platforms//os:macos": [
+            "-shared-libgcc",
+        ],
+    }) + select({
+        # Mirror the alias above — `-lstdc++` is only needed when ghdl_lib
+        # resolves to ghdl_llvm_jit_lib (i.e. NOT mcode-on-x86_64).
+        ":_mcode_on_x86_64": [],
+        "//conditions:default": ["-lstdc++"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":ghdl_lib"] + select({
+        "@platforms//os:linux": [":_grt_version_script"],
+        "//conditions:default": [],
+    }),
+)
+
+ghdl_with_backend(
+    name = "ghdl_mcode",
+    actual = ":ghdl",
+    backend = "mcode",
+    # mcode codegen is x86-only — see the comment on `ghdl_mcode_lib`.
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    visibility = ["//visibility:public"],
+)
+
+ghdl_with_backend(
+    name = "ghdl_llvm_jit",
+    actual = ":ghdl",
+    backend = "llvm-jit",
+    visibility = ["//visibility:public"],
+)
+
+# ===========================================================================
+# libghdl shared library (for pyGHDL / LSP)
+# ===========================================================================
+
+ada_shared_library(
+    name = "libghdl",
+    srcs = glob([
+        "src/vhdl/libghdl/*.ads",
+        "src/vhdl/libghdl/*.adb",
+    ]),
+    copts = ["-gnat12"],
+    deps = [":ghdl_lib"],
+)
+
+# ===========================================================================
+# VHDL standard libraries (bootstrap)
+# ===========================================================================
+
+_IEEE_CORE = [
+    "libraries/ieee/std_logic_1164.vhdl",
+    "libraries/ieee/std_logic_1164-body.vhdl",
+    "libraries/ieee/numeric_bit.vhdl",
+    "libraries/ieee/numeric_bit-body.vhdl",
+    "libraries/ieee/numeric_std.vhdl",
+    "libraries/ieee/numeric_std-body.vhdl",
+]
+
+_UPF = [
+    "libraries/upf/upf.vhdl",
+    "libraries/upf/upf-body.vhdl",
+]
+
+_SYNOPSYS = [
+    "libraries/synopsys/std_logic_arith.vhdl",
+    "libraries/synopsys/std_logic_unsigned.vhdl",
+    "libraries/synopsys/std_logic_signed.vhdl",
+]
+
+_SYNOPSYS_V = [
+    "libraries/synopsys/std_logic_misc.vhdl",
+    "libraries/synopsys/std_logic_misc-body.vhdl",
+]
+
+vhdl_std_libs(
+    name = "vhdl_libs_v87",
+    ghdl = ":ghdl",
+    ieee_extra_srcs = _UPF + [
+        "libraries/vital95/vital_timing.vhdl",
+        "libraries/vital95/vital_timing-body.vhdl",
+        "libraries/vital95/vital_primitives.vhdl",
+        "libraries/vital95/vital_primitives-body.vhdl",
+    ],
+    ieee_srcs = _IEEE_CORE,
+    std = "87",
+    std_srcs = [
+        "libraries/std/textio.vhdl",
+        "libraries/std/textio-body.vhdl",
+    ],
+    synopsys_srcs = _SYNOPSYS + _SYNOPSYS_V + [
+        "libraries/synopsys/std_logic_textio.vhdl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+vhdl_std_libs(
+    name = "vhdl_libs_v93",
+    ghdl = ":ghdl",
+    ieee_extra_srcs = [
+        "libraries/ieee/math_real.vhdl",
+        "libraries/ieee/math_real-body.vhdl",
+        "libraries/ieee/math_complex.vhdl",
+        "libraries/ieee/math_complex-body.vhdl",
+    ] + _UPF + [
+        "libraries/vital2000/timing_p.vhdl",
+        "libraries/vital2000/timing_b.vhdl",
+        "libraries/vital2000/prmtvs_p.vhdl",
+        "libraries/vital2000/prmtvs_b.vhdl",
+        "libraries/vital2000/memory_p.vhdl",
+        "libraries/vital2000/memory_b.vhdl",
+    ],
+    ieee_srcs = _IEEE_CORE,
+    std = "93",
+    std_srcs = [
+        "libraries/std/textio.vhdl",
+        "libraries/std/textio-body.vhdl",
+    ],
+    synopsys_srcs = _SYNOPSYS + _SYNOPSYS_V + [
+        "libraries/synopsys/std_logic_textio.vhdl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+vhdl_std_libs(
+    name = "vhdl_libs_v08",
+    ghdl = ":ghdl",
+    ieee_extra_srcs = [
+        "libraries/ieee2008/std_logic_1164.vhdl",
+        "libraries/ieee2008/std_logic_1164-body.vhdl",
+        "libraries/ieee2008/std_logic_textio.vhdl",
+        "libraries/ieee2008/math_real.vhdl",
+        "libraries/ieee2008/math_real-body.vhdl",
+        "libraries/ieee2008/math_complex.vhdl",
+        "libraries/ieee2008/math_complex-body.vhdl",
+        "libraries/ieee2008/numeric_bit.vhdl",
+        "libraries/ieee2008/numeric_bit-body.vhdl",
+        "libraries/ieee2008/numeric_bit_unsigned.vhdl",
+        "libraries/ieee2008/numeric_bit_unsigned-body.vhdl",
+        "libraries/ieee2008/numeric_std.vhdl",
+        "libraries/ieee2008/numeric_std-body.vhdl",
+        "libraries/ieee2008/numeric_std_unsigned.vhdl",
+        "libraries/ieee2008/numeric_std_unsigned-body.vhdl",
+        "libraries/ieee2008/fixed_float_types.vhdl",
+        "libraries/ieee2008/fixed_generic_pkg.vhdl",
+        "libraries/ieee2008/fixed_generic_pkg-body.vhdl",
+        "libraries/ieee2008/fixed_pkg.vhdl",
+        "libraries/ieee2008/float_generic_pkg.vhdl",
+        "libraries/ieee2008/float_generic_pkg-body.vhdl",
+        "libraries/ieee2008/float_pkg.vhdl",
+        "libraries/ieee2008/ieee_bit_context.vhdl",
+        "libraries/ieee2008/ieee_std_context.vhdl",
+    ] + _UPF,
+    ieee_relaxed_srcs = [
+        "libraries/vital2000/timing_p.vhdl",
+        "libraries/vital2000/timing_b.vhdl",
+        "libraries/vital2000/prmtvs_p.vhdl",
+        "libraries/vital2000/prmtvs_b.vhdl",
+        "libraries/vital2000/memory_p.vhdl",
+        "libraries/vital2000/memory_b.vhdl",
+    ],
+    std = "08",
+    std_srcs = [
+        "libraries/std/textio.vhdl",
+        "libraries/std/textio-body.vhdl",
+        "libraries/std/env.vhdl",
+        "libraries/std/env-body.vhdl",
+    ],
+    synopsys_pp_srcs = _SYNOPSYS_V,
+    synopsys_srcs = _SYNOPSYS,
+    visibility = ["//visibility:public"],
+)
+
+vhdl_std_libs(
+    name = "vhdl_libs_v19",
+    ghdl = ":ghdl",
+    ieee_extra_srcs = [
+        "libraries/ieee2008/std_logic_1164.vhdl",
+        "libraries/ieee2008/std_logic_1164-body.vhdl",
+        "libraries/ieee2008/std_logic_textio.vhdl",
+        "libraries/ieee2008/math_real.vhdl",
+        "libraries/ieee2008/math_real-body.vhdl",
+        "libraries/ieee2008/math_complex.vhdl",
+        "libraries/ieee2008/math_complex-body.vhdl",
+        "libraries/ieee2008/numeric_bit.vhdl",
+        "libraries/ieee2008/numeric_bit-body.vhdl",
+        "libraries/ieee2008/numeric_bit_unsigned.vhdl",
+        "libraries/ieee2008/numeric_bit_unsigned-body.vhdl",
+        "libraries/ieee2008/numeric_std.vhdl",
+        "libraries/ieee2008/numeric_std-body.vhdl",
+        "libraries/ieee2008/numeric_std_unsigned.vhdl",
+        "libraries/ieee2008/numeric_std_unsigned-body.vhdl",
+        "libraries/ieee2008/fixed_float_types.vhdl",
+        "libraries/ieee2008/fixed_generic_pkg.vhdl",
+        "libraries/ieee2008/fixed_generic_pkg-body.vhdl",
+        "libraries/ieee2008/fixed_pkg.vhdl",
+        "libraries/ieee2008/float_generic_pkg.vhdl",
+        "libraries/ieee2008/float_generic_pkg-body.vhdl",
+        "libraries/ieee2008/float_pkg.vhdl",
+        "libraries/ieee2008/ieee_bit_context.vhdl",
+        "libraries/ieee2008/ieee_std_context.vhdl",
+    ] + _UPF,
+    ieee_relaxed_srcs = [
+        "libraries/vital2000/timing_p.vhdl",
+        "libraries/vital2000/timing_b.vhdl",
+        "libraries/vital2000/prmtvs_p.vhdl",
+        "libraries/vital2000/prmtvs_b.vhdl",
+        "libraries/vital2000/memory_p.vhdl",
+        "libraries/vital2000/memory_b.vhdl",
+    ],
+    std = "19",
+    std_srcs = [
+        "libraries/std/textio.vhdl",
+        "libraries/std/textio-body.vhdl",
+        "libraries/std/env.vhdl",
+        "libraries/std/env-body.vhdl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ===========================================================================
+# ghwdump binary and libghw shared library
+# ===========================================================================
+
+cc_library(
+    name = "libghw",
+    srcs = ["ghw/libghw.c"],
+    hdrs = ["ghw/libghw.h"],
+    includes = ["ghw"],
+)
+
+cc_binary(
+    name = "ghwdump",
+    srcs = ["ghw/ghwdump.c"],
+    deps = [":libghw"],
+)
+
+# ===========================================================================
+# VPI/VHPI thunk library
+# ===========================================================================
+
+cc_shared_library(
+    name = "libghdlvpi",
+    deps = [":ghdlvpi_thunks"],
+)
+
+cc_library(
+    name = "ghdlvpi_thunks",
+    srcs = [
+        "src/grt/vhpi_thunk.c",
+        "src/grt/vpi_thunk.c",
+    ],
+    hdrs = [
+        "src/grt/vhpi_thunk.h",
+        "src/grt/vhpi_user.h",
+        "src/grt/vpi_thunk.h",
+        "src/grt/vpi_user.h",
+    ],
+    includes = ["src/grt"],
+)

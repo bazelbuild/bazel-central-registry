@@ -1,0 +1,1530 @@
+"""Bazel build for nvc — a VHDL compiler and simulator."""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//bazel:css_header.bzl", "css_header")
+load("//bazel:llvm_utils.bzl", "cc_stdcc17_transitioned_library")
+load("//bazel:nvc_compile.bzl", "vhdl_chain")
+
+_LLVM_VERSION = "17.0.4"
+
+# ===========================================================================
+# User-facing build flags. These mirror the meaningful `./configure`
+# options that affect what code is compiled into the resulting `nvc`
+# binary.
+# ===========================================================================
+
+# --enable-llvm (default yes upstream). When off, the LLVM ahead-of-time
+# code generator (src/jit/jit-llvm.c) and its LLVM library dependencies
+# are dropped. The remaining interpreter / x86 JIT backend still works.
+bool_flag(
+    name = "enable_llvm",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_llvm_enabled",
+    flag_values = {":enable_llvm": "True"},
+)
+
+# --enable-vital (default yes upstream). Controls whether the VITAL
+# (Vital Initiative Timing) VHDL libraries are compiled as part of the
+# bootstrap library set.
+bool_flag(
+    name = "enable_vital",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_vital_enabled",
+    flag_values = {":enable_vital": "True"},
+)
+
+# --enable-tcl (default no upstream). Compiles the TCL shell extension
+# (src/tcl/*). TCL and readline must be available on the system; in
+# this port they are not currently wired up, so the default stays off.
+bool_flag(
+    name = "enable_tcl",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_tcl_enabled",
+    flag_values = {":enable_tcl": "True"},
+)
+
+# --disable-default-paths (configure default: enabled). When on, the
+# binary searches a compiled-in PREFIX-relative path for VHDL libraries
+# in addition to user-supplied -L paths. Off matches upstream
+# `--disable-default-paths`.
+bool_flag(
+    name = "enable_default_paths",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_default_paths_enabled",
+    flag_values = {":enable_default_paths": "True"},
+)
+
+# --enable-debug (default no upstream). When off, configure adds
+# `-DNDEBUG=1`; when on, NDEBUG is omitted and extra runtime checks run.
+bool_flag(
+    name = "enable_debug",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_debug_enabled",
+    flag_values = {":enable_debug": "True"},
+)
+
+# Linux + x86_64 — the only platform where the elfutils BCR module
+# currently compiles cleanly. Its aarch64 backend
+# (`backends/aarch64_initreg.c`) redeclares `struct user_pac_mask`,
+# which now conflicts with `<asm/ptrace.h>` on glibc kernel headers
+# 5.x+. Until the elfutils module ships a fix, gate libdw use on this
+# narrower platform; nvc's stacktrace path is already designed to
+# degrade gracefully when libdw is absent (configure.ac treats it as
+# optional via AC_CHECK_LIB).
+config_setting(
+    name = "_linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+# Installation prefix used at runtime to locate the bundled VHDL
+# standard libraries. The default mirrors GNU autoconf's
+# `--prefix=/usr/local`. The lib/libexec/data subdirectories are
+# derived in the AC_DEFINEs below by appending the conventional
+# suffixes.
+string_flag(
+    name = "prefix",
+    build_setting_default = "/usr/local",
+    visibility = ["//visibility:public"],
+)
+
+# ===========================================================================
+# Package metadata + autoconf feature detection
+#
+# `module_bazel = "MODULE.bazel"` resolves to the MODULE.bazel that
+# Bazel's module resolver layers into the source tree from the
+# registry — we don't need a second copy inside the overlay. The
+# PACKAGE_NAME / PACKAGE_VERSION / PACKAGE_STRING / PACKAGE_TARNAME
+# defines come straight from that file's `module(name = "nvc",
+# version = "1.21.0")` and match what upstream's AC_INIT([nvc],
+# [1.21.0], ...) would have produced.
+# ===========================================================================
+
+package_info(
+    name = "package",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://github.com/nickg/nvc/issues",
+    package_url = "https://www.nickg.me.uk/nvc/",
+)
+
+# Autoconf checks that mirror the contents of `configure.ac`. Only the
+# checks whose result the C code actually reads are included; cosmetic
+# AC_PROG_* probes (compiler discovery, etc.) are handled by the Bazel
+# cc_toolchain and so do not appear here.
+#
+# Platform-specific checks are gathered with select(). Linux is the
+# primary supported target; macOS / BSD / Windows ports can be added
+# by extending the selects without changing the toplevel structure.
+autoconf(
+    name = "autoconf",
+    checks = macros.AC_CHECK_HEADERS([
+        "sys/ptrace.h",
+        "sys/prctl.h",
+        "ucontext.h",
+        "sys/ucontext.h",
+        "stdio_ext.h",
+        "stdio.h",
+        "stdlib.h",
+        "string.h",
+        "strings.h",
+        "inttypes.h",
+        "stdint.h",
+        "sys/stat.h",
+        "sys/types.h",
+        "unistd.h",
+        "wchar.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        "tcgetwinsize",
+        "memmem",
+        "strcasestr",
+        "getline",
+        "fseeko",
+        "ftello",
+        "fpurge",
+        "__fpurge",
+        "strchrnul",
+        "strndup",
+        "gettid",
+        "popen",
+    ]) + macros.AC_CHECK_MEMBERS(
+        [
+            "struct stat.st_mtimespec.tv_nsec",
+            "struct stat.st_mtim.tv_nsec",
+        ],
+        includes = [
+            "sys/stat.h",
+            "sys/types.h",
+        ],
+    ) + [
+        # configure.ac: AC_LINK_IFELSE around getcontext(). Gated on
+        # the presence of <ucontext.h> via `requires=`, mirroring the
+        # original AS_IF nesting.
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_getcontext",
+            code = "ucontext_t uc; getcontext(&uc);",
+            define = "HAVE_GETCONTEXT",
+            includes = ["ucontext.h"],
+            requires = ["HAVE_UCONTEXT_H"],
+        ),
+        checks.AC_C_RESTRICT(),
+    ] + select({
+        "@platforms//cpu:aarch64": [
+            checks.AC_CHECK_C_COMPILER_FLAG(
+                "-march=armv8-a+crypto",
+                define = "HAVE_ARM_CRYPTO",
+            ),
+            checks.AC_CHECK_HEADER("arm_neon.h"),
+        ],
+        # x86_64-only vector/crypto probes — mirrors the
+        # `case $target_cpu in x86_64|amd64) ... esac` block in
+        # configure.ac. Gating on the CPU constraint (rather than
+        # always probing) keeps thirdparty/sha1.c from including
+        # `<x86intrin.h>` on aarch64, where gcc silently accepts
+        # `-msha` as a no-op and would otherwise leave HAVE_SSE_SHA
+        # defined.
+        "@platforms//cpu:x86_64": [
+            checks.AC_CHECK_C_COMPILER_FLAG(
+                "-mavx2",
+                define = "HAVE_AVX2",
+            ),
+            checks.AC_CHECK_C_COMPILER_FLAG(
+                "-msse4.1",
+                define = "HAVE_SSE41",
+            ),
+            checks.AC_CHECK_C_COMPILER_FLAG(
+                "-msha",
+                define = "HAVE_SSE_SHA",
+            ),
+            checks.AC_CHECK_C_COMPILER_FLAG(
+                "-mpopcnt",
+                define = "HAVE_POPCNT",
+            ),
+        ],
+        "//conditions:default": [],
+    }) + [
+        # GCC function attribute probe. Used by util.h to annotate
+        # allocator helpers with __attribute__((returns_nonnull)).
+        checks.AC_TRY_COMPILE(
+            name = "ax_gcc_func_attribute_returns_nonnull",
+            code = """
+                void *foo(void) __attribute__((returns_nonnull));
+                void *foo(void) { return (void*)1; }
+                int main(void) { return foo() == 0; }
+            """,
+            define = "HAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
+        ),
+        # GCC __builtin_setjmp probe — used by jit-tramp.c for its
+        # signal-safe long-jump implementation.
+        checks.AC_TRY_LINK(
+            name = "ax_gcc_builtin_setjmp",
+            code = """
+                int main(void) {
+                    void *buf[5];
+                    if (__builtin_setjmp(buf) == 0) __builtin_longjmp(buf, 1);
+                    return 0;
+                }
+            """,
+            define = "HAVE___BUILTIN_SETJMP",
+        ),
+        # Unconditional AC_DEFINE_UNQUOTED calls in configure.ac.
+        checks.AC_DEFINE("FST_REMOVE_DUPLICATE_VC", 1),
+        # Raw subst entry mirroring the PACKAGE_VERSION that
+        # `:package` produces as a C string `#define`. Needed because
+        # `package_info` only populates `define_results` — text-mode
+        # templates (`@PACKAGE_VERSION@` in `nvc_version_template`)
+        # need a `subst_results` entry too. Bumping the module's
+        # version means changing MODULE.bazel and this line.
+        checks.AC_SUBST("PACKAGE_VERSION", "1.21.0"),
+        # AX_PTHREAD in configure.ac splits into two real probes here:
+        #   HAVE_PTHREAD     — gates `#include <pthread.h>` in util.c
+        #                      and similar; spelled `HAVE_PTHREAD`
+        #                      rather than the conventional
+        #                      `HAVE_PTHREAD_H` because the nvc source
+        #                      reads the former name.
+        #   HAVE_LIBPTHREAD  — gates the FST parallel writer
+        #                      (thirdparty/fstapi.c). AC_CHECK_LIB
+        #                      drives a real `-lpthread` link probe.
+        checks.AC_CHECK_HEADER(
+            "pthread.h",
+            define = "HAVE_PTHREAD",
+        ),
+        checks.AC_CHECK_LIB("pthread", "pthread_create"),
+    ] + select({
+        ":_linux_x86_64": [checks.AC_DEFINE("HAVE_LIBDW", 1)],
+        "//conditions:default": [],
+    }) + select({
+        ":_debug_enabled": [],
+        "//conditions:default": [checks.AC_DEFINE("NDEBUG", 1)],
+    }) + select({
+        ":_default_paths_enabled": [checks.AC_DEFINE("ENABLE_DEFAULT_PATHS", 1)],
+        "//conditions:default": [],
+    }) + select({
+        ":_llvm_enabled": [
+            checks.AC_DEFINE("ENABLE_LLVM", 1),
+            checks.AC_DEFINE("HAVE_LLVM", 1),
+            # LLVM version-gated feature defines. These come from
+            # m4/ax_llvm_c.m4 in the original tree, where they are
+            # emitted based on the `llvm-config --version` of the
+            # host LLVM. We pin to llvm-project 17.x via MODULE.bazel,
+            # so the set is fixed: 17.x >= 100, 110, 120, 130, 150
+            # but < 210.
+            checks.AC_DEFINE("LLVM_HAVE_DI_SCOPE_GET_FILE", 1),
+            checks.AC_DEFINE("LLVM_HAVE_SET_CURRENT_DEBUG_LOCATION_2", 1),
+            checks.AC_DEFINE("LLVM_CREATE_CU_HAS_SYSROOT", 1),
+            checks.AC_DEFINE("LLVM_HAS_PASS_BUILDER", 1),
+            checks.AC_DEFINE("LLVM_HAS_LLJIT", 1),
+            checks.AC_DEFINE("LLVM_HAS_OPAQUE_POINTERS", 1),
+            checks.AC_DEFINE("LLVM_UWTABLE_HAS_ARGUMENT", 1),
+            # String-valued LLVM defines. AC_DEFINE keeps the supplied
+            # value verbatim, so the outer single-quotes wrap an inner
+            # double-quoted C string literal — matching upstream's
+            # `AC_DEFINE_UNQUOTED([LLVM_VERSION], ["$LLVM_VERSION"])`.
+            checks.AC_DEFINE(
+                "LLVM_VERSION",
+                '"{}"'.format(_LLVM_VERSION),
+            ),
+            checks.AC_DEFINE("LLVM_OBJ_EXT", '"o"'),
+            checks.AC_DEFINE("LLVM_CONFIG_BINDIR", '""'),
+            # Raw (unquoted) subst entry so the version-test template
+            # can interpolate `@LLVM_VERSION@` as `17.0.4` without the
+            # surrounding C string quotes the AC_DEFINE above carries.
+            checks.AC_SUBST("LLVM_VERSION", _LLVM_VERSION),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":_tcl_enabled": [checks.AC_DEFINE("ENABLE_TCL", 1)],
+        "//conditions:default": [],
+    }) + [
+        # String-valued path defines. configure.ac normally derives
+        # these from --prefix; in the Bazel build the user can fork
+        # the BUILD file (or override --//:prefix and the related
+        # constants) to point elsewhere. As AC_DEFINEs they ride the
+        # same #undef → #define replacement pass that the autoconf
+        # check results use — no separate `substitutions` table on
+        # autoconf_hdr below.
+        checks.AC_DEFINE("DATADIR", '"/usr/local/share/nvc"'),
+        checks.AC_DEFINE("DIFF_PATH", '"/usr/bin/diff"'),
+        checks.AC_DEFINE("DIR_SEP", '"/"'),
+        checks.AC_DEFINE("DLL_EXT", '"so"'),
+        checks.AC_DEFINE("EXEEXT", '""'),
+        checks.AC_DEFINE("LIBDIR", '"/usr/local/lib/nvc"'),
+        checks.AC_DEFINE("LIBEXECDIR", '"/usr/local/libexec/nvc"'),
+        checks.AC_DEFINE("PATH_SEP", '":"'),
+        checks.AC_DEFINE("PREFIX", '"/usr/local"'),
+        checks.AC_DEFINE("SH_PATH", '"/bin/sh"'),
+        checks.AC_DEFINE("TARGET_SYSTEM", '"bazel"'),
+        checks.AC_DEFINE("TESTDIR", '"test"'),
+        # XMLLINT_PATH is used only by the regression test harness, so
+        # leaving it #undef matches a configure run where xmllint is
+        # absent.
+    ],
+    deps = [":package"],
+)
+
+# ===========================================================================
+# config.h generation
+#
+# Every #undef in config.h.in is now resolved by autoconf_hdr against
+# the AC_DEFINE/check results in the autoconf rule above — no manual
+# substitutions table is needed.
+# ===========================================================================
+
+autoconf_hdr(
+    name = "config",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config_hdr",
+    hdrs = [":config.h"],
+    includes = ["."],
+)
+
+# ===========================================================================
+# Generated source files
+# ===========================================================================
+
+# src/cov/cov-style.h: a single static const char[] of the contents of
+# cov-style.css. Upstream uses a sed pipeline; the css_header rule (in
+# bazel/css_header.bzl) wraps the same transformation in a C++
+# wrapper invoked via ctx.actions.run, so the output is byte-for-byte
+# identical with the autotools build.
+css_header(
+    name = "cov_style_h",
+    src = "src/cov/cov-style.css",
+    out = "src/cov/cov-style.h",
+    varname = "cov_style",
+)
+
+# src/gitsha.h: configure.ac emits this only when building from a git
+# tree (ENABLE_GIT_SHA). The tarball ships without a .git directory,
+# so we use write_file to drop a static stub matching the autoconf
+# "release tarball" path — HAVE_GIT_SHA is not defined, but the
+# header is referenced unconditionally elsewhere so a stub keeps the
+# include resolvable.
+write_file(
+    name = "gitsha_h",
+    out = "src/gitsha.h",
+    content = [
+        '#define GIT_SHA ""',
+        "",
+    ],
+)
+
+# Flex-generated lexer. Upstream's Makefile.am sets `AM_LFLAGS = -o
+# lex.yy.c`; we ask the flex module's rule for a single named output.
+# The lexer source uses YY_INPUT / YY_USER_ACTION hooks defined in
+# src/scan.h, so the generated .c is compiled as part of :libnvc.
+flex(
+    name = "lexer_c",
+    srcs = ["src/lexer.l"],
+    outs = ["src/lexer.c"],
+    args = [
+        "-o",
+        "$(execpath src/lexer.c)",
+        "$(execpath src/lexer.l)",
+    ],
+)
+
+# ===========================================================================
+# Header-only target carrying the project-wide include paths
+# ===========================================================================
+
+cc_library(
+    name = "nvc_headers",
+    hdrs = glob([
+        "src/*.h",
+        "src/cov/*.h",
+        "src/jit/*.h",
+        "src/mir/*.h",
+        "src/psl/*.h",
+        "src/rt/*.h",
+        "src/sdf/*.h",
+        "src/tcl/*.h",
+        "src/vhdl/*.h",
+        "src/vhpi/*.h",
+        "src/vlog/*.h",
+        "src/vpi/*.h",
+        "thirdparty/*.h",
+    ]) + [
+        ":cov_style_h",
+        ":gitsha_h",
+    ],
+    includes = [
+        ".",
+        "src",
+        "thirdparty",
+    ],
+    deps = [":config_hdr"],
+)
+
+# ===========================================================================
+# Third-party support library
+#
+# Matches thirdparty/Makemodule.am: fst writer, lz4, fastlz, sha1, the
+# parallel JIT cpustate helpers, and the system-verilog RNG. Gnulib
+# fallback implementations (memmem / strcasestr / getline / strchrnul
+# / strndup) are pulled in only when the corresponding HAVE_* probe
+# failed. Most modern Linux systems have these libc functions, but
+# the autoconf check above will set HAVE_* and the fallback files
+# compile to nothing in that case (their guards key off the HAVE_*
+# defines).
+# ===========================================================================
+
+cc_library(
+    name = "thirdparty",
+    srcs = [
+        "thirdparty/cpustate.c",
+        "thirdparty/fastlz.c",
+        "thirdparty/fstapi.c",
+        "thirdparty/getdelim.c",
+        "thirdparty/getline.c",
+        "thirdparty/lz4.c",
+        "thirdparty/memmem.c",
+        "thirdparty/rawmemchr.c",
+        "thirdparty/sha1.c",
+        "thirdparty/strcasestr.c",
+        "thirdparty/strchrnul.c",
+        "thirdparty/strndup.c",
+        "thirdparty/svrand.c",
+    ],
+    hdrs = glob(["thirdparty/*.h"]),
+    copts = [
+        "-Wno-implicit-function-declaration",
+        "-Wno-pointer-sign",
+        "-Wno-unused-function",
+        "-Wno-unused-variable",
+    ] + select({
+        "@platforms//cpu:aarch64": ["-march=armv8-a+crypto"],
+        "//conditions:default": [],
+    }),
+    includes = ["thirdparty"],
+    deps = [
+        ":config_hdr",
+        "@zlib",
+    ],
+)
+
+# ===========================================================================
+# libnvc: the bulk of the compiler/simulator implementation
+#
+# The source list is the concatenation of every Makemodule.am that
+# adds to lib_libnvc_a_SOURCES. Architecture- and feature-gated
+# sources are moved behind select()s so wildcard builds don't try to
+# compile e.g. jit-x86.c on aarch64 or jit-llvm.c when --enable_llvm
+# is off.
+# ===========================================================================
+
+_LIBNVC_COMMON_SRCS = [
+    # src/Makemodule.am
+    "src/bounds.c",
+    "src/common.c",
+    "src/debug.c",
+    "src/diag.c",
+    "src/driver.c",
+    "src/dump.c",
+    "src/elab.c",
+    "src/eval.c",
+    "src/fbuf.c",
+    "src/hash.c",
+    "src/ident.c",
+    "src/inst.c",
+    "src/lib.c",
+    "src/lower.c",
+    "src/make.c",
+    "src/mask.c",
+    "src/names.c",
+    "src/object.c",
+    "src/option.c",
+    "src/parse.c",
+    "src/printf.c",
+    "src/reheat.c",
+    "src/scan.c",
+    "src/sem.c",
+    "src/simp.c",
+    "src/thread.c",
+    "src/tree.c",
+    "src/type.c",
+    "src/util.c",
+    "src/vcode.c",
+    # src/cov/Makemodule.am
+    "src/cov/cov-data.c",
+    "src/cov/cov-exclude.c",
+    "src/cov/cov-export.c",
+    "src/cov/cov-html.c",
+    "src/cov/cov-report.c",
+    # src/jit/Makemodule.am (unconditional sources)
+    "src/jit/jit-code.c",
+    "src/jit/jit-core.c",
+    "src/jit/jit-dump.c",
+    "src/jit/jit-exits.c",
+    "src/jit/jit-ffi.c",
+    "src/jit/jit-interp.c",
+    "src/jit/jit-intrin.c",
+    "src/jit/jit-irgen.c",
+    "src/jit/jit-layout.c",
+    "src/jit/jit-optim.c",
+    "src/jit/jit-tramp.c",
+    # src/mir/Makemodule.am
+    "src/mir/mir-dump.c",
+    "src/mir/mir-node.c",
+    "src/mir/mir-optim.c",
+    "src/mir/mir-type.c",
+    "src/mir/mir-unit.c",
+    "src/mir/mir-vcode.c",
+    # src/psl/Makemodule.am
+    "src/psl/psl-dump.c",
+    "src/psl/psl-fsm.c",
+    "src/psl/psl-lower.c",
+    "src/psl/psl-node.c",
+    "src/psl/psl-sem.c",
+    # src/rt/Makemodule.am
+    "src/rt/assert.c",
+    "src/rt/copy.c",
+    "src/rt/cover.c",
+    "src/rt/ename.c",
+    "src/rt/fileio.c",
+    "src/rt/heap.c",
+    "src/rt/model.c",
+    "src/rt/mspace.c",
+    "src/rt/printer.c",
+    "src/rt/random.c",
+    "src/rt/reflect.c",
+    "src/rt/simpkg.c",
+    "src/rt/standard.c",
+    "src/rt/stdenv.c",
+    "src/rt/wave.c",
+    # src/sdf/Makemodule.am
+    "src/sdf/sdf-parse.c",
+    "src/sdf/sdf-util.c",
+    # src/vhdl/Makemodule.am
+    "src/vhdl/vhdl-cover.c",
+    "src/vhdl/vhdl-inst.c",
+    "src/vhdl/vhdl-lower.c",
+    "src/vhdl/vhdl-predef.c",
+    "src/vhdl/vhdl-util.c",
+    # src/vhpi/Makemodule.am
+    "src/vhpi/vhpi-model.c",
+    "src/vhpi/vhpi-str.c",
+    "src/vhpi/vhpi-util.c",
+    "src/vhpi/vhpi_sens.c",
+    # src/vlog/Makemodule.am
+    "src/vlog/vlog-dump.c",
+    "src/vlog/vlog-inst.c",
+    "src/vlog/vlog-lower.c",
+    "src/vlog/vlog-node.c",
+    "src/vlog/vlog-number.c",
+    "src/vlog/vlog-parse.c",
+    "src/vlog/vlog-pp.c",
+    "src/vlog/vlog-sem.c",
+    "src/vlog/vlog-simp.c",
+    "src/vlog/vlog-symtab.c",
+    "src/vlog/vlog-trans.c",
+    "src/vlog/vlog-udp.c",
+    "src/vlog/vlog-util.c",
+    # src/vpi/Makemodule.am
+    "src/vpi/vpi-model.c",
+    "src/vpi/vpi-str.c",
+    "src/vpi/vpi-systf.c",
+    "src/vpi/vpi-util.c",
+]
+
+# Suppress the most noisy warnings that NVC's own source code triggers
+# without `-Wno-*` flags from the upstream Makefile. The upstream
+# build uses `-Wall` and relies on the compiler's defaults; Bazel's
+# default strictness varies by toolchain. Keep this list minimal —
+# anything not required for the build to succeed should be left out.
+_LIBNVC_COPTS = [
+    "-D_GNU_SOURCE",
+    # AC_CONFIG_HEADERS([config.h]) in configure.ac causes automake to
+    # emit -DHAVE_CONFIG_H on every compile; util.h keys its
+    # `#include "config.h"` off this define, so without it none of the
+    # autoconf-detected feature defines reach the rest of the code.
+    "-DHAVE_CONFIG_H=1",
+    "-Wno-unused-parameter",
+    "-Wno-unused-variable",
+    "-Wno-unused-function",
+    "-Wno-unused-but-set-variable",
+    "-Wno-implicit-fallthrough",
+    "-Wno-missing-field-initializers",
+    "-Wno-sign-compare",
+    "-Wno-pointer-sign",
+    "-fno-strict-aliasing",
+    # The flex-generated lexer relies on these GCC-isms being
+    # available without warnings.
+    "-Wno-deprecated-declarations",
+]
+
+alias(
+    name = "libnvc",
+    actual = ":lib/nvc",
+)
+
+cc_library(
+    name = "lib/nvc",
+    srcs = _LIBNVC_COMMON_SRCS + [":lexer_c"] + select({
+        ":_tcl_enabled": [
+            "src/tcl/tcl-shell.c",
+            "src/tcl/tcl-vhpi.c",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":_llvm_enabled": ["src/jit/jit-llvm.c"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//cpu:x86_64": ["src/jit/jit-x86.c"],
+        "//conditions:default": [],
+    }),
+    copts = _LIBNVC_COPTS,
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lm",
+            "-lpthread",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":nvc_headers",
+        ":thirdparty",
+        "@libffi",
+        "@zlib",
+        "@zstd",
+    ] + select({
+        ":_linux_x86_64": ["@elfutils//:libdw"],
+        "//conditions:default": [],
+    }) + select({
+        ":_llvm_enabled": [":llvm_libs"],
+        "//conditions:default": [],
+    }),
+    alwayslink = True,
+)
+
+# Pure-aggregator cc_library that pulls in the LLVM C bindings we
+# actually link `nvc` against (LLVMInitializeNativeTarget,
+# LLVMCreateTargetMachine, LLVMTargetMachineEmitToMemoryBuffer, …).
+# Tagged `manual` so wildcard builds don't compile it without the
+# C++17 transition wrapper below — LLVM 17+ headers use
+# `std::string_view` etc. and fail under the BCR CI's
+# default `-std=c++14`.
+cc_library(
+    name = "_llvm_libs_raw",
+    tags = ["manual"],
+    deps = [
+        "@llvm-project//llvm:AllTargetsAsmParsers",
+        "@llvm-project//llvm:AllTargetsCodeGens",
+        "@llvm-project//llvm:Analysis",
+        "@llvm-project//llvm:BitWriter",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:Target",
+        "@llvm-project//llvm:TargetParser",
+    ],
+)
+
+# Force the entire LLVM dependency closure to be built with C++17.
+# Without this every consumer of `:libnvc` (this build, plus anything
+# downstream that depends on `@nvc//:nvc`) would have to set
+# `--cxxopt=-std=c++17` / `--host_cxxopt=-std=c++17` manually.
+cc_stdcc17_transitioned_library(
+    name = "llvm_libs",
+    target = ":_llvm_libs_raw",
+)
+
+# ===========================================================================
+# nvc binary
+# ===========================================================================
+
+cc_binary(
+    name = "nvc",
+    srcs = ["src/nvc.c"],
+    additional_linker_inputs = ["src/symbols.txt"],
+    copts = _LIBNVC_COPTS,
+    linkopts = select({
+        # Match the upstream Makefile's `-Wl,--dynamic-list=...`,
+        # which narrows the exported symbol set to those listed in
+        # src/symbols.txt. Falls back to nothing on platforms whose
+        # linker doesn't support the option (the symbols just default
+        # to hidden).
+        "@platforms//os:linux": ["-Wl,--dynamic-list=$(location src/symbols.txt)"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":libnvc"],
+)
+
+# ===========================================================================
+# Auxiliary binary that ships in the upstream tarball
+# ===========================================================================
+
+# bin/fstdump: a small utility that dumps the contents of an FST
+# waveform file. Useful both as a regression-test tool and as a
+# standalone program.
+cc_binary(
+    name = "fstdump",
+    srcs = ["test/fstdump.c"],
+    copts = _LIBNVC_COPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":thirdparty",
+        "@zlib",
+    ],
+)
+
+# ===========================================================================
+# VHDL standard libraries (bootstrap)
+#
+# Source declarations use the standard `@rules_vhdl//vhdl:defs.bzl#vhdl_library`
+# rule (just sources + metadata, no compilation). The matching
+# `nvc_compile` rule (in //bazel:nvc_compile.bzl) consumes a
+# `vhdl_library` target and runs `nvc -a` to produce a compiled
+# library directory.
+#
+# Cyclic interleaving: per-standard the upstream Makefile interleaves
+# cross-library dependencies that don't fit a strict DAG:
+#   - STD.TEXTIO-body has `use nvc.polyfill.all;` (needs NVC)
+#   - NVC.PSL_SUPPORT has `library ieee; use ieee.std_logic_1164.all;`
+#     (needs IEEE.STD_LOGIC_1164)
+#   - IEEE.*-body files have `library nvc;` (needs NVC)
+#   - Every NVC.* unit transitively needs STD.STANDARD
+# We resolve the cycle with a four-stage bootstrap per standard:
+#   1. std_base    → STD.STANDARD + body + TEXTIO declaration only
+#   2. ieee_decls  → IEEE package declarations only (no bodies) — deps std_base
+#   3. lib_nvc     → all NVC.* including PSL_SUPPORT — deps std_base + ieee_decls
+#   4. std         → seed std_base, add TEXTIO-body, ENV, REFLECTION — deps lib_nvc
+#      ieee       → seed ieee_decls, add IEEE bodies + MATH_* + SYNOPSYS + VITAL
+#                   — deps lib_nvc + std
+#
+# Three parallel sets are produced, one per VHDL standard: 1993
+# (plain dir name), 2008 (`.08` suffix), 2019 (`.19` suffix).
+# ===========================================================================
+
+# Shared SYNOPSYS source list — upstream compiles these helpers into
+# the IEEE library across every standard (so legacy code that says
+# `use ieee.std_logic_arith;` works without an extra library).
+_SYNOPSYS_SRCS = [
+    "lib/synopsys/std_logic_arith.vhd",
+    "lib/synopsys/std_logic_misc.vhd",
+    "lib/synopsys/std_logic_signed.vhd",
+    "lib/synopsys/std_logic_textio.vhd",
+    "lib/synopsys/std_logic_unsigned.vhd",
+]
+
+# SYNOPSYS chain phases. Alphabetical order matches the required
+# analysis order: std_logic_arith must come before std_logic_signed /
+# std_logic_unsigned, which use it.
+#
+# `_SYNOPSYS_PHASE_93` includes std_logic_textio.vhd; `_SYNOPSYS_PHASE`
+# (used by .08/.19) does not, because IEEE 2008/2019 provide their
+# own `ieee.std_logic_textio` and the upstream Makefile excludes the
+# Synopsys variant there. Compiling it triggers a known crash in nvc
+# 1.21.0's semantic analyser (sem_check_array_ref / type_is_array)
+# when seeded with the 2008/2019 IEEE library state.
+_SYNOPSYS_PHASE_93 = ("synopsys", _SYNOPSYS_SRCS)
+
+_SYNOPSYS_PHASE = (
+    "synopsys",
+    [s for s in _SYNOPSYS_SRCS if s != "lib/synopsys/std_logic_textio.vhd"],
+)
+
+# VITAL phases — each package declaration uses the ones that came
+# before it (prmtvs_p uses timing, memory_p uses both), so they're
+# split into per-package phases to give vhdl_chain a strict order
+# that buildifier can't reshuffle. Bodies don't reference each other,
+# so they stay in one phase.
+_VITAL_PHASES = [
+    (
+        "vital_timing_decl",
+        select({
+            ":_vital_enabled": ["lib/vital/timing_p.vhdl"],
+            "//conditions:default": [],
+        }),
+    ),
+    (
+        "vital_prmtvs_decl",
+        select({
+            ":_vital_enabled": ["lib/vital/prmtvs_p.vhdl"],
+            "//conditions:default": [],
+        }),
+    ),
+    (
+        "vital_memory_decl",
+        select({
+            ":_vital_enabled": ["lib/vital/memory_p.vhdl"],
+            "//conditions:default": [],
+        }),
+    ),
+    (
+        "vital_bodies",
+        select({
+            ":_vital_enabled": [
+                "lib/vital/memory_b.vhdl",
+                "lib/vital/prmtvs_b.vhdl",
+                "lib/vital/timing_b.vhdl",
+            ],
+            "//conditions:default": [],
+        }),
+    ),
+]
+
+# --- VHDL-1993 ---
+
+vhdl_chain(
+    name = "std_base",
+    bootstrap = True,
+    library = "std",
+    phases = [
+        (
+            "standard",
+            ["lib/std/standard.vhd"],
+        ),
+        (
+            "standard_body",
+            ["lib/std/standard-body.vhd"],
+        ),
+        (
+            "textio",
+            ["lib/std/textio.vhd"],
+        ),
+    ],
+    standard = "1993",
+)
+
+vhdl_chain(
+    name = "ieee_decls",
+    library = "ieee",
+    phases = [
+        # numeric_* declarations use ieee.std_logic_1164, so the logic
+        # package must be a separate phase that runs first; bodies
+        # likewise need their own phase because alphabetical sort puts
+        # `*-body.vhdl` before `*.vhdl`.
+        (
+            "logic",
+            ["lib/ieee/std_logic_1164.vhdl"],
+        ),
+        (
+            "logic_body",
+            ["lib/ieee/std_logic_1164-body.vhdl"],
+        ),
+        (
+            "numeric_decls",
+            [
+                "lib/ieee/numeric_bit.vhdl",
+                "lib/ieee/numeric_std.vhdl",
+            ],
+        ),
+    ],
+    standard = "1993",
+    deps = [":std_base"],
+)
+
+vhdl_chain(
+    # Bazel target name is `lib_nvc` to avoid colliding with the
+    # `:nvc` cc_binary target above; the underlying VHDL library is
+    # still named `nvc` via the `library` attr.
+    name = "lib_nvc",
+    library = "nvc",
+    phases = [
+        # All NVC.* package declarations — independent of one another,
+        # so alphabetical order is fine.
+        (
+            "decls",
+            [
+                "lib/nvc/cover_pkg.vhd",
+                "lib/nvc/polyfill.vhd",
+                "lib/nvc/psl_support.vhd",
+                "lib/nvc/random.vhd",
+                "lib/nvc/sim_pkg.vhd",
+                "lib/nvc/text_util.vhd",
+                "lib/nvc/verilog.vhd",
+            ],
+        ),
+        # All NVC.*-body files. text_util-body uses nvc.polyfill which
+        # is already in the seeded `decls` phase.
+        (
+            "bodies",
+            [
+                "lib/nvc/cover_pkg-body.vhd",
+                "lib/nvc/polyfill-body.vhd",
+                "lib/nvc/psl_support-body.vhd",
+                "lib/nvc/random-body.vhd",
+                "lib/nvc/sim_pkg-body.vhd",
+                "lib/nvc/text_util-body.vhd",
+                "lib/nvc/verilog-body.vhd",
+            ],
+        ),
+    ],
+    standard = "1993",
+    deps = [
+        ":ieee_decls",
+        ":std_base",
+    ],
+)
+
+vhdl_chain(
+    # Final STD library: extend std_base with STD.TEXTIO-body, which
+    # needs NVC.POLYFILL.
+    name = "std",
+    library = "std",
+    phases = [
+        (
+            "textio_body",
+            ["lib/std/textio-body.vhd"],
+        ),
+    ],
+    seed = ":std_base",
+    standard = "1993",
+    visibility = ["//visibility:public"],
+    deps = [":lib_nvc"],
+)
+
+vhdl_chain(
+    # Final IEEE library: extend ieee_decls with the bodies (which
+    # need NVC.POLYFILL), math packages, SYNOPSYS shims, and
+    # (optionally) VITAL.
+    name = "ieee",
+    library = "ieee",
+    phases = [
+        (
+            "numeric_bodies",
+            [
+                "lib/ieee/numeric_bit-body.vhdl",
+                "lib/ieee/numeric_std-body.vhdl",
+            ],
+        ),
+        # math_complex declaration uses ieee.math_real, so math_real
+        # must come first. Splitting into two phases prevents
+        # buildifier from sorting them alphabetically (which would
+        # put math_complex before math_real).
+        (
+            "math_real_decl",
+            ["lib/ieee/math_real.vhdl"],
+        ),
+        (
+            "math_complex_decl",
+            ["lib/ieee/math_complex.vhdl"],
+        ),
+        (
+            "math_bodies",
+            [
+                "lib/ieee/math_complex-body.vhdl",
+                "lib/ieee/math_real-body.vhdl",
+            ],
+        ),
+        _SYNOPSYS_PHASE_93,
+    ] + _VITAL_PHASES,
+    # vital prmtvs_b.vhdl violates LRM-1993 strict rules; upstream
+    # invokes nvc with --relaxed for THAT file. Bazel rules don't yet
+    # support per-source flags, so we apply --relaxed library-wide —
+    # the other sources are unaffected by relaxed mode.
+    relaxed = True,
+    seed = ":ieee_decls",
+    standard = "1993",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lib_nvc",
+        ":std",
+    ],
+)
+
+# --- VHDL-2008 ---
+
+vhdl_chain(
+    name = "std_08_base",
+    bootstrap = True,
+    library = "std.08",
+    phases = [
+        (
+            "standard",
+            ["lib/std.08/standard.vhd"],
+        ),
+        # STANDARD-body.vhd is shared verbatim with 1993; the upstream
+        # Makemodule.am for std.08 reuses lib/std/standard-body.vhd.
+        (
+            "standard_body",
+            ["lib/std/standard-body.vhd"],
+        ),
+        (
+            "textio",
+            ["lib/std.08/textio.vhd"],
+        ),
+    ],
+    standard = "2008",
+)
+
+vhdl_chain(
+    name = "ieee_08_decls",
+    library = "ieee.08",
+    phases = [
+        (
+            "logic",
+            ["lib/ieee.08/std_logic_1164.vhdl"],
+        ),
+        (
+            "logic_body",
+            ["lib/ieee.08/std_logic_1164-body.vhdl"],
+        ),
+        (
+            "numeric_decls",
+            [
+                "lib/ieee.08/numeric_bit.vhdl",
+                "lib/ieee.08/numeric_bit_unsigned.vhdl",
+                "lib/ieee.08/numeric_std.vhdl",
+                "lib/ieee.08/numeric_std_unsigned.vhdl",
+            ],
+        ),
+    ],
+    standard = "2008",
+    deps = [":std_08_base"],
+)
+
+vhdl_chain(
+    name = "lib_nvc.08",
+    library = "nvc.08",
+    phases = [
+        (
+            "decls",
+            [
+                "lib/nvc/cover_pkg.vhd",
+                # 2008 uses a different polyfill (empty stub) — see
+                # comment in lib/nvc.08/polyfill.vhd.
+                "lib/nvc.08/polyfill.vhd",
+                "lib/nvc/psl_support.vhd",
+                "lib/nvc/random.vhd",
+                "lib/nvc/sim_pkg.vhd",
+                "lib/nvc/text_util.vhd",
+                "lib/nvc/verilog.vhd",
+            ],
+        ),
+        (
+            # nvc.08/polyfill.vhd is an empty package with no body, so
+            # only the original lib/nvc/* bodies appear here.
+            "bodies",
+            [
+                "lib/nvc/cover_pkg-body.vhd",
+                "lib/nvc/psl_support-body.vhd",
+                "lib/nvc/random-body.vhd",
+                "lib/nvc/sim_pkg-body.vhd",
+                "lib/nvc/text_util-body.vhd",
+                "lib/nvc/verilog-body.vhd",
+            ],
+        ),
+    ],
+    standard = "2008",
+    deps = [
+        ":ieee_08_decls",
+        ":std_08_base",
+    ],
+)
+
+vhdl_chain(
+    name = "std.08",
+    library = "std.08",
+    phases = [
+        # ENV first: STD.TEXTIO-body has a VHDL_VERSION>=2019 branch
+        # that references std.env; the 2008 build never hits that
+        # branch but keeping env earlier mirrors the 2019 chain.
+        (
+            "env",
+            ["lib/std.08/env.vhd"],
+        ),
+        (
+            "env_body",
+            ["lib/std.08/env-body.vhd"],
+        ),
+        (
+            "textio_body",
+            ["lib/std/textio-body.vhd"],
+        ),
+    ],
+    seed = ":std_08_base",
+    standard = "2008",
+    visibility = ["//visibility:public"],
+    deps = [":lib_nvc.08"],
+)
+
+vhdl_chain(
+    name = "ieee.08",
+    library = "ieee.08",
+    phases = [
+        (
+            "numeric_bodies",
+            [
+                "lib/ieee.08/numeric_bit-body.vhdl",
+                "lib/ieee.08/numeric_bit_unsigned-body.vhdl",
+                "lib/ieee.08/numeric_std-body.vhdl",
+                "lib/ieee.08/numeric_std_unsigned-body.vhdl",
+            ],
+        ),
+        # math_real / math_complex are shared with the 1993 set.
+        # math_complex declaration uses ieee.math_real, so math_real
+        # must come first. Splitting into two phases prevents
+        # buildifier from sorting them alphabetically (which would
+        # put math_complex before math_real).
+        (
+            "math_real_decl",
+            ["lib/ieee/math_real.vhdl"],
+        ),
+        (
+            "math_complex_decl",
+            ["lib/ieee/math_complex.vhdl"],
+        ),
+        (
+            "math_bodies",
+            [
+                "lib/ieee/math_complex-body.vhdl",
+                "lib/ieee/math_real-body.vhdl",
+            ],
+        ),
+        (
+            "std_logic_textio",
+            ["lib/ieee.08/std_logic_textio.vhdl"],
+        ),
+        # fixed_pkg / float_pkg are package instantiations of the
+        # matching `_generic_pkg`s, and IEEE's elaboration rule
+        # requires the generic's body to be analysed before any
+        # instantiation. The order is therefore: types → generic-decl
+        # → generic-body → instantiation. Two phases (decls / bodies)
+        # aren't enough.
+        (
+            "fixed_float_types",
+            ["lib/ieee.08/fixed_float_types.vhdl"],
+        ),
+        (
+            "fixed_generic_pkg",
+            ["lib/ieee.08/fixed_generic_pkg.vhdl"],
+        ),
+        (
+            "fixed_generic_body",
+            ["lib/ieee.08/fixed_generic_pkg-body.vhdl"],
+        ),
+        (
+            "fixed_pkg",
+            ["lib/ieee.08/fixed_pkg.vhdl"],
+        ),
+        (
+            "float_generic_pkg",
+            ["lib/ieee.08/float_generic_pkg.vhdl"],
+        ),
+        (
+            "float_generic_body",
+            ["lib/ieee.08/float_generic_pkg-body.vhdl"],
+        ),
+        (
+            "float_pkg",
+            ["lib/ieee.08/float_pkg.vhdl"],
+        ),
+        (
+            "contexts",
+            [
+                "lib/ieee.08/ieee_bit_context.vhdl",
+                "lib/ieee.08/ieee_std_context.vhdl",
+            ],
+        ),
+        _SYNOPSYS_PHASE,
+    ] + _VITAL_PHASES,
+    relaxed = True,
+    seed = ":ieee_08_decls",
+    standard = "2008",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lib_nvc.08",
+        ":std.08",
+    ],
+)
+
+# --- VHDL-2019 ---
+#
+# 2019 re-uses many of the 2008 source files (via the same `library`
+# name but a different on-disk directory: `*.19` vs `*.08`).
+
+vhdl_chain(
+    name = "std_19_base",
+    bootstrap = True,
+    library = "std.19",
+    phases = [
+        (
+            "standard",
+            ["lib/std.19/standard.vhd"],
+        ),
+        (
+            "standard_body",
+            ["lib/std/standard-body.vhd"],
+        ),
+        (
+            "textio",
+            ["lib/std.19/textio.vhdl"],
+        ),
+    ],
+    standard = "2019",
+)
+
+vhdl_chain(
+    name = "ieee_19_decls",
+    library = "ieee.19",
+    phases = [
+        (
+            "logic",
+            ["lib/ieee.08/std_logic_1164.vhdl"],
+        ),
+        (
+            "logic_body",
+            ["lib/ieee.08/std_logic_1164-body.vhdl"],
+        ),
+        (
+            "numeric_decls",
+            [
+                "lib/ieee.08/numeric_bit.vhdl",
+                "lib/ieee.08/numeric_bit_unsigned.vhdl",
+                "lib/ieee.08/numeric_std.vhdl",
+                "lib/ieee.08/numeric_std_unsigned.vhdl",
+            ],
+        ),
+    ],
+    standard = "2019",
+    deps = [":std_19_base"],
+)
+
+vhdl_chain(
+    name = "lib_nvc.19",
+    library = "nvc.19",
+    phases = [
+        (
+            "decls",
+            [
+                "lib/nvc/cover_pkg.vhd",
+                "lib/nvc.08/polyfill.vhd",
+                "lib/nvc/psl_support.vhd",
+                "lib/nvc/random.vhd",
+                "lib/nvc/sim_pkg.vhd",
+                "lib/nvc/text_util.vhd",
+                "lib/nvc/verilog.vhd",
+            ],
+        ),
+        (
+            "bodies",
+            [
+                "lib/nvc/cover_pkg-body.vhd",
+                "lib/nvc/psl_support-body.vhd",
+                "lib/nvc/random-body.vhd",
+                "lib/nvc/sim_pkg-body.vhd",
+                "lib/nvc/text_util-body.vhd",
+                "lib/nvc/verilog-body.vhd",
+            ],
+        ),
+    ],
+    standard = "2019",
+    deps = [
+        ":ieee_19_decls",
+        ":std_19_base",
+    ],
+)
+
+vhdl_chain(
+    name = "std.19",
+    library = "std.19",
+    phases = [
+        # ENV must come before TEXTIO-body: the 2019 branch of
+        # STD.TEXTIO-body's `read_severity` references
+        # std.env.GetVhdlReadSeverity, so ENV's declaration must
+        # already be in the library when textio-body is analysed.
+        (
+            "env",
+            ["lib/std.19/env.vhdl"],
+        ),
+        (
+            "env_body",
+            ["lib/std.19/env-body.vhd"],
+        ),
+        (
+            "reflection",
+            ["lib/std.19/reflection.vhdl"],
+        ),
+        (
+            "reflection_body",
+            ["lib/std.19/reflection-body.vhd"],
+        ),
+        (
+            "textio_body",
+            ["lib/std/textio-body.vhd"],
+        ),
+    ],
+    seed = ":std_19_base",
+    standard = "2019",
+    visibility = ["//visibility:public"],
+    deps = [":lib_nvc.19"],
+)
+
+vhdl_chain(
+    name = "ieee.19",
+    library = "ieee.19",
+    phases = [
+        (
+            "numeric_bodies",
+            [
+                "lib/ieee.08/numeric_bit-body.vhdl",
+                "lib/ieee.08/numeric_bit_unsigned-body.vhdl",
+                "lib/ieee.08/numeric_std-body.vhdl",
+                "lib/ieee.08/numeric_std_unsigned-body.vhdl",
+            ],
+        ),
+        # math_complex declaration uses ieee.math_real, so math_real
+        # must come first. Splitting into two phases prevents
+        # buildifier from sorting them alphabetically (which would
+        # put math_complex before math_real).
+        (
+            "math_real_decl",
+            ["lib/ieee/math_real.vhdl"],
+        ),
+        (
+            "math_complex_decl",
+            ["lib/ieee/math_complex.vhdl"],
+        ),
+        (
+            "math_bodies",
+            [
+                "lib/ieee/math_complex-body.vhdl",
+                "lib/ieee/math_real-body.vhdl",
+            ],
+        ),
+        (
+            "std_logic_textio",
+            ["lib/ieee.08/std_logic_textio.vhdl"],
+        ),
+        # fixed_pkg / float_pkg are package instantiations of the
+        # matching `_generic_pkg`s, and IEEE's elaboration rule
+        # requires the generic's body to be analysed before any
+        # instantiation. The order is therefore: types → generic-decl
+        # → generic-body → instantiation. Two phases (decls / bodies)
+        # aren't enough.
+        (
+            "fixed_float_types",
+            ["lib/ieee.08/fixed_float_types.vhdl"],
+        ),
+        (
+            "fixed_generic_pkg",
+            ["lib/ieee.08/fixed_generic_pkg.vhdl"],
+        ),
+        (
+            "fixed_generic_body",
+            ["lib/ieee.08/fixed_generic_pkg-body.vhdl"],
+        ),
+        (
+            "fixed_pkg",
+            ["lib/ieee.08/fixed_pkg.vhdl"],
+        ),
+        (
+            "float_generic_pkg",
+            ["lib/ieee.08/float_generic_pkg.vhdl"],
+        ),
+        (
+            "float_generic_body",
+            ["lib/ieee.08/float_generic_pkg-body.vhdl"],
+        ),
+        (
+            "float_pkg",
+            ["lib/ieee.08/float_pkg.vhdl"],
+        ),
+        (
+            "contexts",
+            [
+                "lib/ieee.08/ieee_bit_context.vhdl",
+                "lib/ieee.08/ieee_std_context.vhdl",
+            ],
+        ),
+        _SYNOPSYS_PHASE,
+    ] + _VITAL_PHASES,
+    relaxed = True,
+    seed = ":ieee_19_decls",
+    standard = "2019",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lib_nvc.19",
+        ":std.19",
+    ],
+)
+
+# Aggregate that exposes every shipped VHDL library, mirroring `make
+# bootstrap`. Each entry is its own TreeArtifact whose basename is
+# the NVC library identifier — same granularity an `apt`/`brew`
+# install of nvc would lay out on disk under
+# `<prefix>/lib/nvc/<library>/`.
+filegroup(
+    name = "vhdl_libs",
+    srcs = [
+        ":ieee",
+        ":ieee.08",
+        ":ieee.19",
+        ":lib_nvc",
+        ":lib_nvc.08",
+        ":lib_nvc.19",
+        ":std",
+        ":std.08",
+        ":std.19",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ===========================================================================
+# Smoke test — confirm the binary actually runs.
+#
+# Three-stage pipeline:
+#
+#   1. `write_file` emits a template (`nvc_version_expected.in`) with
+#      `@PACKAGE_VERSION@` / `@LLVM_VERSION@` placeholders. The
+#      template never has to be edited when bumping nvc or LLVM — the
+#      version literals live at the top of this BUILD file.
+#   2. `autoconf_hdr` renders the template via the same
+#      `substitutions` machinery that produces `config.h`, so the
+#      expected golden picks up the same constants the binary was
+#      compiled with.
+#   3. `genrule` redirects `nvc --version` into a file (no host-tool
+#      pipelines like `head` or `sed`); the LLVM-on vs LLVM-off
+#      difference is folded into the template via select() above
+#      so the expected text matches whichever variant was built. The
+#      `cmd_bat` mirrors the POSIX `cmd` for Windows action workers —
+#      cmd.exe also redirects with `>`.
+#   4. `diff_test` byte-compares actual vs expected.
+# ===========================================================================
+
+write_file(
+    name = "nvc_version_template",
+    out = "nvc_version_expected.in",
+    content = select({
+        ":_llvm_enabled": [
+            "nvc @PACKAGE_VERSION@ (Using LLVM @LLVM_VERSION@)",
+        ],
+        "//conditions:default": [
+            "nvc @PACKAGE_VERSION@",
+        ],
+    }) + [
+        "Copyright (C) 2011-2026  Nick Gasson",
+        "This program comes with ABSOLUTELY NO WARRANTY. This is free software, and",
+        "you are welcome to redistribute it under certain conditions. See the GNU",
+        "General Public Licence for details.",
+        "",
+    ],
+)
+
+autoconf_hdr(
+    name = "nvc_version_expected_file",
+    out = "nvc_version_expected.txt",
+    mode = "subst",
+    template = ":nvc_version_template",
+    deps = [
+        ":autoconf",
+        ":package",
+    ],
+)
+
+genrule(
+    name = "nvc_version_output",
+    srcs = [],
+    outs = ["nvc_version_actual.txt"],
+    cmd = "$(execpath :nvc) --version > $@",
+    cmd_bat = "$(execpath :nvc) --version > $@",
+    tools = [":nvc"],
+)
+
+diff_test(
+    name = "nvc_version_test",
+    file1 = ":nvc_version_output",
+    file2 = ":nvc_version_expected_file",
+)

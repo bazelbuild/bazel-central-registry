@@ -1,0 +1,91 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+package_info(
+    name = "package_info",
+    package_name = "libpaper",
+    module_bazel = "MODULE.bazel",
+    package_url = "https://github.com/rrthomas/libpaper",
+)
+
+autoconf(
+    name = "configure",
+    checks = [
+        # Check for NL_PAPER constants in langinfo.h (glibc extension).
+        # configure.ac: AC_DEFINE(HAVE_NL_PAPER_CONSTANTS, ...)
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <langinfo.h>
+int main(void) {
+    int w = _NL_PAPER_WIDTH;
+    int h = _NL_PAPER_HEIGHT;
+    (void)w; (void)h;
+    return 0;
+}
+""",
+            compile_defines = ["_GNU_SOURCE"],
+            define = "HAVE_NL_PAPER_CONSTANTS",
+        ),
+
+        # AC_SUBST for @sysconfdir@ in lib/libpaper.c.in.in
+        checks.AC_SUBST("sysconfdir", "/etc"),
+    ],
+    deps = [
+        ":package_info",
+        # AC_USE_SYSTEM_EXTENSIONS (_GNU_SOURCE et al.)
+        "@rules_cc_autoconf//gnulib/m4/extensions",
+        # AC_CHECK_FUNCS([strndup])
+        "@rules_cc_autoconf//gnulib/m4/strndup",
+        # gnulib config.h.in conditional checks
+        "@rules_cc_autoconf//gnulib/m4/stdbool",
+        "@rules_cc_autoconf//gnulib/m4/stdalign",
+        "@rules_cc_autoconf//gnulib/m4/builtin-expect",
+        "@rules_cc_autoconf//gnulib/m4/c-bool",
+        "@rules_cc_autoconf//gnulib/m4/assert_h",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":configure"],
+)
+
+autoconf_hdr(
+    name = "libpaper_c",
+    out = "libpaper.c",
+    mode = "subst",
+    template = "lib/libpaper.c.in.in",
+    deps = [":configure"],
+)
+
+cc_library(
+    name = "paper",
+    srcs = [
+        "config.h",
+        "libgnu/relocatable.h",
+        "libpaper.c",
+    ],
+    hdrs = ["lib/paper.h"],
+    includes = [
+        "lib",
+        "libgnu",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libpaper",
+    actual = ":paper",
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "paperspecs",
+    srcs = ["lib/paperspecs"],
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,86 @@
+module(
+    name = "ahab",
+    version = "0.1.0",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+###############################################################################
+# Core deps
+###############################################################################
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_rust_prost", version = "0.71.3")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "protobuf", version = "35.1")
+
+###############################################################################
+# Starlark formatting
+###############################################################################
+
+bazel_dep(
+    name = "buildifier_prebuilt",
+    version = "8.5.1.3",
+    dev_dependency = True,
+)
+
+###############################################################################
+# Hermetic C/C++ toolchain
+###############################################################################
+
+# Rust linking shells out to a C/C++ compiler, so without a registered cc
+# toolchain Bazel falls back to whatever cc/ld happen to be on the host. The
+# llvm module provides a zero-sysroot, fully hermetic LLVM-based cc toolchain.
+bazel_dep(name = "llvm", version = "0.8.14", dev_dependency = True)
+
+register_toolchains(
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)
+
+###############################################################################
+# Rust toolchain
+###############################################################################
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.86.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+###############################################################################
+# Third-party crate dependencies
+###############################################################################
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+
+# `from_cargo` rather than `from_specs`: inline specs cannot be resolved by
+# crate_universe when Ahab is a dependency rather than the root module, so
+# `from_specs` makes the module unusable by anyone else. The manifest and
+# lockfile ship with the module and are read the same way from either side.
+#
+# The hub is named rather than left as the default `crates`, so that a
+# consumer with its own Rust dependencies is not sharing a repository name
+# with ours.
+crate.from_cargo(
+    name = "ahab_crates",
+    cargo_lockfile = "//:Cargo.lock",
+    # The crate_universe lockfile, distinct from Cargo's own: it records the
+    # resolved render, and shipping it is what lets a consumer use these
+    # crates without repinning, which bzlmod does not allow across a module
+    # boundary.
+    lockfile = "//:Cargo.Bazel.lock",
+    manifests = ["//:Cargo.toml"],
+)
+crate.annotation(
+    crate = "protoc-gen-prost",
+    gen_binaries = ["protoc-gen-prost"],
+    repositories = ["ahab_crates"],
+)
+use_repo(crate, "ahab_crates")
+
+register_toolchains("//proto:prost_toolchain")

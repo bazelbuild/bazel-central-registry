@@ -1,0 +1,1643 @@
+"""GNU sed - https://www.gnu.org/software/sed/"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("@rules_cc_autoconf//gnulib:conditional_hdrs.bzl", "cc_gnulib_conditional_hdrs")
+
+bool_flag(
+    name = "enable_i18n",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_threads",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "i18n_disabled",
+    flag_values = {":enable_i18n": "False"},
+)
+
+config_setting(
+    name = "threads_enabled",
+    flag_values = {":enable_threads": "True"},
+)
+
+package_info(
+    name = "sed_package_info",
+    package_name = "GNU sed",
+    aliases = {
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "bug-sed@gnu.org",
+    package_url = "https://www.gnu.org/software/sed/",
+    strip_bcr_version = True,
+)
+
+# m4 modules not provided by @rules_cc_autoconf//gnulib/m4 (excluded from the
+# auto-mapped GNULIB_M4_DEPS below and handled inline).
+SED_UNIQUE_M4_FILES = [
+    "m4/gnulib-comp.m4",
+    # memeq/streq are C2y proposals new in sed-4.10's gnulib; no upstream module yet.
+    "m4/memeq.m4",
+    "m4/streq.m4",
+    "m4/wchar_t.m4",
+    "m4/year2038.m4",
+    # Locally overridden -- see m4_c32rtomb below for the rationale.
+    "m4/c32rtomb.m4",
+]
+
+GNULIB_M4_DEPS = [
+    "@rules_cc_autoconf//gnulib/m4/{}".format(file[len("m4/"):-len(".m4")])
+    for file in glob(
+        include = ["m4/*.m4"],
+        exclude = SED_UNIQUE_M4_FILES,
+    )
+]
+
+autoconf(
+    name = "m4_wchar_t",
+    checks = [
+        checks.AC_TRY_COMPILE(
+            name = "gt_cv_c_wchar_t",
+            code = "#include <stddef.h>\nwchar_t foo = (wchar_t)'\\0';\nint main(void) { return 0; }\n",
+        ),
+        checks.AC_DEFINE(
+            "HAVE_WCHAR_T",
+            1,
+            requires = ["gt_cv_c_wchar_t"],
+        ),
+    ],
+)
+
+# year2038: guarantees 64-bit time_t.  Mingw needs an opt-in macro; everywhere
+# else modern time_t is the default.
+autoconf(
+    name = "m4_year2038",
+    checks = select({
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("__MINGW_USE_VC2005_COMPAT", 1),
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+autoconf(
+    name = "m4_memeq",
+    checks = [checks.AC_CHECK_DECL(
+        "memeq",
+        define = "HAVE_DECL_MEMEQ",
+        includes = ["string.h"],
+    )],
+)
+
+autoconf(
+    name = "m4_streq",
+    checks = [checks.AC_CHECK_DECL(
+        "streq",
+        define = "HAVE_DECL_STREQ",
+        includes = ["string.h"],
+    )],
+)
+
+# Upstream's gl_CHECK_FUNC_C32RTOMB probes c32rtomb at the autoconf toolchain's
+# own compile flags rather than the consumer's; on macOS, libSystem's <uchar.h>
+# hides the c32rtomb prototype unless a feature-test macro is set that
+# -std=gnu11 doesn't activate, so the probe says "available" but sed's TU
+# can't see the decl.  We sidestep the probe and pin HAVE_C32RTOMB from
+# platform knowledge: Linux glibc has it; macOS at gnu11 doesn't expose the
+# decl; MSVC has no <uchar.h> at all.  Other substs/cache vars come from the
+# toolchain defaults + mbrtoc32's transitive :gl_C32RTOMB_SANITYCHECK dep.
+autoconf(
+    name = "m4_c32rtomb",
+    checks = select({
+        "@platforms//os:linux": [
+            checks.AC_SUBST("HAVE_C32RTOMB", 1),
+        ],
+        "//conditions:default": [
+            checks.AC_SUBST("HAVE_C32RTOMB", 0),
+        ],
+    }),
+)
+
+# Gnulib aggregator: enables GNULIB_* module indicators and GL_GENERATE_*_H
+# gates that lib/*.in.h templates branch on.  "IN_SED_GNULIB_TESTS"-valued
+# substs are gated on a token undefined outside the gnulib-tests subtree
+# (which sed itself isn't part of), per sed's gnulib-comp.m4.
+autoconf(
+    name = "m4_gnulib-comp",
+    checks = [
+        # always-1 indicators
+        checks.AC_SUBST("GNULIB_CLOSEDIR", 1),
+        checks.AC_SUBST("GNULIB_DIRFD", 1),
+        checks.AC_SUBST("GNULIB_OPENDIR", 1),
+        checks.AC_SUBST("GNULIB_READDIR", 1),
+        checks.AC_SUBST("GNULIB_FCNTL", 1),
+        checks.AC_SUBST("GNULIB_OPEN", 1),
+        checks.AC_SUBST("GNULIB_NL_LANGINFO", 1),
+        checks.AC_SUBST("GNULIB_LOCALECONV", 1),
+        checks.AC_SUBST("GNULIB_SETLOCALE_NULL", 1),
+        checks.AC_SUBST("GNULIB_PTHREAD_THREAD", 1),
+        checks.AC_SUBST("GNULIB_FGETC", 1),
+        checks.AC_SUBST("GNULIB_FGETS", 1),
+        checks.AC_SUBST("GNULIB_FOPEN_GNU", 1),
+        checks.AC_SUBST("GNULIB_FPRINTF", 1),
+        checks.AC_SUBST("GNULIB_FPUTC", 1),
+        checks.AC_SUBST("GNULIB_FPUTS", 1),
+        checks.AC_SUBST("GNULIB_FREAD", 1),
+        checks.AC_SUBST("GNULIB_FSCANF", 1),
+        checks.AC_SUBST("GNULIB_FWRITE", 1),
+        checks.AC_SUBST("GNULIB_GETC", 1),
+        checks.AC_SUBST("GNULIB_GETCHAR", 1),
+        checks.AC_SUBST("GNULIB_GETDELIM", 1),
+        checks.AC_SUBST("GNULIB_PRINTF", 1),
+        checks.AC_SUBST("GNULIB_PUTC", 1),
+        checks.AC_SUBST("GNULIB_PUTCHAR", 1),
+        checks.AC_SUBST("GNULIB_PUTS", 1),
+        checks.AC_SUBST("GNULIB_RENAME", 1),
+        checks.AC_SUBST("GNULIB_SCANF", 1),
+        checks.AC_SUBST("GNULIB_VFPRINTF", 1),
+        checks.AC_SUBST("GNULIB_VPRINTF", 1),
+        checks.AC_SUBST("GNULIB_CALLOC_GNU", 1),
+        checks.AC_SUBST("GNULIB_CALLOC_POSIX", 1),
+        checks.AC_SUBST("GNULIB_CANONICALIZE_FILE_NAME", 1),
+        checks.AC_SUBST("GNULIB_FREE_POSIX", 1),
+        checks.AC_SUBST("GNULIB_MALLOC_GNU", 1),
+        checks.AC_SUBST("GNULIB_MALLOC_POSIX", 1),
+        checks.AC_SUBST("GNULIB_MBTOWC", 1),
+        checks.AC_SUBST("GNULIB_MKOSTEMP", 1),
+        checks.AC_SUBST("GNULIB_REALLOCARRAY", 1),
+        checks.AC_SUBST("GNULIB_REALLOC_POSIX", 1),
+        checks.AC_SUBST("GNULIB_REALPATH", 1),
+        checks.AC_SUBST("GNULIB_WCTOMB", 1),
+        checks.AC_SUBST("GNULIB_MEMCHR", 1),
+        checks.AC_SUBST("GNULIB_MEMPCPY", 1),
+        checks.AC_SUBST("GNULIB_MEMRCHR", 1),
+        checks.AC_SUBST("GNULIB_RAWMEMCHR", 1),
+        checks.AC_SUBST("GNULIB_STRERROR", 1),
+        checks.AC_SUBST("GNULIB_STRVERSCMP", 1),
+        checks.AC_SUBST("GNULIB_GETRANDOM", 1),
+        checks.AC_SUBST("GNULIB_FSTAT", 1),
+        checks.AC_SUBST("GNULIB_LSTAT", 1),
+        checks.AC_SUBST("GNULIB_MKDIR", 1),
+        checks.AC_SUBST("GNULIB_STAT", 1),
+        checks.AC_SUBST("GNULIB_CHDIR", 1),
+        checks.AC_SUBST("GNULIB_CLOSE", 1),
+        checks.AC_SUBST("GNULIB_DUP2", 1),
+        checks.AC_SUBST("GNULIB_GETDTABLESIZE", 1),
+        checks.AC_SUBST("GNULIB_READLINK", 1),
+        checks.AC_SUBST("GNULIB_RMDIR", 1),
+        checks.AC_SUBST("GNULIB_BTOWC", 1),
+        checks.AC_SUBST("GNULIB_MBRLEN", 1),
+        checks.AC_SUBST("GNULIB_MBRTOWC", 1),
+        checks.AC_SUBST("GNULIB_MBSINIT", 1),
+        checks.AC_SUBST("GNULIB_WCRTOMB", 1),
+        checks.AC_SUBST("GNULIB_WCTOB", 1),
+        # in-tests-only indicators
+        checks.AC_SUBST("GNULIB_ENVIRON", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_EXPLICIT_BZERO", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FDOPEN", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FFLUSH", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FOPEN", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FPURGE", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FSEEK", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FSEEKO", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FTELL", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FTELLO", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_FTRUNCATE", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_GETCWD", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_GETPAGESIZE", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_ISBLANK", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_LINK", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_LOCALENAME", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_LSEEK", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_NANOSLEEP", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_PERROR", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_PIPE", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_PUTENV", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_SETENV", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_SETLOCALE", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_SLEEP", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_STRDUP", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_STRERROR_R", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_SYMLINK", "IN_SED_GNULIB_TESTS"),
+        checks.AC_SUBST("GNULIB_UNSETENV", "IN_SED_GNULIB_TESTS"),
+
+        # gl_MODULE_INDICATOR -> AC_DEFINE in config.h
+        checks.AC_DEFINE("GNULIB_CANONICALIZE_LGPL", 1),
+        checks.AC_DEFINE("GNULIB_CLOSE_STREAM", 1),
+        checks.AC_DEFINE("GNULIB_FFLUSH", 1),
+        checks.AC_DEFINE("GNULIB_FOPEN_GNU", 1),
+        checks.AC_DEFINE("GNULIB_FSCANF", 1),
+        checks.AC_DEFINE("GNULIB_ISBLANK", 1),
+        checks.AC_DEFINE("GNULIB_LOCK", 1),
+        checks.AC_DEFINE("GNULIB_MKOSTEMP", 1),
+        checks.AC_DEFINE("GNULIB_MSVC_NOTHROW", 1),
+        checks.AC_DEFINE("GNULIB_REALLOCARRAY", 1),
+        checks.AC_DEFINE("GNULIB_SCANF", 1),
+        checks.AC_DEFINE("GNULIB_STRERROR", 1),
+        # GNULIB_STRERROR_R_POSIX is platform-selected at the rule's tail:
+        # MSVC has strerror_s, not POSIX strerror_r.
+        checks.AC_DEFINE("GNULIB_TEMPNAME", 1),
+        checks.AC_DEFINE("GNULIB_XALLOC", 1),
+        checks.AC_DEFINE("GNULIB_XALLOC_DIE", 1),
+        checks.AC_SUBST("IN_SED_GNULIB_TESTS", 0),
+
+        # always-0 indicators -- referenced in #if directives in sed's
+        # gnulib templates, so leaving them unset emits raw @GNULIB_X@ tokens
+        # the preprocessor can't parse.
+        checks.AC_SUBST("GNULIB_ABORT_DEBUG", 0),
+        checks.AC_SUBST("GNULIB_ACCESS", 0),
+        checks.AC_SUBST("GNULIB_ALIGNED_ALLOC", 0),
+        checks.AC_SUBST("GNULIB_ALPHASORT", 0),
+        checks.AC_SUBST("GNULIB_ATOLL", 0),
+        checks.AC_SUBST("GNULIB_BTOC32", 0),
+        checks.AC_SUBST("GNULIB_C32ISALNUM", 0),
+        checks.AC_SUBST("GNULIB_C32ISALPHA", 0),
+        checks.AC_SUBST("GNULIB_C32ISBLANK", 0),
+        checks.AC_SUBST("GNULIB_C32ISCNTRL", 0),
+        checks.AC_SUBST("GNULIB_C32ISDIGIT", 0),
+        checks.AC_SUBST("GNULIB_C32ISGRAPH", 0),
+        checks.AC_SUBST("GNULIB_C32ISLOWER", 0),
+        checks.AC_SUBST("GNULIB_C32ISPRINT", 1),
+        checks.AC_SUBST("GNULIB_C32ISPUNCT", 0),
+        checks.AC_SUBST("GNULIB_C32ISSPACE", 1),
+        checks.AC_SUBST("GNULIB_C32ISUPPER", 0),
+        checks.AC_SUBST("GNULIB_C32ISXDIGIT", 0),
+        checks.AC_SUBST("GNULIB_C32RTOMB", 1),
+        checks.AC_SUBST("GNULIB_C32SNRTOMBS", 0),
+        checks.AC_SUBST("GNULIB_C32SRTOMBS", 0),
+        checks.AC_SUBST("GNULIB_C32STOMBS", 0),
+        checks.AC_SUBST("GNULIB_C32SWIDTH", 0),
+        checks.AC_SUBST("GNULIB_C32TOB", 1),
+        checks.AC_SUBST("GNULIB_C32TOLOWER", 1),
+        checks.AC_SUBST("GNULIB_C32TOUPPER", 1),
+        checks.AC_SUBST("GNULIB_C32WIDTH", 0),
+        checks.AC_SUBST("GNULIB_C32_APPLY_MAPPING", 0),
+        checks.AC_SUBST("GNULIB_C32_APPLY_TYPE_TEST", 0),
+        checks.AC_SUBST("GNULIB_C32_GET_MAPPING", 0),
+        checks.AC_SUBST("GNULIB_C32_GET_TYPE_TEST", 0),
+        checks.AC_SUBST("GNULIB_CHMOD", 0),
+        checks.AC_SUBST("GNULIB_CHOWN", 0),
+        checks.AC_SUBST("GNULIB_COPY_FILE_RANGE", 0),
+        checks.AC_SUBST("GNULIB_CREAT", 0),
+        checks.AC_SUBST("GNULIB_CTIME", 0),
+        checks.AC_SUBST("GNULIB_DPRINTF", 0),
+        checks.AC_SUBST("GNULIB_DUP", 0),
+        checks.AC_SUBST("GNULIB_DUP3", 0),
+        checks.AC_SUBST("GNULIB_DUPLOCALE", 0),
+        checks.AC_SUBST("GNULIB_DZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_EUIDACCESS", 0),
+        checks.AC_SUBST("GNULIB_EXECL", 0),
+        checks.AC_SUBST("GNULIB_EXECLE", 0),
+        checks.AC_SUBST("GNULIB_EXECLP", 0),
+        checks.AC_SUBST("GNULIB_EXECV", 0),
+        checks.AC_SUBST("GNULIB_EXECVE", 0),
+        checks.AC_SUBST("GNULIB_EXECVP", 0),
+        checks.AC_SUBST("GNULIB_EXECVPE", 0),
+        checks.AC_SUBST("GNULIB_FACCESSAT", 0),
+        checks.AC_SUBST("GNULIB_FCHDIR", 0),
+        checks.AC_SUBST("GNULIB_FCHMODAT", 0),
+        checks.AC_SUBST("GNULIB_FCHOWNAT", 0),
+        checks.AC_SUBST("GNULIB_FCLOSE", 0),
+        checks.AC_SUBST("GNULIB_FDATASYNC", 0),
+        checks.AC_SUBST("GNULIB_FDOPENDIR", 0),
+        checks.AC_SUBST("GNULIB_FFSL", 0),
+        checks.AC_SUBST("GNULIB_FFSLL", 0),
+        checks.AC_SUBST("GNULIB_FPRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_FREELOCALE", 0),
+        checks.AC_SUBST("GNULIB_FREOPEN", 0),
+        checks.AC_SUBST("GNULIB_FSTATAT", 0),
+        checks.AC_SUBST("GNULIB_FSYNC", 0),
+        checks.AC_SUBST("GNULIB_FUTIMENS", 0),
+        checks.AC_SUBST("GNULIB_FZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_GETDOMAINNAME", 0),
+        checks.AC_SUBST("GNULIB_GETENTROPY", 0),
+        checks.AC_SUBST("GNULIB_GETGROUPS", 0),
+        checks.AC_SUBST("GNULIB_GETHOSTNAME", 0),
+        checks.AC_SUBST("GNULIB_GETLINE", 0),
+        checks.AC_SUBST("GNULIB_GETLOADAVG", 0),
+        checks.AC_SUBST("GNULIB_GETLOCALENAME_L", 0),
+        checks.AC_SUBST("GNULIB_GETLOCALENAME_L_UNSAFE", 0),
+        checks.AC_SUBST("GNULIB_GETLOGIN", 0),
+        checks.AC_SUBST("GNULIB_GETLOGIN_R", 0),
+        checks.AC_SUBST("GNULIB_GETPASS", 0),
+        checks.AC_SUBST("GNULIB_GETPASS_GNU", 0),
+        checks.AC_SUBST("GNULIB_GETPROGNAME", 0),
+        checks.AC_SUBST("GNULIB_GETSUBOPT", 0),
+        checks.AC_SUBST("GNULIB_GETUMASK", 0),
+        checks.AC_SUBST("GNULIB_GETUSERSHELL", 0),
+        checks.AC_SUBST("GNULIB_GRANTPT", 0),
+        checks.AC_SUBST("GNULIB_GROUP_MEMBER", 0),
+        checks.AC_SUBST("GNULIB_IMAXABS", 0),
+        checks.AC_SUBST("GNULIB_IMAXDIV", 0),
+        checks.AC_SUBST("GNULIB_ISALNUM_L", 0),
+        checks.AC_SUBST("GNULIB_ISALPHA_L", 0),
+        checks.AC_SUBST("GNULIB_ISATTY", 0),
+        checks.AC_SUBST("GNULIB_ISBLANK_L", 0),
+        checks.AC_SUBST("GNULIB_ISCNTRL_L", 0),
+        checks.AC_SUBST("GNULIB_ISDIGIT_L", 0),
+        checks.AC_SUBST("GNULIB_ISGRAPH_L", 0),
+        checks.AC_SUBST("GNULIB_ISLOWER_L", 0),
+        checks.AC_SUBST("GNULIB_ISPRINT_L", 0),
+        checks.AC_SUBST("GNULIB_ISPUNCT_L", 0),
+        checks.AC_SUBST("GNULIB_ISSPACE_L", 0),
+        checks.AC_SUBST("GNULIB_ISUPPER_L", 0),
+        checks.AC_SUBST("GNULIB_ISWBLANK", 1),
+        checks.AC_SUBST("GNULIB_ISWCTYPE", 1),
+        checks.AC_SUBST("GNULIB_ISWDIGIT", 1),
+        checks.AC_SUBST("GNULIB_ISWPUNCT", 0),
+        checks.AC_SUBST("GNULIB_ISWXDIGIT", 1),
+        checks.AC_SUBST("GNULIB_ISXDIGIT_L", 0),
+        checks.AC_SUBST("GNULIB_LCHMOD", 0),
+        checks.AC_SUBST("GNULIB_LCHOWN", 0),
+        checks.AC_SUBST("GNULIB_LINKAT", 0),
+        checks.AC_SUBST("GNULIB_LOCALTIME", 0),
+        checks.AC_SUBST("GNULIB_MBRTOC16", 0),
+        checks.AC_SUBST("GNULIB_MBRTOC32", 1),
+        checks.AC_SUBST("GNULIB_MBSCASECMP", 0),
+        checks.AC_SUBST("GNULIB_MBSCASESTR", 0),
+        checks.AC_SUBST("GNULIB_MBSCHR", 0),
+        checks.AC_SUBST("GNULIB_MBSCSPN", 0),
+        checks.AC_SUBST("GNULIB_MBSLEN", 0),
+        checks.AC_SUBST("GNULIB_MBSNCASECMP", 0),
+        checks.AC_SUBST("GNULIB_MBSNLEN", 0),
+        checks.AC_SUBST("GNULIB_MBSNRTOC32S", 0),
+        checks.AC_SUBST("GNULIB_MBSNRTOWCS", 0),
+        checks.AC_SUBST("GNULIB_MBSPBRK", 0),
+        checks.AC_SUBST("GNULIB_MBSPCASECMP", 0),
+        checks.AC_SUBST("GNULIB_MBSRCHR", 0),
+        checks.AC_SUBST("GNULIB_MBSRTOC32S", 0),
+        checks.AC_SUBST("GNULIB_MBSRTOWCS", 0),
+        checks.AC_SUBST("GNULIB_MBSSEP", 0),
+        checks.AC_SUBST("GNULIB_MBSSPN", 0),
+        checks.AC_SUBST("GNULIB_MBSSTR", 0),
+        checks.AC_SUBST("GNULIB_MBSTOC32S", 0),
+        checks.AC_SUBST("GNULIB_MBSTOK_R", 0),
+        checks.AC_SUBST("GNULIB_MBSTOWCS", 0),
+        checks.AC_SUBST("GNULIB_MBSZERO", 1),
+        checks.AC_SUBST("GNULIB_MBS_ENDSWITH", 0),
+        checks.AC_SUBST("GNULIB_MBS_STARTSWITH", 0),
+        checks.AC_SUBST("GNULIB_MDA_ACCESS", 0),
+        checks.AC_SUBST("GNULIB_MDA_CHDIR", 0),
+        checks.AC_SUBST("GNULIB_MDA_CHMOD", 0),
+        checks.AC_SUBST("GNULIB_MDA_CLOSE", 0),
+        checks.AC_SUBST("GNULIB_MDA_CREAT", 0),
+        checks.AC_SUBST("GNULIB_MDA_DUP", 0),
+        checks.AC_SUBST("GNULIB_MDA_DUP2", 0),
+        checks.AC_SUBST("GNULIB_MDA_ECVT", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECL", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECLE", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECLP", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECV", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECVE", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECVP", 0),
+        checks.AC_SUBST("GNULIB_MDA_EXECVPE", 0),
+        checks.AC_SUBST("GNULIB_MDA_FCLOSEALL", 0),
+        checks.AC_SUBST("GNULIB_MDA_FCVT", 0),
+        checks.AC_SUBST("GNULIB_MDA_FDOPEN", 0),
+        checks.AC_SUBST("GNULIB_MDA_FILENO", 0),
+        checks.AC_SUBST("GNULIB_MDA_GCVT", 0),
+        checks.AC_SUBST("GNULIB_MDA_GETCWD", 0),
+        checks.AC_SUBST("GNULIB_MDA_GETPID", 0),
+        checks.AC_SUBST("GNULIB_MDA_GETW", 0),
+        checks.AC_SUBST("GNULIB_MDA_ISATTY", 0),
+        checks.AC_SUBST("GNULIB_MDA_LSEEK", 0),
+        checks.AC_SUBST("GNULIB_MDA_MEMCCPY", 0),
+        checks.AC_SUBST("GNULIB_MDA_MKDIR", 0),
+        checks.AC_SUBST("GNULIB_MDA_MKTEMP", 0),
+        checks.AC_SUBST("GNULIB_MDA_OPEN", 0),
+        checks.AC_SUBST("GNULIB_MDA_PUTENV", 0),
+        checks.AC_SUBST("GNULIB_MDA_PUTW", 0),
+        checks.AC_SUBST("GNULIB_MDA_READ", 0),
+        checks.AC_SUBST("GNULIB_MDA_RMDIR", 0),
+        checks.AC_SUBST("GNULIB_MDA_STRDUP", 0),
+        checks.AC_SUBST("GNULIB_MDA_SWAB", 0),
+        checks.AC_SUBST("GNULIB_MDA_TEMPNAM", 0),
+        checks.AC_SUBST("GNULIB_MDA_TZSET", 0),
+        checks.AC_SUBST("GNULIB_MDA_UMASK", 0),
+        checks.AC_SUBST("GNULIB_MDA_UNLINK", 0),
+        checks.AC_SUBST("GNULIB_MDA_WCSDUP", 0),
+        checks.AC_SUBST("GNULIB_MDA_WRITE", 0),
+        checks.AC_SUBST("GNULIB_MEMEQ", 1),
+        checks.AC_SUBST("GNULIB_MEMMEM", 0),
+        checks.AC_SUBST("GNULIB_MEMSET_EXPLICIT", 0),
+        checks.AC_SUBST("GNULIB_MKDIRAT", 0),
+        checks.AC_SUBST("GNULIB_MKDTEMP", 0),
+        checks.AC_SUBST("GNULIB_MKFIFO", 0),
+        checks.AC_SUBST("GNULIB_MKFIFOAT", 0),
+        checks.AC_SUBST("GNULIB_MKNOD", 0),
+        checks.AC_SUBST("GNULIB_MKNODAT", 0),
+        checks.AC_SUBST("GNULIB_MKOSTEMPS", 0),
+        checks.AC_SUBST("GNULIB_MKSTEMP", 0),
+        checks.AC_SUBST("GNULIB_MKSTEMPS", 0),
+        checks.AC_SUBST("GNULIB_MKTIME", 0),
+        checks.AC_SUBST("GNULIB_NEWLOCALE", 0),
+        checks.AC_SUBST("GNULIB_NONBLOCKING", 0),
+        checks.AC_SUBST("GNULIB_OBSTACK_PRINTF", 0),
+        checks.AC_SUBST("GNULIB_OBSTACK_PRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_OBSTACK_ZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_OPENAT", 0),
+        checks.AC_SUBST("GNULIB_OPENAT2", 0),
+        checks.AC_SUBST("GNULIB_OVERRIDES_STRUCT_STAT", 0),
+        checks.AC_SUBST("GNULIB_PCLOSE", 0),
+        checks.AC_SUBST("GNULIB_PIPE2", 0),
+        checks.AC_SUBST("GNULIB_POPEN", 0),
+        checks.AC_SUBST("GNULIB_POSIX_MEMALIGN", 0),
+        checks.AC_SUBST("GNULIB_POSIX_OPENPT", 0),
+        checks.AC_SUBST("GNULIB_PREAD", 0),
+        checks.AC_SUBST("GNULIB_PRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_COND", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_MUTEX", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_MUTEX_TIMEDLOCK", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_ONCE", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_RWLOCK", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_SPIN", 0),
+        checks.AC_SUBST("GNULIB_PTHREAD_TSS", 0),
+        checks.AC_SUBST("GNULIB_PTSNAME", 0),
+        checks.AC_SUBST("GNULIB_PTSNAME_R", 0),
+        checks.AC_SUBST("GNULIB_PWRITE", 0),
+        checks.AC_SUBST("GNULIB_QSORT_R", 0),
+        checks.AC_SUBST("GNULIB_RAND", 0),
+        checks.AC_SUBST("GNULIB_RANDOM", 0),
+        checks.AC_SUBST("GNULIB_RANDOM_R", 0),
+        checks.AC_SUBST("GNULIB_READ", 0),
+        checks.AC_SUBST("GNULIB_READLINKAT", 0),
+        checks.AC_SUBST("GNULIB_REMOVE", 0),
+        checks.AC_SUBST("GNULIB_RENAMEAT", 0),
+        checks.AC_SUBST("GNULIB_REWINDDIR", 0),
+        checks.AC_SUBST("GNULIB_RPMATCH", 0),
+        checks.AC_SUBST("GNULIB_SCANDIR", 0),
+        checks.AC_SUBST("GNULIB_SCHED_YIELD", 0),
+        checks.AC_SUBST("GNULIB_SECURE_GETENV", 0),
+        checks.AC_SUBST("GNULIB_SETHOSTNAME", 0),
+        checks.AC_SUBST("GNULIB_SIGABBREV_NP", 0),
+        checks.AC_SUBST("GNULIB_SIGDESCR_NP", 0),
+        checks.AC_SUBST("GNULIB_SNPRINTF", 0),
+        checks.AC_SUBST("GNULIB_SNZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_SPRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_STACK_TRACE", 0),
+        checks.AC_SUBST("GNULIB_STDIO_H_NONBLOCKING", 0),
+        checks.AC_SUBST("GNULIB_STDIO_H_SIGPIPE", 0),
+        checks.AC_SUBST("GNULIB_STPCPY", 0),
+        checks.AC_SUBST("GNULIB_STPNCPY", 0),
+        checks.AC_SUBST("GNULIB_STRCASESTR", 0),
+        checks.AC_SUBST("GNULIB_STRCHRNUL", 0),
+        checks.AC_SUBST("GNULIB_STREQ", 1),
+        checks.AC_SUBST("GNULIB_STRERRORNAME_NP", 0),
+        checks.AC_SUBST("GNULIB_STRERROR_L", 0),
+        checks.AC_SUBST("GNULIB_STRFTIME", 0),
+        checks.AC_SUBST("GNULIB_STRNCAT", 0),
+        checks.AC_SUBST("GNULIB_STRNCPY", 0),
+        checks.AC_SUBST("GNULIB_STRNDUP", 0),
+        checks.AC_SUBST("GNULIB_STRNLEN", 0),
+        checks.AC_SUBST("GNULIB_STRNUL", 0),
+        checks.AC_SUBST("GNULIB_STRPBRK", 0),
+        checks.AC_SUBST("GNULIB_STRPTIME", 0),
+        checks.AC_SUBST("GNULIB_STRSEP", 0),
+        checks.AC_SUBST("GNULIB_STRSIGNAL", 0),
+        checks.AC_SUBST("GNULIB_STRSTR", 0),
+        checks.AC_SUBST("GNULIB_STRTOD", 0),
+        checks.AC_SUBST("GNULIB_STRTOF", 0),
+        checks.AC_SUBST("GNULIB_STRTOIMAX", 0),
+        checks.AC_SUBST("GNULIB_STRTOK_R", 0),
+        checks.AC_SUBST("GNULIB_STRTOL", 0),
+        checks.AC_SUBST("GNULIB_STRTOLD", 0),
+        checks.AC_SUBST("GNULIB_STRTOLL", 0),
+        checks.AC_SUBST("GNULIB_STRTOUL", 0),
+        checks.AC_SUBST("GNULIB_STRTOULL", 0),
+        checks.AC_SUBST("GNULIB_STRTOUMAX", 0),
+        checks.AC_SUBST("GNULIB_STR_ENDSWITH", 0),
+        checks.AC_SUBST("GNULIB_STR_STARTSWITH", 0),
+        checks.AC_SUBST("GNULIB_SYMLINKAT", 0),
+        checks.AC_SUBST("GNULIB_SYSTEM_POSIX", 0),
+        checks.AC_SUBST("GNULIB_SZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_TIME", 0),
+        checks.AC_SUBST("GNULIB_TIMEGM", 0),
+        checks.AC_SUBST("GNULIB_TIMESPEC_GET", 0),
+        checks.AC_SUBST("GNULIB_TIMESPEC_GETRES", 0),
+        checks.AC_SUBST("GNULIB_TIME_R", 0),
+        checks.AC_SUBST("GNULIB_TIME_RZ", 0),
+        checks.AC_SUBST("GNULIB_TMPFILE", 0),
+        checks.AC_SUBST("GNULIB_TOLOWER_L", 0),
+        checks.AC_SUBST("GNULIB_TOUPPER_L", 0),
+        checks.AC_SUBST("GNULIB_TOWCTRANS", 0),
+        checks.AC_SUBST("GNULIB_TRUNCATE", 0),
+        checks.AC_SUBST("GNULIB_TTYNAME_R", 0),
+        checks.AC_SUBST("GNULIB_TZNAME", 0),
+        checks.AC_SUBST("GNULIB_TZSET", 0),
+        checks.AC_SUBST("GNULIB_UNICASE_EMPTY_PREFIX_CONTEXT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICASE_EMPTY_SUFFIX_CONTEXT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_CC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_CF_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_CN_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_CO_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_CS_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_C_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_LC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_LL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_LM_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_LO_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_LT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_LU_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_L_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_MC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_ME_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_MN_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_M_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_ND_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_NL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_NO_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_N_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PD_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PF_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PI_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PO_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_PS_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_P_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_SC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_SK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_SM_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_SO_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_S_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_ZL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_ZP_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_ZS_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_CATEGORY_Z_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ALPHABETIC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ASCII_HEX_DIGIT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_ARABIC_DIGIT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_ARABIC_RIGHT_TO_LEFT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_BLOCK_SEPARATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_BOUNDARY_NEUTRAL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_COMMON_SEPARATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_CONTROL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_EMBEDDING_OR_OVERRIDE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_EUROPEAN_DIGIT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_EUR_NUM_SEPARATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_EUR_NUM_TERMINATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_HEBREW_RIGHT_TO_LEFT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_LEFT_TO_RIGHT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_NON_SPACING_MARK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_OTHER_NEUTRAL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_PDF_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_SEGMENT_SEPARATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_BIDI_WHITESPACE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CASED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CASE_IGNORABLE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CHANGES_WHEN_CASEFOLDED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CHANGES_WHEN_CASEMAPPED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CHANGES_WHEN_LOWERCASED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CHANGES_WHEN_TITLECASED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CHANGES_WHEN_UPPERCASED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_COMBINING_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_COMPOSITE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_CURRENCY_SYMBOL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_DASH_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_DECIMAL_DIGIT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_DEFAULT_IGNORABLE_CODE_POINT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_DEPRECATED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_DIACRITIC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EMOJI_COMPONENT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EMOJI_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EMOJI_MODIFIER_BASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EMOJI_MODIFIER_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EMOJI_PRESENTATION_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EXTENDED_PICTOGRAPHIC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_EXTENDER_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_FORMAT_CONTROL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_GRAPHEME_BASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_GRAPHEME_EXTEND_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_GRAPHEME_LINK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_HEX_DIGIT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_HYPHEN_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_IDEOGRAPHIC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_IDS_BINARY_OPERATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_IDS_TRINARY_OPERATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_IDS_UNARY_OPERATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ID_COMPAT_MATH_CONTINUE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ID_COMPAT_MATH_START_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ID_CONTINUE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ID_START_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_IGNORABLE_CONTROL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ISO_CONTROL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_JOIN_CONTROL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_LEFT_OF_PAIR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_LINE_SEPARATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_LOGICAL_ORDER_EXCEPTION_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_LOWERCASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_MATH_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_MODIFIER_COMBINING_MARK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_NON_BREAK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_NOT_A_CHARACTER_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_NUMERIC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_ALPHABETIC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_DEFAULT_IGNORABLE_CODE_POINT_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_GRAPHEME_EXTEND_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_ID_CONTINUE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_ID_START_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_LOWERCASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_MATH_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_OTHER_UPPERCASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PAIRED_PUNCTUATION_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PARAGRAPH_SEPARATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PATTERN_SYNTAX_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PATTERN_WHITE_SPACE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PREPENDED_CONCATENATION_MARK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PRIVATE_USE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_PUNCTUATION_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_QUOTATION_MARK_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_RADICAL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_REGIONAL_INDICATOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_SENTENCE_TERMINAL_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_SOFT_DOTTED_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_SPACE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_TERMINAL_PUNCTUATION_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_TITLECASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_UNASSIGNED_CODE_VALUE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_UNIFIED_IDEOGRAPH_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_UPPERCASE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_VARIATION_SELECTOR_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_WHITE_SPACE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_XID_CONTINUE_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_XID_START_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNICTYPE_PROPERTY_ZERO_WIDTH_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNINORM_NFC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNINORM_NFD_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNINORM_NFKC_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNINORM_NFKD_DLL_VARIABLE", ""),
+        checks.AC_SUBST("GNULIB_UNLINK", 0),
+        checks.AC_SUBST("GNULIB_UNLINKAT", 0),
+        checks.AC_SUBST("GNULIB_UNLOCKPT", 0),
+        checks.AC_SUBST("GNULIB_USLEEP", 0),
+        checks.AC_SUBST("GNULIB_UTIMENSAT", 0),
+        checks.AC_SUBST("GNULIB_VAPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VASPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VASZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VDPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VDZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VFPRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_VFSCANF", 0),
+        checks.AC_SUBST("GNULIB_VFZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VPRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_VSCANF", 0),
+        checks.AC_SUBST("GNULIB_VSNPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VSNZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VSPRINTF_POSIX", 0),
+        checks.AC_SUBST("GNULIB_VSZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_VZPRINTF", 0),
+        checks.AC_SUBST("GNULIB_WCPCPY", 0),
+        checks.AC_SUBST("GNULIB_WCPNCPY", 0),
+        checks.AC_SUBST("GNULIB_WCSCASECMP", 0),
+        checks.AC_SUBST("GNULIB_WCSCAT", 0),
+        checks.AC_SUBST("GNULIB_WCSCHR", 0),
+        checks.AC_SUBST("GNULIB_WCSCMP", 0),
+        checks.AC_SUBST("GNULIB_WCSCOLL", 0),
+        checks.AC_SUBST("GNULIB_WCSCPY", 0),
+        checks.AC_SUBST("GNULIB_WCSCSPN", 0),
+        checks.AC_SUBST("GNULIB_WCSDUP", 0),
+        checks.AC_SUBST("GNULIB_WCSFTIME", 0),
+        checks.AC_SUBST("GNULIB_WCSLEN", 0),
+        checks.AC_SUBST("GNULIB_WCSNCASECMP", 0),
+        checks.AC_SUBST("GNULIB_WCSNCAT", 0),
+        checks.AC_SUBST("GNULIB_WCSNCMP", 0),
+        checks.AC_SUBST("GNULIB_WCSNCPY", 0),
+        checks.AC_SUBST("GNULIB_WCSNLEN", 0),
+        checks.AC_SUBST("GNULIB_WCSNRTOMBS", 0),
+        checks.AC_SUBST("GNULIB_WCSPBRK", 0),
+        checks.AC_SUBST("GNULIB_WCSRCHR", 0),
+        checks.AC_SUBST("GNULIB_WCSRTOMBS", 0),
+        checks.AC_SUBST("GNULIB_WCSSPN", 0),
+        checks.AC_SUBST("GNULIB_WCSSTR", 0),
+        checks.AC_SUBST("GNULIB_WCSTOK", 0),
+        checks.AC_SUBST("GNULIB_WCSWIDTH", 0),
+        checks.AC_SUBST("GNULIB_WCSXFRM", 0),
+        checks.AC_SUBST("GNULIB_WCTRANS", 0),
+        checks.AC_SUBST("GNULIB_WCTYPE", 0),
+        checks.AC_SUBST("GNULIB_WCWIDTH", 0),
+        checks.AC_SUBST("GNULIB_WGETCWD", 0),
+        checks.AC_SUBST("GNULIB_WMEMCHR", 0),
+        checks.AC_SUBST("GNULIB_WMEMCMP", 0),
+        checks.AC_SUBST("GNULIB_WMEMCPY", 0),
+        checks.AC_SUBST("GNULIB_WMEMMOVE", 0),
+        checks.AC_SUBST("GNULIB_WMEMPCPY", 0),
+        checks.AC_SUBST("GNULIB_WMEMSET", 0),
+        checks.AC_SUBST("GNULIB_WRITE", 0),
+        checks.AC_SUBST("GNULIB_ZPRINTF", 0),
+        checks.AC_SUBST("GNULIB__EXIT", 0),
+
+        # AC_SUBSTs from gnulib-comp.m4 envelope
+        checks.AC_SUBST("LIBSED_LIBDEPS", ""),
+        checks.AC_SUBST("LIBSED_LTLIBDEPS", ""),
+        checks.AC_SUBST("LIB_HARD_LOCALE", ""),
+        checks.AC_SUBST("LIBINTL", ""),
+        checks.AC_SUBST("LTLIBINTL", ""),
+
+        # stdcountof.h is a C2y header that no system ships; gnulib's shadow
+        # is the only source.  The other six cc_gnulib_conditional_hdrs gates
+        # come from upstream gnulib m4 modules in GNULIB_M4_DEPS.
+        checks.M4_VARIABLE("GL_GENERATE_STDCOUNTOF_H", "true"),
+    ] + select({
+        # MSVC has strerror_s, not POSIX strerror_r.
+        "@rules_cc//cc/compiler:msvc-cl": [
+            checks.AC_DEFINE("GNULIB_STRERROR_R_POSIX", 0),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("GNULIB_STRERROR_R_POSIX", 1),
+        ],
+    }),
+)
+
+SED_UNIQUE_AUTOCONF_TARGETS = [
+    "m4_{}".format(file[len("m4/"):-len(".m4")])
+    for file in SED_UNIQUE_M4_FILES
+]
+
+# Aggregates every gnulib m4 module + sed-specific defines from configure.ac.
+autoconf(
+    name = "configure_ac",
+    checks = [
+        checks.AC_DEFINE("GNULIB_NO_VLA", 1),
+        # gnulib derives this from PACKAGE_NAME via gnulib-common.m4 shell
+        # macros; sed expects "GL".
+        checks.AC_SUBST("GUARD_PREFIX", "GL"),
+        # The other AC_CHECK_HEADERS_ONCE(locale.h errno.h wchar.h wctype.h)
+        # entries are handled by their dedicated gnulib m4 modules.
+        checks.AC_CHECK_HEADER(
+            "mcheck.h",
+            define = "HAVE_MCHECK_H",
+        ),
+        # The remaining AC_CHECK_FUNCS_ONCE entries (isatty/memcpy/strtoul/
+        # readlink/popen/setlocale/wcscoll) come from gnulib m4 modules.
+    ] + macros.AC_CHECK_FUNCS([
+        "isascii",
+        "strchr",
+        "pathconf",
+        "fchown",
+        "fchmod",
+    ]) + [
+        checks.AC_DEFINE("LOCALEDIR", '"/usr/share/locale"'),
+    ] + select({
+        # AC_CACHE_CHECK([whether "rt" can be used with fopen]) is a runtime
+        # check; assume yes on cygwin/mingw, no elsewhere.
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("HAVE_FOPEN_RT", 1),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":i18n_disabled": [
+            checks.AC_SUBST("ac_cv_func_wcscoll", "no"),
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":sed_package_info",
+    ] + SED_UNIQUE_AUTOCONF_TARGETS + GNULIB_M4_DEPS,
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = "config_h.in",
+    deps = [":configure_ac"],
+)
+
+# lib/*.in.h templates that always need @VAR@ substitution plus inline
+# expansion of the gnulib helper headers (_GL_ARG_NONNULL, _GL_WARN_ON_USE,
+# etc.).  The replacement chains through #include_next to the system header
+# and exists only to expose gnulib's GNULIB_X function-indicator macros, so
+# it's additive and safe to always shadow.  Several headers are deliberately
+# omitted:
+#   * errno.h, assert.h -- gnulib only ships a replacement when the system
+#     version is incomplete.
+#   * sys/types.h -- gnulib's template needs Windows typedefs (ino_t,
+#     nlink_t) that rules_cc_autoconf doesn't populate.
+#   * stdint.h -- routed through NONMSVC_GENERATED_HDRS below because MSVC
+#     mis-parses gnulib's template even when its main body is gated out.
+GENERATED_HDRS = {
+    "lib/ctype.h": "lib/ctype.in.h",
+    "lib/dirent.h": "lib/dirent.in.h",
+    # Required on MSVC where the SDK has no <error.h>; copy-acl.c includes it
+    # via gnulib's error module.
+    "lib/error.h": "lib/error.in.h",
+    "lib/fcntl.h": "lib/fcntl.in.h",
+    "lib/getopt-cdefs.h": "lib/getopt-cdefs.in.h",
+    "lib/inttypes.h": "lib/inttypes.in.h",
+    "lib/langinfo.h": "lib/langinfo.in.h",
+    "lib/locale.h": "lib/locale.in.h",
+    "lib/selinux/context.h": "lib/se-context.in.h",
+    "lib/selinux/label.h": "lib/se-label.in.h",
+    "lib/selinux/selinux.h": "lib/se-selinux.in.h",
+    "lib/stdio.h": "lib/stdio.in.h",
+    "lib/stdlib.h": "lib/stdlib.in.h",
+    "lib/string.h": "lib/string.in.h",
+    "lib/sys/random.h": "lib/sys_random.in.h",
+    "lib/sys/stat.h": "lib/sys_stat.in.h",
+    "lib/time.h": "lib/time.in.h",
+    "lib/uchar.h": "lib/uchar.in.h",
+    "lib/unicase.h": "lib/unicase.in.h",
+    "lib/unictype.h": "lib/unictype.in.h",
+    "lib/uninorm.h": "lib/uninorm.in.h",
+    "lib/unistd.h": "lib/unistd.in.h",
+    "lib/unitypes.h": "lib/unitypes.in.h",
+    "lib/wchar.h": "lib/wchar.in.h",
+    "lib/wctype.h": "lib/wctype.in.h",
+}
+
+# Conditionally-generated headers: gnulib's m4 modules decide whether the
+# system header needs shadowing via GL_GENERATE_<HDR>_H.  Wired through
+# cc_gnulib_conditional_hdrs below; gate-true -> shadow on include path,
+# gate-false -> falls through to system header.
+CONDITIONAL_GENERATED_HDRS = {
+    "lib/alloca.h": "lib/alloca.in.h",
+    "lib/getopt.h": "lib/getopt.in.h",
+    "lib/limits.h": "lib/limits.in.h",
+    "lib/obstack.h": "lib/obstack.in.h",
+    "lib/stdckdint.h": "lib/stdckdint.in.h",
+    "lib/stdcountof.h": "lib/stdcountof.in.h",
+    "lib/stddef.h": "lib/stddef.in.h",
+}
+
+# Generated into an isolated output dir (kept off the lib/ include path)
+# so MSVC never sees them; :lib_hdrs_nonmsvc re-exposes them only on
+# non-MSVC toolchains.
+#
+# lib/stdint.h: macOS gnulib needs UINTPTR_WIDTH for lib/rawmemchr.c, but
+# MSVC mis-parses gnulib's stdint template (bare `.`, mismatched #if/#endif)
+# even though m4/stdint sets HAVE_C99_STDINT_H=1 to skip the main body.
+NONMSVC_GENERATED_HDRS = {
+    "stdint.h": "lib/stdint.in.h",
+}
+
+# Fallbacks for @VAR@ markers gnulib leaves unset because their m4 module
+# only sets them when the system header is incomplete.  Values match
+# gnulib's Makefile.am defaults.
+DEFAULT_SUBSTITUTIONS = {
+    "@HAVE_LANGINFO_T_FMT_AMPM@": "1",
+    "@HAVE_LANGINFO_YESEXPR@": "1",
+}
+
+# The inlines/mode/substitutions/deps quartet below is identical across
+# the three lib/*.in.h -> *.h substitution loops (lib/, _cond_hdrs/,
+# nonmsvc_hdrs/).  BUILD files disallow `def` / `**kwargs` so the block
+# is repeated rather than factored.
+[
+    autoconf_hdr(
+        name = hdr[:-len(".h")].replace("/", "_") + "_h",
+        out = hdr,
+        defaults = True,
+        inlines = {
+            "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+            "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+            "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+        },
+        mode = "subst",
+        substitutions = DEFAULT_SUBSTITUTIONS,
+        template = template,
+        deps = [":configure_ac"],
+    )
+    for hdr, template in GENERATED_HDRS.items()
+]
+
+# Generated into _cond_hdrs/ so the intermediate is never directly on the
+# include path; cc_gnulib_conditional_hdrs below decides per-header whether
+# to expose the shadow under lib/ or let the system header take over.
+[
+    autoconf_hdr(
+        name = "_cond_" + hdr[:-len(".h")].replace("/", "_") + "_h",
+        out = "_cond_hdrs/" + hdr,
+        defaults = True,
+        inlines = {
+            "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+            "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+            "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+        },
+        mode = "subst",
+        substitutions = DEFAULT_SUBSTITUTIONS,
+        template = template,
+        deps = [":configure_ac"],
+    )
+    for hdr, template in CONDITIONAL_GENERATED_HDRS.items()
+]
+
+cc_gnulib_conditional_hdrs(
+    name = "conditional_hdrs",
+    hdrs = {
+        # GL_GENERATE_<NAME>_H gate derived from each header path; matches
+        # the upstream gnulib m4 modules that own these conditional headers.
+        ":_cond_" + hdr[:-len(".h")].replace("/", "_") + "_h": "GL_GENERATE_{}_H".format(hdr[len("lib/"):-len(".h")].upper())
+        for hdr in CONDITIONAL_GENERATED_HDRS.keys()
+    },
+    deps = [":configure_ac"],
+)
+
+# GL_COND_OBJ_<X>-gated sources from lib/gnulib.mk.  autoconf_srcs wraps
+# each .c in `#ifdef <CONDITION>` so the TU is a no-op when the autoconf
+# check says the system version suffices.  Conditions referencing
+# REPLACE_<X> or USES_MSVCRT (unexported by rules_cc_autoconf 0.13.2) are
+# approximated; see comments per entry.  These also remain omitted entirely:
+#   iswdigit.c, iswpunct.c, iswxdigit.c, localeconv.c, pthread-once.c,
+#   stdio-consolesafe.c, strncpy.c -- all evaluate false in stock gnulib's
+#   configure on our target platforms, so omission matches upstream.
+CONDITIONAL_SRC_CONDS = {
+    "lib/fseterr.c": "HAVE___FSETERR==0",
+    # Drops the REPLACE_ISWCNTRL branch; remainder is "no iswcntrl AND no
+    # iswblank", which never happens on Linux/macOS.
+    "lib/iswblank.c": "HAVE_ISWCNTRL==1&&HAVE_ISWBLANK==0",
+    "lib/iswctype.c": "HAVE_WCTYPE_T==0||GNULIBHEADERS_OVERRIDE_WINT_T==1",
+    "lib/strtoimax.c": "HAVE_DECL_STRTOIMAX==0||REPLACE_STRTOIMAX==1",
+    "lib/strtoll.c": "HAVE_STRTOLL==0||REPLACE_STRTOLL==1",
+    # Drops REPLACE_WCTYPE branch; HAVE_WCTYPE==0 covers the common case.
+    "lib/wctype.c": "HAVE_WCTYPE==0",
+}
+
+autoconf_srcs(
+    name = "conditional_srcs",
+    srcs = CONDITIONAL_SRC_CONDS,
+    deps = [":configure_ac"],
+)
+
+# Generate NONMSVC_GENERATED_HDRS into the isolated `nonmsvc_hdrs/` output
+# directory.  The action runs unconditionally and the file is fine on disk;
+# only the cc_library that re-exposes that directory is conditional.
+[
+    autoconf_hdr(
+        name = "nonmsvc_" + hdr[:-len(".h")].replace("/", "_") + "_h",
+        out = "nonmsvc_hdrs/" + hdr,
+        defaults = True,
+        inlines = {
+            "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+            "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+            "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+        },
+        mode = "subst",
+        substitutions = DEFAULT_SUBSTITUTIONS,
+        template = template,
+        deps = [":configure_ac"],
+    )
+    for hdr, template in NONMSVC_GENERATED_HDRS.items()
+]
+
+cc_library(
+    name = "lib_hdrs_nonmsvc",
+    hdrs = [":nonmsvc_" + hdr[:-len(".h")].replace("/", "_") + "_h" for hdr in NONMSVC_GENERATED_HDRS.keys()],
+    includes = ["nonmsvc_hdrs"],
+)
+
+# Gnulib renames a few headers so they can be re-included with different
+# macros active; contents are unchanged.
+[
+    copy_file(
+        name = name,
+        src = src,
+        out = out,
+    )
+    for name, src, out in [
+        ("dynarray_skeleton_gl_h", "lib/malloc/dynarray-skeleton.c", "lib/malloc/dynarray-skeleton.gl.h"),
+        ("dynarray_gl_h", "lib/malloc/dynarray.h", "lib/malloc/dynarray.gl.h"),
+        ("scratch_buffer_gl_h", "lib/malloc/scratch_buffer.h", "lib/malloc/scratch_buffer.gl.h"),
+    ]
+]
+
+# lib/static_assert.h is sed's alternate spelling of gnulib's _GL_VERIFY.
+expand_template(
+    name = "static_assert_h",
+    out = "lib/static_assert.h",
+    substitutions = {
+        "_GL_VERIFY": "_GL_STATIC_ASSERT",
+        "_gl_verify": "_gl_static_assert",
+    },
+    template = "lib/verify.h",
+)
+
+GENERATED_HDR_LABELS = [":" + hdr[:-len(".h")].replace("/", "_") + "_h" for hdr in GENERATED_HDRS.keys()]
+
+ALL_GENERATED_HDRS = [
+    ":config_h",
+    ":static_assert_h",
+    ":dynarray_skeleton_gl_h",
+    ":dynarray_gl_h",
+    ":scratch_buffer_gl_h",
+] + GENERATED_HDR_LABELS
+
+COPTS = select({
+    # Sed requires C11+ for `static_assert` via <assert.h> in several gnulib
+    # sources (localeinfo.c etc.).
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/std:c11",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=gnu11",
+    ],
+})
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    # Seven gnulib lib/*.c files use bare C11 `static_assert` without
+    # `#include <assert.h>`; surface the keyword mapping directly so config.h
+    # doesn't need to gate on HAVE_C_STATIC_ASSERT (autoconf detects support
+    # so the gate stays at 1 and config.h's define doesn't fire).
+    "static_assert=_Static_assert",
+] + select({
+    # sed/compile.c calls C23 `unreachable()` directly; gnulib's stddef.h
+    # polyfill is gated on HAVE_C_UNREACHABLE which rules_cc_autoconf's
+    # macOS probe sets to 1 (probe uses C23, sed compiles at gnu11), so the
+    # polyfill never fires.  Map onto the compiler builtin instead.
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "unreachable()=__assume(0)",
+        # lib/setlocale_null.c hardcodes a __declspec(dllimport) extern for
+        # gl_get_setlocale_null_lock, but the static-link build of
+        # setlocale-lock.c has no matching dllexport.  AVOID_ANY_THREADS
+        # collapses the locking branch before that extern is seen.
+        "AVOID_ANY_THREADS=1",
+    ],
+    "//conditions:default": [
+        "unreachable=__builtin_unreachable",
+    ],
+})
+
+# Headers shipped in the lib/ tree that gnulib code includes directly.
+LIB_STATIC_HDRS = glob(
+    include = ["lib/**/*.h"],
+    exclude = ["lib/**/*.in.h"] + list(GENERATED_HDRS.keys()) + [
+        "lib/static_assert.h",
+        "lib/malloc/dynarray-skeleton.gl.h",
+        "lib/malloc/dynarray.gl.h",
+        "lib/malloc/scratch_buffer.gl.h",
+    ],
+)
+
+cc_library(
+    name = "lib_hdrs",
+    hdrs = LIB_STATIC_HDRS + ALL_GENERATED_HDRS,
+    includes = [
+        ".",
+        "lib",
+    ],
+    textual_hdrs = [
+        "lib/regex_internal.c",
+        "lib/regcomp.c",
+        "lib/regexec.c",
+        "lib/malloc/dynarray-skeleton.c",
+        # lib/strtoll.c #includes <strtol.c> to share the parser body.
+        "lib/strtol.c",
+    ],
+    deps = [
+        ":conditional_hdrs",
+    ] + select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [":lib_hdrs_nonmsvc"],
+    }),
+)
+
+LIB_SRCS = [
+    "lib/realloc.c",
+    "lib/copy-acl.c",
+    "lib/set-acl.c",
+    "lib/acl-errno-valid.c",
+    "lib/acl-internal.c",
+    "lib/get-permissions.c",
+    "lib/set-permissions.c",
+    "lib/basename-lgpl.c",
+    "lib/binary-io.c",
+    "lib/btowc.c",
+    "lib/c-ctype.c",
+    "lib/c32isprint.c",
+    "lib/c32isspace.c",
+    "lib/c32rtomb.c",
+    "lib/c32tob.c",
+    "lib/c32tolower.c",
+    "lib/c32toupper.c",
+    "lib/c-strcasecmp.c",
+    # rpl_mbrtoc32 -- generated lib/uchar.h's REPLACE_MBRTOC32=1 redirect
+    # needs this on Linux.  Must appear with our uchar.h on the include
+    # path, otherwise bare `mbrtoc32` self-recurses.
+    "lib/mbrtoc32.c",
+    "lib/canonicalize-lgpl.c",
+    "lib/cloexec.c",
+    "lib/close.c",
+    "lib/dfa.c",
+    "lib/localeinfo.c",
+    "lib/dirname-lgpl.c",
+    "lib/stripslash.c",
+    "lib/dup2.c",
+    "lib/error.c",
+    "lib/exitfail.c",
+    "lib/fcntl.c",
+    "lib/fd-hook.c",
+    "lib/file-has-acl.c",
+    "lib/free.c",
+    "lib/fstat.c",
+    "lib/getdelim.c",
+    "lib/getdtablesize.c",
+    "lib/getopt.c",
+    "lib/getopt1.c",
+    "lib/getprogname.c",
+    "lib/getrandom.c",
+    "lib/glthread/once.c",
+    "lib/issymlink.c",
+    "lib/malloc/dynarray_at_failure.c",
+    "lib/malloc/dynarray_emplace_enlarge.c",
+    "lib/malloc/dynarray_finalize.c",
+    "lib/malloc/dynarray_resize.c",
+    "lib/malloc/dynarray_resize_clear.c",
+    "lib/malloc/scratch_buffer_grow.c",
+    "lib/malloc/scratch_buffer_grow_preserve.c",
+    "lib/malloc/scratch_buffer_set_array_size.c",
+    "lib/hard-locale.c",
+    "lib/ialloc.c",
+    "lib/localcharset.c",
+    "lib/lstat.c",
+    "lib/malloca.c",
+    "lib/mbrtowc.c",
+    "lib/mbtowc.c",
+    "lib/memeq.c",
+    "lib/mempcpy.c",
+    "lib/memrchr.c",
+    "lib/mkostemp.c",
+    "lib/mbszero.c",
+    "lib/nl_langinfo.c",
+    "lib/nl_langinfo-lock.c",
+    "lib/obstack.c",
+    "lib/open.c",
+    "lib/progname.c",
+    "lib/qcopy-acl.c",
+    "lib/qset-acl.c",
+    "lib/quotearg.c",
+    "lib/rawmemchr.c",
+    "lib/readlink.c",
+    "lib/reallocarray.c",
+    "lib/regex.c",
+    "lib/rename.c",
+    "lib/rmdir.c",
+    "lib/same-inode.c",
+    "lib/se-context.c",
+    "lib/se-label.c",
+    "lib/se-selinux.c",
+    "lib/setlocale_null.c",
+    "lib/setlocale_null-unlocked.c",
+    "lib/setlocale-lock.c",
+    "lib/stat.c",
+    "lib/stat-time.c",
+    "lib/stdio-read.c",
+    "lib/stdio-write.c",
+    "lib/stdlib.c",
+    "lib/streq.c",
+    "lib/strnul.c",
+    "lib/strerror.c",
+    "lib/strerror-override.c",
+    "lib/strverscmp.c",
+    "lib/tempname.c",
+    "lib/unicase/tolower.c",
+    "lib/unicase/toupper.c",
+    "lib/unictype/ctype_print.c",
+    "lib/unictype/ctype_space.c",
+    "lib/unistd.c",
+    "lib/version-etc.c",
+    "lib/version-etc-fsf.c",
+    "lib/wcrtomb.c",
+    "lib/wctob.c",
+    "lib/wctomb.c",
+    "lib/wctype-h.c",
+    "lib/xmalloc.c",
+    "lib/xalloc-die.c",
+] + [":conditional_srcs"] + select({
+    ":threads_enabled": [
+        "lib/glthread/lock.c",
+        "lib/glthread/threadlib.c",
+    ],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//os:macos": [
+        "lib/acl_entries.c",
+        "lib/fwriting.c",
+        "lib/getfilecon.c",
+    ],
+    "@platforms//os:windows": [
+        "lib/fwriting.c",
+        "lib/stat-w32.c",
+        "lib/windows-mutex.c",
+        "lib/windows-once.c",
+        "lib/windows-recmutex.c",
+        "lib/windows-rwlock.c",
+    ],
+    "//conditions:default": [],
+}) + select({
+    # On MSVC: memchr is a compiler intrinsic and mkdir/mbsinit have inline
+    # bodies in gnulib's sys/stat.h / wchar.h replacements on _WIN32, so
+    # the corresponding .c sources collide (C2169/C2084).
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "//conditions:default": [
+        "lib/mbsinit.c",
+        "lib/memchr.c",
+        "lib/mkdir.c",
+    ],
+}) + select({
+    # MSVC C runtime-specific helpers; don't build on MinGW.
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "lib/msvc-inval.c",
+        "lib/msvc-nothrow.c",
+    ],
+    "//conditions:default": [],
+})
+
+# Public-API subset of sed's bundled gnulib utility headers.  Each entry
+# must parse without the gnulib lib/*.h shadowing layer AND without our
+# private config.h on the include path.  That rules out:
+#   * xalloc.h, ialloc.h, c-ctype.h    -- `#error` if config.h absent
+#   * error.h, version-etc.h, binary-io.h
+#     -- need _GL_ATTRIBUTE_FORMAT_* from our lib/stdio.h
+#   * gettext.h                        -- pulls <libintl.h>; sed doesn't link it
+#   * obstack.h                        -- gated by GL_GENERATE_OBSTACK_H, so
+#                                         not statically promotable
+# Exposed under `sed/` (via include_prefix) so `#include "sed/regex.h"`
+# doesn't shadow the system <regex.h>.
+PUBLIC_HDRS = [
+    "lib/attribute.h",
+    "lib/intprops.h",
+    "lib/intprops-internal.h",
+    "lib/ignore-value.h",
+    "lib/verify.h",
+    "lib/xalloc-oversized.h",
+    "lib/idx.h",
+    "lib/regex.h",
+    "lib/dfa.h",
+    "lib/quote.h",
+    "lib/quotearg.h",
+    "lib/dirname.h",
+    "lib/filename.h",
+    "lib/basename-lgpl.h",
+    "lib/localcharset.h",
+    "lib/hard-locale.h",
+    "lib/setlocale_null.h",
+    "lib/exitfail.h",
+    "lib/getprogname.h",
+    "lib/progname.h",
+]
+
+cc_library(
+    name = "lib/sed",
+    srcs = LIB_SRCS,
+    hdrs = PUBLIC_HDRS,
+    copts = COPTS,
+    # lib_hdrs is implementation_deps so the gnulib lib/*.h replacements
+    # don't leak to consumers (see BCR#7642 -- transitive lib/stdio.h can
+    # mis-order vs. system headers under stricter compilers like clang-21).
+    implementation_deps = [":lib_hdrs"],
+    include_prefix = "sed",
+    linkopts = select({
+        # lib/getrandom.c uses CryptAcquireContextA / CryptGenRandom from
+        # Advapi32.lib, which MSVC doesn't link by default.
+        "@rules_cc//cc/compiler:msvc-cl": ["/DEFAULTLIB:advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = LOCAL_DEFINES,
+    strip_include_prefix = "lib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libsed",
+    actual = ":lib/sed",
+    visibility = ["//visibility:public"],
+)
+
+write_file(
+    name = "version_h",
+    out = "sed/version.h",
+    content = [
+        "extern char const *Version;",
+        "",
+    ],
+    newline = "unix",
+)
+
+write_file(
+    name = "version_c_template",
+    out = "sed/version.in.c",
+    content = [
+        "#include \"config.h\"",
+        "char const *Version = @PACKAGE_VERSION@;",
+        "",
+    ],
+    newline = "unix",
+)
+
+# PACKAGE_VERSION comes from :sed_package_info (via :configure_ac), which
+# reads MODULE.bazel.  Keeps the version single-sourced from the module.
+autoconf_hdr(
+    name = "version_c",
+    out = "sed/version.c",
+    mode = "subst",
+    template = ":version_c_template",
+    deps = [":configure_ac"],
+)
+
+cc_binary(
+    name = "bin/sed",
+    srcs = [
+        "basicdefs.h",
+        "sed/compile.c",
+        "sed/debug.c",
+        "sed/execute.c",
+        "sed/mbcs.c",
+        "sed/regexp.c",
+        "sed/sed.c",
+        "sed/sed.h",
+        "sed/utils.c",
+        "sed/utils.h",
+        "sed/version.c",
+        "sed/version.h",
+    ],
+    copts = COPTS,
+    includes = [
+        ".",
+        "sed",
+    ],
+    local_defines = LOCAL_DEFINES + [
+        # bindtextdomain() arguments; AC_INIT exports PACKAGE and configure
+        # sets LOCALEDIR from --datarootdir.
+        "PACKAGE=\\\"sed\\\"",
+        "LOCALEDIR=\\\"/usr/share/locale\\\"",
+    ],
+    visibility = ["//visibility:public"],
+    # sed/utils.h needs _GL_ATTRIBUTE_FORMAT_PRINTF_STANDARD from
+    # lib/stdio.h, which :libsed exposes only as implementation_deps;
+    # re-list lib_hdrs here so the binary can see it.
+    deps = [
+        ":lib_hdrs",
+        ":libsed",
+    ],
+)
+
+# Legacy alias
+alias(
+    name = "sed_bin",
+    actual = ":bin/sed",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "sed",
+    actual = ":bin/sed",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Smoke test
+# =============================================================================
+
+write_file(
+    name = "sed_test_input",
+    out = "sed_test_input.txt",
+    content = [
+        "Hello World",
+        "This is a test.",
+        "Hello again.",
+        "",
+    ],
+    newline = "unix",
+)
+
+genrule(
+    name = "sed_test_output",
+    srcs = ["sed_test_input.txt"],
+    outs = ["sed_test_output.txt"],
+    cmd = "$(execpath :sed) 's/Hello/Hallo/g' $(execpath :sed_test_input.txt) > $@",
+    # cmd_bat + --binary: see :behavior_*_output for the rationale.
+    cmd_bat = "$(execpath :sed) --binary \"s/Hello/Hallo/g\" $(execpath :sed_test_input.txt) > $@",
+    tools = [":sed"],
+)
+
+write_file(
+    name = "sed_test_golden",
+    out = "sed_test_golden.txt",
+    content = [
+        "Hallo World",
+        "This is a test.",
+        "Hallo again.",
+        "",
+    ],
+    newline = "unix",
+)
+
+diff_test(
+    name = "sed_diff_test",
+    file1 = "sed_test_output.txt",
+    file2 = "sed_test_golden.txt",
+)
+
+# Native sed behavior tests.  The upstream testsuite/*.sh tests need the
+# gnulib init.sh framework + executable bits that the tarball-overlay flow
+# doesn't preserve, so each :behavior_* pair runs one sed expression
+# against the inlined "Summum Bonum" poem (from testsuite/distrib.inp:13-28)
+# and compares to a checked-in golden.
+write_file(
+    name = "browning_input",
+    out = "browning.txt",
+    content = [
+        "                _Summum Bonum_",
+        "",
+        "    All the breath and the bloom of the",
+        "            year in the bag of one bee:",
+        "    All the wonder and wealth of the mine in",
+        "         the heart of one gem:",
+        "    In the core of one pearl all the shade and the",
+        "           shine of the sea:",
+        "    Breath and bloom, shade and shine, -- wonder,",
+        "        wealth, and -- how far above them --",
+        "          Truth, thats brighter than gem,",
+        "          Trust, that's purer than pearl, --",
+        "    Brightest truth, purest trust in the universe --",
+        "              all were for me",
+        "                 In the kiss of one girl.",
+        "        -- Robert Browning",
+        "",
+    ],
+    newline = "unix",
+)
+
+SED_BEHAVIOR_TESTS = {
+    # Delete blank lines.
+    "delete_blanks": {
+        "expr": "/^$$/d",
+        "golden": [
+            "                _Summum Bonum_",
+            "    All the breath and the bloom of the",
+            "            year in the bag of one bee:",
+            "    All the wonder and wealth of the mine in",
+            "         the heart of one gem:",
+            "    In the core of one pearl all the shade and the",
+            "           shine of the sea:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than gem,",
+            "          Trust, that's purer than pearl, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # Extended regex via -E with alternation.
+    "extended_regex": {
+        "expr": "s/(pearl|gem|sea)/JEWEL/g",
+        "extra_flags": "-E",
+        "golden": [
+            "                _Summum Bonum_",
+            "",
+            "    All the breath and the bloom of the",
+            "            year in the bag of one bee:",
+            "    All the wonder and wealth of the mine in",
+            "         the heart of one JEWEL:",
+            "    In the core of one JEWEL all the shade and the",
+            "           shine of the JEWEL:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than JEWEL,",
+            "          Trust, that's purer than JEWEL, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # `-n` plus explicit `p`: print only lines mentioning the speaker.
+    "print_match": {
+        "expr": "/Browning/p",
+        "extra_flags": "-n",
+        "golden": [
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # Address range with grouped commands - strip leading whitespace from
+    # the first three content lines after the title.
+    "range_trim": {
+        "expr": "3,5s/^ *//",
+        "golden": [
+            "                _Summum Bonum_",
+            "",
+            "All the breath and the bloom of the",
+            "year in the bag of one bee:",
+            "All the wonder and wealth of the mine in",
+            "         the heart of one gem:",
+            "    In the core of one pearl all the shade and the",
+            "           shine of the sea:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than gem,",
+            "          Trust, that's purer than pearl, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # Hold-space swap: reverse line order ("tac" emulation).
+    # Both `$` chars are doubled so genrule's cmd template leaves them alone.
+    # No `-n`: the classic idiom relies on auto-print for the final line.
+    "reverse_lines": {
+        "expr": "1!G;h;$$!d",
+        "golden": [
+            "        -- Robert Browning",
+            "                 In the kiss of one girl.",
+            "              all were for me",
+            "    Brightest truth, purest trust in the universe --",
+            "          Trust, that's purer than pearl, --",
+            "          Truth, thats brighter than gem,",
+            "        wealth, and -- how far above them --",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "           shine of the sea:",
+            "    In the core of one pearl all the shade and the",
+            "         the heart of one gem:",
+            "    All the wonder and wealth of the mine in",
+            "            year in the bag of one bee:",
+            "    All the breath and the bloom of the",
+            "",
+            "                _Summum Bonum_",
+            "",
+        ],
+    },
+    # Basic substitution: rewrite the title marker.
+    "substitution": {
+        "expr": "s/_Summum Bonum_/== Summum Bonum ==/",
+        "golden": [
+            "                == Summum Bonum ==",
+            "",
+            "    All the breath and the bloom of the",
+            "            year in the bag of one bee:",
+            "    All the wonder and wealth of the mine in",
+            "         the heart of one gem:",
+            "    In the core of one pearl all the shade and the",
+            "           shine of the sea:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than gem,",
+            "          Trust, that's purer than pearl, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+}
+
+[
+    [
+        write_file(
+            name = "behavior_{}_golden".format(name),
+            out = "behavior_{}_golden.txt".format(name),
+            content = spec["golden"],
+            newline = "unix",
+        ),
+        genrule(
+            name = "behavior_{}_output".format(name),
+            srcs = [":browning_input"],
+            outs = ["behavior_{}_output.txt".format(name)],
+            cmd = "$(execpath :sed) {extra} '{expr}' $(SRCS) > $@".format(
+                expr = spec["expr"],
+                extra = spec.get("extra_flags", ""),
+            ),
+            # cmd_bat goes through cmd.exe instead of msys2 bash so that
+            # scripts starting with `/` (e.g. `/Browning/p`) don't get
+            # rewritten to Windows paths; double-quote because cmd.exe
+            # doesn't strip single quotes.  --binary keeps sed.exe's
+            # stdin/stdout in binary mode so `> $@` doesn't CRLF-translate
+            # the output relative to the unix-newline golden.
+            cmd_bat = '$(execpath :sed) --binary {extra} "{expr}" $(SRCS) > $@'.format(
+                expr = spec["expr"],
+                extra = spec.get("extra_flags", ""),
+            ),
+            tools = [":sed"],
+        ),
+        diff_test(
+            name = "behavior_{}_test".format(name),
+            file1 = "behavior_{}_output.txt".format(name),
+            file2 = "behavior_{}_golden.txt".format(name),
+        ),
+    ]
+    for name, spec in SED_BEHAVIOR_TESTS.items()
+]
