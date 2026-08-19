@@ -39,6 +39,10 @@
 #define ZMQ_HAVE_STRUCT_SOCKADDR_UN 1
 #define HAVE_IF_NAMETOINDEX 1
 
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ucred.h>
+
 #elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__DragonFly__) || defined(__OpenBSD__) || defined(__NetBSD__)
 
 #if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
@@ -64,6 +68,7 @@
 #define ZMQ_HAVE_UIO 1
 #define ZMQ_HAVE_NOEXCEPT 1
 #define ZMQ_HAVE_IFADDRS 1
+#define ZMQ_HAVE_LOCAL_PEERCRED 1
 #define ZMQ_HAVE_SO_KEEPALIVE 1
 #define ZMQ_HAVE_TCP_KEEPALIVE 1
 #define HAVE_STRNLEN 1
@@ -71,6 +76,10 @@
 #define ZMQ_HAVE_IPC 1
 #define ZMQ_HAVE_STRUCT_SOCKADDR_UN 1
 #define HAVE_IF_NAMETOINDEX 1
+
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/ucred.h>
 
 #elif defined(__linux__) || defined(__ANDROID__)
 
