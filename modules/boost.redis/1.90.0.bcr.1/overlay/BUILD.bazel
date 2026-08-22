@@ -1,0 +1,63 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+string_flag(
+    name = "ssl",
+    build_setting_default = "openssl",
+    values = [
+        "openssl",
+        "boringssl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "openssl",
+    flag_values = {":ssl": "openssl"},
+)
+
+config_setting(
+    name = "boringssl",
+    flag_values = {":ssl": "boringssl"},
+)
+
+write_file(
+    name = "src",
+    out = "boost.redis.src.cpp",
+    content = ["#include <boost/redis/src.hpp>"],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "boost.redis",
+    srcs = [":src"],
+    textual_hdrs = glob([
+        "include/**/*.*pp",
+    ]),
+    features = [
+        "parse_headers",
+    ],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.asio",
+        "@boost.assert",
+        "@boost.config",
+        "@boost.core",
+        "@boost.mp11",
+        "@boost.system",
+        "@boost.throw_exception",
+    ] + select({
+        ":boringssl": [
+            "@boringssl//:crypto",
+            "@boringssl//:ssl",
+        ],
+        ":openssl": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }),
+)
