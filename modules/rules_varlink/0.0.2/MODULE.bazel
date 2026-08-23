@@ -1,0 +1,62 @@
+module(
+    name = "rules_varlink",
+    version = "0.0.2",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_rs", version = "0.0.102")
+
+bazel_dep(name = "llvm", version = "0.8.17", dev_dependency = True)
+
+# dev_dependency toolchains only apply when rules_varlink is the root module
+# (standalone builds/tests); as a dep, the root module provides its own.
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust", dev_dependency = True)
+use_repo(rules_rust, "rules_rust")
+
+rust_toolchains = use_extension(
+    "@rules_rs//rs/toolchains:module_extension.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+rust_toolchains.toolchain(
+    edition = "2021",
+    version = "1.95.0",
+)
+use_repo(rust_toolchains, "default_rust_toolchains")
+
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)
+
+# The varlink crates follow upstream git main (rev pinned in Cargo.toml) until
+# a release ships with our merged changes (from_reader_writer, push_fd, generator fixes).
+generator_crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+generator_crate.from_cargo(
+    name = "varlink_generator_crates",
+    cargo_lock = "//varlink/toolchain/rust:Cargo.lock",
+    cargo_toml = "//varlink/toolchain/rust:Cargo.toml",
+    platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+    ],
+)
+use_repo(generator_crate, "varlink_generator_crates")
+
+# Runtime varlink crate — exposed as @varlink_crates//:varlink for consumers of
+# rust_varlink_library so they don't need to manage the dep themselves.
+runtime_crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+runtime_crate.from_cargo(
+    name = "varlink_crates",
+    cargo_lock = "//varlink/runtime/rust:Cargo.lock",
+    cargo_toml = "//varlink/runtime/rust:Cargo.toml",
+    platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+    ],
+)
+use_repo(runtime_crate, "varlink_crates")
