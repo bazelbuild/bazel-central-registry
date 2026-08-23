@@ -8,17 +8,20 @@ makes the guarantee part of the graph instead of a property of the checkout.
 """
 
 def _executable_file_impl(ctx):
-    out = ctx.actions.declare_file(ctx.label.name + ".sh")
     ctx.actions.symlink(
-        output = out,
+        output = ctx.outputs.out,
         target_file = ctx.file.src,
         is_executable = True,
     )
-    return [DefaultInfo(files = depset([out]))]
+    return [DefaultInfo(files = depset([ctx.outputs.out]))]
 
 executable_file = rule(
     implementation = _executable_file_impl,
     attrs = {
+        "out": attr.output(
+            mandatory = True,
+            doc = "Filename of the executable copy.",
+        ),
         "src": attr.label(
             allow_single_file = True,
             mandatory = True,
