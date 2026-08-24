@@ -22,14 +22,22 @@ common_copts = [
 ]
 
 config_setting(
+    name = "use_boringssl",
+    flag_values = {"@curl//:ssl_lib": "boringssl"},
+)
+
+config_setting(
     name = "use_openssl",
     flag_values = {"@curl//:ssl_lib": "openssl"},
 )
 
-crypto_deps = select({
-    ":use_openssl": ["@openssl//:crypto"],
-    "//conditions:default": ["@boringssl//:crypto"],
-})
+crypto_deps = select(
+    {
+        ":use_boringssl": ["@boringssl//:crypto"],
+        ":use_openssl": ["@openssl//:crypto"],
+    },
+    no_match_error = "aws_sdk requires --@curl//:ssl_lib=boringssl or --@curl//:ssl_lib=openssl; other curl TLS backends are unsupported.",
+)
 
 cc_library(
     name = "s3",
@@ -136,9 +144,6 @@ cc_library(
         "src/aws-cpp-sdk-core/include/aws/core/utils/crypto/crt/*.h",
     ]),
     copts = common_copts + [
-        "-DAWS_SDK_VERSION_MAJOR=1",
-        "-DAWS_SDK_VERSION_MINOR=11",
-        "-DAWS_SDK_VERSION_PATCH=876",
         "-DENABLE_OPENSSL_ENCRYPTION",
         "-DENABLE_CURL_CLIENT",
         "-Wno-format-nonliteral",
@@ -225,13 +230,13 @@ cc_library(
     ] + select({
         "@platforms//cpu:aarch64": glob(
             [
-                "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/asm/*.c",
+                "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/auxv/*.c",
             ],
             allow_empty = True,
         ),
         "@platforms//cpu:armv7": glob(
             [
-                "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/asm/*.c",
+                "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/auxv/*.c",
             ],
             allow_empty = True,
         ),
@@ -274,7 +279,6 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
-# -march=armv8-a+crc
 cc_library(
     name = "aws-c-event-stream",
     srcs = glob(["crt/aws-crt-cpp/crt/aws-c-event-stream/source/*.c"]) + select({
@@ -303,19 +307,14 @@ cc_library(
     visibility = ["//visibility:public"],
 )
 
+# gen_config leaves AWS_USE_CPU_EXTENSIONS undefined, so CRC dispatch uses
+# software implementations. Unused ARM intrinsics must not impose a -march
+# option that overrides the toolchain's architecture.
 cc_library(
     name = "aws-checksums",
     srcs = glob([
         "crt/aws-crt-cpp/crt/aws-checksums/source/*.c",
     ]) + select({
-        "@platforms//cpu:aarch64": glob(
-            ["crt/aws-crt-cpp/crt/aws-checksums/source/arm/*.c"],
-            allow_empty = True,
-        ),
-        "@platforms//cpu:armv7": glob(
-            ["crt/aws-crt-cpp/crt/aws-checksums/source/arm/*.c"],
-            allow_empty = True,
-        ),
         "@platforms//cpu:x86_64": glob(
             [
                 "crt/aws-crt-cpp/crt/aws-checksums/source/intel/asm/*.c",
@@ -330,10 +329,7 @@ cc_library(
     ]),
     copts = common_copts + [
         "-Wno-implicit-function-declaration",
-    ] + select({
-        "@platforms//cpu:aarch64": ["-march=armv8-a+crc+crypto"],
-        "//conditions:default": [],
-    }),
+    ],
     includes = ["crt/aws-crt-cpp/crt/aws-checksums/include"],
     target_compatible_with = ["@platforms//os:linux"],
     deps = [
