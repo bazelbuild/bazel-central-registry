@@ -20,6 +20,8 @@ load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 
+visibility("private")
+
 # Flags which make sense when compiling a translation unit but not when running
 # a configure probe.  Dependency-file flags name an output configure has no
 # reason to write, and configure supplies its own -o/-c.
