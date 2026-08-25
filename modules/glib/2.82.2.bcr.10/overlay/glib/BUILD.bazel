@@ -208,6 +208,30 @@ genrule(
     tools = ["//tools:gen-visibility-macros.py"],
 )
 
+# The generated public headers on their own.  glib/gnulib needs glib.h,
+# which pulls in glibconfig.h, but it cannot depend on :glib -- :glib
+# links it.  Upstream has the same shape: gnulib_lib takes glibinc as an
+# include directory rather than a dependency.
+cc_library(
+    name = "glib_generated_headers",
+    hdrs = [
+        ":public_hdr_" + hdr.replace("/", "_")
+        for hdr in PUBLIC_HDRS
+    ] + [
+        ":glib-visibility_h",
+        ":glibconfig_h",
+        ":gversionmacros_h",
+    ] + select({
+        "@platforms//os:windows": [
+            ":public_hdr_" + hdr.replace("/", "_")
+            for hdr in PUBLIC_HDRS_WIN32
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["include_glib-2.0"],
+    visibility = ["//:__subpackages__"],
+)
+
 cc_library(
     name = "stub_intl",
     hdrs = ["stub_libintl/libintl.h"],
@@ -325,6 +349,11 @@ cc_library(
     ] + select({
         "@platforms//os:linux": [],
         "//conditions:default": [":stub_intl"],
+    }) + select({
+        # glib/meson.build descends into gnulib only when the system
+        # printf is not good enough, which is every MSVC build.
+        "@platforms//os:windows": ["//glib/gnulib"],
+        "//conditions:default": [],
     }),
     includes = ["include_glib-2.0"],
     linkopts = select({
@@ -406,6 +435,9 @@ cc_library(
         ":glib_internal_textual_hdrs",
         ":stub_intl",
         "//:config_h",
+        # It includes gspawn-win32.c, which reaches gprintfint.h and from
+        # there gnulib/printf.h.
+        "//glib/gnulib",
     ],
 ) for suffix in [
     "",

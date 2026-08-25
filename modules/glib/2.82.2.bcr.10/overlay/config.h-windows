@@ -50,9 +50,13 @@
 
 #define HAVE_BIND_TEXTDOMAIN_CODESET 1
 
-#define HAVE_C99_SNPRINTF 1
-
-#define HAVE_C99_VSNPRINTF 1
+/* meson.build hardcodes HAVE_C99_SNPRINTF, HAVE_C99_VSNPRINTF and
+ * HAVE_UNIX98_PRINTF to false for MSVC and clang-cl -- "the Visual Studio
+ * 2015+ implementations of C99-style snprintf and vsnprintf do not seem to
+ * be quite good enough" -- so they are deliberately absent here and glib
+ * builds glib/gnulib instead.  Claiming them costs %n$ positional
+ * parameters, among other things.
+ */
 
 #define HAVE_DCGETTEXT 1
 
@@ -182,8 +186,125 @@
 
 #define THREADS_WIN32 1
 
-#define USE_SYSTEM_PRINTF 1
+/* Not set: see the note by HAVE_C99_SNPRINTF above.  gnulib supplies
+ * vasprintf when the system printf is not used.
+ */
+#define HAVE_VASPRINTF 1
 
-#define gl_extern_inline
+/* gl_cv_cc_double_expbit0 printed "1/20" when run on x86_64.  The same
+ * holds for Windows on arm64: meson skips this probe on ARM only because
+ * of the old FPA/VFP word-order ambiguity, and Windows is VFP, i.e.
+ * consistently little-endian.
+ */
+#define DBL_EXPBIT0_WORD 1
+#define DBL_EXPBIT0_BIT 20
+
+/* From the gnulib gl_cv_func_printf_* probes, run against MSVC 14.44 and
+ * the UCRT.  The ones that pass -- precision, flag_leftadjust, flag_zero,
+ * directive_f, directive_ls, infinite -- set no NEED_PRINTF_* macro.
+ */
+#define NEED_PRINTF_ENOMEM 1
+#define NEED_PRINTF_FLAG_GROUPING 1
+#define NEED_PRINTF_DIRECTIVE_A 1
+#define NEED_PRINTF_DOUBLE 1
+#define NEED_PRINTF_LONG_DOUBLE 1
+
+/* glib/meson.build leaves gl_extern_inline empty when the system printf
+ * is used, and otherwise fills it from gnulib/gl_extern_inline.  gnulib's
+ * gnulib_math.h refuses to compile without _GL_INLINE_HEADER_BEGIN, so the
+ * block has to be here rather than the empty placeholder the POSIX
+ * configs carry.  Verbatim from gnulib/gl_extern_inline/meson.build.
+ */
+/* Please see the Gnulib manual for how to use these macros.
+
+   Suppress extern inline with HP-UX cc, as it appears to be broken; see
+   <https://lists.gnu.org/r/bug-texinfo/2013-02/msg00030.html>.
+
+   Suppress extern inline with Sun C in standards-conformance mode, as it
+   mishandles inline functions that call each other.  E.g., for 'inline void f
+   (void) { } inline void g (void) { f (); }', c99 incorrectly complains
+   'reference to static identifier "f" in extern inline function'.
+   This bug was observed with Sun C 5.12 SunOS_i386 2011/11/16.
+
+   Suppress extern inline (with or without __attribute__ ((__gnu_inline__)))
+   on configurations that mistakenly use 'static inline' to implement
+   functions or macros in standard C headers like <ctype.h>.  For example,
+   if isdigit is mistakenly implemented via a static inline function,
+   a program containing an extern inline function that calls isdigit
+   may not work since the C standard prohibits extern inline functions
+   from calling static functions.  This bug is known to occur on:
+
+     OS X 10.8 and earlier; see:
+     https://lists.gnu.org/r/bug-gnulib/2012-12/msg00023.html
+
+     DragonFly; see
+     http://muscles.dragonflybsd.org/bulk/bleeding-edge-potential/latest-per-pkg/ah-tty-0.3.12.log
+
+     FreeBSD; see:
+     https://lists.gnu.org/r/bug-gnulib/2014-07/msg00104.html
+
+   OS X 10.9 has a macro __header_inline indicating the bug is fixed for C and
+   for clang but remains for g++; see <https://trac.macports.org/ticket/41033>.
+   Assume DragonFly and FreeBSD will be similar.  */
+#if (((defined __APPLE__ && defined __MACH__) \
+      || defined __DragonFly__ || defined __FreeBSD__) \
+     && (defined __header_inline \
+         ? (defined __cplusplus && defined __GNUC_STDC_INLINE__ \
+            && ! defined __clang__) \
+         : ((! defined _DONT_USE_CTYPE_INLINE_ \
+             && (defined __GNUC__ || defined __cplusplus)) \
+            || (defined _FORTIFY_SOURCE && 0 < _FORTIFY_SOURCE \
+                && defined __GNUC__ && ! defined __cplusplus))))
+# define _GL_EXTERN_INLINE_STDHEADER_BUG
+#endif
+#if ((__GNUC__ \
+      ? defined __GNUC_STDC_INLINE__ && __GNUC_STDC_INLINE__ \
+      : (199901L <= __STDC_VERSION__ \
+         && !defined __HP_cc \
+         && !defined __PGI \
+         && !(defined __SUNPRO_C && __STDC__))) \
+     && !defined _GL_EXTERN_INLINE_STDHEADER_BUG)
+# define _GL_INLINE inline
+# define _GL_EXTERN_INLINE extern inline
+# define _GL_EXTERN_INLINE_IN_USE
+#elif (2 < __GNUC__ + (7 <= __GNUC_MINOR__) && !defined __STRICT_ANSI__ \
+       && !defined _GL_EXTERN_INLINE_STDHEADER_BUG)
+# if defined __GNUC_GNU_INLINE__ && __GNUC_GNU_INLINE__
+   /* __gnu_inline__ suppresses a GCC 4.2 diagnostic.  */
+#  define _GL_INLINE extern inline __attribute__ ((__gnu_inline__)) __attribute__ ((always_inline))
+# else
+#  define _GL_INLINE extern inline
+# endif
+# define _GL_EXTERN_INLINE extern
+# define _GL_EXTERN_INLINE_IN_USE
+#else
+# define _GL_INLINE static _GL_UNUSED
+# define _GL_EXTERN_INLINE static _GL_UNUSED
+#endif
+
+/* In GCC 4.6 (inclusive) to 5.1 (exclusive),
+   suppress bogus "no previous prototype for 'FOO'"
+   and "no previous declaration for 'FOO'" diagnostics,
+   when FOO is an inline function in the header; see
+   <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54113> and
+   <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=63877>.  */
+#if __GNUC__ == 4 && 6 <= __GNUC_MINOR__
+# if defined __GNUC_STDC_INLINE__ && __GNUC_STDC_INLINE__
+#  define _GL_INLINE_HEADER_CONST_PRAGMA
+# else
+#  define _GL_INLINE_HEADER_CONST_PRAGMA \
+     _Pragma ("GCC diagnostic ignored \"-Wsuggest-attribute=const\"")
+# endif
+# define _GL_INLINE_HEADER_BEGIN \
+    _Pragma ("GCC diagnostic push") \
+    _Pragma ("GCC diagnostic ignored \"-Wmissing-prototypes\"") \
+    _Pragma ("GCC diagnostic ignored \"-Wmissing-declarations\"") \
+    _GL_INLINE_HEADER_CONST_PRAGMA
+# define _GL_INLINE_HEADER_END \
+    _Pragma ("GCC diagnostic pop")
+#else
+# define _GL_INLINE_HEADER_BEGIN
+# define _GL_INLINE_HEADER_END
+#endif
 
 #define gl_unused
