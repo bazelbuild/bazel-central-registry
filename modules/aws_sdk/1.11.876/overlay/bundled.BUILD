@@ -274,6 +274,10 @@ cc_library(
         "crt/aws-crt-cpp/crt/aws-c-common/source/external/libcbor",
         "crt/aws-crt-cpp/crt/aws-c-common/source/external/libcbor/cbor/internal",
     ],
+    linkopts = [
+        "-ldl",
+        "-pthread",
+    ],
     target_compatible_with = ["@platforms//os:linux"],
     textual_hdrs = glob(["crt/aws-crt-cpp/crt/aws-c-common/include/**/*.inl"]),
     visibility = ["//visibility:public"],
