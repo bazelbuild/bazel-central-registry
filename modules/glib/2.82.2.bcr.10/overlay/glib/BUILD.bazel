@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_applicable_licenses = ["//:license"])
@@ -215,7 +216,11 @@ GLIB_POSIX_SRCS = [
 GLIB_WIN32_SRCS = [
     "giowin32.c",
     "gwin32.c",
-    "gspawn-win32-helper.c",
+    # glib/meson.build compiles this into the library; it defines the
+    # g_spawn_*_impl entry points gspawn.c dispatches to.  It also appears
+    # in GLIB_INTERNAL_TEXTUAL_HDRS below, because the helper executable
+    # includes it textually rather than linking against it.
+    "gspawn-win32.c",
     # glib ships its own dirent for Windows, which gdir.c includes as
     # "dirent/dirent.h".  wdirent.c is the only compiled entry point: it
     # defines UNICODE and then textually includes dirent.c (listed under
@@ -226,6 +231,10 @@ GLIB_WIN32_SRCS = [
 ]
 
 GLIB_INTERNAL_TEXTUAL_HDRS = [
+    # Also a compiled source of :glib on Windows (see GLIB_WIN32_SRCS).  It
+    # is listed here too because gspawn-win32-helper.c includes it
+    # textually, with GSPAWN_HELPER defined so that only the shared
+    # definitions survive.
     "gspawn-win32.c",
     "gstdio-private.c",
     "gthread-posix.c",
@@ -239,6 +248,14 @@ GLIB_TOOL_SRCS = [
     "gtester.c",
 ]
 
+# Built below as its own executables rather than into the library: it
+# carries a WinMain and textually includes gspawn-win32.c, so compiling it
+# into libglib would duplicate the g_spawn_*_impl symbols.  It still has to
+# be named here, or the *.c glob below sweeps it up on every platform.
+GLIB_HELPER_SRCS = [
+    "gspawn-win32-helper.c",
+]
+
 GLIB_SRCS = glob(
     [
         "*.c",
@@ -250,13 +267,15 @@ GLIB_SRCS = glob(
         GLIB_POSIX_SRCS +
         GLIB_WIN32_SRCS +
         GLIB_INTERNAL_TEXTUAL_HDRS +
-        GLIB_TOOL_SRCS
+        GLIB_TOOL_SRCS +
+        GLIB_HELPER_SRCS
     ),
 )
 
 cc_library(
     name = "glib_internal_textual_hdrs",
     textual_hdrs = GLIB_INTERNAL_TEXTUAL_HDRS,
+    visibility = ["//:__subpackages__"],
 )
 
 REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
@@ -319,6 +338,14 @@ cc_library(
             "-DEFAULTLIB:winmm.lib",
             "-DEFAULTLIB:shlwapi.lib",
             "-DEFAULTLIB:uuid.lib",
+            # A Visual Studio project links these by default and meson
+            # leans on that; Bazel's MSVC toolchain does not, so name them.
+            # advapi32: the registry and SID calls in gutils.c/gtimezone.c.
+            # user32: the message-loop calls in giowin32.c/gmessages.c.
+            # shell32: CommandLineToArgvW in goption.c.
+            "-DEFAULTLIB:advapi32.lib",
+            "-DEFAULTLIB:user32.lib",
+            "-DEFAULTLIB:shell32.lib",
         ],
         "//conditions:default": [],
     }),
@@ -330,6 +357,49 @@ cc_library(
         "G_LOG_DOMAIN='\"GLib\"'",
         "GLIB_COMPILATION",
         "GLIB_CHARSETALIAS_DIR='\"/usr/lib\"'",
-    ],
+    ] + select({
+        # glib/meson.build's pcre2_static_args.  pcre2.h decorates its
+        # entry points __declspec(dllimport) under MSVC otherwise, and
+        # gregex.c fails to link against the static pcre2.
+        "@platforms//os:windows": ["PCRE2_STATIC"],
+        "//conditions:default": [],
+    }),
     visibility = ["//visibility:public"],
 )
+
+# glib/meson.build builds these two for Windows.  g_spawn* there does not
+# launch the target program directly: it runs gspawn-win64-helper.exe (the
+# name gspawn-win32.c's HELPER_PROCESS expands to under _WIN64), which
+# gwin32.c locates by walking up from the calling executable's directory
+# and looking in "", "bin", "lib", "glib" and "gio" at each level.  Without
+# them every g_spawn* call fails with "Failed to execute helper program".
+[cc_binary(
+    name = "gspawn-win64-helper" + suffix,
+    srcs = ["gspawn-win32-helper.c"],
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+    ],
+    linkopts = [] if suffix else [
+        # meson's win_subsystem : 'windows'.  Without HELPER_CONSOLE the
+        # entry point is WinMain, and the console helper is the one that
+        # keeps a console attached.
+        "-SUBSYSTEM:WINDOWS",
+        "-ENTRY:WinMainCRTStartup",
+    ],
+    local_defines = [
+        "G_LOG_DOMAIN='\"GLib\"'",
+        "GLIB_COMPILATION",
+    ] + (["HELPER_CONSOLE"] if suffix else []),
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":glib",
+        ":glib_internal_textual_hdrs",
+        ":stub_intl",
+        "//:config_h",
+    ],
+) for suffix in [
+    "",
+    "-console",
+]]

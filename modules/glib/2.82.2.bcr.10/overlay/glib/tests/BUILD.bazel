@@ -230,6 +230,12 @@ REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
 
 INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
 
+# win32.c textually includes glib/gwin32-private.c, which the glib package
+# carries as a textual header rather than as a compiled source.
+TEST_DEPS_EXTRA = {
+    "win32": ["//glib:glib_internal_textual_hdrs"],
+}
+
 [cc_test(
     name = test_name,
     size = "small",
@@ -241,7 +247,16 @@ INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
         "-I%s/glib" % (INCLUDE_PREFIX,),
         "-I%s/glib/deprecated" % (INCLUDE_PREFIX,),
     ],
-    data = TEST_DATA + TEST_DATA_EXTRA.get(test_name, []),
+    data = TEST_DATA + TEST_DATA_EXTRA.get(test_name, []) + select({
+        # g_test_trap_subprocess() and anything else calling g_spawn* on
+        # Windows runs through these; gwin32.c finds them by walking up
+        # from this test binary's own directory.
+        "@platforms//os:windows": [
+            "//glib:gspawn-win64-helper",
+            "//glib:gspawn-win64-helper-console",
+        ],
+        "//conditions:default": [],
+    }),
     env = TEST_ENV.get(test_name, DEFAULT_TEST_ENV),
     local_defines = [
         "_GNU_SOURCE",
@@ -251,7 +266,7 @@ INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
     deps = [
         "//:config_h",
         "//glib",
-    ] + select({
+    ] + TEST_DEPS_EXTRA.get(test_name, []) + select({
         "@platforms//os:linux": [],
         "//conditions:default": ["//glib:stub_intl"],
     }),

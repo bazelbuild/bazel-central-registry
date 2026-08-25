@@ -4,7 +4,6 @@ def _mkenums_impl(ctx):
     inputs = list(ctx.files.srcs)
     args = ctx.actions.args()
 
-    args.add(ctx.executable._glib_mkenums)
     template = "--template"
     if ctx.attr.template:
         inputs.append(ctx.file.template)
@@ -16,18 +15,14 @@ def _mkenums_impl(ctx):
     args.add("--output", ctx.outputs.out)
     args.add_all(ctx.files.srcs)
 
-    py_runtime = ctx.toolchains["@bazel_tools//tools/python:toolchain_type"].py3_runtime
-    interpreter = py_runtime.interpreter if py_runtime.interpreter else py_runtime.interpreter_path
-    py_inputs = py_runtime.files if py_runtime.interpreter else depset()
-
+    # Run the py_binary itself rather than handing its executable to a
+    # separately resolved interpreter: on Windows that executable is a
+    # native launcher, not a script python can parse.  This is what the
+    # genmarshal rule below already does.
     ctx.actions.run(
-        inputs = depset(inputs + [ctx.executable._glib_mkenums], transitive = [py_inputs]),
+        inputs = inputs,
         outputs = [ctx.outputs.out],
-        tools = [
-            ctx.attr._glib_mkenums[DefaultInfo].files_to_run,
-            py_runtime.files,
-        ],
-        executable = interpreter,
+        executable = ctx.executable._glib_mkenums,
         arguments = [args],
         mnemonic = "GlibMkenums",
         progress_message = "Generating {}".format(ctx.outputs.out.basename),
@@ -59,7 +54,6 @@ _mkenums_attrs = {
 mkenums = rule(
     _mkenums_impl,
     attrs = _mkenums_attrs,
-    toolchains = ["@bazel_tools//tools/python:toolchain_type"],
 )
 
 def _add_genmarshal_action(ctx, output, mode):

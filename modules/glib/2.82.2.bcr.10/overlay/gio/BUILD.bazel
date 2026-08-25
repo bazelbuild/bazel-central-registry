@@ -25,7 +25,10 @@ expand_template(
             "%s.c" % target,
             "%s.h" % target,
         ],
-        cmd = ("$(PYTHON3) $(location //gio/gdbus-2.0/codegen:gdbus_codegen) --interface-prefix {prefix} " +
+        # Run the py_binary directly rather than through $(PYTHON3): on
+        # Windows its executable is a native launcher, not a script an
+        # interpreter can read.
+        cmd = ("$(location //gio/gdbus-2.0/codegen:gdbus_codegen) --interface-prefix {prefix} " +
                "--output-directory $$(dirname $(location {target}.c)) " +
                "--generate-c-code {target} --c-namespace {namespace} {srcs}").format(
             srcs = " ".join(["$(location %s)" % s for s in srcs]),
@@ -33,7 +36,6 @@ expand_template(
             prefix = prefix,
             target = target,
         ),
-        toolchains = ["@rules_python//python:current_py_toolchain"],
         tools = ["//gio/gdbus-2.0/codegen:gdbus_codegen"],
     )
     for prefix, target, namespace, srcs in [
@@ -239,6 +241,22 @@ GIO_WIN32_SRCS = [
     "gwin32notificationbackend.c",
     "gwin32sid.c",
     "gwin32sid.h",
+    # gio/win32/meson.build's giowin32_lib.  giomodule.c references
+    # g_win32_file_monitor_get_type() and _g_winhttp_vfs_get_type() from
+    # under #ifdef G_OS_WIN32, so these are not optional.
+    "win32/gwin32fsmonitorutils.c",
+    "win32/gwin32fsmonitorutils.h",
+    "win32/gwin32filemonitor.c",
+    "win32/gwin32filemonitor.h",
+    "win32/gwinhttpvfs.c",
+    "win32/gwinhttpvfs.h",
+    "win32/gwinhttpfile.c",
+    "win32/gwinhttpfile.h",
+    "win32/gwinhttpfileinputstream.c",
+    "win32/gwinhttpfileinputstream.h",
+    "win32/gwinhttpfileoutputstream.c",
+    "win32/gwinhttpfileoutputstream.h",
+    "win32/winhttp.h",
 ]
 
 GIO_BASE_SOURCES = [
@@ -779,11 +797,17 @@ cc_library(
     implementation_deps = [
         ":gio_internal_textual_hdrs",
         "//:config_h",
-        "//gio/xdgmime",
         "@zlib",
     ] + select({
         "@platforms//os:linux": [],
         "//conditions:default": ["//glib:stub_intl"],
+    }) + select({
+        # gio/meson.build builds xdgmime under host_system != 'windows'
+        # only.  Its users are gcontenttype-fdo.c, which Windows replaces
+        # with gcontenttype-win32.c, and glocalfileinfo.c, which guards the
+        # call with !G_OS_WIN32.  xdgmimemagic.h includes <unistd.h>.
+        "@platforms//os:windows": [],
+        "//conditions:default": ["//gio/xdgmime"],
     }),
     includes = ["include_glib-2.0"],
     linkopts = select({
@@ -800,6 +824,15 @@ cc_library(
             "-DEFAULTLIB:dnsapi.lib",
             "-DEFAULTLIB:iphlpapi.lib",
             "-DEFAULTLIB:ws2_32.lib",
+            # Implicit in a Visual Studio project, but not in Bazel's MSVC
+            # toolchain.  advapi32: the registry and security-descriptor
+            # calls in gregistrysettingsbackend.c/gwin32sid.c.  shell32:
+            # SHFileOperationW and the shell-item calls in glocalfile.c and
+            # gwin32appinfo.c.  winhttp: the gio/win32 vfs.
+            "-DEFAULTLIB:advapi32.lib",
+            "-DEFAULTLIB:shell32.lib",
+            "-DEFAULTLIB:ole32.lib",
+            "-DEFAULTLIB:winhttp.lib",
         ],
         "//conditions:default": [],
     }),
