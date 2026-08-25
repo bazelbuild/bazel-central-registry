@@ -6,9 +6,8 @@ libraries, with CSV, JSON, IPC, local filesystems, and common compression codecs
 enabled. The module uses the system allocator rather than bundling jemalloc or
 mimalloc.
 
-Apache Thrift is not available as a Bazel Central Registry module, so the module
-extension downloads the exact Thrift 0.22.0 release selected by Arrow 25.0.1
-and builds only the compact-protocol sources needed by Parquet.
+Parquet uses the `thrift` registry module for the Apache Thrift 0.22.0 compact
+protocol selected by Arrow 25.0.1.
 
 Azure Storage support can be enabled with:
 
