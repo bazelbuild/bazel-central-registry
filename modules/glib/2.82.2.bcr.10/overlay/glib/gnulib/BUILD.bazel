@@ -1,0 +1,93 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":gnulib_math.bzl", "math_substitutions")
+
+package(default_applicable_licenses = ["//:license"])
+
+# glib/meson.build only descends into this directory when the system
+# printf is not good enough, which for this port means Windows: upstream
+# hardcodes HAVE_C99_SNPRINTF, HAVE_C99_VSNPRINTF and HAVE_UNIX98_PRINTF
+# to false for MSVC and clang-cl.  On POSIX the system printf is used and
+# nothing here is built, so every target is Windows-only.
+
+expand_template(
+    name = "gnulib_math_h",
+    out = "gnulib_math.h",
+    substitutions = math_substitutions(),
+    template = "gnulib_math.h.in",
+)
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+cc_library(
+    name = "gnulib",
+    srcs = [
+        "asnprintf.c",
+        "printf.c",
+        "printf-args.c",
+        "printf-parse.c",
+        "printf-frexp.c",
+        "printf-frexpl.c",
+        "vasnprintf.c",
+        "xsize.c",
+        # g-gnulib.h includes "glib/glib.h" out of the source tree, which
+        # the -I above resolves; these declare them as inputs.
+        "//glib:all_hdrs",
+    ],
+    hdrs = [
+        "g-gnulib.h",
+        # gprintfint.h routes g_printf and friends here once
+        # USE_SYSTEM_PRINTF is unset, so :glib includes this itself.
+        "printf.h",
+        "printf-args.h",
+        "printf-frexp.h",
+        "printf-frexpl.h",
+        "printf-parse.h",
+        "vasnprintf.h",
+        "verify.h",
+        "xsize.h",
+        "arg-nonnull.h",
+        "c++defs.h",
+        "float+.h",
+        "fpucw.h",
+        "isnand-nolibm.h",
+        "isnanf-nolibm.h",
+        "isnanl-nolibm.h",
+        ":gnulib_math_h",
+    ],
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+        "-I%s/glib/gnulib" % (INCLUDE_PREFIX,),
+        "-I$(BINDIR)/%s/glib/gnulib" % (INCLUDE_PREFIX,),
+    ] + select({
+        "@platforms//os:windows": ["/utf-8"],
+        "//conditions:default": [],
+    }),
+    # printf-frexpl.c is the long-double build of printf-frexp.c: it
+    # defines USE_LONG_DOUBLE and includes it textually.  isnand.c,
+    # isnanf.c and isnanl.c do the same with isnan.c, but none of those
+    # four are built here -- the UCRT's own isnan* are used instead.
+    textual_hdrs = ["printf-frexp.c"],
+    linkstatic = True,
+    local_defines = [
+        "GCC_LINT=1",
+        "G_LOG_DOMAIN='\"GLib\"'",
+        "GLIB_COMPILATION",
+        # meson's extra_gnulib_args: isnan, isnand, isnanf and isnanl all
+        # link against the UCRT, so gnulib uses them rather than its own.
+        "HAVE_ISNAN_IN_LIBC",
+        "HAVE_ISNAND_IN_LIBC",
+        "HAVE_ISNANF_IN_LIBC",
+        "HAVE_ISNANL_IN_LIBC",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//glib:__pkg__"],
+    deps = [
+        "//:config_h",
+        "//glib:glib_generated_headers",
+        "//glib:stub_intl",
+    ],
+)
