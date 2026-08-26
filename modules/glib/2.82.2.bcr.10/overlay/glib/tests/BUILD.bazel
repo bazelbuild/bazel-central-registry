@@ -227,18 +227,34 @@ REPO = repo_name()
 
 G_TEST_SRCDIR = "../%s/glib/tests" % (REPO,) if REPO else "glib/tests"
 
+# Same path, native separators.  spawn-singlethread hands a fixture path
+# built from G_TEST_SRCDIR to cmd.exe, which reads everything after the
+# first '/' as switches: "../glib+/glib/tests/echo-script.bat" runs as the
+# command ".." with switches "/glib+", "/glib" and so on, and cmd reports
+# "'..' is not recognized as an internal or external command".  This only
+# bites when the test falls back to G_TEST_SRCDIR, which it does whenever
+# argv[0] is the bazel-bin copy rather than the one in the runfiles tree.
+G_TEST_SRCDIR_WINDOWS = G_TEST_SRCDIR.replace("/", "\\")
+
 DEFAULT_TEST_ENV = {
     "G_TEST_SRCDIR": G_TEST_SRCDIR,
 }
 
+DEFAULT_TEST_ENV_WINDOWS = {
+    "G_TEST_SRCDIR": G_TEST_SRCDIR_WINDOWS,
+}
+
+# skip tests that expect to run from installed /usr prefix
+BUILDDIR_OVERRIDE = {
+    "G_TEST_BUILDDIR": "dummy",
+}
+
 TEST_ENV = {
-    "gdatetime": dicts.add(
-        DEFAULT_TEST_ENV,
-        {
-            # skip tests that expect to run from installed /usr prefix
-            "G_TEST_BUILDDIR": "dummy",
-        },
-    ),
+    "gdatetime": dicts.add(DEFAULT_TEST_ENV, BUILDDIR_OVERRIDE),
+}
+
+TEST_ENV_WINDOWS = {
+    "gdatetime": dicts.add(DEFAULT_TEST_ENV_WINDOWS, BUILDDIR_OVERRIDE),
 }
 
 REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
@@ -272,7 +288,10 @@ TEST_DEPS_EXTRA = {
         ],
         "//conditions:default": [],
     }),
-    env = TEST_ENV.get(test_name, DEFAULT_TEST_ENV),
+    env = select({
+        "@platforms//os:windows": TEST_ENV_WINDOWS.get(test_name, DEFAULT_TEST_ENV_WINDOWS),
+        "//conditions:default": TEST_ENV.get(test_name, DEFAULT_TEST_ENV),
+    }),
     local_defines = [
         "_GNU_SOURCE",
         "G_LOG_DOMAIN='\"GLib\"'",
