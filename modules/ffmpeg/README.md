@@ -17,14 +17,14 @@ Each FFmpeg library is available as a `cc_library` target with two variants:
 | `@ffmpeg//:avdevice`   | Device capture/playback library                                   |
 | `@ffmpeg//:swresample` | Audio resampling and format conversion library                    |
 | `@ffmpeg//:swscale`    | Video scaling and pixel format conversion library                 |
-| `@ffmpeg//:postproc`   | Video post-processing library                                     |
+| `@ffmpeg//:postproc`   | Video post-processing library (7.1.1 only; not present in 9.0.1) |
 
 #### Bare targets vs `with_defaults/` targets
 
 Every library and binary target has two forms:
 
 - **Bare target** (e.g. `@ffmpeg//:avcodec`) — all component flags default to `False`. No codecs, muxers, demuxers, or filters are compiled in unless you explicitly enable them via `--@ffmpeg//:enable_<component>=True`.
-- **`with_defaults/` target** (e.g. `@ffmpeg//:with_defaults/avcodec`) — a Bazel transition automatically enables all components appropriate for the target platform (OS + CPU). This matches a typical `./configure && make` build.
+- **`with_defaults/` target** (e.g. `@ffmpeg//:with_defaults/avcodec`) — a Bazel transition enables the precomputed component profile for the target platform (OS + CPU). Additional components can be enabled explicitly with the same component flags as bare targets.
 
 Use `with_defaults/` for most applications. Use bare targets when you need precise control over binary size by enabling only specific components.
 
@@ -99,8 +99,8 @@ The Bazel overlay relies on several generated `.bzl` files that are produced by 
 | Step | Script                          | Input                                   | Output                                                               | When to re-run                                                                |
 | ---- | ------------------------------- | --------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | 1    | `generate_config_defs.py`       | FFmpeg `configure` script               | `config.h.in`, `libavutil/avconfig.h.in`, `libavutil/ffversion.h.in` | New FFmpeg version (changed `ARCH_LIST`, `HAVE_LIST`, `CONFIG_LIST`)          |
-| 2    | Manual                          | FFmpeg `configure` script               | `component_defs.bzl`                                                 | New FFmpeg version (changed components, deps, CONFIG_EXTRA)                   |
-| 3    | `generate_component_srcs.py`    | FFmpeg Makefiles + `component_defs.bzl` | `component_srcs.bzl`                                                 | New FFmpeg version or changed `component_defs.bzl`                            |
+| 2    | `generate_component_defs.py`    | FFmpeg `configure` and component declarations | `component_defs.bzl`                                            | New FFmpeg version (changed components, deps, CONFIG_EXTRA)                   |
+| 3    | `generate_component_srcs.py`    | FFmpeg Makefiles + `component_defs.bzl` + `config.h.in` | `component_srcs.bzl`                                  | New FFmpeg version or changed component/configuration definitions              |
 | 4    | `generate_resolved_profiles.py` | `component_defs.bzl`                    | `component_resolved.bzl`                                             | Changed `component_defs.bzl` (new components, deps, profiles, available libs) |
 
 ### Why resolution is pre-computed
@@ -124,10 +124,13 @@ All generator scripts accept `--version <VERSION>` to target a specific overlay 
 # Step 1: regenerate config header templates
 python3 generate_config_defs.py /path/to/ffmpeg/source
 
-# Step 2: regenerate per-component source lists
+# Step 2: regenerate component declarations and dependencies
+python3 generate_component_defs.py /path/to/ffmpeg/source
+
+# Step 3: regenerate per-component source lists
 python3 generate_component_srcs.py /path/to/ffmpeg/source
 
-# Step 3: regenerate resolved profiles
+# Step 4: regenerate resolved profiles
 python3 generate_resolved_profiles.py
 
 # Target a specific version:
@@ -150,13 +153,15 @@ Add `"<NEW_VERSION>"` to `metadata.json` `"versions"` array.
 
 All paths below are relative to `modules/ffmpeg/<NEW_VERSION>/`.
 
-#### `config_defs.bzl`
+#### Configuration headers
 
-Update the version string in `FFVERSION_H`.
+Regenerate `config.h.in` and the `libavutil` header templates with
+`generate_config_defs.py`. Preserve the autoconf substitutions in `avconfig.h.in`
+and the `PACKAGE_VERSION` substitution in `ffversion.h.in`.
 
 #### `component_defs.bzl`
 
-Re-extract from the new FFmpeg `configure` script:
+Run `generate_component_defs.py` against the new FFmpeg source tree to update:
 
 | Variable                | Source in `configure`                                                                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
@@ -164,6 +169,15 @@ Re-extract from the new FFmpeg `configure` script:
 | `PROFILE_EVERYTHING`    | Flat union of all the above lists                                                                                                     |
 | `CONFIG_EXTRA_REGISTRY` | `CONFIG_EXTRA` block in `configure`                                                                                                   |
 | `FILTER_SYMBOL_MAP`     | `FILTER_LIST` entries mapped to their C symbol names (see `libavfilter/allfilters.c`)                                                 |
+
+The generator preserves the default component policy from `7.1.1.bcr.beta.7`.
+Use `--policy-version` to choose another existing overlay when deliberately
+changing that policy. It also marks `threads` available, matching
+`ffmpeg_config_checks.bzl`, so the new `tee_muxer` dependency on `fifo_muxer`
+does not remove `tee_muxer` from the default profile.
+Optional TLS, external-library, and platform components
+can require explicit `enable_<component>` flags even when their dependencies
+are available.
 
 #### `ffmpeg_config_checks.bzl`
 
@@ -196,13 +210,21 @@ Steps:
 
 #### Script tunables
 
-If the new FFmpeg version introduces changes, these lists inside `generate_component_srcs.py` may need updating:
+The generator reads subsystem names from `CONFIG_EXTRA_REGISTRY`. If the new
+FFmpeg version introduces Makefile changes, these settings inside
+`generate_component_srcs.py` may need updating:
 
 | Variable                 | When to update                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------ |
-| `CONFIG_EXTRA`           | New internal subsystem flags appear in `configure`'s `CONFIG_EXTRA` block            |
+| `OBJECT_PREFIXES`        | A supported architecture adds another object-file group                             |
+| `MAKEFILE_FEATURES`      | Static Makefile conditions change; keep these consistent with `config.h.in`           |
 | `EXTERNAL_FILES_TO_SKIP` | New source files require external/platform headers unavailable in the Bazel build    |
 | `LIBS[].sub_makefiles`   | A library gains a new sub-directory with its own `Makefile` (e.g. `libavcodec/vvc/`) |
+
+Architecture Makefiles are discovered recursively, including nested HEVC and
+VVC directories. AArch64 source selections also include `neon/Makefile`.
+Sources selected by fixed `CONFIG_*` settings in `config.h.in` are emitted
+unconditionally and excluded from the conditional source groups.
 
 ### 4. Regenerating `component_resolved.bzl`
 
@@ -240,7 +262,7 @@ FFmpeg uses NASM-syntax `.asm` files for x86 SIMD optimizations (161 files in 7.
 
 Key points for new versions:
 
-- All `.asm` files are compiled unconditionally; the C init files gate registration via `HAVE_X86ASM` and component flags.
+- Component `.asm` files follow the same component flags as their C initialization files.
 - `config.asm` is auto-generated from `config.h` by a `genrule` (converts `#define` to `%define`).
 - Template `.asm` files (e.g. `*_template.asm`) must be excluded from `srcs` and listed in `hdrs`.
 - Include-only files (`x86inc.asm`, `x86util.asm`) go in `hdrs`, not `srcs`.
@@ -249,6 +271,20 @@ Key points for new versions:
 When updating, check each library's `x86/Makefile` for new `.asm` files. The glob patterns in `BUILD.bazel` pick up
 additions automatically. If a new library gains x86 assembly, add a corresponding `nasm_library` target and wire it
 into the `cc_variant_library` `srcs`.
+
+For FFmpeg 9.0.1, `libavcodec` uses separate NASM targets for `x86`, `x86/hevc`,
+`x86/vvc`, and `x86/h26x`: `rules_nasm` names object files by basename, and those
+directories contain different sources with the same basename. The experimental
+`libswscale` implementation (`CONFIG_UNSTABLE`) and SVE/SME assembly remain
+disabled. The `ffmpeg` graph HTML and CSS are embedded without compression using
+FFmpeg's `ffbuild/bin2c.c`.
+
+The 9.0.1 swscale patch keeps `ff_sws_chroma_pos` available with
+`CONFIG_UNSTABLE=0`, because `graph.c` also calls it from the legacy scaler.
+
+The 9.0.1 BoringSSL patch uses `BIO_read` for PEM serialization and BoringSSL's
+`SSL_set_mtu` and `SSL_max_seal_overhead` for DTLS, because the pinned BoringSSL
+does not provide `BIO_read_ex`, `DTLS_set_link_mtu`, or `DTLS_get_data_mtu`.
 
 ### 6. External Library Dependencies
 
