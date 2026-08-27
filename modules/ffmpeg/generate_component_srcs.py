@@ -11,6 +11,8 @@ Usage:
 The script reads PROFILE_EVERYTHING and CONFIG_EXTRA_REGISTRY from
 component_defs.bzl, and fixed CONFIG_* values from config.h.in, in the
 version overlay directory and writes component_srcs.bzl to the same overlay.
+Shared-group IDs and sections come from the immutable --reference-version
+overlay, not the output being regenerated.
 """
 
 from __future__ import annotations
@@ -152,7 +154,7 @@ def _makefile_lines(path: Path) -> Iterator[str]:
 
 
 def parse_makefile(path: Path) -> dict[str, list[str]]:
-    """Parse OBJS and STLIBOBJS selections, excluding shared-build copies.
+    """Parse OBJS, STLIBOBJS, and SHLIBOBJS component selections.
 
     Returns dict mapping config_name (lowercase) -> list of .o basenames
     (with subdirectory prefix if present).
@@ -160,7 +162,7 @@ def parse_makefile(path: Path) -> dict[str, list[str]]:
     mapping: dict[str, list[str]] = defaultdict(list)
     for line in _makefile_lines(path):
         match = re.match(
-            r"(?:(\w+)-)?(?:OBJS|STLIBOBJS)-\$\(CONFIG_(\w+)\)\s*\+=\s*(.*)",
+            r"(?:(\w+)-)?(?:OBJS|STLIBOBJS|SHLIBOBJS)-\$\(CONFIG_(\w+)\)\s*\+=\s*(.*)",
             line,
         )
         if match and match.group(1) in OBJECT_PREFIXES:
@@ -173,14 +175,14 @@ def parse_makefile(path: Path) -> dict[str, list[str]]:
     return dict(mapping)
 
 
-def parse_unconditional_objs(path: Path) -> set[str]:
-    """Parse unconditional OBJS from a Makefile (OBJS = / OBJS +=, no CONFIG_).
+def parse_unconditional_objs(path: Path, variable: str = "OBJS") -> set[str]:
+    """Parse unconditional OBJS or SHLIBOBJS assignments from a Makefile.
 
     Returns a set of .o basenames that are always compiled.
     """
     objs: set[str] = set()
     for line in _makefile_lines(path):
-        if re.match(r"^OBJS\s*[+:]?=", line) and "CONFIG_" not in line:
+        if re.match(rf"^{re.escape(variable)}\s*[+:]?=", line) and "CONFIG_" not in line:
             objs.update(re.findall(r"([\w./-]+\.o)\b", line.split("=", 1)[1]))
 
     return objs
@@ -362,6 +364,13 @@ def process_library(ffmpeg_root: Path, lib_info: LibInfo) -> LibrarySources:
     )
     fixed_mapping = _classify_objects(ffmpeg_root, lib_dir, generic_mapping, STATIC_CONFIG_SET)
     fixed_sources = {src for files in fixed_mapping.values() for src in files}
+    # cc_library produces both static and shared libraries. Keep the SHLIBOBJS
+    # copies of hidden symbols in each library, as ffbuild/library.mak does.
+    shared_objs = parse_unconditional_objs(ffmpeg_root / lib_dir / "Makefile", "SHLIBOBJS")
+    for obj in shared_objs - unconditional:
+        src = obj_to_src(ffmpeg_root, lib_dir, obj)
+        if src is not None:
+            fixed_sources.add(src)
     component_mapping = _classify_objects(ffmpeg_root, lib_dir, generic_mapping)
     components, extra = _split_extra_sources(
         _categorize_sources({comp: files - fixed_sources for comp, files in component_mapping.items()}),
@@ -410,8 +419,7 @@ def fmt_string_list(items: list[str], indent: int = 8) -> str:
 def _emit_groups_to(
     name: str,
     data: SourceGroups,
-    all_shared_groups: dict[tuple[str, ...], str],
-    group_counter: list[int],
+    all_shared_groups: set[tuple[str, ...]],
     emit,
 ) -> None:
     """Emit component selections and register every shared-source group."""
@@ -421,18 +429,9 @@ def _emit_groups_to(
     emit("}")
     emit()
 
-    shared_var_entries: list[tuple[str, list[str], list[str]]] = []
-    for comps, files in data.shared:
-        group_key = tuple(comps)
-        if group_key not in all_shared_groups:
-            group_counter[0] += 1
-            all_shared_groups[group_key] = f"shared_group_{group_counter[0]}"
-        shared_var_entries.append(
-            (all_shared_groups[group_key], comps, files),
-        )
-
     emit(f"{name}_SHARED_SRCS = [")
-    for _gid, comps, files in shared_var_entries:
+    for comps, files in data.shared:
+        all_shared_groups.add(tuple(comps))
         comps_str = ", ".join(f'"{c}"' for c in comps)
         files_str = ", ".join(f'"{f}"' for f in files)
         emit(f"    (({comps_str}), [{files_str}]),")
@@ -443,8 +442,7 @@ def _emit_groups_to(
 def _emit_library_to(
     lib_info: LibInfo,
     ffmpeg_root: Path,
-    all_shared_groups: dict[tuple[str, ...], str],
-    group_counter: list[int],
+    all_shared_groups: set[tuple[str, ...]],
     emit,
 ) -> None:
     """Emit generic, subsystem, and architecture selections for one library."""
@@ -455,14 +453,14 @@ def _emit_library_to(
     # such as libavcodec's STLIBOBJS-$(CONFIG_AVFORMAT) dependencies.
     emit(f"{name}_EXTRA_SRCS = {fmt_list(data.unconditional)}")
     emit()
-    _emit_groups_to(name + "_EXTRA", data.extra, all_shared_groups, group_counter, emit)
-    _emit_groups_to(name, data.components, all_shared_groups, group_counter, emit)
+    _emit_groups_to(name + "_EXTRA", data.extra, all_shared_groups, emit)
+    _emit_groups_to(name, data.components, all_shared_groups, emit)
 
     for arch, groups in [("AARCH64", data.aarch64), ("X86", data.x86)]:
         emit(f"{name}_{arch}_COMPONENT_SRCS = []")
         emit()
-        _emit_groups_to(name + "_" + arch, groups, all_shared_groups, group_counter, emit)
-    _emit_groups_to(name + "_X86_ASM", data.x86_asm, all_shared_groups, group_counter, emit)
+        _emit_groups_to(name + "_" + arch, groups, all_shared_groups, emit)
+    _emit_groups_to(name + "_X86_ASM", data.x86_asm, all_shared_groups, emit)
     if lib_info.name == "avcodec":
         _emit_asm_directories_to(name + "_X86_ASM", data.x86_asm, emit)
 
@@ -503,6 +501,72 @@ def _emit_asm_directories_to(name: str, groups: SourceGroups, emit) -> None:
     emit()
 
 
+def shared_group_definitions(
+    reference_path: Path,
+    groups: set[tuple[str, ...]],
+) -> tuple[dict[str, list[tuple[str, list[str]]]], list[str]]:
+    """Retain component_srcs.bzl IDs, aliases, and sections for surviving groups."""
+    sections: dict[str, list[tuple[str, list[str]]]] = {}
+    section_order: list[str] = []
+    reserved_ids: set[str] = set()
+    reference_groups: set[tuple[str, ...]] = set()
+    groups = {tuple(sorted(comps)) for comps in groups}
+
+    def section_names(value: ast.expr) -> list[str]:
+        if isinstance(value, ast.Name):
+            return [value.id]
+        if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
+            return section_names(value.left) + section_names(value.right)
+        raise ValueError(f"Unsupported shared-group section expression in {reference_path}")
+
+    for node in ast.parse(reference_path.read_text(encoding="utf-8")).body:
+        if not isinstance(node, ast.Assign) or not isinstance(node.targets[0], ast.Name):
+            continue
+        name = node.targets[0].id
+        if name == "ALL_SHARED_GROUP_DEFINITIONS":
+            section_order = section_names(node.value)
+        elif name.endswith("SHARED_GROUP_DEFINITIONS") and isinstance(node.value, ast.List):
+            sections[name] = []
+            for gid, comps in ast.literal_eval(node.value):
+                if gid in reserved_ids:
+                    raise ValueError(f"Duplicate shared-group ID {gid} in {reference_path}")
+                reserved_ids.add(gid)
+                key = tuple(sorted(comps))
+                reference_groups.add(key)
+                if key in groups:
+                    # Historical aliases have distinct IDs; retain all surviving
+                    # aliases and their original section and concatenation order.
+                    sections[name].append((gid, list(key)))
+
+    if not sections:
+        raise ValueError(f"No shared-group definitions found in {reference_path}")
+    if not section_order:
+        section_order = list(sections)
+    if set(section_order) != set(sections) or len(section_order) != len(sections):
+        raise ValueError(f"Invalid ALL_SHARED_GROUP_DEFINITIONS in {reference_path}")
+    if "SHARED_GROUP_DEFINITIONS" not in sections:
+        sections["SHARED_GROUP_DEFINITIONS"] = []
+        section_order.append("SHARED_GROUP_DEFINITIONS")
+
+    next_id = max(
+        (int(match.group(1)) for gid in reserved_ids if (match := re.fullmatch(r"shared_group_(\d+)", gid))),
+        default=0,
+    )
+    for comps in sorted(groups - reference_groups):
+        next_id += 1
+        sections["SHARED_GROUP_DEFINITIONS"].append((f"shared_group_{next_id}", list(comps)))
+    return sections, section_order
+
+
+def _emit_shared_group_definitions_to(name: str, groups: list[tuple[str, list[str]]], emit) -> None:
+    emit(f"{name} = [")
+    for gid, comps in groups:
+        comps_str = ", ".join(f'"{c}"' for c in comps)
+        emit(f'    ("{gid}", [{comps_str}]),')
+    emit("]")
+    emit()
+
+
 # -- Entry point --------------------------------------------------------------
 
 
@@ -519,9 +583,17 @@ def main() -> None:
         help="Path to the FFmpeg source tree",
     )
     add_version_arg(parser)
+    parser.add_argument(
+        "--reference-version",
+        default="7.1.1.bcr.beta.7",
+        help="Immutable module version supplying shared-group IDs and section order.",
+    )
     args = parser.parse_args()
 
     overlay = resolve_overlay_dir(args.version)
+    reference_overlay = resolve_overlay_dir(args.reference_version)
+    if overlay.resolve() == reference_overlay.resolve():
+        parser.error("--reference-version must name a different immutable overlay")
     PROFILE_EVERYTHING_SET = load_profile_everything(overlay / "component_defs.bzl")
     CONFIG_EXTRA_SET = load_registry_keys(overlay / "component_defs.bzl", "CONFIG_EXTRA_REGISTRY")
     STATIC_CONFIG_SET = load_static_configs(overlay / "config.h.in")
@@ -540,22 +612,29 @@ def main() -> None:
     emit('"""')
     emit()
 
-    all_shared_groups: dict[tuple[str, ...], str] = {}
-    group_counter = [0]
-
+    all_shared_groups: set[tuple[str, ...]] = set()
+    library_output: dict[str, list[str]] = {}
     for lib_info in LIBS:
-        _emit_library_to(lib_info, ffmpeg_root, all_shared_groups, group_counter, emit)
+        lines: list[str] = []
+        _emit_library_to(lib_info, ffmpeg_root, all_shared_groups, lambda line="", lines=lines: lines.append(line))
+        library_output[lib_info.name] = lines
 
-    emit("SHARED_GROUP_DEFINITIONS = [")
-    for group_key, gid in sorted(
-        all_shared_groups.items(),
-        key=lambda x: x[1],
-    ):
-        comps_str = ", ".join(f'"{c}"' for c in group_key)
-        emit(f'    ("{gid}", [{comps_str}]),')
-    emit("]")
-    emit()
-    emit("ALL_SHARED_GROUP_DEFINITIONS = SHARED_GROUP_DEFINITIONS")
+    sections, section_order = shared_group_definitions(
+        reference_overlay / "component_srcs.bzl",
+        all_shared_groups,
+    )
+    library_sections = {
+        "avcodec": "X86_SHARED_GROUP_DEFINITIONS",
+        "avfilter": "AVFILTER_X86_SHARED_GROUP_DEFINITIONS",
+    }
+    for name, lines in library_output.items():
+        buf.extend(lines)
+        section = library_sections.get(name)
+        if section in sections:
+            _emit_shared_group_definitions_to(section, sections.pop(section), emit)
+    for name, groups in sections.items():
+        _emit_shared_group_definitions_to(name, groups, emit)
+    emit("ALL_SHARED_GROUP_DEFINITIONS = " + " + ".join(section_order))
 
     output_path.write_text("\n".join(buf) + "\n", encoding="utf-8")
     print(f"  wrote {output_path}", file=sys.stderr)

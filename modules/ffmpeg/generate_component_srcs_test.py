@@ -78,7 +78,40 @@ class ComponentSourcesTest(unittest.TestCase):
         self.assertEqual(generator.parse_unconditional_objs(path), {"base.o", "base2.o"})
         self.assertEqual(
             generator.parse_makefile(path),
-            {"hevc_decoder": ["decoder.o", "common.o", "static.o", "x86/idct64.o", "aarch64/neon.o"]},
+            {"hevc_decoder": ["decoder.o", "common.o", "static.o", "shared.o", "x86/idct64.o", "aarch64/neon.o"]},
+        )
+
+    def test_unconditional_shared_objects_are_emitted_once_per_library(self):
+        for library in ("avcodec", "avformat"):
+            directory = "lib" + library
+            self.write(
+                directory + "/Makefile",
+                "OBJS = base.o\n"
+                "SHLIBOBJS = shared.o base.o\n"
+                "SHLIBOBJS += shared.o\n"
+                "OBJS-$(CONFIG_HEVC_DECODER) += shared.o decoder.o\n",
+            )
+            for name in ("base", "shared", "decoder"):
+                self.write(directory + "/" + name + ".c")
+            sources = generator.process_library(self.root, generator.LibInfo(library, directory, []))
+            with self.subTest(library=library):
+                self.assertEqual(sources.unconditional, [directory + "/shared.c"])
+                self.assertEqual(sources.components, ({"hevc_decoder": [directory + "/decoder.c"]}, []))
+
+    def test_conditional_shared_objects_keep_all_component_selections(self):
+        self.write(
+            "libavformat/Makefile",
+            "SHLIBOBJS-$(CONFIG_MATROSKA_MUXER) += opus_frame_duration_tab.o\n"
+            "SHLIBOBJS-$(CONFIG_WEBM_MUXER) += opus_frame_duration_tab.o\n"
+            "OBJS-$(CONFIG_MATROSKA_MUXER) += opus_frame_duration_tab.o\n",
+        )
+        self.write("libavformat/opus_frame_duration_tab.c")
+        sources = generator.process_library(self.root, generator.LibInfo("avformat", "libavformat", []))
+        self.assertEqual(sources.unconditional, [])
+        self.assertEqual(sources.components.exclusive, {})
+        self.assertEqual(
+            sources.components.shared,
+            [(["matroska_muxer", "webm_muxer"], ["libavformat/opus_frame_duration_tab.c"])],
         )
 
     def test_sources_shared_by_components_and_subsystems_appear_once(self):
@@ -144,8 +177,7 @@ class ComponentSourcesTest(unittest.TestCase):
         generator._emit_library_to(
             generator.LibInfo("avcodec", "libavcodec", []),
             self.root,
-            {},
-            [0],
+            set(),
             lambda line="": output.append(line),
         )
         namespace = generated_assignments(output)
@@ -235,13 +267,12 @@ class ComponentSourcesTest(unittest.TestCase):
             "OBJS-$(CONFIG_DSP) += shared.o\nOBJS-$(CONFIG_HEVC_DECODER) += shared.o\n",
         )
         self.write("libavcodec/shared.c")
-        groups = {}
+        groups = set()
         output = []
         generator._emit_library_to(
             generator.LibInfo("avcodec", "libavcodec", []),
             self.root,
             groups,
-            [0],
             lambda line="": output.append(line),
         )
         namespace = generated_assignments(output)
@@ -285,6 +316,100 @@ class ComponentSourcesTest(unittest.TestCase):
             shared["libavcodec/x86"],
             [(("hevc_decoder", "vvc_decoder"), ["libavcodec/x86/other.asm"])],
         )
+
+
+class SharedGroupDefinitionsTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.reference = Path(self.directory.name) / "component_srcs.bzl"
+        self.reference.write_text(
+            "X86_SHARED_GROUP_DEFINITIONS = [\n"
+            '    ("x86_shared_group_2", ["alpha_decoder", "beta_decoder"]),\n'
+            "]\n"
+            "SHARED_GROUP_DEFINITIONS = [\n"
+            '    ("shared_group_9", ["alpha_decoder", "beta_decoder"]),\n'
+            '    ("shared_group_3", ["delta_decoder", "gamma_decoder"]),\n'
+            '    ("shared_group_99", ["removed_decoder", "removed_encoder"]),\n'
+            "]\n"
+            "EXTRA_SHARED_GROUP_DEFINITIONS = [\n"
+            '    ("extra_shared_group_1", ["dsp", "hevc_decoder"]),\n'
+            "]\n"
+            "ALL_SHARED_GROUP_DEFINITIONS = SHARED_GROUP_DEFINITIONS + "
+            "EXTRA_SHARED_GROUP_DEFINITIONS + X86_SHARED_GROUP_DEFINITIONS\n",
+            encoding="utf-8",
+        )
+
+    def test_existing_ids_and_definition_order_survive(self):
+        sections, _ = generator.shared_group_definitions(
+            self.reference,
+            {("delta_decoder", "gamma_decoder"), ("alpha_decoder", "beta_decoder")},
+        )
+        self.assertEqual(
+            sections["SHARED_GROUP_DEFINITIONS"],
+            [
+                ("shared_group_9", ["alpha_decoder", "beta_decoder"]),
+                ("shared_group_3", ["delta_decoder", "gamma_decoder"]),
+            ],
+        )
+
+    def test_new_groups_reserve_removed_ids_and_have_deterministic_order(self):
+        sections, _ = generator.shared_group_definitions(
+            self.reference,
+            {
+                ("z_decoder", "z_encoder"),
+                ("alpha_decoder", "beta_decoder"),
+                ("a_decoder", "a_encoder"),
+            },
+        )
+        self.assertEqual(
+            sections["SHARED_GROUP_DEFINITIONS"],
+            [
+                ("shared_group_9", ["alpha_decoder", "beta_decoder"]),
+                ("shared_group_100", ["a_decoder", "a_encoder"]),
+                ("shared_group_101", ["z_decoder", "z_encoder"]),
+            ],
+        )
+        ids = [gid for entries in sections.values() for gid, _ in entries]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_removed_groups_are_not_emitted(self):
+        sections, _ = generator.shared_group_definitions(self.reference, set())
+        self.assertTrue(all(not entries for entries in sections.values()))
+
+    def test_old_sections_and_duplicate_membership_aliases_are_preserved(self):
+        sections, order = generator.shared_group_definitions(
+            self.reference,
+            {("alpha_decoder", "beta_decoder"), ("dsp", "hevc_decoder")},
+        )
+        self.assertEqual(
+            list(sections),
+            ["X86_SHARED_GROUP_DEFINITIONS", "SHARED_GROUP_DEFINITIONS", "EXTRA_SHARED_GROUP_DEFINITIONS"],
+        )
+        self.assertEqual(
+            order,
+            ["SHARED_GROUP_DEFINITIONS", "EXTRA_SHARED_GROUP_DEFINITIONS", "X86_SHARED_GROUP_DEFINITIONS"],
+        )
+        self.assertEqual(
+            sections["X86_SHARED_GROUP_DEFINITIONS"],
+            [("x86_shared_group_2", ["alpha_decoder", "beta_decoder"])],
+        )
+        self.assertEqual(
+            sections["EXTRA_SHARED_GROUP_DEFINITIONS"],
+            [("extra_shared_group_1", ["dsp", "hevc_decoder"])],
+        )
+        output = []
+        for name, entries in sections.items():
+            generator._emit_shared_group_definitions_to(name, entries, lambda line="": output.append(line))
+        self.assertEqual(generated_assignments(output), sections)
+
+    def test_duplicate_historical_ids_are_rejected(self):
+        self.reference.write_text(
+            self.reference.read_text(encoding="utf-8").replace('"x86_shared_group_2"', '"shared_group_9"'),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "Duplicate shared-group ID shared_group_9"):
+            generator.shared_group_definitions(self.reference, set())
 
 
 if __name__ == "__main__":

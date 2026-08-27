@@ -225,6 +225,12 @@ Architecture Makefiles are discovered recursively, including nested HEVC and
 VVC directories. AArch64 source selections also include `neon/Makefile`.
 Sources selected by fixed `CONFIG_*` settings in `config.h.in` are emitted
 unconditionally and excluded from the conditional source groups.
+The generator includes both `STLIBOBJS` and `SHLIBOBJS`: Bazel produces static
+and shared libraries, and shared libraries need their own copies of FFmpeg's
+hidden helper definitions, as described in `ffbuild/library.mak`.
+Shared-group IDs and definition sections are preserved from the immutable
+`7.1.1.bcr.beta.7` overlay. Use `--reference-version` to choose another existing
+version as the reference; regeneration does not use the output file as input.
 
 ### 4. Regenerating `component_resolved.bzl`
 
