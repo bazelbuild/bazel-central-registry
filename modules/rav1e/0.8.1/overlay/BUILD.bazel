@@ -1,7 +1,10 @@
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
 load("@rav1e_crates//:defs.bzl", "aliases", "all_crate_deps")
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
-load("@rules_rust//cargo:defs.bzl", "cargo_build_script", "cargo_toml_env_vars")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("@rules_rs//rs:cargo_build_script.bzl", "cargo_build_script")
+load("@rules_rs//rs:rust_library.bzl", "rust_library")
+load("@rules_rs//rs:rust_static_library.bzl", "rust_static_library")
+load("@rules_rs//rs:rust_test.bzl", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -10,17 +13,35 @@ _FEATURES = [
     "threading",
 ]
 
-cargo_toml_env_vars(
-    name = "cargo_metadata_env",
-    src = "Cargo.toml",
+run_binary(
+    name = "generate_c_api",
+    srcs = [
+        "Cargo.toml",
+        "cbindgen.toml",
+        "@rav1e_crates//:v_frame_lib_rs",
+        "@rav1e_crates//:v_frame_sources",
+    ] + glob(["src/**/*.rs"]),
+    outs = [
+        "cargo_metadata.env",
+        "include/rav1e.h",
+    ],
+    args = [
+        "$(location Cargo.toml)",
+        "$(location cbindgen.toml)",
+        "$(location src/lib.rs)",
+        "$(location @rav1e_crates//:v_frame_lib_rs)",
+        "$(location include/rav1e.h)",
+        "$(location cargo_metadata.env)",
+    ],
+    tool = "//tools/cbindgen:generate",
 )
 
 cargo_build_script(
     name = "rav1e_build_script",
     srcs = ["build.rs"],
-    aliases = aliases(build = True),
+    aliases = aliases(),
     build_script_env = {"CARGO_ENCODED_RUSTFLAGS": ""},
-    build_script_env_files = [":cargo_metadata_env"],
+    build_script_env_files = [":cargo_metadata.env"],
     crate_features = _FEATURES,
     data = [
         "Cargo.lock",
@@ -35,15 +56,11 @@ cargo_build_script(
 rust_library(
     name = "rav1e_rust",
     srcs = glob(["src/**/*.rs"]),
-    aliases = aliases(
-        normal = True,
-        proc_macro = True,
-    ),
+    aliases = aliases(),
     crate_features = _FEATURES,
     crate_name = "rav1e",
     crate_root = "src/lib.rs",
     edition = "2021",
-    proc_macro_deps = all_crate_deps(proc_macro = True),
     version = "0.8.1",
     deps = all_crate_deps(normal = True) + [":rav1e_build_script"],
 )
@@ -51,15 +68,11 @@ rust_library(
 rust_static_library(
     name = "rav1e_static",
     srcs = glob(["src/**/*.rs"]),
-    aliases = aliases(
-        normal = True,
-        proc_macro = True,
-    ),
+    aliases = aliases(),
     crate_features = _FEATURES,
     crate_name = "rav1e",
     crate_root = "src/lib.rs",
     edition = "2021",
-    proc_macro_deps = all_crate_deps(proc_macro = True),
     version = "0.8.1",
     deps = all_crate_deps(normal = True) + [":rav1e_build_script"],
 )
@@ -74,18 +87,21 @@ cc_library(
 
 rust_test(
     name = "upstream_api_test",
+    aliases = aliases(),
     args = ["api::test::zero_frames"],
     crate = ":rav1e_rust",
     edition = "2021",
-    proc_macro_deps = all_crate_deps(proc_macro_dev = True) + ["@rav1e_crates//:interpolate_name"],
-    deps = all_crate_deps(normal_dev = True) + [
-        "@rav1e_crates//:rand",
-        "@rav1e_crates//:rand_chacha",
-    ],
+    deps = all_crate_deps(normal_dev = True),
 )
 
 cc_test(
     name = "c_api_encode_test",
     srcs = ["tests/c_api_encode_test.c"],
+    deps = [":rav1e"],
+)
+
+cc_test(
+    name = "c_api_header_cpp_test",
+    srcs = ["tests/c_api_header_cpp_test.cc"],
     deps = [":rav1e"],
 )

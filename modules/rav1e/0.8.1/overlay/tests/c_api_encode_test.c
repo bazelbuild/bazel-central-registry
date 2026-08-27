@@ -4,6 +4,12 @@
 
 #include "rav1e.h"
 
+_Static_assert(RAV1E_MAJOR == 0 && RAV1E_MINOR == 8 && RAV1E_PATCH == 1,
+               "unexpected rav1e header version");
+_Static_assert(RA_CHROMA_SAMPLING_CS420 == 0 && RA_CHROMA_SAMPLING_CS422 == 1 &&
+                   RA_CHROMA_SAMPLING_CS444 == 2 && RA_CHROMA_SAMPLING_CS400 == 3,
+               "unexpected v_frame chroma sampling values");
+
 int main(void) {
     uint8_t luma[64 * 64];
     uint8_t chroma[32 * 32];
