@@ -110,10 +110,17 @@ def component_declarations(source: Path) -> tuple[dict[str, list[str]], dict[str
 def format_assignment(name: str, value) -> str:
     """Format component names, lists, and registries as Starlark literals."""
     if isinstance(value, list):
+        if name in {"CONFIG_LIST", "ALWAYS_AVAILABLE_LIBS", "PROFILE_EVERYTHING"}:
+            return f"{name} = {json.dumps(value)}"
         return name + " = [\n" + "".join(f"    {json.dumps(v)},\n" for v in value) + "]"
     if isinstance(value, dict):
         lines = [name + " = {"]
         for key, item in sorted(value.items()):
+            if isinstance(item, list):
+                lines.append(f"    {json.dumps(key)}: [")
+                lines.extend(f"        {json.dumps(v)}," for v in item)
+                lines.append("    ],")
+                continue
             if isinstance(item, bool):
                 formatted = str(item)
             else:
@@ -126,8 +133,14 @@ def format_assignment(name: str, value) -> str:
 
 def policy_definitions(policy_text: str, components: set[str]) -> str:
     """Preserve the policy helpers while dropping names removed by FFmpeg."""
-    start = policy_text.index("_HWAPI_PATTERNS =")
-    text = policy_text[start:]
+    start = next(
+        node.end_lineno
+        for node in ast.parse(policy_text).body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "FILTER_SYMBOL_MAP"
+    )
+    text = "".join(policy_text.splitlines(keepends=True)[start:]).lstrip("\n")
     lines = text.splitlines(keepends=True)
     edits = []
     filtered = {
@@ -145,10 +158,11 @@ def policy_definitions(policy_text: str, components: set[str]) -> str:
             continue
         value = ast.literal_eval(node.value)
         if isinstance(value, dict):
-            value = {key: item for key, item in value.items() if key in components}
+            filtered_value = {key: item for key, item in value.items() if key in components}
         else:
-            value = [item for item in value if item in components]
-        edits.append((node.lineno - 1, node.end_lineno, format_assignment(name, value) + "\n"))
+            filtered_value = [item for item in value if item in components]
+        if filtered_value != value:
+            edits.append((node.lineno - 1, node.end_lineno, format_assignment(name, filtered_value) + "\n"))
     for begin, end, replacement in reversed(edits):
         lines[begin:end] = [replacement]
     return "".join(lines).rstrip()

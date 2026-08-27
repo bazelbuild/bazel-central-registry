@@ -1,5 +1,6 @@
 """Tests for FFmpeg component extraction and config header generation."""
 
+import ast
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,8 +10,10 @@ from generate_component_defs import (
     SYNTHETIC_COMPONENTS,
     component_declarations,
     configure_dependencies,
+    format_assignment,
     generate_definitions,
     literal_assignments,
+    policy_definitions,
 )
 from generate_config_defs import (
     generate_avconfig_h,
@@ -18,6 +21,45 @@ from generate_config_defs import (
     generate_ffversion_h,
     resolve_list,
 )
+
+
+class ComponentFormattingTest(unittest.TestCase):
+    def setUp(self):
+        self.policy = (Path(__file__).parent / "7.1.1.bcr.beta.7/overlay/component_defs.bzl").read_text(
+            encoding="utf-8",
+        )
+
+    def test_generated_assignments_preserve_previous_layout(self):
+        names = {
+            "COMPONENT_TYPES",
+            "COMPONENT_REGISTRY",
+            "CONFIG_EXTRA_REGISTRY",
+            "CONFIG_LIST",
+            "ALWAYS_AVAILABLE_LIBS",
+            "PROFILE_MINIMAL",
+            "PROFILE_EVERYTHING",
+            "FILTER_SYMBOL_MAP",
+        }
+        for node in ast.parse(self.policy).body:
+            if not isinstance(node, ast.Assign) or not isinstance(node.targets[0], ast.Name):
+                continue
+            name = node.targets[0].id
+            if name in names:
+                with self.subTest(name=name):
+                    self.assertEqual(
+                        format_assignment(name, ast.literal_eval(node.value)),
+                        ast.get_source_segment(self.policy, node),
+                    )
+
+    def test_unchanged_policy_preserves_comments(self):
+        values = literal_assignments(self.policy)
+        expected = self.policy[
+            self.policy.index("# ---------------------------------------------------------------------------") :
+        ]
+        self.assertEqual(
+            policy_definitions(self.policy, set(values["COMPONENT_REGISTRY"])),
+            expected.rstrip(),
+        )
 
 
 class ComponentDefinitionsTest(unittest.TestCase):
