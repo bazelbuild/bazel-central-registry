@@ -1,4 +1,4 @@
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -42,6 +42,29 @@ cc_library(
     strip_include_prefix = "include",
 )
 
+# Match frontend/Makefile.am, using the library's configuration without optional
+# MP3 decoding, libsndfile, iconv, or termcap dependencies.
+cc_binary(
+    name = "lame_bin",
+    srcs = [
+        "frontend/brhist.c",
+        "frontend/console.c",
+        "frontend/get_audio.c",
+        "frontend/lame_main.c",
+        "frontend/lametime.c",
+        "frontend/main.c",
+        "frontend/parse.c",
+        "frontend/timestatus.c",
+        "include/config.h",
+    ] + glob([
+        "frontend/*.h",
+        "libmp3lame/*.h",
+    ]),
+    includes = ["libmp3lame"],
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [":lame"],
+)
+
 cc_test(
     name = "upstream_wav_test",
     srcs = ["tests/upstream_wav_test.c"],
@@ -54,4 +77,43 @@ cc_test(
         "testcase.wav",
     ],
     deps = [":lame"],
+)
+
+cc_test(
+    name = "lame_version_test",
+    srcs = ["tests/cli_test.c"],
+    args = [
+        "$(location :lame_bin)",
+        "--version",
+    ],
+    data = [":lame_bin"],
+    env = {"LAMEOPT": ""},
+)
+
+cc_test(
+    name = "lame_help_test",
+    srcs = ["tests/cli_test.c"],
+    args = [
+        "$(location :lame_bin)",
+        "--help",
+    ],
+    data = [":lame_bin"],
+    env = {"LAMEOPT": ""},
+)
+
+cc_test(
+    name = "lame_encode_test",
+    srcs = ["tests/cli_test.c"],
+    args = [
+        "$(location :lame_bin)",
+        "encode",
+        "$(location testcase.wav)",
+        "$(location testcase.mp3)",
+    ],
+    data = [
+        "testcase.mp3",
+        "testcase.wav",
+        ":lame_bin",
+    ],
+    env = {"LAMEOPT": ""},
 )

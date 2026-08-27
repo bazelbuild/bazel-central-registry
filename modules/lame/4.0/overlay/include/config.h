@@ -6,6 +6,7 @@
 #define HAVE_ERRNO_H 1
 #define HAVE_FCNTL_H 1
 #define HAVE_INTTYPES_H 1
+#define HAVE_LIMITS_H 1
 #define HAVE_MEMCPY 1
 #define HAVE_STDINT_H 1
 #define HAVE_STRCHR 1
