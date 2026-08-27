@@ -20,6 +20,16 @@ _LOCAL_DEFINES = ["BOOST_ASIO_NO_DEPRECATED"] + select({
     "//conditions:default": [],
 })
 
+# Clang keeps the in-flight exception of the coroutine ramp function in the
+# coroutine frame. When the promise constructor throws, the ramp deallocates
+# that frame and only then reads the exception back out of it to resume
+# unwinding, so the test crashes instead of seeing "bad executor". Anything
+# above -O0 promotes the slot out of the frame and hides the miscompile.
+CLANG_CORO_RAMP_UNWIND_WORKAROUND = select({
+    "@rules_cc//cc/compiler:clang": ["-O1"],
+    "//conditions:default": [],
+})
+
 def boost_test_impl():
     """The Boost.Test main upstream links into every test."""
     cc_library(
@@ -38,7 +48,7 @@ def boost_test_impl():
         ],
     )
 
-def boost_test_suite(name, srcs, extra_srcs = [], deps = []):
+def boost_test_suite(name, srcs, extra_srcs = [], deps = [], extra_copts = {}):
     """Generates a cc_test target per upstream test.
 
     Args:
@@ -46,6 +56,7 @@ def boost_test_suite(name, srcs, extra_srcs = [], deps = []):
         srcs: test sources, one translation unit per test.
         extra_srcs: sources compiled into every test of this suite.
         deps: additional dependencies for these tests.
+        extra_copts: copts to append, keyed by generated test name.
     """
     tests = []
     for src in srcs:
@@ -54,7 +65,7 @@ def boost_test_suite(name, srcs, extra_srcs = [], deps = []):
         cc_test(
             name = test_name,
             srcs = [src] + extra_srcs + native.glob(["**/*.hpp"]),
-            copts = _COPTS,
+            copts = _COPTS + extra_copts.get(test_name, []),
             # With Boost.Test linked dynamically its globals end up both in the
             # shared library and in the test binary, and are destroyed twice.
             linkstatic = True,
