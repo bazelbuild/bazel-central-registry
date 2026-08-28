@@ -6,7 +6,7 @@ sub-Makefiles) to produce a Starlark file with per-library source-file
 dictionaries consumed by the Bazel build.
 
 Usage:
-    python3 generate_component_srcs.py [--version 9.0.1] /path/to/ffmpeg
+    python3 generate_component_srcs.py [--version 9.0.1.beta.bcr] /path/to/ffmpeg
 
 The script reads PROFILE_EVERYTHING and CONFIG_EXTRA_REGISTRY from
 component_defs.bzl, and fixed CONFIG_* values from config.h.in, in the
@@ -225,6 +225,7 @@ def _collect_generic_mapping(
     mapping: dict[str, list[str]] = defaultdict(list)
 
     main_objs = parse_makefile(ffmpeg_root / lib_dir / "Makefile")
+    makefile_configs = set(main_objs)
     for config, objs in main_objs.items():
         for obj in objs:
             if not is_arch_path(obj) and obj not in unconditional:
@@ -234,13 +235,24 @@ def _collect_generic_mapping(
         sub_mf = ffmpeg_root / lib_dir / sub / "Makefile"
         if not sub_mf.exists():
             continue
-        for config, objs in parse_makefile(sub_mf).items():
+        sub_objs = parse_makefile(sub_mf)
+        makefile_configs.update(sub_objs)
+        for config, objs in sub_objs.items():
             for obj in objs:
                 if is_arch_path(obj):
                     continue
                 # Included Makefiles already use paths relative to lib_dir.
                 if obj not in unconditional:
                     mapping[config].append(obj)
+
+    # FFmpeg 9.0.1 declares JPEG XL animation codecs but omits their Makefile
+    # entries. They share the still-image implementations; preserve any explicit
+    # upstream animation entries, including empty entries.
+    if lib_info.name == "avcodec":
+        for component_type in ("decoder", "encoder"):
+            animation = f"libjxl_anim_{component_type}"
+            if animation in PROFILE_EVERYTHING_SET and animation not in makefile_configs:
+                mapping[animation] = list(mapping.get(f"libjxl_{component_type}", []))
 
     return dict(mapping)
 

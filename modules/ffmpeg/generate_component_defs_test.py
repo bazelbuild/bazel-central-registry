@@ -169,13 +169,35 @@ class ConfigHeadersTest(unittest.TestCase):
         self.assertIn("#undef AV_HAVE_FAST_UNALIGNED", header)
         self.assertNotIn("#define AV_HAVE_", header)
 
-    def test_version_uses_module_version(self):
+    def test_version_uses_package_info(self):
         header = "\n".join(generate_ffversion_h())
         self.assertIn("#undef PACKAGE_VERSION", header)
         self.assertIn("#define FFMPEG_VERSION PACKAGE_VERSION", header)
 
     def test_config_extra_is_not_overridden(self):
-        derived = ["dwt", "error_resilience", "lsp", "network", "pixelutils"]
+        derived = [
+            "dwt",
+            "error_resilience",
+            "gplv3",
+            "libcodec2",
+            "libdav1d",
+            "libgsm",
+            "libjxl",
+            "libjxl_threads",
+            "libmp3lame",
+            "libopenjpeg",
+            "librav1e",
+            "libshine",
+            "libspeex",
+            "libtwolame",
+            "libvorbis",
+            "libvorbisenc",
+            "libxvid",
+            "lsp",
+            "network",
+            "pixelutils",
+            "version3",
+        ]
         header = "\n".join(
             generate_config_h_in(
                 ["aarch64"],
@@ -186,6 +208,7 @@ class ConfigHeadersTest(unittest.TestCase):
         for name in derived:
             self.assertNotIn(f"#define CONFIG_{name.upper()}", header)
         self.assertIn('#include "config_extra.h"', header)
+        self.assertNotIn("#define FFMPEG_LICENSE", header)
         self.assertIn("#define CONFIG_RESOURCE_COMPRESSION 0", header)
         self.assertIn("#define CONFIG_UNSTABLE 0", header)
         self.assertIn("#define HAVE_SVE 0", header)

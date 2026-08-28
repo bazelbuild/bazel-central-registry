@@ -92,6 +92,55 @@ The flag naming convention follows FFmpeg's configure script: `enable_<component
 | `enable_alsa_indev`           | Input device     |
 | `enable_alsa_outdev`          | Output device    |
 
+### Optional codec libraries in 9.0.1.beta.bcr
+
+The following component flags enable the newly supported BCR libraries. All
+flags remain `False` by default, including on `with_defaults/` targets. Enabling
+a flag selects the FFmpeg implementation, the required BCR dependency, and the
+corresponding `CONFIG_LIB*` definitions. Encoders and decoders can be selected
+independently.
+
+| BCR module | Flags (after `--@ffmpeg//:`) |
+| ---------- | ------------------------- |
+| `codec2@1.2.0` | `enable_libcodec2_decoder`, `enable_libcodec2_encoder` |
+| `dav1d@1.5.4` | `enable_libdav1d_decoder` |
+| `gsm@1.0.24` | `enable_libgsm_decoder`, `enable_libgsm_encoder`, `enable_libgsm_ms_decoder`, `enable_libgsm_ms_encoder` |
+| `lame@4.0` | `enable_libmp3lame_encoder` |
+| `libjxl@0.12.0.bcr.1` | `enable_libjxl_decoder`, `enable_libjxl_encoder`, `enable_libjxl_anim_decoder`, `enable_libjxl_anim_encoder` |
+| `openjpeg@2.5.4` | `enable_libopenjpeg_encoder` |
+| `rav1e@0.8.1` | `enable_librav1e_encoder` |
+| `shine@3.1.1` | `enable_libshine_encoder` |
+| `speex@1.2.1` | `enable_libspeex_decoder`, `enable_libspeex_encoder` |
+| `twolame@0.4.0` | `enable_libtwolame_encoder` |
+| `vorbis@1.3.7` | `enable_libvorbis_decoder`, `enable_libvorbis_encoder` |
+| `xvidcore@1.3.7` | `enable_libxvid_encoder` |
+
+For example, add LAME encoding and dav1d decoding to the platform defaults:
+
+```bash
+bazel build @ffmpeg//:with_defaults/ffmpeg \
+    --@ffmpeg//:enable_libmp3lame_encoder=True \
+    --@ffmpeg//:enable_libdav1d_decoder=True
+```
+
+JPEG XL requires a C++17 toolchain; with older compiler defaults, pass
+`--cxxopt=-std=c++17 --host_cxxopt=-std=c++17`.
+The animation flags do not require the still-image flags. FFmpeg 9.0.1 no
+longer has a `libopenjpeg_decoder`; its native `jpeg2000_decoder` remains
+available.
+
+This module version requires Bazel 8.5.0 or later because `rav1e@0.8.1` uses
+`rules_rs`. Bazel resolves this requirement even when rav1e encoding is off.
+The BCR version is `9.0.1.beta.bcr`; `ffmpeg`, `ffprobe`, and `av_version_info()`
+continue to report the upstream release version `9.0.1`.
+
+Selecting Xvid, x264, or x265 makes the generated FFmpeg license report
+`GPL version 3 or later`, including for OpenSSL 3 configurations. This is the
+overlay's common license choice for these external GPL codecs.
+`FFMPEG_LICENSE`, `CONFIG_GPLV3`, and `CONFIG_VERSION3` reflect that choice;
+`CONFIG_GPL` remains `0`, so selecting an external codec does not also enable
+FFmpeg's internal GPL implementations or change the default component profile.
+
 ## Adding new versions
 
 The Bazel overlay relies on several generated `.bzl` files that are produced by Python scripts and checked into the overlay. When adding a new FFmpeg version, these must be regenerated **in order** (later steps depend on earlier ones).
@@ -231,6 +280,9 @@ hidden helper definitions, as described in `ffbuild/library.mak`.
 Shared-group IDs and definition sections are preserved from the immutable
 `7.1.1.bcr.beta.7` overlay. Use `--reference-version` to choose another existing
 version as the reference; regeneration does not use the output file as input.
+FFmpeg 9.0.1 omits Makefile entries for its declared JPEG XL animation codecs.
+The generator supplies missing animation entries from the corresponding
+still-image entries, while preserving any explicit upstream animation entries.
 
 ### 4. Regenerating `component_resolved.bzl`
 

@@ -2,7 +2,7 @@
 """Regenerate FFmpeg component declarations and configure dependencies.
 
 Usage:
-    python3 generate_component_defs.py --version 9.0.1 /path/to/ffmpeg
+    python3 generate_component_defs.py --version 9.0.1.beta.bcr /path/to/ffmpeg
 
 The source tree supplies component declarations, dependency assignments, and
 CONFIG_EXTRA. The immutable --policy-version overlay supplies Bazel defaults,

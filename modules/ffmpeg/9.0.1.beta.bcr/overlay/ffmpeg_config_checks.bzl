@@ -75,7 +75,8 @@ FFMPEG_CONFIG_CHECKS = [
     checks.AC_CHECK_HEADER("dxgidebug.h", define = "HAVE_DXGIDEBUG_H"),
     checks.AC_CHECK_HEADER("dxva.h", define = "HAVE_DXVA_H"),
     checks.AC_CHECK_HEADER("ES2/gl.h", define = "HAVE_ES2_GL_H"),
-    checks.AC_CHECK_HEADER("gsm.h", define = "HAVE_GSM_H"),
+    # @gsm exports gsm/gsm.h; do not select an unrelated host gsm.h.
+    checks.AC_DEFINE("HAVE_GSM_H", "0"),
     checks.AC_CHECK_HEADER("io.h", define = "HAVE_IO_H"),
     checks.AC_CHECK_HEADER("linux/dma-buf.h", define = "HAVE_LINUX_DMA_BUF_H"),
     checks.AC_CHECK_HEADER("linux/perf_event.h", define = "HAVE_LINUX_PERF_EVENT_H"),

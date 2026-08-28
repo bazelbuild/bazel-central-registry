@@ -10,9 +10,9 @@ templates into the version overlay directory:
   <overlay>/libavutil/ffversion.h.in
 
 Usage:
-    python3 generate_config_defs.py [--version 9.0.1] /path/to/FFmpeg
+    python3 generate_config_defs.py [--version 9.0.1.beta.bcr] /path/to/FFmpeg
 
-The generated ffversion.h template uses PACKAGE_VERSION from MODULE.bazel.
+The generated ffversion.h template uses PACKAGE_VERSION from package_info.
 """
 
 import argparse
@@ -90,12 +90,28 @@ CONFIG_DERIVED = {
     "dwt",
     "error_resilience",
     "gmp",
+    "gplv3",
+    "libcodec2",
+    "libdav1d",
+    "libgsm",
+    "libjxl",
+    "libjxl_threads",
+    "libmp3lame",
+    "libopenjpeg",
+    "librav1e",
+    "libshine",
+    "libspeex",
+    "libtwolame",
+    "libvorbis",
+    "libvorbisenc",
+    "libxvid",
     "lsp",
     "mbedtls",
     "network",
     "openssl",
     "pixelutils",
     "protocols",
+    "version3",
 }
 
 # Standard C99/POSIX math functions checked via AC_CHECK_LIB in the Bazel
@@ -288,7 +304,6 @@ def generate_config_h_in(
             "",
             "/* --- Static metadata --- */",
             '#define FFMPEG_CONFIGURATION "bazel --disable-everything"',
-            '#define FFMPEG_LICENSE "LGPL version 2.1 or later"',
             "#define CONFIG_THIS_YEAR 2026",
             '#define FFMPEG_DATADIR "/usr/local/share/ffmpeg"',
             '#define AVCONV_DATADIR "/usr/local/share/ffmpeg"',

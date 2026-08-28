@@ -9,7 +9,7 @@ load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
 load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
 load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
 load("@rules_nasm//nasm:defs.bzl", "nasm_library")
-load(":component_config.bzl", "ffmpeg_component_gen", "ffmpeg_config_asm")
+load(":component_config.bzl", "EXTERNAL_CODEC_LIBRARIES", "GPL_EXTERNAL_CODECS", "ffmpeg_component_gen", "ffmpeg_config_asm")
 load(":component_defs.bzl", "COMPONENT_TYPES", "CONFIG_EXTRA_REGISTRY", "PROFILE_EVERYTHING", "TRANSITIVE_SELECT_CLOSURE")
 load(":component_flags.bzl", "cc_variant_binary", "cc_variant_library", "component_config_copts", "component_select_srcs", "flag_config_copts")
 load(
@@ -297,7 +297,17 @@ _LIBRARY_FLAGS = {
     "openssl": True,
 }
 
-_LIBRARY_CONFIG_COPTS = flag_config_copts(sorted(_LIBRARY_FLAGS.keys()))
+_LIBRARY_CONFIG_COPTS = flag_config_copts(sorted(_LIBRARY_FLAGS.keys())) + component_config_copts(sorted({
+    comp: True
+    for components in EXTERNAL_CODEC_LIBRARIES.values() + [
+        GPL_EXTERNAL_CODECS,
+        [
+            "gplv3",
+            "lgplv3",
+        ],
+    ]
+    for comp in components
+}.keys()))
 
 _AVFORMAT_PROTOCOL_CONFIG_COPTS = component_config_copts(COMPONENT_TYPES["protocol"])
 
@@ -350,11 +360,11 @@ autoconf_hdr(
     deps = [":avconfig_checks"],
 )
 
-# libavutil/ffversion.h - version string from MODULE.bazel via package_info
+# Keep the upstream release version separate from the BCR beta version.
 package_info(
     name = "ffmpeg_package_info",
     module_bazel = "//:MODULE.bazel",
-    strip_bcr_version = True,
+    package_version = "9.0.1",
 )
 
 autoconf_hdr(
@@ -1129,6 +1139,14 @@ selects.config_setting_group(
     ],
 )
 
+[
+    selects.config_setting_group(
+        name = "avcodec_{}_is_used".format(lib),
+        match_any = ["//:enable_{}_is_true".format(comp) for comp in components],
+    )
+    for lib, components in EXTERNAL_CODEC_LIBRARIES.items()
+]
+
 cc_variant_library(
     name = "avcodec",
     srcs = _AVCODEC_BASE_SRCS + AVCODEC_EXTRA_SRCS +
@@ -1208,6 +1226,48 @@ cc_variant_library(
         "//conditions:default": [],
     }) + select({
         "//:avcodec_libsvtav1_is_used": ["@libsvtav1"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libcodec2_is_used": ["@codec2"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libdav1d_is_used": ["@dav1d"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libgsm_is_used": ["@gsm"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libjxl_is_used": [
+            "@libjxl//:jxl",
+            "@libjxl//:jxl_threads",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libmp3lame_is_used": ["@lame"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libopenjpeg_is_used": ["@openjpeg//:openjp2"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_librav1e_is_used": ["@rav1e"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libshine_is_used": ["@shine"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libspeex_is_used": ["@speex"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libtwolame_is_used": ["@twolame"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libvorbis_is_used": ["@vorbis"],
+        "//conditions:default": [],
+    }) + select({
+        "//:enable_libvorbis_encoder_is_true": ["@vorbis//:vorbisenc"],
+        "//conditions:default": [],
+    }) + select({
+        "//:avcodec_libxvid_is_used": ["@xvidcore"],
         "//conditions:default": [],
     }),
 )

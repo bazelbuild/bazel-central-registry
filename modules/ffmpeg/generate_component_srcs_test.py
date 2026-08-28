@@ -147,6 +147,69 @@ class ComponentSourcesTest(unittest.TestCase):
             [(["matroska_muxer", "webm_muxer"], ["libavcodec/opus/frame_duration_tab.c"])],
         )
 
+    def test_libjxl_animation_selects_sources_without_still_image_flags(self):
+        generator.PROFILE_EVERYTHING_SET = {
+            "libjxl_anim_decoder",
+            "libjxl_anim_encoder",
+            "libjxl_decoder",
+            "libjxl_encoder",
+        }
+        self.write(
+            "libavcodec/Makefile",
+            "OBJS-$(CONFIG_LIBJXL_DECODER) += libjxldec.o libjxl.o\n"
+            "OBJS-$(CONFIG_LIBJXL_ENCODER) += libjxlenc.o libjxl.o\n",
+        )
+        for name in ("libjxl", "libjxldec", "libjxlenc"):
+            self.write("libavcodec/" + name + ".c")
+        sources = self.process_codec()
+        for component_type, implementation in (("decoder", "libjxldec"), ("encoder", "libjxlenc")):
+            animation = f"libjxl_anim_{component_type}"
+            selected = list(sources.components.exclusive.get(animation, []))
+            for components, files in sources.components.shared:
+                if animation in components:
+                    selected.extend(files)
+            with self.subTest(component=animation):
+                self.assertEqual(sorted(selected), ["libavcodec/libjxl.c", f"libavcodec/{implementation}.c"])
+
+    def test_libjxl_animation_does_not_change_older_profiles(self):
+        generator.PROFILE_EVERYTHING_SET = {"libjxl_decoder", "libjxl_encoder"}
+        self.write(
+            "libavcodec/Makefile",
+            "OBJS-$(CONFIG_LIBJXL_DECODER) += libjxldec.o libjxl.o\n"
+            "OBJS-$(CONFIG_LIBJXL_ENCODER) += libjxlenc.o libjxl.o\n",
+        )
+        self.assertEqual(
+            generator._collect_generic_mapping(self.root, generator.LibInfo("avcodec", "libavcodec", []), set()),
+            {
+                "libjxl_decoder": ["libjxldec.o", "libjxl.o"],
+                "libjxl_encoder": ["libjxlenc.o", "libjxl.o"],
+            },
+        )
+
+    def test_libjxl_animation_preserves_explicit_makefile_entries(self):
+        for component_type in ("decoder", "encoder"):
+            animation = f"libjxl_anim_{component_type}"
+            still_image = f"libjxl_{component_type}"
+            generator.PROFILE_EVERYTHING_SET = {animation, still_image}
+            for sub_makefiles in ([], ["jxl"]):
+                for objects in ("animation.o", ""):
+                    with self.subTest(component=animation, sub_makefiles=sub_makefiles, objects=objects):
+                        still_entry = f"OBJS-$(CONFIG_{still_image.upper()}) += still.o libjxl.o\n"
+                        animation_entry = f"OBJS-$(CONFIG_{animation.upper()}) += {objects}\n"
+                        self.write(
+                            "libavcodec/Makefile",
+                            still_entry if sub_makefiles else still_entry + animation_entry,
+                        )
+                        if sub_makefiles:
+                            self.write("libavcodec/jxl/Makefile", animation_entry)
+                        mapping = generator._collect_generic_mapping(
+                            self.root,
+                            generator.LibInfo("avcodec", "libavcodec", sub_makefiles),
+                            set(),
+                        )
+                        self.assertEqual(mapping[still_image], ["still.o", "libjxl.o"])
+                        self.assertEqual(mapping.get(animation, []), objects.split())
+
     def test_fixed_configs_select_static_sources_without_conditional_duplicates(self):
         template = self.write(
             "config.h.in",
