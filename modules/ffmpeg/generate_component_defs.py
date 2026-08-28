@@ -110,7 +110,7 @@ def component_declarations(source: Path) -> tuple[dict[str, list[str]], dict[str
 def format_assignment(name: str, value) -> str:
     """Format component names, lists, and registries as Starlark literals."""
     if isinstance(value, list):
-        if name in {"CONFIG_LIST", "ALWAYS_AVAILABLE_LIBS", "PROFILE_EVERYTHING"}:
+        if name == "ALWAYS_AVAILABLE_LIBS":
             return f"{name} = {json.dumps(value)}"
         return name + " = [\n" + "".join(f"    {json.dumps(v)},\n" for v in value) + "]"
     if isinstance(value, dict):

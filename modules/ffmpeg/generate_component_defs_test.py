@@ -34,10 +34,8 @@ class ComponentFormattingTest(unittest.TestCase):
             "COMPONENT_TYPES",
             "COMPONENT_REGISTRY",
             "CONFIG_EXTRA_REGISTRY",
-            "CONFIG_LIST",
             "ALWAYS_AVAILABLE_LIBS",
             "PROFILE_MINIMAL",
-            "PROFILE_EVERYTHING",
             "FILTER_SYMBOL_MAP",
         }
         for node in ast.parse(self.policy).body:
@@ -50,6 +48,18 @@ class ComponentFormattingTest(unittest.TestCase):
                         format_assignment(name, ast.literal_eval(node.value)),
                         ast.get_source_segment(self.policy, node),
                     )
+
+    def test_config_list_has_one_entry_per_line(self):
+        self.assertEqual(
+            format_assignment("CONFIG_LIST", ["avcodec", "libjxl"]),
+            'CONFIG_LIST = [\n    "avcodec",\n    "libjxl",\n]',
+        )
+
+    def test_profile_everything_has_one_entry_per_line(self):
+        self.assertEqual(
+            format_assignment("PROFILE_EVERYTHING", ["aac_decoder", "libjxl_decoder"]),
+            'PROFILE_EVERYTHING = [\n    "aac_decoder",\n    "libjxl_decoder",\n]',
+        )
 
     def test_unchanged_policy_preserves_comments(self):
         values = literal_assignments(self.policy)
