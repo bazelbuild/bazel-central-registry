@@ -9,12 +9,21 @@ _LOCAL_DEFINES = [
     # Deprecated functions are part of what the tests cover.
     "BOOST_ALLOW_DEPRECATED=1",
 ] + select({
-    "@platforms//os:windows": ["_WIN32_WINNT=0x0601"],
+    "@platforms//os:windows": [
+        "_WIN32_WINNT=0x0601",
+        "WIN32_LEAN_AND_MEAN",
+    ],
     "//conditions:default": [],
 })
 
 _COPTS = select({
-    "@platforms//os:windows": ["/bigobj"],
+    "@platforms//os:windows": [
+        "/bigobj",
+        # OpenSSL propagates _WINSOCKAPI_, which makes Asio reject winsock2.h.
+        # Remove it and force the header that the Asio guard expects.
+        "/U_WINSOCKAPI_",
+        "/FIwinsock2.h",
+    ],
     "//conditions:default": [],
 })
 
