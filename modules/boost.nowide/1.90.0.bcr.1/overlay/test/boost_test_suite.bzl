@@ -25,13 +25,14 @@ def boost_test_suite(name, tests):
 
     Args:
         name: name of the generated test_suite.
-        tests: test name -> {src, defines, deps, target_compatible_with}.
+        tests: test name -> {src, defines, deps, linkopts, target_compatible_with}.
     """
     for test_name, spec in tests.items():
         cc_test(
             name = test_name,
             srcs = [spec["src"]] + native.glob(["*.hpp"]),
             copts = _COPTS,
+            linkopts = spec.get("linkopts", []),
             local_defines = spec.get("defines", []),
             target_compatible_with = spec.get("target_compatible_with", []),
             deps = spec.get("deps", []) + ["@boost.nowide"],
