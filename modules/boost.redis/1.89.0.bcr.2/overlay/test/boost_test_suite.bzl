@@ -27,6 +27,17 @@ _COPTS = select({
     "//conditions:default": [],
 })
 
+_LINKOPTS = select({
+    # OpenSSL uses these Windows APIs, but its static libraries do not carry
+    # the corresponding system-library dependencies in this release.
+    "@platforms//os:windows": [
+        "/DEFAULTLIB:advapi32.lib",
+        "/DEFAULTLIB:crypt32.lib",
+        "/DEFAULTLIB:user32.lib",
+    ],
+    "//conditions:default": [],
+})
+
 _DEPS = [
     "@boost.asio",
     "@boost.assert",
@@ -70,6 +81,7 @@ def boost_test_suite(name, srcs, unit_test_main = False):
             name = test_name,
             srcs = [src],
             copts = _COPTS,
+            linkopts = _LINKOPTS,
             # With Boost.Test linked dynamically its globals end up both in the
             # shared library and in the test binary, and are destroyed twice.
             linkstatic = True,
