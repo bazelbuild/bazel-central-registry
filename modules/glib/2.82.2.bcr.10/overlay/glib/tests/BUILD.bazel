@@ -1,0 +1,307 @@
+load("@bazel_skylib//lib:dicts.bzl", "dicts")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+package(default_applicable_licenses = ["//:license"])
+
+# meson.build project-wide adds /utf-8 for MSVC.  Without it cl reads
+# these sources in the system ANSI codepage and mangles non-ASCII
+# string literals -- glib/tests/unicode.c's normalization data, for one.
+#
+# Bazel 7's MSVC toolchain also passes /DCOMPILER_MSVC by default, which
+# collides with the CompilerType enum in gio/glib-compile-resources.c.
+# Bazel 8 dropped it; glib reads _MSC_VER, never this, so drop it too.
+MSVC_COPTS = select({
+    "@platforms//os:windows": [
+        "/utf-8",
+        "/UCOMPILER_MSVC",
+    ],
+    "//conditions:default": [],
+})
+
+SKIP_BUILD_FAILURE = [
+    # bazel_dep(name = "pcre2", version = "10.43") doesn't have JIT support
+    "autoptr",
+    "regex",
+]
+
+# The platform split from upstream's glib/tests/meson.build, which adds
+# 'win32' (and 'gpoll', which needs winsock2) only when
+# host_machine.system() == 'windows', and 'include'/'unix' only when it is
+# not.  Building either group on the wrong platform does not compile.
+WIN32_ONLY_TESTS = [
+    "gpoll",
+    "win32",
+]
+
+POSIX_ONLY_TESTS = [
+    "include",
+    "unix",
+]
+
+SKIP_TEST_FAILURE = [
+    # platform-specific dynamic library loading
+    "constructor",
+
+    # asserts test data isn't a symlink
+    "fileutils",
+
+    # requires LD_PRELOAD
+    "gutils-user-database",
+
+    # Fails in BCR CI for unclear reasons, and not reproducible locally
+    "unix",
+
+    # Fails in BCR CI on macOS for unclear reasons, and not reproducible locally
+    "1bit-mutex",
+    "mutex",
+    "rwlock",
+]
+
+# Marked can_fail on Windows by upstream's glib/tests/meson.build.
+# spawn-multithreaded is conditioned there on a static build, which is what
+# this port always is.
+SKIP_TEST_FAILURE_WIN32 = [
+    "gdatetime",
+    "spawn-multithreaded",
+]
+
+TEST_HELPER_SRCS = [
+    "assert-msg-test.c",
+    "constructor-helper.c",
+    "getpwuid-preload.c",
+    "messages-low-memory.c",
+    "path-test-subdir/spawn-test-helper.c",
+    "spawn-path-search-helper.c",
+    "spawn-test-helper.c",
+    "spawn-test-win32-gui.c",
+    "test-spawn-echo.c",
+    "test-spawn-sleep.c",
+    "testing-helper.c",
+]
+
+TEST_SRCS = glob(
+    ["*.c"],
+    exclude = TEST_HELPER_SRCS,
+)
+
+TEST_NAMES = [src.replace(".c", "") for src in TEST_SRCS]
+
+[cc_binary(
+    name = helper_name,
+    srcs = [helper_name + ".c"],
+    local_defines = [
+        "_GNU_SOURCE",
+        "G_LOG_DOMAIN='\"GLib\"'",
+    ],
+    deps = [
+        "//:config_h",
+        "//glib",
+    ],
+) for helper_name in [
+    "testing-helper",
+    "test-spawn-echo",
+    "test-spawn-sleep",
+    "spawn-test-helper",
+    "spawn-path-search-helper",
+    "path-test-subdir/spawn-test-helper",
+]]
+
+cc_binary(
+    name = "spawn-test-win32-gui",
+    srcs = ["spawn-test-win32-gui.c"],
+    linkopts = [
+        # This helper has a WinMain() rather than a main(): upstream builds
+        # it with win_subsystem: 'windows' so that spawn-test can check what
+        # g_spawn_* does with a GUI-subsystem child.  The explicit entry
+        # point keeps link.exe from looking for mainCRTStartup.
+        "-SUBSYSTEM:WINDOWS",
+        "-ENTRY:WinMainCRTStartup",
+    ],
+    local_defines = [
+        "G_LOG_DOMAIN='\"GLib\"'",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    deps = [
+        "//:config_h",
+        "//glib",
+    ],
+)
+
+TEST_DATA = glob(
+    ["**/*"],
+    exclude = [
+        "**/*.c",
+        "**/*.h",
+        "BUILD.bazel",
+    ],
+)
+
+TEST_DATA_EXTRA = {
+    "keyfile": ["keyfile.c"],
+    "testing": [":testing-helper"],
+    "spawn-multithreaded": [
+        ":test-spawn-echo",
+        ":test-spawn-sleep",
+    ],
+    "spawn-singlethread": [":test-spawn-echo"],
+    "spawn-path-search": [
+        ":spawn-test-helper",
+        ":spawn-path-search-helper",
+        ":path-test-subdir/spawn-test-helper",
+    ],
+    # spawn-test locates this next to its own argv[0], so it only needs to
+    # be in the runfiles.
+    "spawn-test": select({
+        "@platforms//os:windows": [":spawn-test-win32-gui"],
+        "//conditions:default": [],
+    }),
+}
+
+constraint_setting(
+    name = "skip_reason",
+)
+
+constraint_value(
+    name = "skip_build_failure",
+    constraint_setting = ":skip_reason",
+)
+
+constraint_value(
+    name = "skip_test_failure",
+    constraint_setting = ":skip_reason",
+)
+
+TEST_PLATFORMS = {}
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        [":skip_build_failure"],
+    )
+    for test_name in SKIP_BUILD_FAILURE
+])
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        [":skip_test_failure"],
+    )
+    for test_name in SKIP_TEST_FAILURE
+])
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        ["@platforms//os:windows"],
+    )
+    for test_name in WIN32_ONLY_TESTS
+    if test_name not in TEST_PLATFORMS
+])
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        select({
+            "@platforms//os:windows": [":skip_build_failure"],
+            "//conditions:default": [],
+        }),
+    )
+    for test_name in POSIX_ONLY_TESTS
+    if test_name not in TEST_PLATFORMS
+])
+
+TEST_PLATFORMS.update([
+    (
+        test_name,
+        select({
+            "@platforms//os:windows": [":skip_test_failure"],
+            "//conditions:default": [],
+        }),
+    )
+    for test_name in SKIP_TEST_FAILURE_WIN32
+    if test_name not in TEST_PLATFORMS
+])
+
+REPO = repo_name()
+
+G_TEST_SRCDIR = "../%s/glib/tests" % (REPO,) if REPO else "glib/tests"
+
+# Same path, native separators.  spawn-singlethread hands a fixture path
+# built from G_TEST_SRCDIR to cmd.exe, which reads everything after the
+# first '/' as switches: "../glib+/glib/tests/echo-script.bat" runs as the
+# command ".." with switches "/glib+", "/glib" and so on, and cmd reports
+# "'..' is not recognized as an internal or external command".  This only
+# bites when the test falls back to G_TEST_SRCDIR, which it does whenever
+# argv[0] is the bazel-bin copy rather than the one in the runfiles tree.
+G_TEST_SRCDIR_WINDOWS = G_TEST_SRCDIR.replace("/", "\\")
+
+DEFAULT_TEST_ENV = {
+    "G_TEST_SRCDIR": G_TEST_SRCDIR,
+}
+
+DEFAULT_TEST_ENV_WINDOWS = {
+    "G_TEST_SRCDIR": G_TEST_SRCDIR_WINDOWS,
+}
+
+# skip tests that expect to run from installed /usr prefix
+BUILDDIR_OVERRIDE = {
+    "G_TEST_BUILDDIR": "dummy",
+}
+
+TEST_ENV = {
+    "gdatetime": dicts.add(DEFAULT_TEST_ENV, BUILDDIR_OVERRIDE),
+}
+
+TEST_ENV_WINDOWS = {
+    "gdatetime": dicts.add(DEFAULT_TEST_ENV_WINDOWS, BUILDDIR_OVERRIDE),
+}
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+# win32.c textually includes glib/gwin32-private.c, which the glib package
+# carries as a textual header rather than as a compiled source.
+TEST_DEPS_EXTRA = {
+    "win32": ["//glib:glib_internal_textual_hdrs"],
+}
+
+[cc_test(
+    name = test_name,
+    size = "small",
+    srcs = [test_name + ".c", "testutils.h"] + [
+        "//glib:all_hdrs",
+    ],
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+        "-I%s/glib/deprecated" % (INCLUDE_PREFIX,),
+    ] + MSVC_COPTS,
+    data = TEST_DATA + TEST_DATA_EXTRA.get(test_name, []) + select({
+        # g_test_trap_subprocess() and anything else calling g_spawn* on
+        # Windows runs through these; gwin32.c finds them by walking up
+        # from this test binary's own directory.
+        "@platforms//os:windows": [
+            "//glib:gspawn-win64-helper",
+            "//glib:gspawn-win64-helper-console",
+        ],
+        "//conditions:default": [],
+    }),
+    env = select({
+        "@platforms//os:windows": TEST_ENV_WINDOWS.get(test_name, DEFAULT_TEST_ENV_WINDOWS),
+        "//conditions:default": TEST_ENV.get(test_name, DEFAULT_TEST_ENV),
+    }),
+    local_defines = [
+        "_GNU_SOURCE",
+        "G_LOG_DOMAIN='\"GLib\"'",
+    ],
+    target_compatible_with = TEST_PLATFORMS.get(test_name, []),
+    deps = [
+        "//:config_h",
+        "//glib",
+    ] + TEST_DEPS_EXTRA.get(test_name, []) + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["//glib:stub_intl"],
+    }),
+) for test_name in TEST_NAMES]
