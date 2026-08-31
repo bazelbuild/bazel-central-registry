@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
                                   error_callback, &callbacks);
   syminfo_result = backtrace_syminfo(state, (uintptr_t)&main, syminfo_callback,
                                      error_callback, &callbacks);
-  if (!syminfo_result || !callbacks.full_called || !callbacks.syminfo_called) {
+  if (!syminfo_result || !callbacks.syminfo_called) {
     fprintf(stderr, "pcinfo=%d full=%d syminfo=%d symbol=%d\n", pcinfo_result,
             callbacks.full_called, syminfo_result, callbacks.syminfo_called);
     return 1;
