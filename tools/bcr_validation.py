@@ -68,6 +68,18 @@ class BcrValidationResult(Enum):
     FAILED = 3
 
 
+def _validate_overlay_build_files(module_dir):
+    overlay_dir = module_dir / "overlay"
+    if not overlay_dir.is_dir():
+        return BcrValidationResult.GOOD
+    build_files = list(overlay_dir.rglob("BUILD.bazel")) + list(overlay_dir.rglob("BUILD"))
+    for build_file in build_files:
+        content = build_file.read_text()
+        if 'tags = ["local"]' in content or "tags = ['local']" in content:
+            return BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW
+    return BcrValidationResult.GOOD
+
+
 RED = "\x1b[31m"
 GREEN = "\x1b[32m"
 YELLOW = "\x1b[33m"
@@ -799,6 +811,12 @@ class BcrValidator:
         self.verify_module_dot_bazel(module_name, version, "compatibility_level" not in skipped_validations)
         if "attestations" not in skipped_validations:
             self.verify_attestations(module_name, version)
+        overlay_result = _validate_overlay_build_files(self.registry.get_version_dir(module_name, version))
+        if overlay_result == BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW:
+            self.report(
+                BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW,
+                f'{module_name}@{version} overlay contains a BUILD file with tags=["local"], which requires BCR maintainer review.',
+            )
 
     def validate_metadata(self, modules):
         print_expanded_group(f"Validating metadata.json files for {modules}")
@@ -924,10 +942,7 @@ class BcrValidator:
         if source_uri not in gh_source_uris:
             self.report(
                 BcrValidationResult.FAILED,
-                (
-                    f"{module_name}@{version}: Expected source URI {source_uri}, "
-                    f"but got {', '.join(gh_source_uris)}."
-                ),
+                (f"{module_name}@{version}: Expected source URI {source_uri}, but got {', '.join(gh_source_uris)}."),
             )
             return
 
