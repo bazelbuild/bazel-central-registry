@@ -1,0 +1,460 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# tftp-hpa 5.4 uses bare `bool`, `true` and `false` and therefore assumes a
+# C23 compiler. `-include stdbool.h` keeps it building on the older compilers
+# that still default to C17 or earlier.
+_COPTS = [
+    "-include",
+    "stdbool.h",
+    # configure.ac: PA_ADD_CFLAGS([-fno-common]) / PA_ADD_CFLAGS(-fno-strict-aliasing)
+    "-fno-common",
+    "-fno-strict-aliasing",
+]
+
+# @readline bundles its own xmalloc() and @ncurses (pulled in by @readline)
+# exports trace(). Upstream links against those as shared libraries, but here
+# everything is statically linked with -fno-common, so the tftp-hpa
+# definitions have to be renamed to avoid duplicate symbols.
+_XALLOC_DEFINES = [
+    "xmalloc=tftp_xmalloc",
+    "xstrdup=tftp_xstrdup",
+]
+
+_TRACE_DEFINES = ["trace=tftp_trace"]
+
+# --------------------------------------------------------------------------- #
+# Build configuration flags (mirrors configure.ac PA_ARG_DISABLED options)
+# --------------------------------------------------------------------------- #
+
+bool_flag(
+    name = "with_ipv6",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_remap",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_tcpwrappers",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "ipv6_enabled",
+    flag_values = {":with_ipv6": "True"},
+)
+
+config_setting(
+    name = "remap_enabled",
+    flag_values = {":with_remap": "True"},
+)
+
+config_setting(
+    name = "tcpwrappers_enabled",
+    flag_values = {":with_tcpwrappers": "True"},
+)
+
+# --------------------------------------------------------------------------- #
+# Stub dependencies
+# --------------------------------------------------------------------------- #
+
+write_file(
+    name = "tcp_wrappers_c",
+    out = "tcp_wrappers.c",
+    content = [
+        "#error tcpwrappers/libwrap is not implemented: https://github.com/bazelbuild/bazel-central-registry/issues/8443",
+        "",
+    ],
+)
+
+cc_library(
+    name = "tcp_wrappers",
+    srcs = [":tcp_wrappers.c"],
+    tags = ["manual"],
+)
+
+# --------------------------------------------------------------------------- #
+# Package info
+# --------------------------------------------------------------------------- #
+
+package_info(
+    name = "package",
+    module_bazel = "//:MODULE.bazel",
+)
+
+# --------------------------------------------------------------------------- #
+# Autoconf checks (mirrors configure.ac)
+#
+# The CFLAGS_* (PA_ADD_CFLAGS), HAVE_STDC_INLINE (PA_CHECK_BAD_STDC_INLINE),
+# HAVE_TYPEOF (PA_C_TYPEOF), const, inline, restrict, mode_t, off_t, pid_t and
+# size_t entries of config/config.h.in are deliberately left undefined: they
+# record which compiler flags configure picked, and none of them are
+# referenced by the tftp-hpa sources.
+# --------------------------------------------------------------------------- #
+
+# AC_CHECK_HEADERS_ONCE + PA_ADD_HEADERS. The stdio.h/stdlib.h/string.h
+# entries are not spelled out in configure.ac; they come from
+# AC_CHECK_INCLUDES_DEFAULT and are part of config/config.h.in.
+_HEADER_CHECKS = macros.AC_CHECK_HEADERS([
+    "arpa/inet.h",
+    "fcntl.h",
+    "grp.h",
+    "inttypes.h",
+    "libgen.h",
+    "locale.h",
+    "machine/param.h",
+    "netdb.h",
+    "netinet/in.h",
+    "regex.h",
+    "setjmp.h",
+    "stdint.h",
+    "stdio.h",
+    "stdlib.h",
+    "string.h",
+    "strings.h",
+    "sys/file.h",
+    "sys/filio.h",
+    "sys/socket.h",
+    "sys/stat.h",
+    "sys/time.h",
+    "sys/types.h",
+    "sys/uio.h",
+    "sysexits.h",
+    "unistd.h",
+    "wchar.h",
+    "wctype.h",
+    "windows.h",
+    "winsock.h",
+    "winsock2.h",
+])
+
+# AC_CHECK_FUNCS + PA_SEARCH_LIBS_AND_ADD
+_FUNC_CHECKS = macros.AC_CHECK_FUNCS([
+    "daemon",
+    "fcntl",
+    "flock",
+    "ftruncate",
+    "getaddrinfo",
+    "getopt_long",
+    "inet_ntop",
+    "initgroups",
+    "mbrtowc",
+    "recvmsg",
+    "setgroups",
+    "setregid",
+    "setresgid",
+    "setresuid",
+    "setreuid",
+    "setsid",
+    "strtoull",
+    "strtoumax",
+    "towlower",
+])
+
+# AC_CHECK_TYPES. sighandler_t is deliberately checked with the default
+# includes (which do not pull in <signal.h>), matching configure.ac.
+_TYPE_CHECKS = macros.AC_CHECK_TYPES([
+    "intmax_t",
+    "long long",
+    "sighandler_t",
+    "u_long",
+    "u_short",
+    "uint16_t",
+    "uint32_t",
+]) + macros.AC_CHECK_TYPES(
+    ["socklen_t"],
+    # buildifier: leave-alone
+    includes = [
+        "#include <sys/types.h>",
+        "#include <sys/socket.h>",
+    ],
+)
+
+# AC_CHECK_MEMBERS
+_MEMBER_CHECKS = macros.AC_CHECK_MEMBERS(
+    ["struct msghdr.msg_control"],
+    includes = ["#include <sys/socket.h>"],
+) + macros.AC_CHECK_MEMBERS(
+    ["struct in_pktinfo.ipi_addr"],
+    includes = ["#include <netinet/in.h>"],
+) + macros.AC_CHECK_MEMBERS(
+    ["struct addrinfo.ai_addr"],
+    includes = ["#include <netdb.h>"],
+) + macros.AC_CHECK_MEMBERS(
+    ["struct sockaddr_in6.sin6_addr"],
+    includes = ["#include <netinet/in.h>"],
+)
+
+# AC_CHECK_DECLS. These define HAVE_DECL_<SYMBOL> to 0 or 1, which is what
+# config.h tests for.
+_DECL_CHECKS = macros.AC_CHECK_DECLS(
+    # buildifier: leave-alone
+    [
+        "O_NONBLOCK",
+        "O_NDELAY",
+        "O_BINARY",
+        "O_TEXT",
+        "F_SETLK",
+    ],
+    includes = ["#include <fcntl.h>"],
+) + macros.AC_CHECK_DECLS(
+    # buildifier: leave-alone
+    [
+        "LOCK_SH",
+        "LOCK_EX",
+    ],
+    includes = ["#include <sys/file.h>"],
+) + macros.AC_CHECK_DECLS(
+    ["IPPORT_TFTP"],
+    includes = ["#include <netinet/in.h>"],
+)
+
+_CUSTOM_CHECKS = [
+    # PA_SIGSETJMP
+    checks.AC_TRY_LINK(
+        code = "sigjmp_buf buf; sigsetjmp(buf, 1);",
+        define = "HAVE_SIGSETJMP",
+        includes = ["#include <setjmp.h>"],
+    ),
+    # AC_CHECK_INCLUDES_DEFAULT
+    checks.AC_TRY_COMPILE(
+        code = "",
+        define = "STDC_HEADERS",
+        # buildifier: leave-alone
+        includes = [
+            "#include <stdlib.h>",
+            "#include <stdarg.h>",
+            "#include <string.h>",
+            "#include <float.h>",
+        ],
+    ),
+]
+
+# Static defines
+_STATIC_DEFINES = [
+    # PA_CHECK_INTTYPES_H_SANE
+    checks.AC_DEFINE("INTTYPES_H_IS_SANE", "1"),
+    # AC_USE_SYSTEM_EXTENSIONS
+    checks.AC_DEFINE("_GNU_SOURCE", "1"),
+    checks.AC_DEFINE("_ALL_SOURCE", "1"),
+    checks.AC_DEFINE("__EXTENSIONS__", "1"),
+    checks.AC_DEFINE("_POSIX_PTHREAD_SEMANTICS", "1"),
+    checks.AC_DEFINE("_TANDEM_SOURCE", "1"),
+    # Readline is always available via the @readline bazel_dep
+    checks.AC_DEFINE("WITH_READLINE", "1"),
+    checks.AC_DEFINE("HAVE_READLINE_HISTORY_H", "1"),
+]
+
+# IPv6 checks (gated by with_ipv6 flag)
+_IPV6_CHECKS = [
+    checks.AC_DEFINE(
+        "HAVE_IPV6",
+        condition = "ac_cv_member_struct_sockaddr_in6_sin6_addr",
+        if_false = None,
+        if_true = "1",
+        requires = ["HAVE_STRUCT_ADDRINFO_AI_ADDR"],
+    ),
+] + macros.AC_CHECK_MEMBERS(
+    ["struct in6_pktinfo.ipi6_addr"],
+    # glibc only exposes struct in6_pktinfo under __USE_GNU. configure gets
+    # this for free because AC_USE_SYSTEM_EXTENSIONS puts _GNU_SOURCE into
+    # confdefs.h ahead of every subsequent test.
+    compile_defines = ["_GNU_SOURCE"],
+    includes = ["#include <netinet/in.h>"],
+    # configure.ac only performs this check once HAVE_IPV6 has been defined.
+    # buildifier: leave-alone
+    requires = [
+        "HAVE_STRUCT_SOCKADDR_IN6_SIN6_ADDR",
+        "HAVE_STRUCT_ADDRINFO_AI_ADDR",
+    ],
+)
+
+# Remap checks (gated by with_remap flag)
+_REMAP_CHECKS = macros.AC_CHECK_FUNCS(["regcomp"]) + [
+    checks.AC_DEFINE(
+        "WITH_REGEX",
+        condition = "ac_cv_func_regcomp",
+        if_false = None,
+        if_true = "1",
+        requires = ["HAVE_REGEX_H"],
+    ),
+]
+
+# TCP wrappers checks (gated by with_tcpwrappers flag)
+_TCPWRAPPERS_CHECKS = [
+    checks.AC_DEFINE("HAVE_TCPWRAPPERS", "1"),
+    checks.AC_DEFINE("HAVE_LIBWRAP", "1"),
+]
+
+autoconf(
+    name = "autoconf",
+    checks = (
+        _HEADER_CHECKS +
+        _FUNC_CHECKS +
+        _TYPE_CHECKS +
+        _MEMBER_CHECKS +
+        _DECL_CHECKS +
+        _CUSTOM_CHECKS +
+        _STATIC_DEFINES +
+        select({
+            ":ipv6_enabled": _IPV6_CHECKS,
+            "//conditions:default": [],
+        }) +
+        select({
+            ":remap_enabled": _REMAP_CHECKS,
+            "//conditions:default": [],
+        }) +
+        select({
+            ":tcpwrappers_enabled": _TCPWRAPPERS_CHECKS,
+            "//conditions:default": [],
+        })
+    ),
+    deps = [":package"],
+)
+
+# --------------------------------------------------------------------------- #
+# Generated headers
+# --------------------------------------------------------------------------- #
+
+# The top level config.h does `#include "config/config.h"`.
+autoconf_hdr(
+    name = "aconfig",
+    out = "config/config.h",
+    template = "config/config.h.in",
+    deps = [":autoconf"],
+)
+
+# Makefile: echo \#define VERSION \"tftp-hpa `cat version`\" > version.h
+write_file(
+    name = "gen_version_h",
+    out = "version.h",
+    content = ['#define VERSION "tftp-hpa %s"' % module_version()],
+)
+
+# --------------------------------------------------------------------------- #
+# Conditional sources
+# --------------------------------------------------------------------------- #
+
+# lib/ portability fallbacks (lib/libxtra.a) compiled when the system doesn't
+# provide the function.
+autoconf_srcs(
+    name = "lib_srcs",
+    srcs = {
+        "lib/daemon.c": "!HAVE_DAEMON",
+        "lib/getaddrinfo.c": "!HAVE_GETADDRINFO",
+        "lib/getopt_long.c": "!HAVE_GETOPT_LONG",
+        "lib/inet_ntop.c": "!HAVE_INET_NTOP",
+    },
+    naming = "per_target",
+    deps = [":autoconf"],
+)
+
+# --------------------------------------------------------------------------- #
+# Libraries
+# --------------------------------------------------------------------------- #
+
+# common/Makefile: OBJS = tftpsubs.$(O) signal.$(O) xalloc.$(O) progname.$(O)
+cc_library(
+    name = "common",
+    srcs = [
+        "common/progname.c",
+        "common/signal.c",
+        "common/tftpsubs.c",
+        "common/xalloc.c",
+        ":lib_srcs",
+    ],
+    hdrs = [
+        "common/tftpsubs.h",
+        "config.h",
+    ],
+    copts = _COPTS,
+    defines = ["_GNU_SOURCE"] + _XALLOC_DEFINES,
+    textual_hdrs = [
+        "lib/getopt.h",
+        ":aconfig",
+        ":gen_version_h",
+    ],
+)
+
+# --------------------------------------------------------------------------- #
+# Binaries
+# --------------------------------------------------------------------------- #
+
+# tftp/Makefile: OBJS = tftp.$(O) main.$(O)
+cc_binary(
+    name = "tftp",
+    srcs = [
+        "tftp/extern.h",
+        "tftp/main.c",
+        "tftp/tftp.c",
+    ],
+    copts = _COPTS,
+    local_defines = _TRACE_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":common",
+        "@readline",
+    ],
+)
+
+# tftpd/Makefile: OBJS = tftpd.$(O) recvfrom.$(O) misc.$(O) path.$(O) $(TFTPDOBJS)
+cc_binary(
+    name = "tftpd",
+    srcs = [
+        "tftpd/misc.c",
+        "tftpd/path.c",
+        "tftpd/path.h",
+        "tftpd/recvfrom.c",
+        "tftpd/recvfrom.h",
+        "tftpd/remap.h",
+        "tftpd/tftpd.c",
+        "tftpd/tftpd.h",
+    ] + select({
+        ":remap_enabled": ["tftpd/remap.c"],
+        "//conditions:default": [],
+    }),
+    copts = _COPTS,
+    visibility = ["//visibility:public"],
+    deps = [":common"] + select({
+        ":tcpwrappers_enabled": [":tcp_wrappers"],
+        "//conditions:default": [],
+    }),
+)
+
+# --------------------------------------------------------------------------- #
+# Smoke tests
+#
+# tftp-hpa 5.4 ships no test suite of its own, so this simply confirms the
+# binaries start, parse arguments and report the expected version.
+# --------------------------------------------------------------------------- #
+
+[
+    cc_test(
+        name = "%s_smoke_test" % tool,
+        srcs = ["smoke_test.cc"],
+        args = [
+            "$(rlocationpath :%s)" % tool,
+            module_version(),
+        ],
+        data = [":%s" % tool],
+        deps = ["@rules_cc//cc/runfiles"],
+    )
+    for tool in [
+        "tftp",
+        "tftpd",
+    ]
+]
