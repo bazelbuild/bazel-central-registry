@@ -37,8 +37,10 @@ import requests
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import yaml
+import zstandard
 
 from difflib import unified_diff
 from enum import Enum
@@ -171,9 +173,12 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
         True if the reference is found AND not spoofed; False otherwise
     """
 
-    # Make sure the reference is not a pull request
-    # e.g. refs/pull/1234/head
-    if re.match(r"^pull/\d+/head$", reference):
+    # Make sure the reference is not a pull request.
+    # GitHub archive URLs carry the full ref form (e.g. "refs/pull/1234/head").
+    # Such refs exist in the base repo's namespace but point at commits the
+    # project has not reviewed or accepted, so reject both the bare and "refs/"-
+    # prefixed forms, covering "/merge" as well as "/head".
+    if re.match(r"^(refs/)?pull/\d+/(head|merge)$", reference):
         return False
 
     url = f"https://github.com/{repo_path}/latest-commit/{reference}"
@@ -434,8 +439,9 @@ class BcrValidator:
 
         # Differences in only platform names or bazel versions don't need BCR maintainer review.
         for doc in (previous_presubmit_doc, current_presubmit_doc):
-            for scrub in ("bazel", "platform"):
-                doc.setdefault("matrix", {})[scrub] = None
+            for matrixed_node in (doc, doc.setdefault("bcr_test_module", {})):
+                for scrub in ("bazel", "platform"):
+                    matrixed_node.setdefault("matrix", {})[scrub] = None
         if current_presubmit_doc == previous_presubmit_doc:
             self.report(
                 BcrValidationResult.GOOD,
@@ -482,10 +488,20 @@ class BcrValidator:
         # https://docs.python.org/3/library/shutil.html#shutil.unpack_archive
         archive_type = source.get("archive_type")
         if not archive_type:
-            for ext in ["tar.gz", "tgz", "tar.bz2", "tar.xz", "tar", "zip", "jar", "war", "aar"]:
+            for ext in ["tar.gz", "tgz", "tar.bz2", "tar.xz", "tar.zst", "tzst", "tar", "zip", "jar", "war", "aar"]:
                 if str(archive_file).endswith("." + ext):
                     archive_type = ext
                     break
+        # shutil has no native zstd support, so stream-decompress with the
+        # `zstandard` package straight into tarfile.
+        if archive_type in ("tar.zst", "tzst"):
+            with open(archive_file, "rb") as fh, zstandard.ZstdDecompressor().stream_reader(fh) as reader:
+                with tarfile.open(fileobj=reader, mode="r|") as tar:
+                    if sys.version_info >= (3, 12):
+                        tar.extractall(output_dir, filter="data")
+                    else:
+                        tar.extractall(output_dir)
+            return
         format = {
             "tar.gz": "gztar",
             "tgz": "gztar",
@@ -531,6 +547,23 @@ class BcrValidator:
 
         tmp_dir = Path(tempfile.mkdtemp())
         output_dir = tmp_dir.joinpath("source_root")
+        # Validate the stripped output directory.
+        strip_prefix = source.get("strip_prefix", "")
+        if strip_prefix:
+            candidate = (output_dir / strip_prefix).resolve()
+            try:
+                candidate.relative_to(output_dir.resolve())
+            except ValueError:
+                error_msg = (
+                    "CRITICAL FAILURE: "
+                    f"strip_prefix '{strip_prefix}' resolves outside the "
+                    f"extraction directory. Resolved to: {candidate}"
+                )
+                self.report(BcrValidationResult.FAILED, error_msg)
+                shutil.rmtree(tmp_dir)
+                raise BcrValidationException(error_msg)
+        source_root = output_dir / strip_prefix
+
         self._download_source_archive(source, output_dir)
 
         module_file = self.registry.get_module_dot_bazel_path(module_name, version)
@@ -902,7 +935,7 @@ class BcrValidator:
         tmp_dir = tempfile.mkdtemp()
         for attestation in attestations:
             try:
-                self._verifier.run(attestation, source_uri, version, tmp_dir)
+                self._verifier.run(module_name, attestation, source_uri, version, tmp_dir)
             except attestations_lib.Error as ex:
                 self.report(BcrValidationResult.FAILED, f"{module_name}@{version}: {ex}")
                 success = False

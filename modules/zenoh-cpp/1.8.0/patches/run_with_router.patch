@@ -1,0 +1,69 @@
+diff --git a/tests/run_with_router.sh b/tests/run_with_router.sh
+old mode 100644
+new mode 100755
+index c36747a..289526a
+--- a/tests/run_with_router.sh
++++ b/tests/run_with_router.sh
+@@ -14,8 +14,9 @@
+ #
+ 
+ TESTBIN="$1"
+-TESTDIR=$(dirname "$0")
+-ZENOH_BRANCH="$2"
++TESTDIR=$PWD
++ZENOHD=${2:-"zenohd"}
++LOGDIR=$PWD
+ 
+ # get vinary name without extension
+ TEST_NAME_WE=$(basename -- "$TESTBIN")
+@@ -27,34 +28,34 @@ echo "------------------ Running test $TESTBIN -------------------"
+ 
+ sleep 5
+ 
+-if [ ! -f zenohd ]; then
++if [ ! -f $ZENOHD ]; then
+     git clone https://github.com/eclipse-zenoh/zenoh.git zenoh-git
+     cd zenoh-git || exit
+     git switch "$ZENOH_BRANCH"
+     rustup show
+     cargo build --lib --bin zenohd
+-    cp ./target/debug/zenohd "$TESTDIR"/
++    ZENOHD=./target/debug/zenohd
+     cd "$TESTDIR"|| exit
+ fi
+ 
+-chmod +x zenohd
+ 
+ LOCATORS="tcp/127.0.0.1:7447"
+ for LOCATOR in $(echo "$LOCATORS" | xargs); do
+     sleep 1
+ 
+     echo "> Running zenohd ... $LOCATOR"
+-    RUST_LOG=debug ./zenohd --plugin-search-dir "$TESTDIR/zenoh-git/target/debug" -l "$LOCATOR" > zenohd."$TEST_NAME_WE".log 2>&1 &
++    RUST_LOG=debug $ZENOHD --plugin-search-dir ".." -l "$LOCATOR" > $LOGDIR/zenohd."$TEST_NAME_WE".log 2>&1 &
+     ZPID=$!
+ 
+-    sleep 5
++    # Allow for a longer startup time for the router
++    sleep 10
+ 
+     echo "> Running $TESTBIN ..."
+-    "$TESTBIN" "$LOCATOR" > client."$TEST_NAME_WE".log 2>&1
++    "$TESTBIN" "$LOCATOR" > $LOGDIR/client."$TEST_NAME_WE".log 2>&1
+     RETCODE=$?
+ 
+     echo "> Logs of $TESTBIN ..."
+-    cat client."$TEST_NAME_WE".log
++    cat $LOGDIR/client."$TEST_NAME_WE".log
+ 
+     echo "> Stopping zenohd ..."
+     kill -9 "$ZPID"
+@@ -62,7 +63,7 @@ for LOCATOR in $(echo "$LOCATORS" | xargs); do
+     sleep 1
+ 
+     echo "> Logs of zenohd ..."
+-    cat zenohd."$TEST_NAME_WE".log
++    cat $LOGDIR/zenohd."$TEST_NAME_WE".log
+ 
+     [ "$RETCODE" -lt 0 ] && exit "$RETCODE"
+ done

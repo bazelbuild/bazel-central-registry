@@ -37,7 +37,7 @@ from registry import integrity_for_comparison
 _GH_RELEASE_BUILDER_ID = "https://github.com/bazel-contrib/.github/.github/workflows/release_ruleset.yaml"
 _GH_PUBLISH_BUILDER_ID = "https://github.com/bazel-contrib/publish-to-bcr/.github/workflows/publish.yaml"
 _VSA_VERIFIER_ID = "https://bcid.corp.google.com/verifier/bcid_package_enforcer/v0.1"
-_VSA_VERIFIED_LEVEL = "SLSA_BUILD_LEVEL_2"
+_VSA_VERIFIED_LEVEL = "SLSA_BUILD_LEVEL_0"
 _VSA_KEY_ID = "keystore://76574:prod:vsa_signing_public_key"
 
 # https://cloud.google.com/kubernetes-engine/docs/how-to/verify-control-plane-vm-integrity
@@ -83,7 +83,7 @@ class Verifier:
     def _get_binary_extension(self):
         return ".exe" if platform.system().lower() == "windows" else ""
 
-    def run(self, attestation, source_uri, source_tag, tmp_dir):
+    def run(self, module_name, attestation, github_source_uri, source_tag, tmp_dir):
         self._download_binary_if_necessary()
 
         attestation_basename = os.path.basename(attestation.url)
@@ -104,8 +104,9 @@ class Verifier:
 
         cmd, args = self._get_args(
             predicate_type,
+            module_name,
             attestation_path,
-            source_uri,
+            github_source_uri,
             source_tag,
             attestation.artifact_url_or_path,
             tmp_dir,
@@ -206,17 +207,30 @@ class Verifier:
 
         return result
 
-    def _get_args(self, validated_type, attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
+    def _get_args(
+        self,
+        validated_type,
+        module_name,
+        attestation_path,
+        github_source_uri,
+        source_tag,
+        artifact_url_or_path,
+        tmp_dir,
+    ):
         fname = "_get_vsa_args" if validated_type == PredicateType.VSA else "_get_github_att_args"
-        return getattr(self, fname)(attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir)
+        return getattr(self, fname)(
+            module_name, attestation_path, github_source_uri, source_tag, artifact_url_or_path, tmp_dir
+        )
 
-    def _get_github_att_args(self, attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
+    def _get_github_att_args(
+        self, module_name, attestation_path, github_source_uri, source_tag, artifact_url_or_path, tmp_dir
+    ):
         artifact_path = self._download_artifact_if_required(artifact_url_or_path, tmp_dir)
         args = [
             "--attestation-path",
             attestation_path,
             "--source-uri",
-            source_uri,
+            github_source_uri,
             "--builder-id",
             self._get_builder_id(artifact_path),
             artifact_path,
@@ -238,18 +252,20 @@ class Verifier:
 
         return _GH_RELEASE_BUILDER_ID
 
-    def _get_vsa_args(self, attestation_path, source_uri, source_tag, artifact_url_or_path, tmp_dir):
+    def _get_vsa_args(
+        self, module_name, attestation_path, github_source_uri, source_tag, artifact_url_or_path, tmp_dir
+    ):
         self._ensure_vsa_key_exists()
         artifact_digest = hashlib.sha256(self._read_url_or_file(artifact_url_or_path)).hexdigest()
         args = [
             "--subject-digest",
-            artifact_digest,
+            f"sha256:{artifact_digest}",
             "--attestation-path",
             attestation_path,
             "--verifier-id",
             _VSA_VERIFIER_ID,
             "--resource-uri",
-            source_uri,
+            self._get_vsa_source_uri(module_name, github_source_uri),
             "--verified-level",
             _VSA_VERIFIED_LEVEL,
             "--public-key-path",
@@ -265,6 +281,9 @@ class Verifier:
 
         with open(self._vsa_key_path, "wt") as f:
             f.write(_VSA_PUBLIC_KEY)
+
+    def _get_vsa_source_uri(self, module_name, github_source_uri):
+        return f"bazel_module://{github_source_uri}:{module_name}"
 
     def _read_url_or_file(self, url_or_path):
         if self._PROTOCOL_RE.match(url_or_path):

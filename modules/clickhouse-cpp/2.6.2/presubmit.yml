@@ -1,0 +1,73 @@
+matrix:
+  unix_platform:
+    - debian11
+    - ubuntu2004
+    - ubuntu2204
+    - ubuntu2404
+    - macos
+    - macos_arm64
+  windows_platform:
+    - windows
+  bazel: [7.x, 8.x, 9.x, rolling]
+tasks:
+  verify_targets_unix:
+    name: Unix
+    platform: ${{ unix_platform }}
+    bazel: ${{ bazel }}
+    # abseil-cpp (a dependency) requires C++17; Bazel 7.x defaults to
+    # -std=c++14 on the Linux/GCC autodetected toolchain, so force the
+    # standard explicitly. Mirrors abseil-cpp's own BCR presubmit.
+    build_flags:
+      - "--cxxopt=-std=c++17"
+    build_targets:
+      - "@clickhouse-cpp//:clickhouse"
+  verify_targets_windows:
+    name: Windows
+    platform: ${{ windows_platform }}
+    bazel: ${{ bazel }}
+    # MSVC spelling of the same C++17 requirement (see Unix task).
+    build_flags:
+      - "--cxxopt=/std:c++17"
+    build_targets:
+      - "@clickhouse-cpp//:clickhouse"
+# Build the module as the root workspace so its dev-only googletest
+# dependency is available, and run the hermetic unit test suite.
+# //ut:e2e_tests is intentionally excluded: it needs a live ClickHouse
+# server (it is tagged manual/external upstream).
+bcr_test_module:
+  module_path: ""
+  matrix:
+    unix_platform:
+      - debian11
+      - ubuntu2004
+      - ubuntu2204
+      - ubuntu2404
+      - macos
+      - macos_arm64
+    windows_platform:
+      - windows
+    bazel: [7.x, 8.x, 9.x, rolling]
+  tasks:
+    unit_tests_unix:
+      name: Unit tests (Unix)
+      platform: ${{ unix_platform }}
+      bazel: ${{ bazel }}
+      # Socketcase.connecttimeout connects to an IPv6 discard address and
+      # asserts a connect timeout / unreachable error. It is non-hermetic
+      # (depends on the sandbox's IPv6 routing, which varies across Bazel
+      # versions' sandboxes), so exclude it from the registry run.
+      test_flags:
+        - "--cxxopt=-std=c++17"
+        - "--test_filter=-Socketcase.connecttimeout"
+      test_targets:
+        - "//ut:unit_tests"
+    unit_tests_windows:
+      name: Unit tests (Windows)
+      platform: ${{ windows_platform }}
+      bazel: ${{ bazel }}
+      # See the Unix task: Socketcase.connecttimeout is non-hermetic.
+      test_flags:
+        - "--cxxopt=/std:c++17"
+        - "--test_filter=-Socketcase.connecttimeout"
+      test_targets:
+        - "//ut:unit_tests"

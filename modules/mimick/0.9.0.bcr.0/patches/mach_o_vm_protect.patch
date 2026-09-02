@@ -1,0 +1,87 @@
+--- a/src/plt-mach-o.c
++++ b/src/plt-mach-o.c
+@@ -24,6 +24,9 @@
+ 
+ #include <dlfcn.h>
+ #include <mach-o/dyld.h>
++#include <mach/mach.h>
++#include <mach/vm_map.h>
++#include <unistd.h>
+ #include <mach-o/loader.h>
+ #include <mach-o/nlist.h>
+ #include <string.h>
+@@ -243,36 +246,56 @@
+         if (!off)
+             continue;
+ 
+-        ot[offidx++] = (plt_offset) { .offset = off };
++        ot[offidx++] = (plt_offset) {
++            .offset = off,
++            .oldval = plt_get_real_fn(ctx, name),
++        };
+     }
+     *count = offidx;
+ 
+     return ot;
+ }
++
++
+ 
+ void plt_set_offsets(plt_offset *offset, size_t nb_off, plt_fn *newval)
+ {
++    const long page_size = sysconf(_SC_PAGESIZE);
+     for (size_t i = 0; i < nb_off; ++i) {
+         if (!offset[i].oldval)
+             offset[i].oldval = *offset[i].offset;
+-#ifdef MMK_ARCH_ARM64
+-        const long page_size = sysconf(_SC_PAGESIZE);
+-        mmk_assert(page_size > 0);
++        offset[i].newval = newval;
++
+         char *page_start = (char *) (((uintptr_t) offset[i].offset) & ~(page_size - 1));
+-        mmk_assert(!mprotect (page_start, page_size, PROT_READ | PROT_WRITE));
+-        __clear_cache(page_start, page_start + page_size);
+-#endif
++        kern_return_t kr = vm_protect(mach_task_self(), (vm_address_t)page_start, page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
++        if (kr != KERN_SUCCESS) {
++            fprintf(stderr, "vm_protect failed: %d\n", kr);
++            abort();
++        }
++
+         *offset[i].offset = newval;
+     }
+ }
+ 
+ void plt_reset_offsets(plt_offset *offset, size_t nb_off)
+ {
++    const long page_size = sysconf(_SC_PAGESIZE);
+     for (size_t i = 0; i < nb_off; ++i) {
++        if (!offset[i].newval)
++            continue;
++
++        char *page_start = (char *) (((uintptr_t) offset[i].offset) & ~(page_size - 1));
++        kern_return_t kr = vm_protect(mach_task_self(), (vm_address_t)page_start, page_size, FALSE, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY);
++        if (kr != KERN_SUCCESS) {
++            fprintf(stderr, "vm_protect failed: %d\n", kr);
++            abort();
++        }
++
+         *offset[i].offset = offset[i].oldval;
+     }
+ }
+ 
++
+ plt_fn *plt_get_real_fn(plt_ctx ctx, const char *name)
+ {
+     (void) ctx;
+
+--- a/src/plt.h
++++ b/src/plt.h
+@@ -39,6 +39,7 @@
+ typedef struct plt_offset {
+     plt_fn **offset;
+     plt_fn *oldval;
++    plt_fn *newval;
+ } plt_offset;
+ 
+ enum plt_selector {

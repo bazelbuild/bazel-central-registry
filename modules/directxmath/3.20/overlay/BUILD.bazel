@@ -1,0 +1,208 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+bool_flag(
+    name = "no_intrinsics",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "no_intrinsics_enabled",
+    flag_values = {":no_intrinsics": "True"},
+)
+
+# sal.h compatibility stub for non-Windows platforms.
+# DirectXMath.h does #include "sal.h" which is provided by MSVC on Windows.
+write_file(
+    name = "sal_compat_header",
+    out = "compat/sal.h",
+    content = [
+        "#pragma once",
+        "#ifndef _SAL_H_DEFINED",
+        "#define _SAL_H_DEFINED",
+        "",
+        "#define _Success_(cond)",
+        "#define _On_failure_(expr)",
+        "#define _Always_(expr)",
+        "",
+        "#define _In_",
+        "#define _In_opt_",
+        "#define _In_z_",
+        "#define _In_opt_z_",
+        "#define _In_reads_(n)",
+        "#define _In_reads_opt_(n)",
+        "#define _In_reads_bytes_(n)",
+        "#define _In_reads_bytes_opt_(n)",
+        "#define _In_reads_z_(n)",
+        "#define _In_reads_or_z_(n)",
+        "#define _In_reads_to_ptr_(p)",
+        "#define _In_reads_to_ptr_opt_(p)",
+        "",
+        "#define _Out_",
+        "#define _Out_opt_",
+        "#define _Out_writes_(n)",
+        "#define _Out_writes_opt_(n)",
+        "#define _Out_writes_bytes_(n)",
+        "#define _Out_writes_bytes_opt_(n)",
+        "#define _Out_writes_z_(n)",
+        "#define _Out_writes_to_(n, c)",
+        "#define _Out_writes_to_opt_(n, c)",
+        "#define _Out_writes_bytes_to_(n, c)",
+        "#define _Out_writes_bytes_to_opt_(n, c)",
+        "#define _Out_writes_all_(n)",
+        "#define _Out_writes_all_opt_(n)",
+        "#define _Out_writes_bytes_all_(n)",
+        "#define _Out_writes_bytes_all_opt_(n)",
+        "#define _Out_writes_to_ptr_(p)",
+        "#define _Out_writes_to_ptr_opt_(p)",
+        "",
+        "#define _Inout_",
+        "#define _Inout_opt_",
+        "#define _Inout_z_",
+        "#define _Inout_opt_z_",
+        "#define _Inout_updates_(n)",
+        "#define _Inout_updates_opt_(n)",
+        "#define _Inout_updates_bytes_(n)",
+        "#define _Inout_updates_bytes_opt_(n)",
+        "#define _Inout_updates_z_(n)",
+        "#define _Inout_updates_to_(n, c)",
+        "#define _Inout_updates_bytes_to_(n, c)",
+        "#define _Inout_updates_all_(n)",
+        "#define _Inout_updates_bytes_all_(n)",
+        "",
+        "#define _Ret_z_",
+        "#define _Ret_writes_(n)",
+        "#define _Ret_writes_z_(n)",
+        "#define _Ret_writes_bytes_(n)",
+        "#define _Ret_writes_maybenull_(n)",
+        "#define _Ret_writes_maybenull_z_(n)",
+        "#define _Ret_writes_bytes_maybenull_(n)",
+        "#define _Ret_maybenull_",
+        "#define _Ret_maybenull_z_",
+        "#define _Ret_notnull_",
+        "#define _Ret_valid_",
+        "#define _Ret_null_",
+        "",
+        "#define _Outptr_",
+        "#define _Outptr_opt_",
+        "#define _Outptr_result_z_",
+        "#define _Outptr_result_maybenull_",
+        "#define _Outptr_opt_result_maybenull_",
+        "#define _Outptr_result_buffer_(n)",
+        "#define _Outptr_result_bytebuffer_(n)",
+        "#define _Outref_",
+        "#define _Outref_result_maybenull_",
+        "#define _Outref_result_buffer_(n)",
+        "#define _Outref_result_bytebuffer_(n)",
+        "",
+        "#define _Use_decl_annotations_",
+        "#define _Analysis_assume_(expr)",
+        "#define _Null_terminated_",
+        "#define _NullNull_terminated_",
+        "#define _Pre_valid_",
+        "#define _Post_valid_",
+        "#define _Pre_maybenull_",
+        "#define _Post_z_",
+        "#define _Pre_z_",
+        "#define _Post_invalid_",
+        "#define _Deref_out_range_(lo, hi)",
+        "#define _Deref_in_range_(lo, hi)",
+        "#define _Deref_ret_range_(lo, hi)",
+        "#define _In_range_(lo, hi)",
+        "#define _Out_range_(lo, hi)",
+        "#define _Field_size_(n)",
+        "#define _Field_size_bytes_(n)",
+        "#define _Field_size_opt_(n)",
+        "#define _Field_size_bytes_opt_(n)",
+        "#define _Field_z_",
+        "#define _Printf_format_string_",
+        "#define _Scanf_format_string_",
+        "#define _Struct_size_bytes_(n)",
+        "",
+        "#endif",
+    ],
+    newline = "auto",
+)
+
+cc_library(
+    name = "sal_compat",
+    hdrs = [":sal_compat_header"],
+    includes = ["compat"],
+)
+
+cc_library(
+    name = "directxmath",
+    hdrs = [
+        "Inc/DirectXCollision.h",
+        "Inc/DirectXColors.h",
+        "Inc/DirectXMath.h",
+        "Inc/DirectXPackedVector.h",
+    ],
+    defines = select({
+        ":no_intrinsics_enabled": ["_XM_NO_INTRINSICS_"],
+        "//conditions:default": [],
+    }),
+    includes = ["Inc"],
+    textual_hdrs = [
+        "Inc/DirectXCollision.inl",
+        "Inc/DirectXMathConvert.inl",
+        "Inc/DirectXMathMatrix.inl",
+        "Inc/DirectXMathMisc.inl",
+        "Inc/DirectXMathVector.inl",
+        "Inc/DirectXPackedVector.inl",
+    ],
+    visibility = ["//visibility:public"],
+    deps = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [":sal_compat"],
+    }),
+)
+
+cc_library(
+    name = "extensions",
+    hdrs = glob(["Extensions/*.h"]),
+    includes = ["Extensions"],
+    visibility = ["//visibility:public"],
+    deps = [":directxmath"],
+)
+
+cc_library(
+    name = "xdsp",
+    hdrs = ["XDSP/XDSP.h"],
+    includes = ["XDSP"],
+    visibility = ["//visibility:public"],
+    deps = [":directxmath"],
+)
+
+cc_library(
+    name = "matrixstack",
+    hdrs = ["MatrixStack/DirectXMatrixStack.h"],
+    includes = ["MatrixStack"],
+    visibility = ["//visibility:public"],
+    deps = [":directxmath"],
+)
+
+cc_library(
+    name = "stereo3d",
+    srcs = ["Stereo3D/Stereo3DMatrixHelper.cpp"],
+    hdrs = ["Stereo3D/Stereo3DMatrixHelper.h"],
+    includes = ["Stereo3D"],
+    visibility = ["//visibility:public"],
+    deps = [":directxmath"],
+)
+
+cc_library(
+    name = "shmath",
+    srcs = ["SHMath/DirectXSH.cpp"],
+    hdrs = ["SHMath/DirectXSH.h"],
+    includes = ["SHMath"],
+    visibility = ["//visibility:public"],
+    deps = [":directxmath"],
+)
+
+test_suite(
+    name = "tests",
+    tests = ["@directxmathtest//:all"],
+)

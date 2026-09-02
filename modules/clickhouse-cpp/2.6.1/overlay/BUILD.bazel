@@ -1,0 +1,167 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# Bazel build for clickhouse-cpp. The canonical build is CMake
+# (top-level CMakeLists.txt); this file mirrors the same library as
+# a bzlmod target so downstream Bazel projects can depend on it via
+# the Bazel Central Registry without standing up CMake.
+#
+# Differences from the CMake build that callers should be aware of:
+#   * TLS links against BoringSSL (`@boringssl`) by default; pass
+#     `--@clickhouse-cpp//:tls=openssl` to use the BCR OpenSSL module
+#     instead, or `--@clickhouse-cpp//:tls=no` to disable TLS
+#     entirely. `USE_BORINGSSL` ifdef-guards the two OpenSSL-only
+#     surfaces (`SSL_CONF_*` command API and `SSL_read_ex`) that
+#     BoringSSL doesn't provide; see clickhouse/base/sslsocket.cpp.
+#   * lz4 / zstd / abseil come from BCR modules instead of contrib/.
+#     cityhash is the exception: it is built from contrib/ because the
+#     wire protocol needs ClickHouse's frozen CityHash variant, which
+#     differs from the stock BCR module (see the :cityhash target).
+
+# Selects the TLS implementation: `--@clickhouse-cpp//:tls=boringssl`
+# (default), `--@clickhouse-cpp//:tls=openssl`, or
+# `--@clickhouse-cpp//:tls=no` to disable TLS entirely (matching
+# CMake's `WITH_OPENSSL=OFF` default). The two TLS libraries come from
+# BCR modules and are linked statically, keeping the build hermetic.
+string_flag(
+    name = "tls",
+    build_setting_default = "boringssl",
+    values = [
+        "boringssl",
+        "openssl",
+        "no",
+    ],
+)
+
+config_setting(
+    name = "tls_boringssl",
+    flag_values = {":tls": "boringssl"},
+)
+
+config_setting(
+    name = "tls_openssl",
+    flag_values = {":tls": "openssl"},
+)
+
+config_setting(
+    name = "tls_no",
+    flag_values = {":tls": "no"},
+)
+
+# OpenSSL on Windows pulls in Win32 system libraries (the cert store via
+# crypt32, plus user32) that BoringSSL bundles itself. Used to gate the
+# extra linkopts below.
+selects.config_setting_group(
+    name = "tls_openssl_on_windows",
+    match_all = [
+        ":tls_openssl",
+        "@platforms//os:windows",
+    ],
+)
+
+# Vendored CityHash from contrib/, NOT the BCR `@cityhash` module.
+# ClickHouse's wire protocol checksums compressed blocks with a specific
+# frozen CityHash128 variant (see clickhouse/base/compressed.cpp); the
+# stock Google CityHash 1.0.2 that BCR packages produces *different*
+# hashes, so a server rejects compressed blocks with "Checksum doesn't
+# match: corrupted data". This is the exact copy the CMake build uses,
+# guaranteeing byte-identical hashing and wire compatibility.
+cc_library(
+    name = "cityhash",
+    srcs = [
+        "contrib/cityhash/cityhash/city.cc",
+        "contrib/cityhash/cityhash/config.h",
+    ],
+    hdrs = [
+        "contrib/cityhash/cityhash/city.h",
+        "contrib/cityhash/cityhash/citycrc.h",
+    ],
+    # config.h gates __builtin_expect off with `#if WIN32 || WIN64`, but
+    # MSVC only predefines `_WIN32`/`_WIN64`. Under CMake it's CMake that
+    # defines WIN32, which Bazel's MSVC toolchain doesn't. Define it here
+    # so the GCC/Clang-only builtin isn't used on MSVC.
+    copts = select({
+        "@platforms//os:windows": ["/DWIN32"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "contrib/cityhash/cityhash",
+)
+
+# The main clickhouse-cpp library. Downstream callers use
+# `#include <clickhouse/client.h>` and link `@clickhouse-cpp//:clickhouse`.
+cc_library(
+    name = "clickhouse",
+    srcs = glob(
+        [
+            "clickhouse/*.cpp",
+            "clickhouse/base/*.cpp",
+            "clickhouse/columns/*.cpp",
+            "clickhouse/types/*.cpp",
+        ],
+        # Only compiled when TLS is enabled, mirroring CMake's
+        # `IF (WITH_OPENSSL)` source-list append.
+        exclude = ["clickhouse/base/sslsocket.cpp"],
+    ) + select({
+        ":tls_no": [],
+        "//conditions:default": ["clickhouse/base/sslsocket.cpp"],
+    }),
+    hdrs = glob([
+        "clickhouse/*.h",
+        "clickhouse/base/*.h",
+        "clickhouse/columns/*.h",
+        "clickhouse/types/*.h",
+    ]),
+    defines = select({
+        # `WITH_OPENSSL` enables the TLS code paths in client.cpp /
+        # sslsocket.cpp (same macro as the CMake option). `USE_BORINGSSL`
+        # takes the BoringSSL-compatible branches in sslsocket.cpp.
+        ":tls_boringssl": [
+            "WITH_OPENSSL",
+            "USE_BORINGSSL",
+        ],
+        ":tls_openssl": ["WITH_OPENSSL"],
+        ":tls_no": [],
+    }),
+    # Winsock, required by base/socket.cpp et al. Mirrors CMake's
+    # `IF (WIN32 OR MINGW)` link block. (The BoringSSL backend already
+    # propagates ws2_32 itself; declare it explicitly so the openssl
+    # and no-TLS configurations link too.)
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:ws2_32.lib",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        # OpenSSL references the Win32 cert store and user32; declare
+        # them so downstream executables link without each consumer
+        # having to repeat it. Mirrors CMake's MSVC `Crypt32` link.
+        ":tls_openssl_on_windows": [
+            "-DEFAULTLIB:crypt32.lib",
+            "-DEFAULTLIB:user32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    # Expose headers at their workspace path so both internal
+    # (`#include "client.h"` from clickhouse/*.cpp via quote-form
+    # source-dir search) and external (`#include <clickhouse/client.h>`)
+    # include forms resolve.
+    strip_include_prefix = "/",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@abseil-cpp//absl/numeric:int128",
+        ":cityhash",
+        "@lz4//:lz4",
+        "@zstd//:zstd",
+    ] + select({
+        ":tls_boringssl": [
+            "@boringssl//:crypto",
+            "@boringssl//:ssl",
+        ],
+        ":tls_openssl": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+        ":tls_no": [],
+    }),
+)

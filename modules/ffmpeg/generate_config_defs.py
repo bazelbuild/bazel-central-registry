@@ -10,8 +10,9 @@ templates into the version overlay directory:
   <overlay>/libavutil/ffversion.h.in
 
 Usage:
-    python3 generate_config_defs.py [--version 7.1.1.bcr.beta.5] /path/to/FFmpeg
-    python3 generate_config_defs.py /path/to/FFmpeg --ffmpeg-version 7.2
+    python3 generate_config_defs.py [--version 9.0.1.beta.bcr] /path/to/FFmpeg
+
+The generated ffversion.h template uses PACKAGE_VERSION from package_info.
 """
 
 import argparse
@@ -22,10 +23,11 @@ from collections import OrderedDict
 
 from _overlay_utils import add_version_arg, resolve_overlay_dir
 
-
 # ---------------------------------------------------------------------------
 # Build-policy defaults: CONFIG_* flags set to 1 in the Bazel build.
 # Everything not listed here defaults to 0.
+# Resource arrays are uncompressed. Unstable swscale code needs generators
+# not provided by the overlay, so resource_compression and unstable stay off.
 # ---------------------------------------------------------------------------
 
 CONFIG_ENABLED = {
@@ -46,7 +48,6 @@ CONFIG_ENABLED = {
     "faan",
     "fast_unaligned",
     "iamf",
-    "network",
     # Features
     "runtime_cpudetect",
     "safe_bitstream_reader",
@@ -83,6 +84,34 @@ CONFIG_ENABLED = {
     "show_metadata_example",
     "transcode_aac_example",
     "transcode_example",
+}
+
+CONFIG_DERIVED = {
+    "dwt",
+    "error_resilience",
+    "gmp",
+    "gplv3",
+    "libcodec2",
+    "libdav1d",
+    "libgsm",
+    "libjxl",
+    "libjxl_threads",
+    "libmp3lame",
+    "libopenjpeg",
+    "librav1e",
+    "libshine",
+    "libspeex",
+    "libtwolame",
+    "libvorbis",
+    "libvorbisenc",
+    "libxvid",
+    "lsp",
+    "mbedtls",
+    "network",
+    "openssl",
+    "pixelutils",
+    "protocols",
+    "version3",
 }
 
 # Standard C99/POSIX math functions checked via AC_CHECK_LIB in the Bazel
@@ -176,21 +205,14 @@ def resolve_list(
     if var_name in cache:
         return cache[var_name]
 
-    body = raw_vars.get(var_name, "")
+    body = re.sub(
+        r"\$\(add_suffix\s+(\S+)\s+\$([A-Z][A-Z0-9_]*)\)",
+        lambda match: " ".join(item + match.group(1) for item in resolve_list(match.group(2), raw_vars, cache)),
+        raw_vars.get(var_name, ""),
+    )
     items: list[str] = []
 
     for token in body.split():
-        if token.startswith("$(add_suffix"):
-            continue
-
-        add_suffix_match = re.match(r"^\$\(add_suffix\s+(\S+)\s+\$(\S+)\)$", token)
-        if add_suffix_match:
-            suffix = add_suffix_match.group(1)
-            ref = add_suffix_match.group(2)
-            for item in resolve_list(ref, raw_vars, cache):
-                items.append(item + suffix)
-            continue
-
         if token.startswith("$"):
             ref = token.lstrip("$").strip("{}")
             items.extend(resolve_list(ref, raw_vars, cache))
@@ -204,35 +226,8 @@ def resolve_list(
 
 
 def resolve_have_list(raw_vars: dict[str, str], cache: dict[str, list[str]]) -> list[str]:
-    """Resolve HAVE_LIST with special handling for $(add_suffix) in its body."""
-    body = raw_vars.get("HAVE_LIST", "")
-    items: list[str] = []
-
-    i = 0
-    tokens = body.split()
-    while i < len(tokens):
-        token = tokens[i]
-
-        if token == "$(add_suffix" and i + 2 < len(tokens):
-            suffix_tok = tokens[i + 1]
-            ref_tok = tokens[i + 2].rstrip(")")
-            ref = ref_tok.lstrip("$").strip("{}")
-            for item in resolve_list(ref, raw_vars, cache):
-                items.append(item + suffix_tok)
-            i += 3
-            continue
-
-        if token.startswith("$"):
-            ref = token.lstrip("$").strip("{}")
-            items.extend(resolve_list(ref, raw_vars, cache))
-            i += 1
-            continue
-
-        if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", token):
-            items.append(token)
-        i += 1
-
-    return items
+    """Resolve HAVE_LIST, including suffixed architecture feature names."""
+    return resolve_list("HAVE_LIST", raw_vars, cache)
 
 
 def dedup(items: list[str]) -> list[str]:
@@ -263,46 +258,31 @@ def extract_all_lists(configure_path: str) -> dict[str, list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Version extraction
-# ---------------------------------------------------------------------------
-
-
-def extract_version(ffmpeg_root: str) -> str:
-    """Read the FFmpeg version from the RELEASE file."""
-    release_path = os.path.join(ffmpeg_root, "RELEASE")
-    if os.path.isfile(release_path):
-        with open(release_path) as f:
-            return f.read().strip()
-    raise FileNotFoundError(f"Cannot find {release_path}")
-
-
-# ---------------------------------------------------------------------------
 # Starlark output generation
 # ---------------------------------------------------------------------------
 
 
 def generate_avconfig_h(have_list_pub: list[str]) -> list[str]:
-    """Generate AVCONFIG_H lines from HAVE_LIST_PUB."""
-    defaults = {"bigendian": 0, "fast_unaligned": 1}
+    """Generate AV_HAVE_* substitutions for the target's autoconf checks."""
     lines = [
-        "/* Generated by Bazel */",
+        "/* Generated by generate_config_defs.py -- do not edit */",
         "#ifndef AVUTIL_AVCONFIG_H",
         "#define AVUTIL_AVCONFIG_H",
     ]
     for item in have_list_pub:
-        val = defaults.get(item, 0)
-        lines.append(f"#define AV_HAVE_{item.upper()} {val}")
+        lines.append(f"#undef AV_HAVE_{item.upper()}")
     lines.append("#endif /* AVUTIL_AVCONFIG_H */")
     return lines
 
 
-def generate_ffversion_h(version: str) -> list[str]:
-    """Generate FFVERSION_H lines."""
+def generate_ffversion_h() -> list[str]:
+    """Generate the version template consumed by package_info."""
     return [
-        "/* Generated by Bazel */",
+        "/* Generated by generate_config_defs.py -- do not edit */",
         "#ifndef AVUTIL_FFVERSION_H",
         "#define AVUTIL_FFVERSION_H",
-        f'#define FFMPEG_VERSION "{version}"',
+        "#undef PACKAGE_VERSION",
+        "#define FFMPEG_VERSION PACKAGE_VERSION",
         "#endif /* AVUTIL_FFVERSION_H */",
     ]
 
@@ -324,8 +304,7 @@ def generate_config_h_in(
             "",
             "/* --- Static metadata --- */",
             '#define FFMPEG_CONFIGURATION "bazel --disable-everything"',
-            '#define FFMPEG_LICENSE "LGPL version 2.1 or later"',
-            "#define CONFIG_THIS_YEAR 2025",
+            "#define CONFIG_THIS_YEAR 2026",
             '#define FFMPEG_DATADIR "/usr/local/share/ffmpeg"',
             '#define AVCONV_DATADIR "/usr/local/share/ffmpeg"',
             '#define CC_IDENT "bazel"',
@@ -376,7 +355,7 @@ def generate_config_h_in(
     # --- Static CONFIG_* defines ---
     lines.append("")
     static_configs = sorted(
-        (c for c in config_list if c not in AUTOCONF_DETECTED_CONFIGS),
+        (c for c in config_list if c not in AUTOCONF_DETECTED_CONFIGS and c not in CONFIG_DERIVED),
         key=lambda x: x.upper(),
     )
     for item in static_configs:
@@ -431,10 +410,6 @@ def main():
         help="Path to FFmpeg source tree root",
     )
     add_version_arg(parser)
-    parser.add_argument(
-        "--ffmpeg-version",
-        help="Override FFmpeg version string (default: read from RELEASE file)",
-    )
     args = parser.parse_args()
 
     overlay = resolve_overlay_dir(args.version)
@@ -445,10 +420,8 @@ def main():
         sys.exit(1)
 
     lists = extract_all_lists(configure_path)
-    version = args.ffmpeg_version or extract_version(args.ffmpeg_root)
-
     avconfig_lines = generate_avconfig_h(lists["HAVE_LIST_PUB"])
-    ffversion_lines = generate_ffversion_h(version)
+    ffversion_lines = generate_ffversion_h()
     config_h_in_lines = generate_config_h_in(
         lists["ARCH_LIST"],
         lists["HAVE_LIST"],

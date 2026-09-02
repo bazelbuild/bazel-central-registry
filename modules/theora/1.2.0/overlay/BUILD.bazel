@@ -1,0 +1,232 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# GCC/Clang-style inline assembly is limited to specific platforms.
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:osx",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_or_osx_x86_64",
+    match_any = [
+        ":linux_x86_64",
+        ":macos_x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:osx",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_or_osx_x86_32",
+    match_any = [
+        ":linux_x86_32",
+        ":macos_x86_32",
+    ],
+)
+
+### LIBRARIES
+
+PUBLIC_HEADERS = [
+    "include/theora/codec.h",
+    "include/theora/theora.h",
+    "include/theora/theoradec.h",
+    "include/theora/theoraenc.h",
+]
+
+PRIVATE_HEADERS = [
+    "lib/apiwrapper.h",
+    "lib/bitpack.h",
+    "lib/dct.h",
+    "lib/decint.h",
+    "lib/dequant.h",
+    "lib/encint.h",
+    "lib/enquant.h",
+    "lib/huffdec.h",
+    "lib/huffenc.h",
+    "lib/huffman.h",
+    "lib/internal.h",
+    "lib/mathops.h",
+    "lib/modedec.h",
+    "lib/ocintrin.h",
+    "lib/quant.h",
+    "lib/state.h",
+    "lib/x86/mmxloop.h",
+    "lib/x86/sse2trans.h",
+    "lib/x86/x86cpu.h",
+    "lib/x86/x86enc.h",
+    "lib/x86/x86int.h",
+    "lib/x86/x86zigzag.h",
+]
+
+# Platform-specific code shared between encoder and decoder.
+
+DECODER_GENERIC_SOURCES = [
+    "lib/apiwrapper.c",
+    "lib/bitpack.c",
+    "lib/decapiwrapper.c",
+    "lib/decinfo.c",
+    "lib/decode.c",
+    "lib/dequant.c",
+    "lib/fragment.c",
+    "lib/huffdec.c",
+    "lib/idct.c",
+    "lib/info.c",
+    "lib/internal.c",
+    "lib/quant.c",
+    "lib/state.c",
+]
+
+DECODER_X86_SOURCES = [
+    "lib/x86/x86cpu.c",
+    "lib/x86/mmxidct.c",
+    "lib/x86/mmxfrag.c",
+    "lib/x86/mmxstate.c",
+    "lib/x86/sse2idct.c",
+    "lib/x86/x86state.c",
+]
+
+cc_library(
+    name = "theoradec",
+    srcs = DECODER_GENERIC_SOURCES + PRIVATE_HEADERS + select({
+        ":linux_or_osx_x86_64": DECODER_X86_SOURCES,
+        ":linux_or_osx_x86_32": DECODER_X86_SOURCES,
+        "//conditions:default": [],
+    }),
+    hdrs = PUBLIC_HEADERS,
+    includes = [
+        "include",
+        "lib",
+    ],
+    local_defines = select({
+        ":linux_or_osx_x86_64": ["OC_X86_ASM", "OC_X86_64_ASM"],
+        ":linux_or_osx_x86_32": ["OC_X86_ASM"],
+        "//conditions:default": [],
+    }),
+    deps = ["@ogg"],
+    features = select({
+        "@platforms//os:windows": ["windows_export_all_symbols"],
+        "//conditions:default": [],
+    }),
+)
+
+# Encoder
+
+ENCODER_GENERIC_SOURCES = [
+    "lib/analyze.c",
+    "lib/fdct.c",
+    "lib/encfrag.c",
+    "lib/encapiwrapper.c",
+    "lib/encinfo.c",
+    "lib/encode.c",
+    "lib/enquant.c",
+    "lib/huffenc.c",
+    "lib/mathops.c",
+    "lib/mcenc.c",
+    "lib/rate.c",
+    "lib/tokenize.c",
+]
+
+ENCODER_X86_SOURCES = [
+    "lib/x86/mmxencfrag.c",
+    "lib/x86/mmxfdct.c",
+    "lib/x86/sse2encfrag.c",
+    "lib/x86/x86enquant.c",
+    "lib/x86/x86enc.c",
+]
+
+ENCODER_X86_64_SOURCES = [
+    "lib/x86/sse2fdct.c",
+]
+
+cc_library(
+    name = "theoraenc",
+    srcs = ENCODER_GENERIC_SOURCES + PRIVATE_HEADERS + select({
+        ":linux_or_osx_x86_64": ENCODER_X86_SOURCES + ENCODER_X86_64_SOURCES,
+        ":linux_or_osx_x86_32": ENCODER_X86_SOURCES,
+        "//conditions:default": [],
+    }),
+    hdrs = PUBLIC_HEADERS,
+    includes = [
+        "include",
+        "lib",
+    ],
+    local_defines = select({
+        ":linux_or_osx_x86_64": ["OC_X86_ASM", "OC_X86_64_ASM"],
+        ":linux_or_osx_x86_32": ["OC_X86_ASM"],
+        "//conditions:default": [],
+    }),
+    deps = [":theoradec"],
+    features = select({
+        "@platforms//os:windows": ["windows_export_all_symbols"],
+        "//conditions:default": [],
+    }),
+)
+
+# theora contains both decoder and encoder
+
+cc_library(
+    name = "theora",
+    hdrs = PUBLIC_HEADERS,
+    deps = [
+        ":theoradec",
+        ":theoraenc",
+    ],
+    features = select({
+        "@platforms//os:windows": ["windows_export_all_symbols"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_shared_library(
+    name = "theora.shared",
+    dynamic_deps = ["@ogg//:ogg.shared"],
+    exports_filter = [":theora"],
+    features = select({
+        "@platforms//os:windows": ["windows_export_all_symbols"],
+        "//conditions:default": [],
+    }),
+    deps = [":theora"],
+)

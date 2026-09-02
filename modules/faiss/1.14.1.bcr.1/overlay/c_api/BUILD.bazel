@@ -1,0 +1,86 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(
+    default_package_metadata = ["//:package_metadata"],
+)
+
+# Mirrors FAISS_C_SRC in c_api/CMakeLists.txt.
+FAISS_C_SRCS = [
+    "AutoTune_c.cpp",
+    "Clustering_c.cpp",
+    "IndexFlat_c.cpp",
+    "IndexHNSW_c.cpp",
+    "IndexIVFFlat_c.cpp",
+    "IndexIVF_c.cpp",
+    "IndexLSH_c.cpp",
+    "IndexPreTransform_c.cpp",
+    "VectorTransform_c.cpp",
+    "IndexShards_c.cpp",
+    "IndexReplicas_c.cpp",
+    "Index_c.cpp",
+    "IndexBinary_c.cpp",
+    "IndexBinaryIVF_c.cpp",
+    "IndexBinaryFlat_c.cpp",
+    "IndexScalarQuantizer_c.cpp",
+    "MetaIndexes_c.cpp",
+    "clone_index_c.cpp",
+    "error_impl.cpp",
+    "index_factory_c.cpp",
+    "index_io_c.cpp",
+    "impl/AuxIndexStructures_c.cpp",
+    "impl/io_c.cpp",
+    "utils/distances_c.cpp",
+    "utils/utils_c.cpp",
+]
+
+# Added to faiss_c when CUDA is available, as in upstream CMake.
+FAISS_C_GPU_SRCS = [
+    "gpu/DeviceUtils_c.cpp",
+    "gpu/GpuAutoTune_c.cpp",
+    "gpu/GpuClonerOptions_c.cpp",
+    "gpu/GpuIndex_c.cpp",
+    "gpu/GpuResources_c.cpp",
+    "gpu/StandardGpuResources_c.cpp",
+]
+
+FAISS_C_HDRS = glob([
+    "*.h",
+    "impl/*.h",
+    "utils/*.h",
+])
+
+FAISS_C_GPU_HDRS = glob(["gpu/*.h"])
+
+# Matches the conditions used by requires_cuda().
+config_setting(
+    name = "cuda_available",
+    flag_values = {
+        "@rules_cuda//cuda:enable": "True",
+        "@cuda//:valid_toolchain_found": "True",
+    },
+)
+
+cc_library(
+    name = "faiss_c",
+    srcs = FAISS_C_SRCS + select({
+        ":cuda_available": FAISS_C_GPU_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = FAISS_C_HDRS + select({
+        ":cuda_available": FAISS_C_GPU_HDRS,
+        "//conditions:default": [],
+    }),
+    include_prefix = "faiss/c_api",
+    strip_include_prefix = ".",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//faiss",
+    ] + select({
+        ":cuda_available": [
+            "//faiss/gpu:faiss_gpu",
+            "@cuda//:cublas",
+            "@cuda//:cuda_runtime",
+        ],
+        "//conditions:default": [],
+    }),
+)

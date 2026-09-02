@@ -1,0 +1,177 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Config setting for Linux with GCC (needs -latomic for 64-bit atomics)
+config_setting(
+    name = "linux_gcc",
+    constraint_values = ["@platforms//os:linux"],
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "gcc"},
+)
+
+# Common compiler flags
+COPTS_COMMON = [
+    "-Wall",
+    "-Wextra",
+    "-Wno-implicit-fallthrough",
+    "-Wno-sign-compare",
+    "-Wno-missing-field-initializers",
+    "-Wno-unused-parameter",
+    "-Wno-unused-but-set-variable",
+    "-Wno-unused-result",
+    "-Wno-array-bounds",
+    "-funsigned-char",
+]
+
+# Windows/MSVC specific flags
+COPTS_MSVC = [
+    "/wd4018",
+    "/wd4061",
+    "/wd4100",
+    "/wd4200",
+    "/wd4242",
+    "/wd4244",
+    "/wd4245",
+    "/wd4267",
+    "/wd4388",
+    "/wd4389",
+    "/wd4456",
+    "/wd4457",
+    "/wd4710",
+    "/wd4711",
+    "/wd4820",
+    "/wd4996",
+    "/wd5045",
+    "/experimental:c11atomics",
+    "/std:c11",
+]
+
+# Common defines
+DEFINES_COMMON = [
+    "_GNU_SOURCE",
+]
+
+# Windows defines
+DEFINES_WINDOWS = [
+    "WIN32_LEAN_AND_MEAN",
+    "_WIN32_WINNT=0x0601",
+]
+
+# Core QuickJS Library
+cc_library(
+    name = "quickjs",
+    srcs = [
+        "dtoa.c",
+        "libregexp.c",
+        "libunicode.c",
+        "quickjs.c",
+        "quickjs-libc.c",
+    ],
+    hdrs = [
+        "builtin-array-fromasync.h",
+        "builtin-iterator-zip.h",
+        "builtin-iterator-zip-keyed.h",
+        "cutils.h",
+        "dtoa.h",
+        "libregexp.h",
+        "libregexp-opcode.h",
+        "libunicode.h",
+        "libunicode-table.h",
+        "list.h",
+        "quickjs.h",
+        "quickjs-atom.h",
+        "quickjs-c-atomics.h",
+        "quickjs-libc.h",
+        "quickjs-opcode.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": COPTS_MSVC,
+        "//conditions:default": COPTS_COMMON,
+    }),
+    defines = DEFINES_COMMON + select({
+        "@platforms//os:windows": DEFINES_WINDOWS,
+        "//conditions:default": [],
+    }),
+    linkopts = selects.with_or({
+        "@platforms//os:windows": [],
+        ":linux_gcc": [
+            "-lm",
+            "-lpthread",
+            "-ldl",
+            "-latomic",
+        ],
+        ("@platforms//os:linux", "//conditions:default"): [
+            "-lm",
+            "-lpthread",
+            "-ldl",
+        ],
+    }),
+)
+
+alias(
+    name = "quickjs-ng",
+    actual = ":quickjs",
+)
+
+# QuickJS Bytecode Compiler
+cc_binary(
+    name = "qjsc",
+    srcs = ["qjsc.c"],
+    deps = [":quickjs"],
+)
+
+# QuickJS CLI (Repl)
+cc_binary(
+    name = "qjs",
+    srcs = [
+        "gen/repl.c",
+        "gen/standalone.c",
+        "qjs.c",
+    ],
+    deps = [":quickjs"],
+)
+
+# Test262 Runner
+cc_binary(
+    name = "run-test262",
+    srcs = ["run-test262.c"],
+    deps = [":quickjs"],
+)
+
+# Tests
+cc_test(
+    name = "api_test",
+    srcs = ["api-test.c"],
+    deps = [":quickjs"],
+)
+
+# Unicode Generator (Standalone)
+cc_binary(
+    name = "unicode_gen",
+    srcs = [
+        "cutils.h",
+        "libunicode.c",
+        "libunicode.h",
+        "libunicode-table.h",
+        "unicode_gen.c",
+        "unicode_gen_def.h",
+    ],
+    defines = DEFINES_COMMON + select({
+        "@platforms//os:windows": DEFINES_WINDOWS,
+        "//conditions:default": [],
+    }),
+)
+
+# Examples
+cc_binary(
+    name = "hello",
+    srcs = ["gen/hello.c"],
+    deps = [":quickjs"],
+)
+
+cc_binary(
+    name = "hello_module",
+    srcs = ["gen/hello_module.c"],
+    deps = [":quickjs"],
+)

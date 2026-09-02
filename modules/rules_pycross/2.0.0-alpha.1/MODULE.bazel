@@ -1,0 +1,267 @@
+"""rules_pycross"""
+
+module(
+    name = "rules_pycross",
+    version = "2.0.0-alpha.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_lib", version = "3.2.0")
+bazel_dep(name = "bazel_features", version = "1.11.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "0.0.4")
+bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "toml.bzl", version = "0.4.1")
+bazel_dep(name = "pypackaging.bzl", version = "0.2.1")
+
+bazel_dep(name = "rules_testing", version = "0.9.0", dev_dependency = True)
+
+# Change this value to set the Python version we use in our repo venv.
+PYTHON_VERSION = "3.13"
+
+py_underscore_version = PYTHON_VERSION.replace(".", "_")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = PYTHON_VERSION)
+use_repo(
+    python,
+    "python_%s" % py_underscore_version,
+    "python_%s_host" % py_underscore_version,
+    "python_versions",
+    "pythons_hub",
+)
+
+pycross = use_extension("@rules_pycross//pycross/extensions:pycross.bzl", "pycross")
+pycross.configure_toolchains()
+pycross.configure_interpreter(
+    python_defs_file = "@python_%s//:defs.bzl" % py_underscore_version,
+    python_interpreter_target = "@python_%s_host//:python" % py_underscore_version,
+)
+pycross.configure_toolchains()
+use_repo(
+    pycross,
+    "rules_pycross_internal",
+    "rules_pycross_internal_config",
+)
+
+backends = use_extension("@rules_pycross//pycross/extensions:backends.bzl", "backends")
+backends.register(
+    name = "meson_build",
+    override_json = "@meson_overrides//:overrides.json",
+    pyproject_backends = [
+        "mesonpy",
+        "mesonbuild",
+    ],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:meson_build.bzl",
+    tool_packages = [
+        "meson",
+        "ninja",
+        "meson-python",
+    ],
+)
+backends.register(
+    name = "cmake_build",
+    override_json = "@cmake_overrides//:overrides.json",
+    pyproject_backends = ["scikit_build_core.build"],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:cmake_build.bzl",
+    tool_packages = [
+        "cmake",
+        "ninja",
+        "scikit-build-core",
+    ],
+)
+backends.register(
+    name = "setuptools_build",
+    override_json = "@setuptools_overrides//:overrides.json",
+    pyproject_backends = [
+        "setuptools.build_meta",
+        "setuptools.build_meta:__legacy__",
+    ],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:setuptools_build.bzl",
+    tool_packages = [
+        "setuptools",
+        "wheel",
+    ],
+)
+
+# Generic PEP 517 fallback backend. Does not need override_json since it has
+# no backend-specific build system attributes to inject.
+backends.register(
+    name = "pep517_build",
+    default = True,
+    pyproject_backends = [
+        "hatchling.build",
+        "flit_core.buildapi",
+        "pdm.backend",
+        "poetry.core.masonry.api",
+    ],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:pep517_build.bzl",
+    tool_packages = [],
+)
+use_repo(
+    backends,
+    "pycross_backends",
+)
+
+toolchains = use_extension("@rules_pycross//pycross/private:toolchains.bzl", "toolchains")
+toolchains.create_for_python_toolchains(name = "pycross_toolchains")
+use_repo(toolchains, "pycross_toolchains")
+
+register_toolchains("@pycross_toolchains//...")
+
+uv = use_extension("@rules_pycross//pycross/extensions:uv.bzl", "uv")
+uv.workspace(
+    name = "pycross_internal_deps",
+    lock_file = "//:uv.lock",
+)
+uv.repo(
+    dependency_groups = [
+        "default",
+        "optional:core",
+        "optional:build",
+        "optional:repairwheel",
+    ],
+    legacy_create_root_aliases = True,
+    workspace = "pycross_internal_deps",
+)
+use_repo(uv, "pycross_internal_deps")
+
+# Create the default (empty) override repos for first-party backends.
+# These are referenced by the backends.register tags above.
+# Users who want to add package-specific overrides (e.g., setuptools.override())
+# must also use_extension the relevant backend in their own MODULE.bazel.
+setuptools = use_extension("@rules_pycross//pycross/backends:setuptools.bzl", "setuptools")
+use_repo(setuptools, "setuptools_overrides")
+
+cmake = use_extension("@rules_pycross//pycross/backends:cmake.bzl", "cmake")
+use_repo(cmake, "cmake_overrides")
+
+meson = use_extension("@rules_pycross//pycross/backends:meson.bzl", "meson")
+use_repo(meson, "meson_overrides")
+
+# Currently development-only
+bazel_dep(name = "gazelle", version = "0.50.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.5.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.3.0", dev_dependency = True)
+
+# Starlark translator test repos (dev-only).
+# Each repo runs the pure-Starlark translator and produces raw_lock.json
+# for golden-file comparison against expected.json.
+_DEFAULT_LOCK_MODEL = '{"projects": ["*"], "dependency_groups": ["default"]}'
+
+_DEFAULT_UV_LOCK_MODEL = '{"projects": ["*"], "dependency_groups": ["default"]}'
+
+_ALL_DEV_UV_LOCK_MODEL = '{"projects": ["*"], "dependency_groups": ["default", "development:*"]}'
+
+starlark_translators = use_extension(
+    "//tests:starlark_lock_model_test.bzl",
+    "translator_test_repos",
+    dev_dependency = True,
+)
+
+# PDM tests
+starlark_translators.translator(
+    name = "starlark_pdm_requirements",
+    lock_file = "//tests/unit/pdm/requirements:pdm.lock",
+    lock_model_json = _DEFAULT_LOCK_MODEL,
+    project_file = "//tests/unit/pdm/requirements:pyproject.toml",
+    translator = "pdm",
+)
+starlark_translators.translator(
+    name = "starlark_pdm_always_build",
+    lock_file = "//tests/unit/pdm/always_build:pdm.lock",
+    lock_model_json = _DEFAULT_LOCK_MODEL,
+    project_file = "//tests/unit/pdm/always_build:pyproject.toml",
+    translator = "pdm",
+)
+starlark_translators.translator(
+    name = "starlark_pdm_local_wheel",
+    lock_file = "//tests/unit/pdm/local_wheel:pdm.lock",
+    lock_model_json = _DEFAULT_LOCK_MODEL,
+    project_file = "//tests/unit/pdm/local_wheel:pyproject.toml",
+    translator = "pdm",
+)
+
+# Poetry tests
+starlark_translators.translator(
+    name = "starlark_poetry_requirements",
+    lock_file = "//tests/unit/poetry/requirements:poetry.lock",
+    lock_model_json = _DEFAULT_LOCK_MODEL,
+    project_file = "//tests/unit/poetry/requirements:pyproject.toml",
+    translator = "poetry",
+)
+starlark_translators.translator(
+    name = "starlark_poetry_always_build",
+    lock_file = "//tests/unit/poetry/always_build:poetry.lock",
+    lock_model_json = _DEFAULT_LOCK_MODEL,
+    project_file = "//tests/unit/poetry/always_build:pyproject.toml",
+    translator = "poetry",
+)
+starlark_translators.translator(
+    name = "starlark_poetry_local_wheel",
+    lock_file = "//tests/unit/poetry/local_wheel:poetry.lock",
+    lock_model_json = _DEFAULT_LOCK_MODEL,
+    project_file = "//tests/unit/poetry/local_wheel:pyproject.toml",
+    translator = "poetry",
+)
+
+# UV tests
+starlark_translators.translator(
+    name = "starlark_uv_lock_0_2_35",
+    lock_file = "//tests/unit/uv/lock_0_2_35:uv.lock",
+    lock_model_json = _DEFAULT_UV_LOCK_MODEL,
+    project_file = "//tests/unit/uv/lock_0_2_35:pyproject.toml",
+    translator = "uv",
+)
+starlark_translators.translator(
+    name = "starlark_uv_lock_pre_0_2_35",
+    lock_file = "//tests/unit/uv/lock_pre_0_2_35:uv.lock",
+    lock_model_json = _DEFAULT_UV_LOCK_MODEL,
+    project_file = "//tests/unit/uv/lock_pre_0_2_35:pyproject.toml",
+    translator = "uv",
+)
+starlark_translators.translator(
+    name = "starlark_uv_lock_0_4_0_virtual",
+    lock_file = "//tests/unit/uv/lock_0_4_0_virtual:uv.lock",
+    lock_model_json = _DEFAULT_UV_LOCK_MODEL,
+    project_file = "//tests/unit/uv/lock_0_4_0_virtual:pyproject.toml",
+    translator = "uv",
+)
+starlark_translators.translator(
+    name = "starlark_uv_lock_0_4_27_pep735",
+    lock_file = "//tests/unit/uv/lock_0_4_27_pep735:uv.lock",
+    lock_model_json = _ALL_DEV_UV_LOCK_MODEL,
+    project_file = "//tests/unit/uv/lock_0_4_27_pep735:pyproject.toml",
+    translator = "uv",
+)
+starlark_translators.translator(
+    name = "starlark_uv_lock_0_4_27_legacy_dev_dependencies",
+    lock_file = "//tests/unit/uv/lock_0_4_27_legacy_dev_dependencies:uv.lock",
+    lock_model_json = _ALL_DEV_UV_LOCK_MODEL,
+    project_file = "//tests/unit/uv/lock_0_4_27_legacy_dev_dependencies:pyproject.toml",
+    translator = "uv",
+)
+starlark_translators.translator(
+    name = "starlark_uv_lock_workspace",
+    lock_file = "//tests/unit/uv/lock_workspace:uv.lock",
+    lock_model_json = _DEFAULT_UV_LOCK_MODEL,
+    project_file = "//tests/unit/uv/lock_workspace:pyproject.toml",
+    translator = "uv",
+)
+use_repo(
+    starlark_translators,
+    "starlark_pdm_always_build",
+    "starlark_pdm_local_wheel",
+    "starlark_pdm_requirements",
+    "starlark_poetry_always_build",
+    "starlark_poetry_local_wheel",
+    "starlark_poetry_requirements",
+    "starlark_uv_lock_0_2_35",
+    "starlark_uv_lock_0_4_0_virtual",
+    "starlark_uv_lock_0_4_27_legacy_dev_dependencies",
+    "starlark_uv_lock_0_4_27_pep735",
+    "starlark_uv_lock_pre_0_2_35",
+    "starlark_uv_lock_workspace",
+)
