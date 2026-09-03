@@ -857,7 +857,6 @@ LIBSED_GNULIB_GENERATED_HDRS = {
     "lib/string.h": "lib/string.in.h",
     "lib/sys/random.h": "lib/sys_random.in.h",
     "lib/sys/stat.h": "lib/sys_stat.in.h",
-    "lib/sys/types.h": "lib/sys_types.in.h",
     "lib/time.h": "lib/time.in.h",
     "lib/uchar.h": "lib/uchar.in.h",
     "lib/unicase.h": "lib/unicase.in.h",
@@ -876,6 +875,15 @@ LIBSED_GNULIB_GENERATED_HDRS = {
         defaults = True,
         inlines = GL_INLINES,
         mode = "subst",
+        substitutions = select({
+            "@rules_cc//cc/compiler:clang-cl": {
+                "@REPLACE_MBSINIT@": "1",
+            },
+            "@rules_cc//cc/compiler:msvc-cl": {
+                "@REPLACE_MBSINIT@": "1",
+            },
+            "//conditions:default": {},
+        }) if hdr == "lib/wchar.h" else {},
         template = template,
         deps = [":autoconf"],
     )
@@ -1001,8 +1009,6 @@ cc_gnulib_conditional_hdrs(
     name = "lib/sed_gnulib_conditional_hdrs",
     hdrs = {
         ":lib_alloca_h_processed": "GL_GENERATE_ALLOCA_H",
-        ":lib_assert_h_processed": "GL_GENERATE_ASSERT_H",
-        ":lib_errno_h_processed": "GL_GENERATE_ERRNO_H",
         ":lib_getopt_cdefs_h_processed": "GL_GENERATE_GETOPT_CDEFS_H",
         ":lib_getopt_h_processed": "GL_GENERATE_GETOPT_H",
         ":lib_limits_h_processed": "GL_GENERATE_LIMITS_H",
@@ -1010,6 +1016,15 @@ cc_gnulib_conditional_hdrs(
         ":lib_stdckdint_h_processed": "GL_GENERATE_STDCKDINT_H",
         ":lib_stdcountof_h_processed": "ac_cv_header_stdcountof_h==0 || NEXT_STDCOUNTOF_H",
         ":lib_stddef_h_processed": "GL_GENERATE_STDDEF_H",
+    },
+    deps = [":autoconf"],
+)
+
+cc_gnulib_conditional_hdrs(
+    name = "lib/sed_gnulib_conditional_hdrs_nonmsvc",
+    hdrs = {
+        ":lib_assert_h_processed": "GL_GENERATE_ASSERT_H",
+        ":lib_errno_h_processed": "GL_GENERATE_ERRNO_H",
         ":lib_stdint_h_processed": "GL_GENERATE_STDINT_H",
     },
     deps = [":autoconf"],
@@ -1026,6 +1041,17 @@ LIBTESTS_GNULIB_GENERATED_HDRS = {
     "gnulib-tests/sys/uio.h": "gnulib-tests/sys_uio.in.h",
 }
 
+MSVC_LIBTESTS_HEADER_SUBSTITUTIONS = {
+    "gnulib-tests/sys/select.h": {
+        "/* Get definition of 'sigset_t'.": "#include <time.h>\n\n/* Get definition of 'sigset_t'.",
+    },
+    "gnulib-tests/sys/socket.h": {
+        "@HAVE_STRUCT_SOCKADDR_STORAGE@": "1",
+        "@HAVE_STRUCT_SOCKADDR_STORAGE_SS_FAMILY@": "1",
+        "@HAVE_WS2TCPIP_H@": "1",
+    },
+}
+
 [
     autoconf_hdr(
         name = hdr.replace("/", "_").replace(".", "_").replace("-", "_"),
@@ -1033,6 +1059,11 @@ LIBTESTS_GNULIB_GENERATED_HDRS = {
         defaults = True,
         inlines = GL_INLINES,
         mode = "subst",
+        substitutions = select({
+            "@rules_cc//cc/compiler:clang-cl": MSVC_LIBTESTS_HEADER_SUBSTITUTIONS.get(hdr, {}),
+            "@rules_cc//cc/compiler:msvc-cl": MSVC_LIBTESTS_HEADER_SUBSTITUTIONS.get(hdr, {}),
+            "//conditions:default": {},
+        }),
         template = template,
         deps = [":autoconf"],
     )
@@ -1301,7 +1332,11 @@ cc_library(
     strip_include_prefix = ".",
     deps = [
         ":lib/sed_gnulib_conditional_hdrs",
-    ],
+    ] + select({
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [":lib/sed_gnulib_conditional_hdrs_nonmsvc"],
+    }),
 )
 
 cc_library(
