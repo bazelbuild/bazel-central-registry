@@ -14,3 +14,7 @@ disables host fontconfig discovery, so it needs no installed fonts.
 
 The configuration also declares `HAVE_ZLIB` for the existing zlib dependency,
 so the script interpreter used by Cairo's presubmit compiles hermetically.
+
+The existing Bazel test-path patch now formats its path through a mutable
+local pointer before assigning the context field, so it compiles with GCC 14
+without discarding pointer qualifiers. This only changes the test harness.
