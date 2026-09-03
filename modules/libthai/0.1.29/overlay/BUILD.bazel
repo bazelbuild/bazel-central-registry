@@ -1,0 +1,82 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    package_name = "libthai",
+    license_kinds = ["@rules_license//licenses/spdx:LGPL-2.1-or-later"],
+    license_text = "COPYING",
+    package_url = "https://linux.thai.net/projects/libthai/",
+    package_version = "0.1.29",
+)
+
+LINUX_ONLY = select({
+    "@platforms//os:linux": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+filegroup(
+    name = "word_lists",
+    srcs = glob(["data/tdict-*.txt"]),
+)
+
+# Same sorted input and compiler invocation as upstream data/Makefile.am.
+genrule(
+    name = "compile_dictionary",
+    srcs = [
+        ":word_lists",
+        "data/thbrk.abm",
+    ],
+    outs = ["bazel_data/thbrk.tri"],
+    cmd = """
+        export LC_ALL=C
+        cat $(locations :word_lists) | sort -u > "$(@D)/tdict.txt"
+        cp $(location data/thbrk.abm) "$(@D)/thbrk.abm"
+        $(location @libdatrie//:trietool) -p "$(@D)" thbrk add-list -e UTF-8 "$(@D)/tdict.txt"
+    """,
+    target_compatible_with = LINUX_ONLY,
+    tools = ["@libdatrie//:trietool"],
+)
+
+filegroup(
+    name = "dictionary",
+    srcs = [":compile_dictionary"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "libthai",
+    srcs = [
+        "src/libthai.c",
+        "src/thbrk/brk-common.c",
+        "src/thbrk/brk-ctype.c",
+        "src/thbrk/brk-maximal.c",
+        "src/thbrk/thbrk.c",
+        "src/thcell/thcell.c",
+        "src/thcoll/cweight.c",
+        "src/thcoll/thcoll.c",
+        "src/thctype/thctype.c",
+        "src/thctype/wtt.c",
+        "src/thinp/thinp.c",
+        "src/thrend/thrend.c",
+        "src/thstr/thstr.c",
+        "src/thwbrk/thwbrk.c",
+        "src/thwchar/thwchar.c",
+        "src/thwctype/thwctype.c",
+        "src/thwstr/thwstr.c",
+    ] + glob(["src/**/*.h"]),
+    hdrs = glob(["include/thai/*.h"]),
+    data = [":dictionary"],
+    includes = ["include"],
+    linkstatic = True,
+    # Consumers resolve :dictionary in runfiles and set LIBTHAI_DICTDIR
+    # before the first default word-breaker call, or use th_brk_new(path).
+    local_defines = ["DICT_DIR='\"/nonexistent/libthai\"'"],
+    target_compatible_with = LINUX_ONLY,
+    visibility = ["//visibility:public"],
+    deps = ["@libdatrie"],
+)
+
+exports_files(glob(["tests/test_th*.c"]))
