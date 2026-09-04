@@ -14,6 +14,7 @@ U+1F600 produces a nonempty colored BGRA bitmap. It does not use host fonts.
 The existing build-platform matrix is retained; the test adds coverage
 for Bazel 7, 8, and 9 on Linux, macOS arm64, and Windows.
 
-The source URL uses FreeType's official SourceForge release distribution
-(the Savannah download redirector returned HTTP 502 in BCR CI). The archive
-checksum and the existing direct mirrors are unchanged.
+The source URL uses Savannah's direct release mirror instead of its download
+redirector, which returned HTTP 502 in BCR CI. This URL was already listed as
+a mirror in the previous registry revision. The archive checksum and the
+other direct mirrors are unchanged.
