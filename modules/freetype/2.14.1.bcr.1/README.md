@@ -13,3 +13,7 @@ with a pinned SHA-256, resolves it through Bazel runfiles, and checks that
 U+1F600 produces a nonempty colored BGRA bitmap. It does not use host fonts.
 The existing build-platform matrix is retained; the test adds coverage
 for Bazel 7, 8, and 9 on Linux, macOS arm64, and Windows.
+
+The source URL uses FreeType's official SourceForge release distribution
+(the Savannah download redirector returned HTTP 502 in BCR CI). The archive
+checksum and the existing direct mirrors are unchanged.
