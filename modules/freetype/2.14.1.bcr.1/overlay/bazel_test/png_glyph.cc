@@ -1,5 +1,10 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
+#include FT_CONFIG_OPTIONS_H
+
+#ifndef FT_CONFIG_OPTION_USE_PNG
+#error Public FreeType configuration must advertise PNG support
+#endif
 #include "rules_cc/cc/runfiles/runfiles.h"
 
 #include <cstdio>
