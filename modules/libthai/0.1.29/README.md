@@ -25,3 +25,5 @@ and resolve its `$(rlocationpath @libthai//:dictionary)` with their runfiles API
 Tests cover six upstream character/input/rendering APIs, dictionary loading
 from runfiles, and the default word breaker with static and dynamic linking.
 The module advertises Linux support; other platforms are not validated.
+
+License: `LGPL-2.1-or-later`; see `COPYING` in the upstream source archive.
