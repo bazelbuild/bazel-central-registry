@@ -18,3 +18,10 @@ so the script interpreter used by Cairo's presubmit compiles hermetically.
 The existing Bazel test-path patch now formats its path through a mutable
 local pointer before assigning the context field, so it compiles with GCC 14
 without discarding pointer qualifiers. This only changes the test harness.
+
+The revision also enables `HAS_PIXMAN_GLYPHS`, as upstream Meson does for
+its required Pixman version. Without it, Cairo selects a legacy compositor
+that rounds glyph positions to whole pixels. `@cairo//test:glyph_positioning`
+compares a synthetic square glyph with equivalent vector geometry at all
+16 quarter-pixel phase combinations. It fails before this configuration fix
+and requires no font files.
