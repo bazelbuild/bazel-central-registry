@@ -2,7 +2,7 @@
 
 Bazel-native Linux targets for the upstream release:
 
-- `@libdatrie//:libdatrie`: public C/C++ library (`<datrie/trie.h>`).
+- `@libdatrie//:datrie` (also `:libdatrie` or `@libdatrie`): public C/C++ library (`<datrie/trie.h>`).
 - `@libdatrie//:trietool`: upstream dictionary compiler, usable as a
   `genrule` tool so Bazel builds it for the execution platform.
 
