@@ -1,0 +1,289 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@glib//gobject:gobject.bzl", "mkenums")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+
+# Source and installed-header lists from pango/meson.build, Pango 1.52.1.
+CORE_HEADERS = [
+    "pango/pango.h",
+    "pango/pango-attributes.h",
+    "pango/pango-bidi-type.h",
+    "pango/pango-break.h",
+    "pango/pango-color.h",
+    "pango/pango-context.h",
+    "pango/pango-coverage.h",
+    "pango/pango-direction.h",
+    "pango/pango-engine.h",
+    "pango/pango-font.h",
+    "pango/pango-fontmap.h",
+    "pango/pango-fontset.h",
+    "pango/pango-fontset-simple.h",
+    "pango/pango-glyph.h",
+    "pango/pango-glyph-item.h",
+    "pango/pango-gravity.h",
+    "pango/pango-item.h",
+    "pango/pango-language.h",
+    "pango/pango-layout.h",
+    "pango/pango-matrix.h",
+    "pango/pango-markup.h",
+    "pango/pango-modules.h",
+    "pango/pango-renderer.h",
+    "pango/pango-script.h",
+    "pango/pango-tabs.h",
+    "pango/pango-types.h",
+    "pango/pango-utils.h",
+]
+
+expand_template(
+    name = "pango_features",
+    out = "pango/pango-features.h",
+    substitutions = {
+        "#mesondefine PANGO_VERSION_MAJOR": "#define PANGO_VERSION_MAJOR 1",
+        "#mesondefine PANGO_VERSION_MINOR": "#define PANGO_VERSION_MINOR 52",
+        "#mesondefine PANGO_VERSION_MICRO": "#define PANGO_VERSION_MICRO 1",
+        "@PANGO_VERSION_MAJOR@": "1",
+        "@PANGO_VERSION_MINOR@": "52",
+        "@PANGO_VERSION_MICRO@": "1",
+    },
+    template = "pango/pango-features.h.meson",
+)
+
+[mkenums(
+    name = "pango_enum_types_" + ext,
+    srcs = CORE_HEADERS,
+    out = "pango/pango-enum-types." + ext,
+    template = "pango/pango-enum-types." + ext + ".template",
+) for ext in [
+    "c",
+    "h",
+]]
+
+# Private headers shared between upstream compilation units. Keep config.h
+# private to Pango so it cannot shadow a consumer's configuration header.
+PRIVATE_HEADERS = glob(["pango/**/*.h"]) + ["config.h"]
+
+# break.c includes these script-specific implementations directly.
+INCLUDED_SOURCES = glob(["pango/break-*.c"]) + ["pango/emoji_presentation_scanner.c"]
+
+LOCAL_DEFINES = [
+    "_GNU_SOURCE",
+    "_POSIX_C_SOURCE=200809L",
+    "_POSIX_THREAD_SAFE_FUNCTIONS",
+    "PANGO_COMPILATION",
+    "PANGO_DISABLE_DEPRECATION_WARNINGS",
+    "G_LOG_DOMAIN='\"Pango\"'",
+    "G_LOG_USE_STRUCTURED=1",
+    # Legacy module/config lookups are unused by the built-in font backends.
+    "SYSCONFDIR='\"/nonexistent\"'",
+    "LIBDIR='\"/nonexistent\"'",
+]
+
+LINUX_ONLY = select({
+    "@platforms//os:linux": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root or "."
+
+NATIVE_DEPS = [
+    "@fontconfig//:fontconfig",
+    "@freetype//:freetype",
+    "@fribidi//:fribidi",
+    "@glib//gio:gio",
+    "@glib//glib:glib",
+    "@glib//gobject:gobject",
+    "@harfbuzz//:harfbuzz",
+    "@libdatrie//:datrie",
+    "@libpng//:libpng",
+    "@libthai//:thai",
+    "@zlib//:zlib",
+]
+
+cc_library(
+    name = "pango",
+    srcs = [
+        "pango/break.c",
+        "pango/ellipsize.c",
+        "pango/fonts.c",
+        "pango/glyphstring.c",
+        "pango/itemize.c",
+        "pango/json/gtkjsonparser.c",
+        "pango/json/gtkjsonprinter.c",
+        "pango/modules.c",
+        "pango/pango-attributes.c",
+        "pango/pango-bidi-type.c",
+        "pango/pango-color.c",
+        "pango/pango-context.c",
+        "pango/pango-coverage.c",
+        "pango/pango-emoji.c",
+        "pango/pango-engine.c",
+        "pango/pango-fontmap.c",
+        "pango/pango-fontset.c",
+        "pango/pango-fontset-simple.c",
+        "pango/pango-glyph-item.c",
+        "pango/pango-gravity.c",
+        "pango/pango-item.c",
+        "pango/pango-language.c",
+        "pango/pango-layout.c",
+        "pango/pango-markup.c",
+        "pango/pango-matrix.c",
+        "pango/pango-renderer.c",
+        "pango/pango-script.c",
+        "pango/pango-tabs.c",
+        "pango/pango-utils.c",
+        "pango/reorder-items.c",
+        "pango/serializer.c",
+        "pango/shape.c",
+    ] + PRIVATE_HEADERS + [":pango_enum_types_c"],
+    hdrs = CORE_HEADERS + [
+        "pango/pango-version-macros.h",
+        ":pango_enum_types_h",
+        ":pango_features",
+    ],
+    copts = [
+        "-std=gnu99",
+        "-fno-strict-aliasing",
+        "-I" + REPO_ROOT,
+    ],
+    include_prefix = "pango",
+    includes = ["pango"],
+    # HarfBuzz 14.1.0 puts hb-unicode.cc in harfbuzz-subset, after the
+    # archive containing hb-glib.cc. Force this dependency into the link
+    # before archive scanning so static consumers also resolve it.
+    linkopts = [
+        "-lm",
+        "-Wl,-u,hb_glib_get_unicode_funcs",
+    ],
+    linkstatic = True,
+    local_defines = LOCAL_DEFINES,
+    strip_include_prefix = "pango",
+    target_compatible_with = LINUX_ONLY,
+    textual_hdrs = INCLUDED_SOURCES,
+    visibility = ["//visibility:public"],
+    deps = NATIVE_DEPS,
+)
+
+cc_library(
+    name = "pangoft2",
+    srcs = [
+        "pango/pango-ot-buffer.c",
+        "pango/pango-ot-info.c",
+        "pango/pango-ot-ruleset.c",
+        "pango/pango-ot-tag.c",
+        "pango/pango-trace.c",
+        "pango/pangofc-decoder.c",
+        "pango/pangofc-font.c",
+        "pango/pangofc-fontmap.c",
+        "pango/pangoft2.c",
+        "pango/pangoft2-fontmap.c",
+        "pango/pangoft2-render.c",
+    ] + PRIVATE_HEADERS,
+    hdrs = [
+        "pango/pango-ot.h",
+        "pango/pangofc-decoder.h",
+        "pango/pangofc-font.h",
+        "pango/pangofc-fontmap.h",
+        "pango/pangoft2.h",
+    ],
+    copts = [
+        "-std=gnu99",
+        "-fno-strict-aliasing",
+        "-I" + REPO_ROOT,
+    ],
+    include_prefix = "pango",
+    includes = ["pango"],
+    linkstatic = True,
+    local_defines = LOCAL_DEFINES,
+    strip_include_prefix = "pango",
+    target_compatible_with = LINUX_ONLY,
+    visibility = ["//visibility:public"],
+    deps = [":pango"],
+)
+
+cc_library(
+    name = "pangocairo",
+    srcs = [
+        "pango/pangocairo-context.c",
+        "pango/pangocairo-fcfont.c",
+        "pango/pangocairo-fcfontmap.c",
+        "pango/pangocairo-font.c",
+        "pango/pangocairo-fontmap.c",
+        "pango/pangocairo-render.c",
+    ] + PRIVATE_HEADERS,
+    hdrs = ["pango/pangocairo.h"],
+    copts = [
+        "-std=gnu99",
+        "-fno-strict-aliasing",
+        "-I" + REPO_ROOT,
+    ],
+    include_prefix = "pango",
+    includes = ["pango"],
+    linkstatic = True,
+    local_defines = LOCAL_DEFINES,
+    strip_include_prefix = "pango",
+    target_compatible_with = LINUX_ONLY,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pangoft2",
+        "@cairo",
+    ],
+)
+
+# Own the shared dependencies once, including all public symbols of the
+# roots below. Otherwise independent dlopen() calls would duplicate GLib's
+# GType registry and other dependency globals across the three DSOs.
+cc_shared_library(
+    name = "pango_shared",
+    # All three DSOs are colocated in this package and in their runfiles.
+    # Also support relocating the three DSOs together outside the build.
+    shared_lib_name = "libpango-1.0.so.0",
+    target_compatible_with = LINUX_ONLY,
+    user_link_flags = [
+        "-Wl,-z,defs",
+        "-Wl,-soname,libpango-1.0.so.0",
+        "-Wl,-rpath,$ORIGIN",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":pango"] + NATIVE_DEPS,
+)
+
+cc_shared_library(
+    name = "pangoft2_shared",
+    dynamic_deps = [":pango_shared"],
+    # All three DSOs are colocated in this package and in their runfiles.
+    # Also support relocating the three DSOs together outside the build.
+    shared_lib_name = "libpangoft2-1.0.so.0",
+    target_compatible_with = LINUX_ONLY,
+    user_link_flags = [
+        "-Wl,-z,defs",
+        "-Wl,-soname,libpangoft2-1.0.so.0",
+        "-Wl,-rpath,$ORIGIN",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":pangoft2"],
+)
+
+cc_shared_library(
+    name = "pangocairo_shared",
+    dynamic_deps = [
+        ":pango_shared",
+        ":pangoft2_shared",
+    ],
+    # All three DSOs are colocated in this package and in their runfiles.
+    # Also support relocating the three DSOs together outside the build.
+    shared_lib_name = "libpangocairo-1.0.so.0",
+    target_compatible_with = LINUX_ONLY,
+    user_link_flags = [
+        "-Wl,-z,defs",
+        "-Wl,-soname,libpangocairo-1.0.so.0",
+        "-Wl,-rpath,$ORIGIN",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":pangocairo"],
+)
+
+# Font fixture from the upstream release; runtime tests never scan host fonts.
+exports_files([
+    "tests/fonts/DejaVuSans.ttf",
+    "tests/fonts/emoji-subset.ttf",
+])
