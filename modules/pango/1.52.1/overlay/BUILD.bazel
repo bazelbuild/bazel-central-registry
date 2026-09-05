@@ -233,20 +233,18 @@ cc_library(
     ],
 )
 
-# Own the shared dependencies once, including all public symbols of the
-# roots below. Otherwise independent dlopen() calls would duplicate GLib's
-# GType registry and other dependency globals across the three DSOs.
+# Export these dependency roots from the core DSO, not just :pango. Cairo
+# also depends on Fontconfig/FreeType/PNG/zlib; cc_shared_library rejects those
+# shared dependencies as "linked statically but not exported" without the roots.
+# Whole-archive linking also retains their public APIs for explicit dlopen users.
+# This gives all three DSOs one GLib/GObject registry and other native globals.
 cc_shared_library(
     name = "pango_shared",
-    # All three DSOs are colocated in this package and in their runfiles.
-    # Also support relocating the three DSOs together outside the build.
     shared_lib_name = "libpango-1.0.so.0",
     target_compatible_with = LINUX_ONLY,
-    user_link_flags = [
-        "-Wl,-z,defs",
-        "-Wl,-soname,libpango-1.0.so.0",
-        "-Wl,-rpath,$ORIGIN",
-    ],
+    # shared_lib_name sets the filename, but the tested Linux toolchain does
+    # not emit DT_SONAME for a custom output name. Keep the stable ABI name.
+    user_link_flags = ["-Wl,-soname,libpango-1.0.so.0"],
     visibility = ["//visibility:public"],
     deps = [":pango"] + NATIVE_DEPS,
 )
@@ -254,13 +252,11 @@ cc_shared_library(
 cc_shared_library(
     name = "pangoft2_shared",
     dynamic_deps = [":pango_shared"],
-    # All three DSOs are colocated in this package and in their runfiles.
-    # Also support relocating the three DSOs together outside the build.
     shared_lib_name = "libpangoft2-1.0.so.0",
     target_compatible_with = LINUX_ONLY,
     user_link_flags = [
-        "-Wl,-z,defs",
         "-Wl,-soname,libpangoft2-1.0.so.0",
+        # Bazel's _solib runpaths do not cover the three DSOs copied together.
         "-Wl,-rpath,$ORIGIN",
     ],
     visibility = ["//visibility:public"],
@@ -273,13 +269,11 @@ cc_shared_library(
         ":pango_shared",
         ":pangoft2_shared",
     ],
-    # All three DSOs are colocated in this package and in their runfiles.
-    # Also support relocating the three DSOs together outside the build.
     shared_lib_name = "libpangocairo-1.0.so.0",
     target_compatible_with = LINUX_ONLY,
     user_link_flags = [
-        "-Wl,-z,defs",
         "-Wl,-soname,libpangocairo-1.0.so.0",
+        # Bazel's _solib runpaths do not cover the three DSOs copied together.
         "-Wl,-rpath,$ORIGIN",
     ],
     visibility = ["//visibility:public"],

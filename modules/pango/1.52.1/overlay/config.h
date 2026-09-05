@@ -1,6 +1,5 @@
 /* Linux configuration for the pinned BCR dependencies. No host probes. */
-#ifndef PANGO_BAZEL_CONFIG_H
-#define PANGO_BAZEL_CONFIG_H
+#pragma once
 #define PANGO_BINARY_AGE 5201
 #define PANGO_INTERFACE_AGE 1
 #define PANGO_VERSION_MAJOR 1
@@ -16,4 +15,3 @@
 #define HAVE_LIBTHAI 1
 #define HAVE_TH_BRK_FIND_BREAKS 1
 #undef HAVE_SYSPROF
-#endif
