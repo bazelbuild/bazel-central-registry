@@ -1,0 +1,46 @@
+load("@rules_python//python:py_binary.bzl", "py_binary")
+load("//bazel/private:exec.bzl", "executable_file")
+
+# The launcher, as something Bazel guarantees is executable rather than
+# something the checkout happens to have marked as such.
+executable_file(
+    name = "run_kit",
+    src = "run_kit.sh",
+    out = "run_kit_executable.sh",
+    # Reached through //bazel:defs.bzl, so a consumer's package has to see it.
+    visibility = ["//visibility:public"],
+)
+
+# Regenerate the two GENERATED files. On the interpreter rules_python pins, not
+# whatever `python3` the host has: these decide what the module builds, so the
+# answer should not depend on the machine that asked.
+#   bazel run @isaacsim//bazel:gen_source_exts -- --tarball IsaacSim-6.0.0.tar.gz
+[
+    py_binary(
+        name = name,
+        srcs = [name + ".py"],
+        # Single-file scripts importing nothing of their own.
+        legacy_create_init = False,
+        python_version = "3.12",
+        visibility = ["//visibility:public"],
+    )
+    for name in [
+        "gen_exts_lock",
+        "gen_pip_lock",
+        "gen_source_exts",
+    ]
+]
+
+exports_files([
+    # Consumed by //bazel:kit.bzl's kit.extensions() and kit.prebundle() in
+    # MODULE.bazel.
+    "exts_lock.json",
+    "pip_urdf_usd_lock.json",
+    # App config fragments and the script Kit runs in the launch test, used from
+    # //BUILD.bazel and by consumers through //bazel:defs.bzl.
+    "deps.kit",
+    "hermetic.kit",
+    "kernel_only.kit",
+    "launch_smoke.py",
+    "registry.kit",
+])
