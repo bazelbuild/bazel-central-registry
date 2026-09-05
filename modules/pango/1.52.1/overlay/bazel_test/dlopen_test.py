@@ -31,7 +31,9 @@ def main():
         relocated = tempfile.TemporaryDirectory()
         paths[:3] = [Path(shutil.copy2(path, relocated.name)) for path in paths[:3]]
         assert {path.name for path in Path(relocated.name).iterdir()} == {
-            "libpango-1.0.so.0", "libpangoft2-1.0.so.0", "libpangocairo-1.0.so.0"
+            "libpango-1.0.so.0",
+            "libpangoft2-1.0.so.0",
+            "libpangocairo-1.0.so.0",
         }
     # The default must work without a dictionary file or an inherited override.
     os.environ.pop("LIBTHAI_DICTDIR", None)
