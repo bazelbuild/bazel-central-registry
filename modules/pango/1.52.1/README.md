@@ -7,6 +7,14 @@ The release's `COPYING` file and copyright notices are retained.
 
 Add `bazel_dep(name = "pango", version = "1.52.1")` to `MODULE.bazel`.
 
+The HarfBuzz/ICU dependencies require C++17 or newer. With a toolchain that
+defaults to an older standard (including Bazel 7's default Linux toolchain), add
+this to your project's `.bazelrc`:
+
+```text
+build --cxxopt=-std=c++17
+```
+
 | Target | Purpose / output |
 | --- | --- |
 | `@pango` or `@pango//:pango` | Core `cc_library`; include `<pango/pango.h>` |
