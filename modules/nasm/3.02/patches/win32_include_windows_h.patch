@@ -1,0 +1,35 @@
+Include <windows.h> before <stringapiset.h> in nasmlib/file.c.
+
+New in 3.02, the _WIN32 branch of `nasmlib/file.c` calls
+`MultiByteToWideChar()` and reaches for `<stringapiset.h>` to declare it.
+That is one of the Windows SDK's "minwin" leaf headers, and it is not
+self-contained: its include chain reaches `<winnt.h>` without anything
+having established the SDK's target-architecture macro (`_AMD64_`,
+`_X86_`, `_ARM64_`, ...), which the compiler does not predefine -- cl.exe
+only predefines `_M_AMD64`/`_M_X64`. `<winnt.h>` then hits its closing
+
+    #else
+    #error "No Target Architecture"
+    #endif
+
+and the translation unit dies with C1189.
+
+`<windows.h>` is the header that sets this up, which is why the leaf
+headers work for everyone who includes it first and only for them. nasm
+includes it nowhere, so pull it in here. WIN32_LEAN_AND_MEAN keeps it to
+the base API and, in particular, keeps `wingdi.h` from defining `ERROR`
+on top of nasm's own error vocabulary.
+
+--- a/nasmlib/file.c
++++ b/nasmlib/file.c
+@@ -45,6 +45,10 @@
+  */
+ #ifdef _WIN32
+ #include <wchar.h>
++#ifndef WIN32_LEAN_AND_MEAN
++# define WIN32_LEAN_AND_MEAN 1
++#endif
++#include <windows.h>
+ #include <stringapiset.h>
+
+ typedef wchar_t *os_filename;
