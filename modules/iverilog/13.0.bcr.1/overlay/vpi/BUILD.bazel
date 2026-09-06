@@ -1,0 +1,311 @@
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:defs.bzl", "autoconf_hdr")
+load(
+    "//bazel:iverilog.bzl",
+    "MATH_LINKOPTS",
+    "PICFLAG",
+    "SHARED_LINKOPTS",
+    "WARNING_COPTS",
+)
+
+VPI_COPTS = ["-DICARUS_VPI_CONST=const"] + PICFLAG
+
+# =============================================================================
+# Config Header
+# =============================================================================
+
+autoconf_hdr(
+    name = "gen_vpi_config_h",
+    out = "vpi_config.h",
+    template = "vpi_config.h.in",
+    deps = ["//:autoconf"],
+)
+
+cc_library(
+    name = "vpi_config",
+    hdrs = [":gen_vpi_config_h"],
+    includes = ["."],
+)
+
+# =============================================================================
+# Flex / Bison Generated Sources
+# =============================================================================
+
+flex(
+    name = "gen_sys_readmem_lex",
+    srcs = ["sys_readmem_lex.lex"],
+    outs = ["sys_readmem_lex.c"],
+    args = [
+        "-o",
+        "$(execpath sys_readmem_lex.c)",
+        "$(execpath sys_readmem_lex.lex)",
+    ],
+)
+
+bison(
+    name = "gen_sdf_parse",
+    srcs = ["sdf_parse.y"],
+    outs = [
+        "sdf_parse.c",
+        "sdf_parse.h",
+    ],
+    args = [
+        "--verbose",
+        "-t",
+        "-p",
+        "sdf",
+        "-d",
+        "-o",
+        "$(execpath sdf_parse.c)",
+        "$(execpath sdf_parse.y)",
+    ],
+)
+
+flex(
+    name = "gen_sdf_lexor",
+    srcs = ["sdf_lexor.lex"],
+    outs = ["sdf_lexor.c"],
+    args = [
+        "-o",
+        "$(execpath sdf_lexor.c)",
+        "$(execpath sdf_lexor.lex)",
+    ],
+)
+
+bison(
+    name = "gen_table_mod_parse",
+    srcs = ["table_mod_parse.y"],
+    outs = [
+        "table_mod_parse.c",
+        "table_mod_parse.h",
+    ],
+    args = [
+        "--verbose",
+        "-t",
+        "-p",
+        "tblmod",
+        "-d",
+        "-o",
+        "$(execpath table_mod_parse.c)",
+        "$(execpath table_mod_parse.y)",
+    ],
+)
+
+flex(
+    name = "gen_table_mod_lexor",
+    srcs = ["table_mod_lexor.lex"],
+    outs = ["table_mod_lexor.c"],
+    args = [
+        "-o",
+        "$(execpath table_mod_lexor.c)",
+        "$(execpath table_mod_lexor.lex)",
+    ],
+)
+
+# =============================================================================
+# VPI Library
+# =============================================================================
+
+cc_library(
+    name = "vpi",
+    srcs = ["libvpi.c"],
+    copts = VPI_COPTS,
+    visibility = ["//visibility:public"],
+    deps = ["//:public_headers"],
+)
+
+# =============================================================================
+# VPI Modules
+# =============================================================================
+
+VPI_HDRS = glob(["*.h"])
+
+SYSTEM_VPI_CORE_SRCS = [
+    "mt19937int.c",
+    "stringheap.c",
+    "sys_convert.c",
+    "sys_countdrivers.c",
+    "sys_darray.c",
+    "sys_deposit.c",
+    "sys_display.c",
+    "sys_fileio.c",
+    "sys_finish.c",
+    "sys_icarus.c",
+    "sys_plusargs.c",
+    "sys_priv.c",
+    "sys_queue.c",
+    "sys_random.c",
+    "sys_random_mti.c",
+    "sys_readmem.c",
+    "sys_scanf.c",
+    "sys_sdf.c",
+    "sys_table.c",
+    "sys_time.c",
+    "sys_vcd.c",
+    "sys_vcdoff.c",
+    "table_mod.c",
+    "vams_simparam.c",
+    "vcd_priv.c",
+    "vcd_priv2.cc",
+]
+
+SYSTEM_VPI_Z_SRCS = [
+    "sys_fst.c",
+    "fstapi.c",
+    "fastlz.c",
+    "lz4.c",
+    "sys_lxt2.c",
+    "lxt2_write.c",
+]
+
+SYSTEM_VPI_LXT_SRCS = [
+    "sys_lxt.c",
+    "lxt_write.c",
+]
+
+cc_binary(
+    name = "system_vpi",
+    srcs = SYSTEM_VPI_CORE_SRCS + VPI_HDRS + [
+        ":gen_sdf_lexor",
+        ":gen_sdf_parse",
+        ":gen_sys_readmem_lex",
+        ":gen_table_mod_lexor",
+        ":gen_table_mod_parse",
+    ] + select({
+        "//:zlib_enabled": SYSTEM_VPI_Z_SRCS,
+        "//conditions:default": [],
+    }) + select({
+        "//:zlib_and_bz2_enabled": SYSTEM_VPI_LXT_SRCS,
+        "//conditions:default": [],
+    }),
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS + MATH_LINKOPTS + select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:config",
+        "//:ivl_alloc",
+        "//:public_headers",
+        "//:version_tag",
+    ] + select({
+        "//:zlib_enabled": ["@zlib"],
+        "//conditions:default": [],
+    }) + select({
+        "//:bz2_enabled": ["@bzip2//:bz2"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "va_math_vpi",
+    srcs = ["va_math.c"] + VPI_HDRS,
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:ivl_alloc",
+        "//:public_headers",
+    ],
+)
+
+cc_binary(
+    name = "v2005_math_vpi",
+    srcs = [
+        "sys_clog2.c",
+        "v2005_math.c",
+    ] + VPI_HDRS,
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:ivl_alloc",
+        "//:public_headers",
+    ],
+)
+
+cc_binary(
+    name = "v2009_vpi",
+    srcs = [
+        "sys_priv.c",
+        "v2009_array.c",
+        "v2009_bitvec.c",
+        "v2009_enum.c",
+        "v2009_string.c",
+        "v2009_table.c",
+    ] + VPI_HDRS,
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:ivl_alloc",
+        "//:public_headers",
+    ],
+)
+
+cc_binary(
+    name = "vhdl_sys_vpi",
+    srcs = [
+        "sys_priv.c",
+        "vhdl_table.c",
+    ] + VPI_HDRS,
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:ivl_alloc",
+        "//:public_headers",
+    ],
+)
+
+cc_binary(
+    name = "vhdl_textio_vpi",
+    srcs = [
+        "sys_priv.c",
+        "vhdl_textio.c",
+    ] + VPI_HDRS,
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:ivl_alloc",
+        "//:public_headers",
+    ],
+)
+
+cc_binary(
+    name = "vpi_debug_vpi",
+    srcs = ["vpi_debug.c"] + VPI_HDRS,
+    copts = WARNING_COPTS + VPI_COPTS,
+    linkopts = SHARED_LINKOPTS,
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":vpi",
+        ":vpi_config",
+        "//:ivl_alloc",
+        "//:public_headers",
+    ],
+)

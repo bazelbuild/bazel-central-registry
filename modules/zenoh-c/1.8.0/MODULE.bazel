@@ -1,0 +1,91 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+module(
+    name = "zenoh-c",
+    version = "1.8.0",
+    bazel_compatibility = [">=7.2.1"],
+)
+
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.19")
+bazel_dep(name = "rules_rs", version = "0.0.93")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "llvm", version = "0.8.9")
+
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
+toolchains.toolchain(
+    edition = "2021",
+    version = "1.93.0",
+)
+use_repo(toolchains, "default_rust_toolchains")
+
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
+
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)
+
+crate = use_extension(
+    "@rules_rs//rs:extensions.bzl",
+    "crate",
+)
+crate.from_cargo(
+    name = "crates_zenoh_c",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+crate.annotation(
+    crate = "cbindgen",
+    gen_binaries = ["cbindgen"],
+)
+
+# Cargo-derived features are resolved by rules_rs. These annotations add only
+# the extra non-default features used by the Bazel zenoh-c and opaque-types
+# targets, so the generated bindings and struct layouts line up.
+crate.annotation(
+    crate = "zenoh",
+    crate_features = [
+        "shared-memory",
+        "unstable",
+        "transport_serial",
+        "transport_vsock",
+    ],
+)
+crate.annotation(
+    crate = "zenoh-ext",
+    crate_features = [
+        "unstable",
+    ],
+)
+crate.annotation(
+    crate = "zenoh-protocol",
+    crate_features = [
+        "shared-memory",
+    ],
+)
+use_repo(crate, "crates_zenoh_c")
+
+# Register cbindgen toolchain (for generating C headers from Rust code)
+
+register_toolchains("@zenoh-c//cbindgen:default_cbindgen_toolchain")

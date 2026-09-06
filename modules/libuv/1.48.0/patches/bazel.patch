@@ -1,0 +1,189 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 00000000..8c28fda5
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,171 @@
++_LOCAL_DEFINES = [
++    "_FILE_OFFSET_BITS=64",
++    "_LARGEFILE_SOURCE",
++] + select({
++    "@platforms//os:macos": [
++        "_DARWIN_UNLIMITED_SELECT=1",
++        "_DARWIN_USE_64_BIT_INODE=1",
++    ],
++    "@platforms//os:linux": [
++        "_GNU_SOURCE",
++        "_POSIX_C_SOURCE=200112",
++    ],
++    "//conditions:default": [],
++})
++
++_COPTS = [
++    "-fno-strict-aliasing",
++    "-fvisibility=hidden",
++    "-Wall",
++    "-Wextra",
++    "-Wno-unused-parameter",
++    "-Wstrict-prototypes",
++]
++
++cc_library(
++    name = "src_headers",
++    hdrs = glob(["src/**/*.h"]),
++    strip_include_prefix = "src",
++)
++
++cc_library(
++    name = "libuv",
++    srcs = [
++        "src/fs-poll.c",
++        "src/idna.c",
++        "src/inet.c",
++        "src/random.c",
++        "src/strscpy.c",
++        "src/strtok.c",
++        "src/thread-common.c",
++        "src/threadpool.c",
++        "src/timer.c",
++        "src/uv-common.c",
++        "src/uv-data-getter-setters.c",
++        "src/version.c",
++    ] + select({
++        "@platforms//os:windows": [],
++        "//conditions:default": [
++            "src/unix/async.c",
++            "src/unix/core.c",
++            "src/unix/dl.c",
++            "src/unix/fs.c",
++            "src/unix/getaddrinfo.c",
++            "src/unix/getnameinfo.c",
++            "src/unix/loop.c",
++            "src/unix/loop-watcher.c",
++            "src/unix/pipe.c",
++            "src/unix/poll.c",
++            "src/unix/process.c",
++            "src/unix/proctitle.c",
++            "src/unix/random-devurandom.c",
++            "src/unix/signal.c",
++            "src/unix/stream.c",
++            "src/unix/tcp.c",
++            "src/unix/thread.c",
++            "src/unix/tty.c",
++            "src/unix/udp.c",
++        ],
++    }) + select({
++        "@platforms//os:macos": [
++            "src/unix/bsd-ifaddrs.c",
++            "src/unix/darwin.c",
++            "src/unix/darwin-proctitle.c",
++            "src/unix/fsevents.c",
++            "src/unix/kqueue.c",
++            "src/unix/random-getentropy.c",
++        ],
++        "@platforms//os:linux": [
++            "src/unix/linux.c",
++            "src/unix/procfs-exepath.c",
++            "src/unix/random-getrandom.c",
++            "src/unix/random-sysctl-linux.c",
++        ],
++        "//conditions:default": [],
++    }),
++    hdrs = glob(["include/**/*.h"]),
++    copts = _COPTS,
++    linkopts = [
++        "-pthread",
++    ] + select({
++        "@platforms//os:linux": [
++            "-ldl",
++            "-lrt",
++        ],
++        "//conditions:default": [],
++    }),
++    local_defines = _LOCAL_DEFINES,
++    strip_include_prefix = "include",
++    visibility = ["//visibility:public"],
++    deps = [
++        ":src_headers",
++    ],
++)
++
++# These are included even though they're C files
++cc_library(
++    name = "test_headers",
++    hdrs = [
++        "src/idna.c",
++        "src/strscpy.c",
++        "src/strtok.c",
++    ],
++)
++
++cc_test(
++    name = "tests",
++    srcs = glob([
++        "test/test-*.c",
++        "test/*.h",
++    ]) + [
++        "test/blackhole-server.c",
++        "test/echo-server.c",
++        "test/run-tests.c",
++        "test/runner.c",
++    ] + select({
++        "@platforms//os:windows": [
++            "test/runner-win.c",
++        ],
++        "//conditions:default": [
++            "test/runner-unix.c",
++        ],
++    }),
++    copts = _COPTS,
++    data = glob(["test/fixtures/**"]),
++    local_defines = _LOCAL_DEFINES,
++    tags = [
++        "no-sandbox",
++    ],
++    deps = [
++        ":libuv",
++        ":test_headers",
++    ],
++)
++
++cc_test(
++    name = "benchmarks",
++    srcs = glob([
++        "test/benchmark-*.c",
++        "test/*.h",
++    ]) + [
++        "test/blackhole-server.c",
++        "test/echo-server.c",
++        "test/run-benchmarks.c",
++        "test/runner.c",
++    ] + select({
++        "@platforms//os:windows": [
++            "test/runner-win.c",
++        ],
++        "//conditions:default": [
++            "test/runner-unix.c",
++        ],
++    }),
++    copts = _COPTS,
++    local_defines = _LOCAL_DEFINES,
++    tags = [
++        "no-sandbox",
++    ],
++    deps = [
++        ":libuv",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 00000000..3eda6b1f
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,6 @@
++module(
++    name = "libuv",
++    version = "1.48.0",
++)
++
++bazel_dep(name = "platforms", version = "0.0.10")

@@ -1,0 +1,134 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [
+        ":license.APACHE",
+        ":license.BSD",
+        ":license.MINPACK",  # Only used by unsupported/** not by Eigen/**.
+        ":license.MPL2",
+    ],
+)
+
+exports_files(glob(["COPYING.*"]))
+
+# Note: Eigen is primarily an MPL2 library with small bits of code under other
+# licenses. Previous versions of Eigen contained LGPL code which needed to be
+# carefully excluded, but as of approximately 2023-02-07 all LGPL code has been
+# removed upstream so does not need any special handling here.
+
+license(
+    name = "license.APACHE",
+    license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
+    license_text = "COPYING.APACHE",
+)
+
+license(
+    name = "license.BSD",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = "COPYING.BSD",
+)
+
+license(
+    name = "license.MINPACK",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause-Attribution"],
+    license_text = "COPYING.MINPACK",
+)
+
+license(
+    name = "license.MPL2",
+    license_kinds = ["@rules_license//licenses/spdx:MPL-2.0"],
+    license_text = "COPYING.MPL2",
+)
+
+cc_library(
+    name = "empty",
+)
+
+# When :EIGEN_USE_BLAS is set to True, then the :blas label must also be set to
+# a BLAS library.
+bool_flag(
+    name = "EIGEN_USE_BLAS",
+    build_setting_default = False,
+)
+
+label_flag(
+    name = "blas",
+    build_setting_default = ":empty",
+)
+
+# At most one of EIGEN_USE_LAPACKE or EIGEN_USE_LAPACKE_STRICT may be set to
+# True. When :EIGEN_USE_LAPACKE is set to True, then the :lapacke label must
+# also be set to a LAPACKE library.
+bool_flag(
+    name = "EIGEN_USE_LAPACKE",
+    build_setting_default = False,
+)
+
+label_flag(
+    name = "lapacke",
+    build_setting_default = ":empty",
+)
+
+# At most one of EIGEN_USE_LAPACKE or EIGEN_USE_LAPACKE_STRICT may be set to
+# True. When :EIGEN_USE_LAPACKE_STRICT is set to True, then the :lapacke label
+# must also be set to a LAPACKE library.
+bool_flag(
+    name = "EIGEN_USE_LAPACKE_STRICT",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "use_blas",
+    flag_values = {":EIGEN_USE_BLAS": "True"},
+)
+
+config_setting(
+    name = "use_lapacke",
+    flag_values = {":EIGEN_USE_LAPACKE": "True"},
+)
+
+config_setting(
+    name = "use_lapacke_strict",
+    flag_values = {":EIGEN_USE_LAPACKE_STRICT": "True"},
+)
+
+HDRS = glob(
+    [
+        "Eigen/**",
+        "unsupported/Eigen/**",
+    ],
+    exclude = [
+        # We don't want any documentation files.
+        "**/*.md",
+        "**/*.txt",
+    ],
+)
+
+cc_library(
+    name = "eigen",
+    hdrs = HDRS,
+    defines = select({
+        ":use_blas": ["EIGEN_USE_BLAS"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_lapacke": ["EIGEN_USE_LAPACKE"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_lapacke_strict": ["EIGEN_USE_LAPACKE_STRICT"],
+        "//conditions:default": [],
+    }),
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":use_blas": [":blas"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_lapacke": [":lapacke"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_lapacke_strict": [":lapacke"],
+        "//conditions:default": [],
+    }),
+)

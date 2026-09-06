@@ -1,0 +1,206 @@
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    package_name = "librealsense",
+    license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/realsenseai/librealsense",
+)
+
+exports_files(["LICENSE"])
+
+# Defines from the CMake build, with BUILD_RS2_ALL/BUILD_WITH_DDS/etc. off.
+_DEFINES = [
+    "BUILD_EASYLOGGINGPP",
+    "COM_MULTITHREADED",
+    "EASYLOGGINGPP_ASYNC",
+    "ELPP_NO_DEFAULT_LOG_FILE",
+    "ELPP_THREAD_SAFE",
+    "HWM_OVER_XU",
+    "UNICODE",
+    "_DEFAULT_SOURCE",
+] + select({
+    # libuvc backend on Apple, V4L2 elsewhere, matching CMake
+    "@platforms//os:macos": ["RS2_USE_LIBUVC_BACKEND"],
+    "//conditions:default": [
+        "RS2_USE_V4L2_BACKEND",
+        "USING_UDEV",
+    ],
+})
+
+# Warning/codegen flags from CMake/unix_config.cmake's os_set_flags().
+_COPTS = [
+    "-pedantic",
+    "-pthread",
+    "-Wno-missing-field-initializers",
+    "-Wno-switch",
+    "-Wno-multichar",
+    "-Wsequence-point",
+    "-Wformat",
+    "-Wformat-security",
+] + select({
+    "@platforms//cpu:arm64": [
+        "-mstrict-align",
+        "-ftree-vectorize",
+    ],
+    "@platforms//cpu:x86_64": ["-mssse3"],
+    "//conditions:default": [],
+}) + select({
+    # Apple SDK headers use CF_ENUM patterns that trip newer Clang's
+    # -Welaborated-enum-base diagnostic when included from C++.
+    "@platforms//os:macos": ["-Wno-elaborated-enum-base"],
+    "//conditions:default": [],
+})
+
+copy_to_directory(
+    name = "gen_dir",
+    srcs = glob(["include/**"]) + [":realsense2_pc"],
+    replace_prefixes = {"realsense2.pc": "lib/pkgconfig/realsense2.pc"},
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "librealsense",
+    srcs = glob(
+        [
+            "src/*.cpp",
+            "src/*.c",
+            "src/core/*.cpp",
+            "src/ds/*.cpp",
+            "src/ds/advanced_mode/*.cpp",
+            "src/ds/d400/*.cpp",
+            "src/ds/d500/*.cpp",
+            "src/ds/features/*.cpp",
+            "src/fw-logs/*.cpp",
+            "src/fw-update/*.cpp",
+            "src/libusb/*.cpp",
+            "src/media/playback/*.cpp",
+            "src/media/record/*.cpp",
+            "src/media/ros/*.cpp",
+            "src/pipeline/*.cpp",
+            "src/platform/*.cpp",
+            "src/proc/*.cpp",
+            "src/proc/neon/*.cpp",
+            "src/proc/sse/*.cpp",
+            "third-party/easyloggingpp/src/*.cc",
+            "third-party/rsutils/src/*.cpp",
+            "third-party/realsense-file/rosbag/console_bridge/src/*.cpp",
+            "third-party/realsense-file/rosbag/cpp_common/src/*.cpp",
+            "third-party/realsense-file/rosbag/rosbag_storage/src/*.cpp",
+            "third-party/realsense-file/rosbag/roscpp_serialization/src/*.cpp",
+            "third-party/realsense-file/rosbag/roslz4/src/*.c",
+            "third-party/realsense-file/rosbag/rostime/src/*.cpp",
+            "third-party/realsense-file/lz4/lz4.c",
+        ],
+        exclude = ["src/image-avx.cpp"],
+    ) + select({
+        # Apple uses the libuvc/rsusb backend; Linux uses the V4L2 backend.
+        "@platforms//os:macos": glob([
+            "src/hid/*.cpp",
+            "src/uvc/*.cpp",
+            "src/rsusb-backend/*.cpp",
+            "src/libuvc/*.cpp",
+        ]) + ["third-party/hidapi/hidapi.cpp"],
+        "//conditions:default": glob(["src/linux/*.cpp"]),
+    }),
+    hdrs = glob([
+        "common/**/*.h",
+        "common/**/*.hpp",
+        "include/**/*.h",
+        "include/**/*.hpp",
+        "src/**/*.h",
+        "src/**/*.hpp",
+        "third-party/*.h",
+        "third-party/easyloggingpp/src/*.h",
+        "third-party/hidapi/*.h",
+        "third-party/rapidxml/*.hpp",
+        "third-party/rsutils/include/**/*.h",
+        "third-party/realsense-file/**/*.h",
+    ]),
+    copts = _COPTS,
+    includes = [
+        ".",
+        "include",
+        "src",
+        "third-party/hidapi",
+        "third-party/easyloggingpp/src",
+        "third-party/rsutils/include",
+        "third-party/realsense-file/lz4/lib",
+        "third-party/realsense-file/rosbag/console_bridge/include",
+        "third-party/realsense-file/rosbag/cpp_common/include",
+        "third-party/realsense-file/rosbag/msgs",
+        "third-party/realsense-file/rosbag/rosbag_storage/include",
+        "third-party/realsense-file/rosbag/roscpp_serialization/include",
+        "third-party/realsense-file/rosbag/roscpp_traits/include",
+        "third-party/realsense-file/rosbag/roslz4/include",
+        "third-party/realsense-file/rosbag/rostime/include",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-Wl,-framework,CoreFoundation",
+            "-Wl,-framework,IOKit",
+        ],
+        "//conditions:default": ["-pthread"],
+    }),
+    local_defines = _DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":image_avx",
+        "@libusb",
+        "@nlohmann_json//:json",
+    ] + select({
+        "@platforms//os:linux": ["@systemd//:libudev"],
+        "//conditions:default": [],
+    }),
+    # Camera/processing-block factories self-register at static-init time, so keep every
+    # object even when a consumer references only part of the API.
+    alwayslink = True,
+)
+
+# The only file CMake builds with -mavx2, and only on x86. Its AVX2 paths run behind a
+# runtime CPUID check (see proc/color-formats-converter.cpp), so -mavx2 must not reach any
+# other file, or the compiler could emit AVX2 in code that runs on non-AVX2 CPUs. Bazel
+# copts are per-target, so this one file gets its own.
+cc_library(
+    name = "image_avx",
+    srcs = ["src/image-avx.cpp"],
+    hdrs = glob([
+        "common/**/*.h",
+        "include/**/*.h",
+        "include/**/*.hpp",
+        "src/**/*.h",
+        "third-party/easyloggingpp/src/*.h",
+        "third-party/rsutils/include/**/*.h",
+    ]),
+    copts = _COPTS + select({
+        "@platforms//cpu:x86_64": ["-mavx2"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        ".",
+        "include",
+        "src",
+        "third-party/easyloggingpp/src",
+        "third-party/rsutils/include",
+    ],
+    local_defines = _DEFINES,
+)
+
+genrule(
+    name = "realsense2_pc",
+    srcs = ["config/librealsense.pc.in"],
+    outs = ["realsense2.pc"],
+    cmd = "sed " +
+          "-e 's|@CMAKE_INSTALL_PREFIX@|$${pcfiledir}/../..|' " +
+          "-e 's|^libdir=.*|libdir=$${prefix}/lib|' " +
+          "-e 's|@REALSENSE_VERSION_STRING@|2.57.7|' " +
+          "-e 's|@LRS_PKG_DEPS@||' " +
+          "-e 's|^Libs:.*|Libs:|' " +
+          "-e 's|^Libs.private:.*|Libs.private:|' " +
+          "$< > $@",
+)

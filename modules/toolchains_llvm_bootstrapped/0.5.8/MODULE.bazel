@@ -1,0 +1,190 @@
+module(
+    name = "toolchains_llvm_bootstrapped",
+    version = "0.5.8",
+    bazel_compatibility = [">=7.4.0"],
+    compatibility_level = 0,
+)
+
+bazel_dep(name = "bazel_lib", version = "3.2.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "bazel_features", version = "1.34.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "with_cfg.bzl", version = "0.12.0")
+bazel_dep(name = "tar.bzl", version = "0.6.0")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+rbe_platform_repository = use_repo_rule("//:rbe.bzl", "rbe_platform_repository")
+
+rbe_platform_repository(
+    name = "rbe_platform",
+)
+
+LLVM_VERSION = "21.1.8"
+
+PREBUILT_LLVM_SUFFIX = "-7"
+
+LLVM_TOOLCHAIN_MINIMAL_SHA256 = {
+    "darwin-arm64": "90653e60375231a7f0ac5529218916c5cace21e519ea062448e305609d2f7662",
+    "linux-amd64-musl": "5e5a98d224c5775b5a36b1e1c178b5e5bd40689a7aa6ff3bb073da1cc2f1da2f",
+    "linux-arm64-musl": "ceb380a3443deaadb8639c2fed75b9b8047e0bf1f7178b46376b2108c7bf6fd8",
+    "windows-amd64": "e90642e68ba3047e34572dce903c4cbd8ed9579774071e900b2a1303755daa17",
+    "windows-arm64": "1dc33bdaa7dc3508e68df1da0184c76db255a39431eb5c9da685136f8e5afd0b",
+}
+
+[
+    http_archive(
+        name = "llvm-toolchain-minimal-{llvm_version}-{target}".format(
+            llvm_version = LLVM_VERSION,
+            target = target.replace("-musl", "").replace("-gnu", ""),
+        ),
+        build_file = "//toolchain/llvm:llvm_release.BUILD.bazel" if "windows" not in target else "//toolchain/llvm:llvm_release_windows.BUILD.bazel",
+        sha256 = sha256,
+        urls = ["https://github.com/cerisier/toolchains_llvm_bootstrapped/releases/download/llvm-{llvm_version}{prebuilt_llvm_suffix}/llvm-toolchain-minimal-{llvm_version}-{target}.tar.zst".format(
+            llvm_version = LLVM_VERSION,
+            prebuilt_llvm_suffix = PREBUILT_LLVM_SUFFIX,
+            target = target,
+        )],
+    )
+    for (target, sha256) in LLVM_TOOLCHAIN_MINIMAL_SHA256.items()
+]
+
+TOOLCHAIN_EXTRAS_SHA256 = {
+    "darwin-arm64": "541c90801795bda277de7cd5c7b7b56f5448c844551b7841450ebb2e1d17649e",
+    "linux-amd64-musl": "345c5b0697c7d3f361728482d45098b5e9be171f866e905df1a76b773df759fe",
+    "linux-arm64-musl": "65292928bc505b90705ddfcf4b60d0fb9d7ca87e1f601d19e262c575cb83bdca",
+    "windows-amd64-gnu": "0cdc02ca846402c0c24b0330a38bd29242b425015db8a469763143f8029a761d",
+    "windows-arm64-gnu": "d79781778b0a58b0469092b0fa7f3cb68d2391a830610eaefb54b4f536887184",
+}
+
+TOOLCHAIN_EXTRAS_VERSION = "20260216"
+
+[
+    http_archive(
+        name = "toolchain-extra-prebuilts-{target}".format(target = target.replace("-musl", "").replace("-gnu", "")),
+        build_file = "//prebuilt/extras:extras.BUILD.bazel",
+        sha256 = sha256,
+        urls = ["https://github.com/cerisier/toolchains_llvm_bootstrapped/releases/download/prebuilts-extras-{version}/toolchain-extra-prebuilts-{version}-{target}.tar.zst".format(
+            target = target,
+            version = TOOLCHAIN_EXTRAS_VERSION,
+        )],
+    )
+    for (target, sha256) in TOOLCHAIN_EXTRAS_SHA256.items()
+]
+
+llvm_source = use_extension("//extensions:llvm_source.bzl", "llvm_source")
+use_repo(llvm_source, "compiler-rt", "libcxx", "libcxxabi", "libunwind", "llvm-raw", "llvm_zlib", "llvm_zstd")
+
+llvm = use_extension("//extensions:llvm.bzl", "llvm")
+llvm.configure(
+    targets = [
+        "AArch64",
+        "X86",
+        "WebAssembly",
+    ],
+)
+use_repo(llvm, "llvm-project")
+
+musl = use_extension("//runtimes/musl/extension:musl.bzl", "musl")
+use_repo(musl, "musl_libc")
+
+mingw = use_extension("//runtimes/mingw/extension:mingw.bzl", "mingw")
+use_repo(mingw, "mingw")
+
+osx = use_extension("//extensions:osx.bzl", "osx")
+use_repo(osx, "macosx15.4.sdk")
+
+glibc = use_extension("//runtimes/glibc/extension:glibc.bzl", "glibc")
+
+# https://cerisier.github.io/glibc-headers/index.json
+glibc.index(file = "//runtimes/glibc/extension:glibc_headers_index.json")
+use_repo(glibc, "glibc")
+
+kernel_headers = use_extension("//kernel/extension:kernel_headers.bzl", "kernel_headers")
+
+# https://cerisier.github.io/kernel-headers/index.json
+kernel_headers.index(file = "//kernel/extension:kernel_headers_index.json")
+use_repo(kernel_headers, "kernel_headers")
+
+######################### DEV DEPENDENCIES ###################################
+
+bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependency = True)
+
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
+bazel_dep(name = "bazelrc-preset.bzl", version = "1.6.0", dev_dependency = True)
+
+GLIBC_STUBS_GENERATOR_COMMIT = "33276300351d5a3cbedd308f4d21669b8e8ef83d"
+
+bazel_dep(name = "glibc-stubs-generator", version = "2.0.1", dev_dependency = True)
+archive_override(
+    module_name = "glibc-stubs-generator",
+    integrity = "sha256-q7bwGW3nRigiGuXj/2kIZMi/LFCHZpVbMD/kRdllLCg=",
+    strip_prefix = "glibc-stubs-generator-{}".format(GLIBC_STUBS_GENERATOR_COMMIT),
+    urls = ["https://github.com/cerisier/glibc-stubs-generator/archive/{}.tar.gz".format(GLIBC_STUBS_GENERATOR_COMMIT)],
+)
+
+LIBSTDCXX_STUBS_GENERATOR_COMMIT = "ed896a140ef8466140c3bcfd066e710a80a41ebe"
+
+bazel_dep(name = "libstdcxx-stubs-generator", version = "0.0.1", dev_dependency = True)
+archive_override(
+    module_name = "libstdcxx-stubs-generator",
+    integrity = "sha256-OAZfeifniTQmKit60qHpZanOLLIJVyYEiMlpN5Q7Fjw=",
+    strip_prefix = "libstdcxx-stubs-generator-{}".format(LIBSTDCXX_STUBS_GENERATOR_COMMIT),
+    urls = ["https://github.com/cerisier/libstdcxx-stubs-generator/archive/{}.tar.gz".format(LIBSTDCXX_STUBS_GENERATOR_COMMIT)],
+)
+
+PKGUTIL_COMMIT = "f04b36f28972e469ad993dff6f9dc00e68531931"  #main
+
+bazel_dep(name = "xpkgutil", version = "1.0.14", dev_dependency = True)
+archive_override(
+    module_name = "xpkgutil",
+    integrity = "sha256-6TyP2o2//KXXb43eLAldl1fKS5gaZt/uL0IUQ8Iz8Hs=",
+    strip_prefix = "pkgutil-{}".format(PKGUTIL_COMMIT),
+    urls = ["https://github.com/cerisier/pkgutil/archive/{}.tar.gz".format(PKGUTIL_COMMIT)],
+)
+
+# pbzx support for libarchive
+bazel_dep(name = "libarchive", version = "3.8.1.bcr.2", dev_dependency = True)
+single_version_override(
+    module_name = "libarchive",
+    patch_strip = 1,
+    patches = [
+        "//3rd_party/libarchive:0001-libarchive_enable_xar_support.patch",
+        "//3rd_party/libarchive:0002-feat-add-pbzx-read-filter.patch",
+        "//3rd_party/libarchive:0003-give-mingw-acceptable-posix-types.patch",
+    ],
+)
+
+# Workaround for their terrible toolchains...
+bazel_dep(name = "rules_swift", version = "3.4.2", dev_dependency = True)
+single_version_override(
+    module_name = "rules_swift",
+    patch_strip = 1,
+    patches = ["//3rd_party/rules_swift:0001-allow-disabling-autoconfiguration.patch"],
+    version = "3.4.2",
+)
+
+## OVERRIDES PORTS FROM DEPENDENCIES
+
+bazel_dep(name = "rules_zig", version = "0.12.2", dev_dependency = True)
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig", dev_dependency = True)
+zig.index(file = "//:zig_index.json")
+zig.toolchain(zig_version = "0.14.0")
+zig.mirrors(urls = [
+    "https://mirror.zml.ai/zig",
+])
+use_repo(zig, "zig_toolchains")
+
+register_toolchains(
+    "@rules_zig//zig/target:all",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "@zig_toolchains//:all",
+    dev_dependency = True,
+)

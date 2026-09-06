@@ -1,0 +1,103 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_python//python:py_binary.bzl", "py_binary")
+
+py_binary(
+    name = "maskaudit",
+    srcs = ["maskaudit.py"],
+    main = "maskaudit.py",
+)
+
+py_binary(
+    name = "jsongen",
+    srcs = ["libgps/jsongen.py"],
+    main = "libgps/jsongen.py",
+)
+
+genrule(
+    name = "gps_maskdump_src",
+    srcs = [
+        "gpsctl.c",
+        "include/gps.h",
+        "include/gpsd.h",
+        "libgps/libgps_core.c",
+        "libgps/libgps_json.c",
+    ],
+    tools = [":maskaudit"],
+    outs = ["libgps/gps_maskdump.c"],
+    cmd = "mkdir -p $(@D) && ROOT=$$(pwd) && OUT=$$(pwd)/$@ && cd $$(dirname $(location include/gpsd.h))/.. && $$ROOT/$(execpath :maskaudit) -c . > $$OUT",
+)
+
+genrule(
+    name = "ais_json_src",
+    tools = [":jsongen"],
+    outs = ["ais_json.i"],
+    cmd = "$(execpath :jsongen) --ais --target=parser > $@",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "gps",
+    srcs = [
+        "libgps/ais_json.c",
+        "libgps/bits.c",
+        "libgps/gpsdclient.c",
+        "libgps/gpsutils.c",
+        "libgps/hex.c",
+        "libgps/json.c",
+        "libgps/libgps_core.c",
+        "libgps/libgps_dbus.c",
+        "libgps/libgps_json.c",
+        "libgps/libgps_shm.c",
+        "libgps/libgps_sock.c",
+        "libgps/netlib.c",
+        "libgps/ntpshmread.c",
+        "libgps/os_compat.c",
+        "libgps/rtcm2_json.c",
+        "libgps/rtcm3_json.c",
+        "libgps/shared_json.c",
+        "libgps/timespec_str.c",
+        ":gps_maskdump_src",
+    ],
+    hdrs = glob(["include/*.h"]),
+    textual_hdrs = [":ais_json_src"],
+    copts = ["-std=c99"],
+    defines = [
+        "AIVDM_ENABLE=1",
+        "GPSD_PROTO_VERSION_MAJOR=16",
+        "GPSD_PROTO_VERSION_MINOR=1",
+        "HAVE_ARPA_INET_H=1",
+        "HAVE_CFMAKERAW=1",
+        "HAVE_CLOCK_GETTIME=1",
+        "HAVE_DAEMON=1",
+        "HAVE_FCNTL=1",
+        "HAVE_NETDB_H=1",
+        "HAVE_NETINET_IN_H=1",
+        "HAVE_STDATOMIC_H=1",
+        "HAVE_STRNLEN=1",
+        "HAVE_STPNCPY=1",
+        "HAVE_SYS_SOCKET_H=1",
+        "HAVE_SYS_UN_H=1",
+        "HAVE_SYSLOG_H=1",
+        "MAX_CLIENTS=64",
+        "MAX_DEVICES=6",
+        "SOCKET_EXPORT_ENABLE=1",
+        "VERSION=\\\"3.27.5\\\"",
+    ],
+    includes = ["include"],
+    linkopts = [
+        "-lm",
+        "-pthread",
+    ],
+)
+
+alias(
+    name = "libgps",
+    actual = ":gps",
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "libgps_test",
+    srcs = ["tests/libgps_test.c"],
+    deps = [":libgps"],
+)

@@ -1,0 +1,975 @@
+diff --git a/include/rawrtc/config.h b/include/rawrtc/config.h
+new file mode 100644
+index 000000000..e69de29bb
+--- /dev/null
++++ b/include/rawrtc/config.h
+@@ -0,0 +1 @@
++
+diff --git a/include/rawrtc/ice_candidate.h b/include/rawrtc/ice_candidate.h
+index 3d048aac2..eea8efc52 100644
+--- a/include/rawrtc/ice_candidate.h
++++ b/include/rawrtc/ice_candidate.h
+@@ -76,6 +76,13 @@ enum rawrtc_code rawrtc_ice_candidate_get_priority(
+     uint32_t* const priorityp,  // de-referenced
+     struct rawrtc_ice_candidate* const candidate);
+ 
++/*
++ * Check if the ICE candidate contains an mDNS address.
++ */
++enum rawrtc_code rawrtc_ice_candidate_is_mdns_hostname(
++    bool* const is_mdnsp,  // de-referenced
++    struct rawrtc_ice_candidate* const candidate);
++
+ /*
+  * Get the ICE candidate's IP address.
+  * `*ipp` will be set to a copy of the IP address that must be
+diff --git a/include/rawrtc/ice_gather_options.h b/include/rawrtc/ice_gather_options.h
+index d850eb58a..d30613b72 100644
+--- a/include/rawrtc/ice_gather_options.h
++++ b/include/rawrtc/ice_gather_options.h
+@@ -33,15 +33,23 @@ enum rawrtc_code rawrtc_ice_gather_options_create(
+     struct rawrtc_ice_gather_options** const optionsp,  // de-referenced
+     enum rawrtc_ice_gather_policy const gather_policy);
+ 
++/*
++ * Force ICE candidates to be generated within a specific range of UDP ports.
++ */
++enum rawrtc_code rawrtc_ice_gather_options_set_udp_port_range(
++    struct rawrtc_ice_gather_options* const options,
++    uint16_t min_udp_port,
++    uint16_t max_udp_port);
++
+ /*
+  * Add an ICE server to the gather options.
+  */
+ enum rawrtc_code rawrtc_ice_gather_options_add_server(
+     struct rawrtc_ice_gather_options* const options,
+-    char* const* const urls,  // copied
++    const char* const* const urls,  // copied
+     size_t const n_urls,
+-    char* const username,  // nullable, copied
+-    char* const credential,  // nullable, copied
++    const char* const username,  // nullable, copied
++    const char* const credential,  // nullable, copied
+     enum rawrtc_ice_credential_type const credential_type);
+ 
+ /*
+diff --git a/include/rawrtc/peer_connection_configuration.h b/include/rawrtc/peer_connection_configuration.h
+index d32a02b69..c331211a6 100644
+--- a/include/rawrtc/peer_connection_configuration.h
++++ b/include/rawrtc/peer_connection_configuration.h
+@@ -27,10 +27,10 @@ enum rawrtc_code rawrtc_peer_connection_configuration_create(
+  */
+ enum rawrtc_code rawrtc_peer_connection_configuration_add_ice_server(
+     struct rawrtc_peer_connection_configuration* const configuration,
+-    char* const* const urls,  // copied
++    const char* const* const urls,  // copied
+     size_t const n_urls,
+-    char* const username,  // nullable, copied
+-    char* const credential,  // nullable, copied
++    const char* const username,  // nullable, copied
++    const char* const credential,  // nullable, copied
+     enum rawrtc_ice_credential_type const credential_type);
+ 
+ /*
+@@ -94,3 +94,11 @@ enum rawrtc_code rawrtc_peer_connection_configuration_set_sctp_mtu(
+  */
+ enum rawrtc_code rawrtc_peer_connection_configuration_set_sctp_mtu_discovery(
+     struct rawrtc_peer_connection_configuration* configuration, bool on);
++
++/*
++ * Force local ICE candidate generation to use the specified local UDP ports.
++ */
++enum rawrtc_code rawrtc_peer_connection_configuration_set_ice_udp_port_range(
++    struct rawrtc_peer_connection_configuration* configuration,
++    uint16_t min_port,
++    uint16_t max_port);
+diff --git a/include/rawrtc/peer_connection_ice_candidate.h b/include/rawrtc/peer_connection_ice_candidate.h
+index 180a6f52d..2ccc91a91 100644
+--- a/include/rawrtc/peer_connection_ice_candidate.h
++++ b/include/rawrtc/peer_connection_ice_candidate.h
+@@ -20,8 +20,8 @@ struct rawrtc_peer_connection_ice_candidate;
+  */
+ enum rawrtc_code rawrtc_peer_connection_ice_candidate_create(
+     struct rawrtc_peer_connection_ice_candidate** const candidatep,  // de-referenced
+-    char* const sdp,
+-    char* const mid,  // nullable, copied
++    const char* const sdp,
++    const char* const mid,  // nullable, copied
+     uint8_t const* const media_line_index,  // nullable, copied
+     char* const username_fragment  // nullable, copied
+ );
+diff --git a/meson.build b/meson.build
+index 92af070f8..61e251a68 100644
+--- a/meson.build
++++ b/meson.build
+@@ -49,7 +49,7 @@ rew_dep = dependency('librawrrew',
+ 
+ # Dependency: rawrtcc
+ rawrtcc_dep = dependency('rawrtcc',
+-    version: '>=0.1.2',
++    version: '>=0.1.3',
+     fallback: ['rawrtcc', 'rawrtcc_dep'],
+     required: true)
+ 
+diff --git a/src/diffie_hellman_parameters/parameters.c b/src/diffie_hellman_parameters/parameters.c
+index 7783e5998..702b8c937 100644
+--- a/src/diffie_hellman_parameters/parameters.c
++++ b/src/diffie_hellman_parameters/parameters.c
+@@ -20,6 +20,12 @@ static enum rawrtc_code set_dh_parameters(
+     struct ssl_ctx_st* const ssl_context,  // not checked
+     DH const* const dh  // not checked
+ ) {
++
++  // Running DH_check on the roborio is obnoxious expensive (~40-50 seconds,
++  // optimized); just YOLO it. Note that this could probably be moved to
++  // somewhere where the cost could be incurred at startup instead of
++  // on connection (or even cached at build-time).
++#if !defined(AOS_ARCHITECTURE_arm_frc) && !defined(RAWRTC_SKIP_DH_CHECK)
+     int codes;
+ 
+     // Check that the parameters are "likely enough to be valid"
+@@ -70,6 +76,9 @@ static enum rawrtc_code set_dh_parameters(
+ #endif
+         return RAWRTC_CODE_INVALID_ARGUMENT;
+     }
++#else
++    dbg_warning("Skipping DH_check() due to performance concerns.\n");
++#endif
+ 
+     // Apply Diffie-Hellman parameters
+     if (!SSL_CTX_set_tmp_dh(ssl_context, dh)) {
+diff --git a/src/ice_candidate/attributes.c b/src/ice_candidate/attributes.c
+index 822c77093..7ea2bb6b5 100644
+--- a/src/ice_candidate/attributes.c
++++ b/src/ice_candidate/attributes.c
+@@ -4,6 +4,10 @@
+ #include <rawrtcc/utils.h>
+ #include <re.h>
+ #include <rew.h>
++#include <string.h>  // strlen
++
++// Constants
++static char const mdns_hostname_regex[] = "[^\\.]+\\.local";
+ 
+ /*
+  * Get the ICE candidate's foundation.
+@@ -60,6 +64,32 @@ enum rawrtc_code rawrtc_ice_candidate_get_priority(
+     }
+ }
+ 
++/*
++ * Check if the ICE candidate contains an mDNS address.
++ */
++enum rawrtc_code rawrtc_ice_candidate_is_mdns_hostname(
++    bool* const is_mdnsp,  // de-referenced
++    struct rawrtc_ice_candidate* const candidate) {
++    // Check arguments
++    if (!candidate || !is_mdnsp) {
++        return RAWRTC_CODE_INVALID_ARGUMENT;
++    }
++
++    // Check if it contains an mDNS address
++    switch (candidate->storage_type) {
++        case RAWRTC_ICE_CANDIDATE_STORAGE_RAW:
++            *is_mdnsp =
++                re_regex(
++                    candidate->candidate.raw_candidate->ip,
++                    strlen(candidate->candidate.raw_candidate->ip), mdns_hostname_regex, NULL)
++                    ? false
++                    : true;
++            return RAWRTC_CODE_SUCCESS;
++        default:
++            return false;
++    }
++}
++
+ /*
+  * Get the ICE candidate's IP address.
+  * `*ipp` will be set to a copy of the IP address that must be
+diff --git a/src/ice_candidate/meson.build b/src/ice_candidate/meson.build
+index abd4455a5..b83a28341 100644
+--- a/src/ice_candidate/meson.build
++++ b/src/ice_candidate/meson.build
+@@ -3,4 +3,5 @@ sources += files([
+     'candidate.c',
+     'helper.c',
+     'utils.c',
++    'resolver.c',
+ ])
+diff --git a/src/ice_candidate/resolver.c b/src/ice_candidate/resolver.c
+new file mode 100644
+index 000000000..728a8d544
+--- /dev/null
++++ b/src/ice_candidate/resolver.c
+@@ -0,0 +1,164 @@
++#include "resolver.h"
++#include <rawrtc/config.h>
++#include <rawrtcc/code.h>
++#include <rawrtcc/utils.h>
++#include <re.h>
++
++#define DEBUG_MODULE "ice-candidate-mdns-resolver"
++//#define RAWRTC_DEBUG_MODULE_LEVEL 7 // Note: Uncomment this to debug this module only
++#include <rawrtcc/debug.h>
++
++/*
++ * DNS A or AAAA record handler.
++ */
++static bool dns_record_result_handler(struct dnsrr* resource_record, void* arg) {
++    struct rawrtc_ice_candidate_mdns_resolver* const resolver = arg;
++    struct sa address;
++    bool stop;
++    DEBUG_PRINTF("DNS resource record: %H\n", dns_rr_print, resource_record);
++
++    // Set IP address
++    switch (resource_record->type) {
++        case DNS_TYPE_A:
++            // Set IPv4 address
++            sa_set_in(&address, resource_record->rdata.a.addr, 0);
++            break;
++
++        case DNS_TYPE_AAAA:
++            // Set IPv6 address
++            sa_set_in6(&address, resource_record->rdata.aaaa.addr, 0);
++            break;
++
++        default:
++            DEBUG_WARNING(
++                "Invalid DNS resource record, expected A/AAAA record, got: %H\n", dns_rr_print,
++                resource_record);
++            return true;  // stop traversing
++    }
++
++    // Announce resolved IP address
++    stop =
++        resolver->address_handler(resolver->candidate, resolver->hostname, &address, resolver->arg);
++
++    // Done (continue or stop traversing)
++    return stop;
++}
++
++/*
++ * DNS query result handler.
++ */
++static void dns_query_handler(
++    int err,
++    struct dnshdr const* header,
++    struct list* answer_records,
++    struct list* authoritive_records,
++    struct list* additional_records,
++    void* arg) {
++    struct rawrtc_ice_candidate_mdns_resolver* const resolver = arg;
++    (void) header;
++    (void) authoritive_records;
++    (void) additional_records;
++
++    // Handle error (if any)
++    if (err) {
++        DEBUG_WARNING("Could not query DNS record for '%s', reason: %m\n", resolver->hostname, err);
++        goto out;
++    } else if (header->rcode != 0) {
++        DEBUG_NOTICE(
++            "DNS record query for '%s' unsuccessful: %s (%" PRIu8 ")\n", resolver->hostname,
++            dns_hdr_rcodename(header->rcode), header->rcode);
++        goto out;
++    }
++
++    // Unlink self from any list
++    list_unlink(&resolver->le);
++
++    // Handle A or AAAA record
++    dns_rrlist_apply2(
++        answer_records, NULL, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_CLASS_IN, true,
++        dns_record_result_handler, resolver);
++
++out:
++    // Unlink & un-reference self
++    // Note: We're unlinking twice here since the above unlink may be skipped in an error case.
++    //       This is perfectly safe.
++    list_unlink(&resolver->le);
++    mem_deref(resolver);
++}
++
++/*
++ * Destructor for an ICE candidate mDNS hostname resolver.
++ */
++static void rawrtc_ice_candidate_mdns_resolver_destroy(void* arg) {
++    struct rawrtc_ice_candidate_mdns_resolver* const resolver = arg;
++
++    // Remove from list
++    list_unlink(&resolver->le);
++
++    // Un-reference
++    mem_deref(resolver->dns_query);
++    mem_deref(resolver->hostname);
++    mem_deref(resolver->candidate);
++}
++
++/*
++ * Create an ICE candidate mDNS hostname resolver.
++ *
++ * Important: Once the handler has been called, the resolver will unlink
++ *            from an associated list and un-reference itself.
++ */
++enum rawrtc_code rawrtc_ice_candidate_mdns_resolver_create(
++    struct rawrtc_ice_candidate_mdns_resolver** const resolverp,  // de-referenced
++    struct dnsc* const dns_client,
++    uint_fast16_t const dns_type,
++    struct rawrtc_ice_candidate* const candidate,  // referenced
++    char* const hostname,
++    rawrtc_ice_candidate_mdns_address_resolved_handler address_handler,
++    void* const arg) {
++    enum rawrtc_code error;
++    struct rawrtc_ice_candidate_mdns_resolver* resolver;
++
++    // Check arguments
++    if (!resolverp || !dns_client || !candidate || !address_handler) {
++        return RAWRTC_CODE_INVALID_ARGUMENT;
++    }
++
++    // Allocate
++    resolver = mem_zalloc(sizeof(*resolver), rawrtc_ice_candidate_mdns_resolver_destroy);
++    if (!resolver) {
++        return RAWRTC_CODE_NO_MEMORY;
++    }
++
++    // Set fields/reference
++    resolver->candidate = mem_ref(candidate);
++    resolver->address_handler = address_handler;
++    resolver->arg = arg;
++    resolver->dns_type = dns_type;
++
++    // Copy hostname
++    error = rawrtc_strdup(&resolver->hostname, hostname);
++    if (error) {
++        goto out;
++    }
++
++    // Query A or AAAA record
++    error = rawrtc_error_to_code(dnsc_query(
++        &resolver->dns_query, dns_client, hostname, (uint16_t) dns_type, DNS_CLASS_IN, true,
++        dns_query_handler, resolver));
++    if (error) {
++        goto out;
++    }
++
++    // Done
++    error = RAWRTC_CODE_SUCCESS;
++
++out:
++    if (error) {
++        mem_deref(resolver);
++    } else {
++        // Set pointer & done
++        *resolverp = resolver;
++    }
++
++    return error;
++}
+diff --git a/src/ice_candidate/resolver.h b/src/ice_candidate/resolver.h
+new file mode 100644
+index 000000000..a0317c27d
+--- /dev/null
++++ b/src/ice_candidate/resolver.h
+@@ -0,0 +1,42 @@
++#pragma once
++#include "candidate.h"
++#include <rawrtcc/code.h>
++#include <re.h>
++
++/*
++ * ICE candidate mDNS hostname address resolved handler.
++ *
++ * `*resolverp` must be referenced if used.
++ *
++ * Return `true` if you want to continue receiving further addresses
++ * from the URL's address entry. Be aware that you will be offered at
++ * least one IPv4 address and one IPv6 address per URL (if available)
++ * even if you always return `false`.
++ */
++typedef bool (*rawrtc_ice_candidate_mdns_address_resolved_handler)(
++    struct rawrtc_ice_candidate* const candidate,
++    char* const hostname,
++    struct sa* const address,
++    void* const arg);
++
++/*
++ * ICE candidate mDNS hostname resolver.
++ */
++struct rawrtc_ice_candidate_mdns_resolver {
++    struct le le;
++    struct rawrtc_ice_candidate* candidate;  // referenced
++    char* hostname;  // copied
++    rawrtc_ice_candidate_mdns_address_resolved_handler address_handler;
++    void* arg;
++    uint_fast16_t dns_type;
++    struct dns_query* dns_query;
++};
++
++enum rawrtc_code rawrtc_ice_candidate_mdns_resolver_create(
++    struct rawrtc_ice_candidate_mdns_resolver** const resolverp,  // de-referenced
++    struct dnsc* const dns_client,
++    uint_fast16_t const dns_type,
++    struct rawrtc_ice_candidate* const candidate,  // referenced
++    char* const hostname,  // copied
++    rawrtc_ice_candidate_mdns_address_resolved_handler address_handler,
++    void* const arg);
+diff --git a/src/ice_gather_options/options.c b/src/ice_gather_options/options.c
+index c2847abe3..f72c260d9 100644
+--- a/src/ice_gather_options/options.c
++++ b/src/ice_gather_options/options.c
+@@ -37,12 +37,33 @@ enum rawrtc_code rawrtc_ice_gather_options_create(
+     // Set fields/reference
+     options->gather_policy = gather_policy;
+     list_init(&options->ice_servers);
++    options->udp_port_range.min = 0;
++    options->udp_port_range.max = 0;
+ 
+     // Set pointer and return
+     *optionsp = options;
+     return RAWRTC_CODE_SUCCESS;
+ }
+ 
++enum rawrtc_code rawrtc_ice_gather_options_set_udp_port_range(
++    struct rawrtc_ice_gather_options* const options,
++    uint16_t min_udp_port,
++    uint16_t max_udp_port) {
++
++    if (!options) {
++        return RAWRTC_CODE_INVALID_ARGUMENT;
++    }
++
++    if (max_udp_port < min_udp_port) {
++        return RAWRTC_CODE_INVALID_ARGUMENT;
++    }
++
++    options->udp_port_range.min = min_udp_port;
++    options->udp_port_range.max = max_udp_port;
++
++    return RAWRTC_CODE_SUCCESS;
++}
++
+ /*
+  * Add an ICE server instance to the gather options.
+  */
+@@ -63,10 +84,10 @@ enum rawrtc_code rawrtc_ice_gather_options_add_server_internal(
+  */
+ enum rawrtc_code rawrtc_ice_gather_options_add_server(
+     struct rawrtc_ice_gather_options* const options,
+-    char* const* const urls,  // copied
++    const char* const* const urls,  // copied
+     size_t const n_urls,
+-    char* const username,  // nullable, copied
+-    char* const credential,  // nullable, copied
++    const char* const username,  // nullable, copied
++    const char* const credential,  // nullable, copied
+     enum rawrtc_ice_credential_type const credential_type) {
+     struct rawrtc_ice_server* server;
+     enum rawrtc_code error;
+diff --git a/src/ice_gather_options/options.h b/src/ice_gather_options/options.h
+index c43b9c840..28a847470 100644
+--- a/src/ice_gather_options/options.h
++++ b/src/ice_gather_options/options.h
+@@ -7,6 +7,10 @@
+ struct rawrtc_ice_gather_options {
+     enum rawrtc_ice_gather_policy gather_policy;
+     struct list ice_servers;
++    struct {
++        uint16_t min;
++        uint16_t max;
++    } udp_port_range;
+ };
+ 
+ enum rawrtc_code rawrtc_ice_gather_options_add_server_internal(
+diff --git a/src/ice_gatherer/gatherer.c b/src/ice_gatherer/gatherer.c
+index 51002fe95..6a06338d2 100644
+--- a/src/ice_gatherer/gatherer.c
++++ b/src/ice_gatherer/gatherer.c
+@@ -106,6 +106,12 @@ enum rawrtc_code rawrtc_ice_gatherer_create(
+         goto out;
+     }
+ 
++    err = trice_set_port_range(gatherer->ice, options->udp_port_range.min, options->udp_port_range.max);
++    if (err) {
++        DEBUG_WARNING("Unable to set trickle ICE port range, reason: %m\n", err);
++        goto out;
++    }
++
+     // Get local DNS servers
+     err = dns_srv_get(NULL, 0, dns_servers, &n_dns_servers);
+     if (err) {
+diff --git a/src/ice_server/resolver.c b/src/ice_server/resolver.c
+index 65ed350e4..cc3476997 100644
+--- a/src/ice_server/resolver.c
++++ b/src/ice_server/resolver.c
+@@ -77,7 +77,8 @@ static void dns_query_handler(
+ 
+     // Handle error (if any)
+     if (err) {
+-        DEBUG_WARNING("Could not query DNS record for '%r', reason: %m\n", &resolver->url->host);
++        DEBUG_WARNING(
++            "Could not query DNS record for '%r', reason: %m\n", &resolver->url->host, err);
+         goto out;
+     } else if (header->rcode != 0) {
+         DEBUG_NOTICE(
+diff --git a/src/ice_server/server.c b/src/ice_server/server.c
+index 2c52d0d50..4fa3ea04e 100644
+--- a/src/ice_server/server.c
++++ b/src/ice_server/server.c
+@@ -334,10 +334,10 @@ static void rawrtc_ice_server_destroy(void* arg) {
+  */
+ enum rawrtc_code rawrtc_ice_server_create(
+     struct rawrtc_ice_server** const serverp,  // de-referenced
+-    char* const* const urls,  // copied
++    const char* const* const urls,  // copied
+     size_t const n_urls,
+-    char* const username,  // nullable, copied
+-    char* const credential,  // nullable, copied
++    const char* const username,  // nullable, copied
++    const char* const credential,  // nullable, copied
+     enum rawrtc_ice_credential_type const credential_type) {
+     struct rawrtc_ice_server* server;
+     enum rawrtc_code error = RAWRTC_CODE_SUCCESS;
+diff --git a/src/ice_server/server.h b/src/ice_server/server.h
+index da9c9a639..7fe1bdbc8 100644
+--- a/src/ice_server/server.h
++++ b/src/ice_server/server.h
+@@ -35,10 +35,10 @@ struct rawrtc_ice_server_url {
+ 
+ enum rawrtc_code rawrtc_ice_server_create(
+     struct rawrtc_ice_server** const serverp,  // de-referenced
+-    char* const* const urls,  // copied
++    const char* const* const urls,  // copied
+     size_t const n_urls,
+-    char* const username,  // nullable, copied
+-    char* const credential,  // nullable, copied
++    const char* const username,  // nullable, copied
++    const char* const credential,  // nullable, copied
+     enum rawrtc_ice_credential_type const credential_type);
+ 
+ enum rawrtc_code rawrtc_ice_server_copy(
+diff --git a/src/ice_transport/transport.c b/src/ice_transport/transport.c
+index a6c914ea3..25fa358f2 100644
+--- a/src/ice_transport/transport.c
++++ b/src/ice_transport/transport.c
+@@ -2,6 +2,7 @@
+ #include "../dtls_transport/transport.h"
+ #include "../ice_candidate/candidate.h"
+ #include "../ice_candidate/helper.h"
++#include "../ice_candidate/resolver.h"
+ #include "../ice_gatherer/gatherer.h"
+ #include "../ice_parameters/parameters.h"
+ #include "../main/config.h"
+@@ -18,6 +19,12 @@
+ //#define RAWRTC_DEBUG_MODULE_LEVEL 7 // Note: Uncomment this to debug this module only
+ #include <rawrtcc/debug.h>
+ 
++static enum rawrtc_code add_remote_candidate(
++    struct rawrtc_ice_transport* const transport,
++    struct rawrtc_ice_candidate* const candidate,  // nullable
++    struct sa* const resolved_mdns_address  // nullable
++);
++
+ /*
+  * Destructor for an existing ICE transport.
+  */
+@@ -29,7 +36,9 @@ static void rawrtc_ice_transport_destroy(void* arg) {
+     rawrtc_ice_transport_stop(transport);
+ 
+     // Un-reference
++    list_flush(&transport->mdns_resolvers);
+     mem_deref(transport->stun_client);
++    mem_deref(transport->mdns_client);
+     mem_deref(transport->remote_parameters);
+     mem_deref(transport->gatherer);
+ }
+@@ -56,6 +65,7 @@ enum rawrtc_code rawrtc_ice_transport_create(
+         .tos = 0x00,
+     };
+     enum rawrtc_code error;
++    struct sa mdns_servers[2] = {0};
+ 
+     // Check arguments
+     if (!transportp || !gatherer) {
+@@ -80,11 +90,35 @@ enum rawrtc_code rawrtc_ice_transport_create(
+     transport->state_change_handler = state_change_handler;
+     transport->candidate_pair_change_handler = candidate_pair_change_handler;
+     transport->arg = arg;
++    list_init(&transport->mdns_resolvers);
+     transport->remote_end_of_candidates = false;
+ 
+     // Create STUN client
+     error = rawrtc_error_to_code(stun_alloc(&transport->stun_client, &stun_config, NULL, NULL));
+     if (error) {
++        DEBUG_WARNING(
++            "Unable to create STUN client instance, reason: %s\n", rawrtc_code_to_str(error));
++        goto out;
++    }
++
++    // Create mDNS client
++    error = rawrtc_error_to_code(sa_set_str(&mdns_servers[0], "224.0.0.251", 5353));
++    if (error) {
++        DEBUG_WARNING(
++            "Unable to set IPv4 mDNS multicast address, reason: %s\n", rawrtc_code_to_str(error));
++        goto out;
++    }
++    error = rawrtc_error_to_code(sa_set_str(&mdns_servers[1], "ff02::fb", 5353));
++    if (error) {
++        DEBUG_WARNING(
++            "Unable to set IPv6 mDNS multicast address, reason: %s\n", rawrtc_code_to_str(error));
++        goto out;
++    }
++    error = rawrtc_error_to_code(
++        dnsc_alloc(&transport->mdns_client, NULL, mdns_servers, ARRAY_SIZE(mdns_servers)));
++    if (error) {
++        DEBUG_WARNING(
++            "Unable to create mDNS client instance, reason: %s\n", rawrtc_code_to_str(error));
+         goto out;
+     }
+ 
+@@ -315,16 +349,14 @@ enum rawrtc_code rawrtc_ice_transport_start(
+     // TODO: Get more states from trice
+     set_state(transport, RAWRTC_ICE_TRANSPORT_STATE_CHECKING);
+ 
+-    // Start checklist (if remote candidates exist)
+-    if (!list_isempty(trice_rcandl(transport->gatherer->ice))) {
+-        // TODO: Get config from struct
+-        DEBUG_INFO("Starting checklist due to start event\n");
+-        error = rawrtc_error_to_code(trice_checklist_start(
+-            transport->gatherer->ice, transport->stun_client, rawrtc_default_config.pacing_interval,
+-            ice_established_handler, ice_failed_handler, transport));
+-        if (error) {
+-            return error;
+-        }
++    // Start checklist
++    // TODO: Get config from struct
++    DEBUG_INFO("Starting checklist due to start event\n");
++    error = rawrtc_error_to_code(trice_checklist_start(
++        transport->gatherer->ice, transport->stun_client, rawrtc_default_config.pacing_interval,
++        ice_established_handler, ice_failed_handler, transport));
++    if (error) {
++        return error;
+     }
+ 
+     // Done
+@@ -354,22 +386,111 @@ enum rawrtc_code rawrtc_ice_transport_stop(struct rawrtc_ice_transport* const tr
+ 
+     // TODO: Remove from RTCICETransportController (once we have it)
+ 
++    // Remove ICE candidate mDNS hostname resolvers
++    list_flush(&transport->mdns_resolvers);
++
++    return RAWRTC_CODE_SUCCESS;
++}
++
++/*
++ * mDNS hostname address resolved handler.
++ */
++static bool mdns_hostname_address_result_handler(
++    struct rawrtc_ice_candidate* const candidate,  // not checked, referenced
++    char* const hostname,  // not checked
++    struct sa* const address,  // not checked
++    void* const arg  // not checked
++) {
++    struct rawrtc_ice_transport* const transport = arg;
++    enum rawrtc_code error;
++    (void) hostname;
++    DEBUG_INFO("Resolved mDNS hostname %s to address %j\n", hostname, address);
++
++    // Add the resolved remote candidate
++    error = add_remote_candidate(transport, candidate, address);
++    if (error) {
++        DEBUG_WARNING(
++            "Unable to add remote mDNS candidate, reason: %m\n", rawrtc_code_to_str(error));
++    }
++
++    // Done, stop traversing, the draft doesn't allow more than one address per mDNS hostname
++    return true;
++}
++
++/*
++ * Resolve an mDNS hostname.
++ */
++static enum rawrtc_code resolve_mdns_hostname(
++    struct rawrtc_ice_transport* const transport,  // not checked
++    struct rawrtc_ice_candidate* candidate  // not checked
++) {
++    enum rawrtc_code error;
++    char* hostname;
++
++    // Get hostname
++    error = rawrtc_ice_candidate_get_ip(&hostname, candidate);
++    if (error) {
++        return error;
++    }
++    DEBUG_PRINTF("Attempting to resolve mDNS hostname: %s\n", hostname);
++
++    // Create URL resolver for A record (if enabled)
++    if (rawrtc_default_config.ipv4_enable) {
++        struct rawrtc_ice_candidate_mdns_resolver* resolver;
++        error = rawrtc_ice_candidate_mdns_resolver_create(
++            &resolver, transport->mdns_client, DNS_TYPE_A, candidate, hostname,
++            mdns_hostname_address_result_handler, transport);
++        if (error) {
++            DEBUG_WARNING(
++                "Unable to query A record for mDNS hostname %s, reason: %s\n", hostname,
++                rawrtc_code_to_str(error));
++            // Continue - not considered critical
++        } else {
++            // Append to list of URL resolvers
++            list_append(&transport->mdns_resolvers, &resolver->le, resolver);
++        }
++    }
++
++    // Create URL resolver for AAAA record (if enabled)
++    if (rawrtc_default_config.ipv6_enable) {
++        struct rawrtc_ice_candidate_mdns_resolver* resolver;
++        error = rawrtc_ice_candidate_mdns_resolver_create(
++            &resolver, transport->mdns_client, DNS_TYPE_AAAA, candidate, hostname,
++            mdns_hostname_address_result_handler, transport);
++        if (error) {
++            DEBUG_WARNING(
++                "Unable to query AAAA record for mDNS hostname %s, reason: %s\n", hostname,
++                rawrtc_code_to_str(error));
++            // Continue - not considered critical
++        } else {
++            // Append to list of URL resolvers
++            list_append(&transport->mdns_resolvers, &resolver->le, resolver);
++        }
++    }
++
++    // Done
++    mem_deref(hostname);
+     return RAWRTC_CODE_SUCCESS;
+ }
+ 
+ /*
+  * Add a remote candidate ot the ICE transport.
++ * *mdns_address` may be `NULL` or contain an address resolved from an
++ * mDNS hostname (with the port being set to `0`).
++ *
+  * Note: 'candidate' must be NULL to inform the transport that the
+  * remote site finished gathering.
+  */
+-enum rawrtc_code rawrtc_ice_transport_add_remote_candidate(
++static enum rawrtc_code add_remote_candidate(
+     struct rawrtc_ice_transport* const transport,
+-    struct rawrtc_ice_candidate* candidate  // nullable
++    struct rawrtc_ice_candidate* const candidate,  // nullable
++    struct sa* const resolved_mdns_address  // nullable
+ ) {
+     struct ice_rcand* re_candidate = NULL;
+     enum rawrtc_code error;
+-    char* ip = NULL;
++    bool is_mdns_hostname;
+     uint16_t port;
++    char* ip = NULL;
+     struct sa address = {0};
+     int af;
+     enum rawrtc_ice_protocol protocol;
+@@ -418,18 +539,39 @@ enum rawrtc_code rawrtc_ice_transport_add_remote_candidate(
+         return RAWRTC_CODE_INVALID_STATE;
+     }
+ 
+-    // Get IP and port
+-    error = rawrtc_ice_candidate_get_ip(&ip, candidate);
+-    if (error) {
+-        goto out;
++    // Resolve mDNS hostname asynchronously (if any and if needed)
++    if (!resolved_mdns_address) {
++        error = rawrtc_ice_candidate_is_mdns_hostname(&is_mdns_hostname, candidate);
++        if (error) {
++            goto out;
++        }
++        if (is_mdns_hostname) {
++            error = resolve_mdns_hostname(transport, candidate);
++            goto out;
++        }
+     }
++
++    // Get port
+     error = rawrtc_ice_candidate_get_port(&port, candidate);
+     if (error) {
+         goto out;
+     }
+-    error = rawrtc_error_to_code(sa_set_str(&address, ip, port));
+-    if (error) {
+-        goto out;
++
++    // Determine address
++    if (resolved_mdns_address) {
++        // Copy resolved mDNS address and set port
++        sa_cpy(&address, resolved_mdns_address);
++        sa_set_port(&address, port);
++    } else {
++        // Set IP and port
++        error = rawrtc_ice_candidate_get_ip(&ip, candidate);
++        if (error) {
++            goto out;
++        }
++        error = rawrtc_error_to_code(sa_set_str(&address, ip, port));
++        if (error) {
++            goto out;
++        }
+     }
+ 
+     // Skip IPv4, IPv6 if requested
+@@ -546,6 +688,18 @@ out:
+     return error;
+ }
+ 
++/*
++ * Add a remote candidate ot the ICE transport.
++ * Note: 'candidate' must be NULL to inform the transport that the
++ * remote site finished gathering.
++ */
++enum rawrtc_code rawrtc_ice_transport_add_remote_candidate(
++    struct rawrtc_ice_transport* const transport,
++    struct rawrtc_ice_candidate* const candidate  // nullable
++) {
++    return add_remote_candidate(transport, candidate, NULL);
++}
++
+ /*
+  * Set the remote candidates on the ICE transport overwriting all
+  * existing remote candidates.
+diff --git a/src/ice_transport/transport.h b/src/ice_transport/transport.h
+index 60d938bb0..a921d2455 100644
+--- a/src/ice_transport/transport.h
++++ b/src/ice_transport/transport.h
+@@ -13,7 +13,9 @@ struct rawrtc_ice_transport {
+     rawrtc_ice_transport_state_change_handler state_change_handler;  // nullable
+     rawrtc_ice_transport_candidate_pair_change_handler candidate_pair_change_handler;  // nullable
+     void* arg;  // nullable
++    struct list mdns_resolvers;
+     struct stun* stun_client;
++    struct dnsc* mdns_client;
+     struct rawrtc_ice_parameters* remote_parameters;  // referenced
+     struct rawrtc_dtls_transport* dtls_transport;  // referenced, nullable
+     bool remote_end_of_candidates;
+diff --git a/src/peer_connection/connection.c b/src/peer_connection/connection.c
+index ceb1a4375..c3730b05b 100644
+--- a/src/peer_connection/connection.c
++++ b/src/peer_connection/connection.c
+@@ -520,6 +520,13 @@ static enum rawrtc_code get_ice_gatherer(
+         return error;
+     }
+ 
++    error = rawrtc_ice_gather_options_set_udp_port_range(
++        options, connection->configuration->ice_udp_port_range.min,
++        connection->configuration->ice_udp_port_range.max);
++    if (error) {
++        return error;
++    }
++
+     // Add ICE servers to gather options
+     for (le = list_head(&connection->configuration->ice_servers); le != NULL; le = le->next) {
+         struct rawrtc_ice_server* const source_server = le->data;
+diff --git a/src/peer_connection_configuration/configuration.c b/src/peer_connection_configuration/configuration.c
+index c1f2b716d..f865ee213 100644
+--- a/src/peer_connection_configuration/configuration.c
++++ b/src/peer_connection_configuration/configuration.c
+@@ -52,6 +52,8 @@ enum rawrtc_code rawrtc_peer_connection_configuration_create(
+     configuration->sctp.congestion_ctrl_algorithm = RAWRTC_SCTP_TRANSPORT_CONGESTION_CTRL_RFC2581;
+     configuration->sctp.mtu = 0;
+     configuration->sctp.mtu_discovery = false;
++    configuration->ice_udp_port_range.min = 0;
++    configuration->ice_udp_port_range.max = 0;
+ 
+     // Set pointer and return
+     *configurationp = configuration;
+@@ -79,10 +81,10 @@ enum rawrtc_code rawrtc_peer_connection_configuration_add_ice_server_internal(
+  */
+ enum rawrtc_code rawrtc_peer_connection_configuration_add_ice_server(
+     struct rawrtc_peer_connection_configuration* const configuration,
+-    char* const* const urls,  // copied
++    const char* const* const urls,  // copied
+     size_t const n_urls,
+-    char* const username,  // nullable, copied
+-    char* const credential,  // nullable, copied
++    const char* const username,  // nullable, copied
++    const char* const credential,  // nullable, copied
+     enum rawrtc_ice_credential_type const credential_type) {
+     struct rawrtc_ice_server* server;
+     enum rawrtc_code error;
+@@ -258,3 +260,18 @@ enum rawrtc_code rawrtc_peer_connection_configuration_set_sctp_mtu_discovery(
+     configuration->sctp.mtu_discovery = on;
+     return RAWRTC_CODE_SUCCESS;
+ }
++
++enum rawrtc_code rawrtc_peer_connection_configuration_set_ice_udp_port_range(
++    struct rawrtc_peer_connection_configuration* configuration,
++    uint16_t min_port,
++    uint16_t max_port) {
++    if (!configuration) {
++        return RAWRTC_CODE_INVALID_ARGUMENT;
++    }
++    if (max_port < min_port) {
++        return RAWRTC_CODE_INVALID_ARGUMENT;
++    }
++    configuration->ice_udp_port_range.min = min_port;
++    configuration->ice_udp_port_range.max = max_port;
++    return RAWRTC_CODE_SUCCESS;
++}
+diff --git a/src/peer_connection_configuration/configuration.h b/src/peer_connection_configuration/configuration.h
+index 34fd7c15b..f89e7b4cb 100644
+--- a/src/peer_connection_configuration/configuration.h
++++ b/src/peer_connection_configuration/configuration.h
+@@ -17,6 +17,10 @@ struct rawrtc_peer_connection_configuration {
+         uint32_t mtu;
+         bool mtu_discovery;
+     } sctp;
++    struct {
++        uint16_t min;
++        uint16_t max;
++    } ice_udp_port_range;
+ };
+ 
+ enum rawrtc_code rawrtc_peer_connection_configuration_add_ice_server_internal(
+diff --git a/src/peer_connection_ice_candidate/candidate.c b/src/peer_connection_ice_candidate/candidate.c
+index 4f2c7fca9..856f62547 100644
+--- a/src/peer_connection_ice_candidate/candidate.c
++++ b/src/peer_connection_ice_candidate/candidate.c
+@@ -64,7 +64,7 @@ enum rawrtc_code rawrtc_peer_connection_ice_candidate_from_ortc_candidate(
+ enum rawrtc_code rawrtc_peer_connection_ice_candidate_create_internal(
+     struct rawrtc_peer_connection_ice_candidate** const candidatep,  // de-referenced
+     struct pl* const sdp,
+-    char* const mid,  // nullable, referenced
++    const char* const mid,  // nullable, referenced
+     uint8_t const* const media_line_index,  // nullable, copied
+     char* const username_fragment  // nullable, referenced
+ ) {
+@@ -205,8 +205,8 @@ out:
+  */
+ enum rawrtc_code rawrtc_peer_connection_ice_candidate_create(
+     struct rawrtc_peer_connection_ice_candidate** const candidatep,  // de-referenced
+-    char* const sdp,
+-    char* const mid,  // nullable, copied
++    const char* const sdp,
++    const char* const mid,  // nullable, copied
+     uint8_t const* const media_line_index,  // nullable, copied
+     char* const username_fragment  // nullable, copied
+ ) {
+diff --git a/src/peer_connection_ice_candidate/candidate.h b/src/peer_connection_ice_candidate/candidate.h
+index 6fbd82824..c8f9b247a 100644
+--- a/src/peer_connection_ice_candidate/candidate.h
++++ b/src/peer_connection_ice_candidate/candidate.h
+@@ -27,6 +27,6 @@ enum rawrtc_code rawrtc_peer_connection_ice_candidate_from_ortc_candidate(
+ enum rawrtc_code rawrtc_peer_connection_ice_candidate_create_internal(
+     struct rawrtc_peer_connection_ice_candidate** const candidatep,  // de-referenced
+     struct pl* const sdp,
+-    char* const mid,  // nullable
++    const char* const mid,  // nullable
+     uint8_t const* const media_line_index,  // nullable
+     char* const username_fragment);
+diff --git a/subprojects/rawrtcc.wrap b/subprojects/rawrtcc.wrap
+index fb3e0645a..6669766f1 100644
+--- a/subprojects/rawrtcc.wrap
++++ b/subprojects/rawrtcc.wrap
+@@ -1,4 +1,4 @@
+ [wrap-git]
+ directory = rawrtcc
+ url = https://github.com/rawrtc/rawrtc-common.git
+-revision = v0.1.2
++revision = v0.1.3

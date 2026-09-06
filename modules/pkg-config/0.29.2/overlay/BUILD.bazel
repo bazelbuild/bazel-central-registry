@@ -1,0 +1,57 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+PKG_CONFIG_PC_PATH = ":".join([
+    "/usr/local/lib/pkgconfig",
+    "/usr/local/share/pkgconfig",
+    "/usr/lib/pkgconfig",
+    "/usr/share/pkgconfig",
+])
+
+expand_template(
+    name = "config_h",
+    out = "config.h",
+    substitutions = {},
+    template = select({
+        "@platforms//os:windows": "config.h.win32",
+    }),
+)
+
+cc_binary(
+    name = "pkg-config",
+    srcs = [
+        "main.c",
+        "parse.c",
+        "parse.h",
+        "pkg.c",
+        "pkg.h",
+        "rpmvercmp.c",
+        "rpmvercmp.h",
+    ] + select({
+        "@platforms//os:windows": [":config_h"],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+    ] + select({
+        "@platforms//os:windows": [
+            "HAVE_CONFIG_H",
+            "PKG_CONFIG_PC_PATH='\"\"'",
+            "PKG_CONFIG_SYSTEM_INCLUDE_PATH='\"\"'",
+            "PKG_CONFIG_SYSTEM_LIBRARY_PATH='\"\"'",
+        ],
+        "//conditions:default": [
+            "VERSION='\"0.29.2\"'",
+            "ENABLE_INDIRECT_DEPS=0",
+            "ENABLE_DEFINE_PREFIX=0",
+            "PKG_CONFIG_PC_PATH='\"%s\"'" % (PKG_CONFIG_PC_PATH,),
+            "PKG_CONFIG_SYSTEM_INCLUDE_PATH='\"/usr/include\"'",
+            "PKG_CONFIG_SYSTEM_LIBRARY_PATH='\"/usr/lib:/lib\"'",
+        ],
+    }) + select({
+        "@platforms//os:macos": [
+            "_DARWIN_USE_64_BIT_INODE=1",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["@glib//glib"],
+)

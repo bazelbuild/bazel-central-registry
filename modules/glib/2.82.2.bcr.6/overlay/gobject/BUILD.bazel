@@ -1,0 +1,141 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+load(":gobject.bzl", "mkenums")
+
+package(default_applicable_licenses = ["//:license"])
+
+PUBLIC_HDRS = [
+    "gobject-autocleanups.h",
+    "glib-types.h",
+    "gbinding.h",
+    "gbindinggroup.h",
+    "gboxed.h",
+    "gclosure.h",
+    "genums.h",
+    "gmarshal.h",
+    "gobject.h",
+    "gparam.h",
+    "gparamspecs.h",
+    "gsignal.h",
+    "gsignalgroup.h",
+    "gsourceclosure.h",
+    "gtype.h",
+    "gtypemodule.h",
+    "gtypeplugin.h",
+    "gvalue.h",
+    "gvaluearray.h",
+    "gvaluecollector.h",
+    "gvaluetypes.h",
+    "gobjectnotifyqueue.c",  # sic
+]
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+run_binary(
+    name = "gobject-visibility_h",
+    outs = ["include_glib-2.0/gobject/gobject-visibility.h"],
+    args = [
+        UPSTREAM_VERSION,
+        "visibility-macros",
+        "GOBJECT",
+        "$(location include_glib-2.0/gobject/gobject-visibility.h)",
+    ],
+    tool = "//tools:gen-visibility-macros",
+)
+
+expand_template(
+    name = "glib-mkenums_in",
+    out = "glib-mkenums.py",
+    substitutions = {
+        "@PYTHON@": "python3",
+        "@VERSION@": UPSTREAM_VERSION,
+    },
+    template = "glib-mkenums.in",
+)
+
+py_binary(
+    name = "glib_mkenums",
+    srcs = ["glib-mkenums.py"],
+    main = "glib-mkenums.py",
+    visibility = ["//:__subpackages__"],
+)
+
+[
+    mkenums(
+        name = "glib_mkenums_for_%s" % out.replace("-", "_").replace(".", "_"),
+        srcs = ["//glib:gunicode_h"],
+        out = out,
+        template = "%s.template" % out,
+    )
+    for out in [
+        "glib-enumtypes.c",
+        "glib-enumtypes.h",
+    ]
+]
+
+[expand_template(
+    name = "public_hdr_" + hdr,
+    out = "include_glib-2.0/gobject/" + hdr,
+    substitutions = {},
+    template = hdr,
+) for hdr in (PUBLIC_HDRS + ["glib-enumtypes.h"])]
+
+GOBJECT_SRCS = [
+    "gatomicarray.c",
+    "gbinding.c",
+    "gbindinggroup.c",
+    "gboxed.c",
+    "gclosure.c",
+    "genums.c",
+    "gmarshal.c",
+    "gobject.c",
+    "gparam.c",
+    "gparamspecs.c",
+    "gsignal.c",
+    "gsignalgroup.c",
+    "gsourceclosure.c",
+    "gtype.c",
+    "gtypemodule.c",
+    "gtypeplugin.c",
+    "gvalue.c",
+    "gvaluearray.c",
+    "gvaluetransform.c",
+    "gvaluetypes.c",
+]
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+cc_library(
+    name = "gobject",
+    srcs = GOBJECT_SRCS + PUBLIC_HDRS + [
+        "gatomicarray.h",
+        "glib-enumtypes.c",
+        "glib-enumtypes.h",
+        "gobject_trace.h",
+        "gtype-private.h",
+    ],
+    hdrs = [":public_hdr_" + hdr for hdr in (PUBLIC_HDRS + ["glib-enumtypes.h"])] + [":gobject-visibility_h"],
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+    ],
+    implementation_deps = [
+        "//:config_h",
+        "@libffi",
+    ] + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["//glib:stub_intl"],
+    }),
+    includes = ["include_glib-2.0"],
+    linkstatic = True,
+    local_defines = [
+        "G_LOG_DOMAIN='\"GLib-GObject\"'",
+        "GOBJECT_COMPILATION",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//glib"],
+)

@@ -1,0 +1,176 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+UPSTREAM_NAME = module_name()
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+# Compiler features
+
+cc_library(
+    name = "config_h",
+    defines = [
+        "PACKAGE=\"{0}\"".format(UPSTREAM_NAME),
+        "PACKAGE_BUGREPORT=\"\"",
+        "PACKAGE_NAME=\"{0}\"".format(UPSTREAM_NAME),
+        "PACKAGE_STRING=\"{0} {1}\"".format(UPSTREAM_NAME, UPSTREAM_VERSION),
+        "PACKAGE_TARNAME=\"{0}\"".format(UPSTREAM_NAME),
+        "PACKAGE_URL=\"https://uncrustify.sourceforge.net/\"",
+        "PACKAGE_VERSION=\"{0}\"".format(UPSTREAM_VERSION),
+        "VERSION=\"{0}\"".format(UPSTREAM_VERSION),
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = ["@rules_autoconf//:config"],
+)
+
+# Converted: cmake/GenerateVersionHeader.cmake
+
+cmake_configure_file(
+    name = "uncrustify_version_h",
+    src = "src/uncrustify_version.h.in",
+    out = "uncrustify_version.h",
+    defines = [
+        "UNCRUSTIFY_VERSION={0}".format(UPSTREAM_VERSION),
+    ],
+)
+
+# Converted: cmake/GenerateTokenNames.cmake
+
+py_binary(
+    name = "generate_token_names",
+    srcs = ["scripts/generate_token_names.py"],
+    main = "scripts/generate_token_names.py",
+)
+
+genrule(
+    name = "generate_token_names_h",
+    srcs = ["src/token_enum.h"],
+    outs = ["token_names.h"],
+    cmd = "$(location :generate_token_names) $(location src/token_enum.h) > $@",
+    tools = [":generate_token_names"],
+)
+
+# Converted: scripts/make_punctuator_table.py
+
+py_binary(
+    name = "make_punctuator_table",
+    srcs = ["scripts/make_punctuator_table.py"],
+    main = "scripts/make_punctuator_table.py",
+)
+
+genrule(
+    name = "generate_punctuator_table_h",
+    srcs = ["src/symbols_table.h"],
+    outs = ["src/punctuator_table.h"],
+    cmd = "$(location :make_punctuator_table) $@ $(location src/symbols_table.h)",
+    tools = [":make_punctuator_table"],
+)
+
+# Converted: scripts/make_options.py
+
+py_binary(
+    name = "make_options",
+    srcs = ["scripts/make_options.py"],
+    main = "scripts/make_options.py",
+)
+
+genrule(
+    name = "generate_options_cpp",
+    srcs = [
+        "src/options.h",
+        "src/options.cpp.in",
+    ],
+    outs = ["src/options.cpp"],
+    cmd = "$(location :make_options) $@ $(location src/options.h) $(location src/options.cpp.in)",
+    tools = [":make_options"],
+)
+
+# Converted: scripts/make_option_enum.py
+
+py_binary(
+    name = "make_option_enum",
+    srcs = ["scripts/make_option_enum.py"],
+    main = "scripts/make_option_enum.py",
+)
+
+genrule(
+    name = "generate_option_enum_h",
+    srcs = [
+        "src/option.h",
+        "src/option_enum.h.in",
+    ],
+    outs = ["src/option_enum.h"],
+    cmd = "$(location :make_option_enum) $@ $(location src/option.h) $(location src/option_enum.h.in)",
+    tools = [":make_option_enum"],
+)
+
+genrule(
+    name = "generate_option_enum_cpp",
+    srcs = [
+        "src/option.h",
+        "src/option_enum.cpp.in",
+    ],
+    outs = ["src/option_enum.cpp"],
+    cmd = "$(location :make_option_enum) $@ $(location src/option.h) $(location src/option_enum.cpp.in)",
+    tools = [":make_option_enum"],
+)
+
+# Headers
+
+cc_library(
+    name = "root_hdrs",
+    hdrs = [
+        ":generate_token_names_h",
+        ":uncrustify_version_h",
+    ],
+    strip_include_prefix = "",
+    deps = [":config_h"],
+)
+
+# Library
+
+cc_library(
+    name = "uncrustify_library",
+    srcs = glob([
+        "src/**/*.cpp",
+    ]) + [
+        ":generate_option_enum_cpp",
+        ":generate_options_cpp",
+    ],
+    hdrs = glob([
+        "src/**/*.h",
+    ]) + [
+        ":generate_option_enum_h",
+        ":generate_punctuator_table_h",
+    ],
+    strip_include_prefix = "src",
+    defines = select({
+        "@platforms//os:windows": ["WIN32"],
+        "//conditions:default": [],
+    }),
+    deps = [":root_hdrs"],
+)
+
+# Executable
+
+cc_binary(
+    name = "uncrustify",
+    deps = [":uncrustify_library"],
+)

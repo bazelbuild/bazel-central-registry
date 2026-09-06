@@ -1,0 +1,128 @@
+module(
+    name = "rules_rs",
+    bazel_compatibility = [">=7.7.0"],
+    version = "0.0.65",
+)
+
+########### BECOME THE RULES_RUST FACADE ################
+rules_rust = use_extension("//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_archive(
+    name = "rules_rust_tinyjson",
+    build_file = "@rules_rust//util/process_wrapper:BUILD.tinyjson.bazel",
+    sha256 = "9ab95735ea2c8fd51154d01e39cf13912a78071c2d89abc49a7ef102a7dd725a",
+    strip_prefix = "tinyjson-2.5.1",
+    type = "tar.gz",
+    url = "https://static.crates.io/crates/tinyjson/tinyjson-2.5.1.crate",
+)
+
+bazel_dep(name = "apple_support", version = "1.24.1", repo_name = "build_bazel_apple_support")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+#########################################################
+
+toolchains = use_extension("//rs/toolchains:module_extension.bzl", "toolchains")
+use_repo(
+    toolchains,
+    "default_rust_toolchains",
+    "rs_rust_host_tools",
+)
+
+[
+    http_file(
+        name = "toml2json_" + name,
+        executable = True,
+        sha256 = sha256,
+        url = "https://github.com/hermeticbuild/toml2json/releases/download/v0.0.26/toml2json_" + name + ext,
+    )
+    for name, sha256, ext in [
+        ("darwin_amd64", "632da497331d7aa5f2dd36b7c3c4339639e203bbafa56db77f0bb46cf46089a6", ""),
+        ("darwin_arm64", "13e000bb10f66fd3eb7e72c1fbb382a72859fefb9a75b99173728b0136bd932f", ""),
+        ("linux_amd64", "87921b36ceb343af152fc988be59eec49ac9865f2e499a48152bed03e66f8228", ""),
+        ("linux_arm64", "b271e043e58814353a3f289fb7ce78198d742e730149325d0622d71f3d8595b5", ""),
+        ("windows_amd64", "3fb037472c7ec2485b1c965253404841bfa32d571489b76dfbbc1c7ad6848884", ".exe"),
+        ("windows_arm64", "f825f7b6aea181bb050d4112d3234ec4ef0de45fadc9e6f99c0adcb08db9cf64", ".exe"),
+    ]
+]
+
+bazel_dep(name = "bazel_lib", version = "3.0.0")
+bazel_dep(name = "bazel_features", version = "1.45.0")
+bazel_dep(name = "bazel_skylib", version = "1.4.1")
+bazel_dep(name = "package_metadata", version = "0.0.7")
+bazel_dep(name = "platforms", version = "0.0.5")
+bazel_dep(name = "protobuf", version = "34.0.bcr.1", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_cc", version = "0.2.8")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "llvm", version = "0.7.5")
+bazel_dep(name = "aspect_tools_telemetry", version = "0.3.3")
+
+osx = use_extension("@llvm//extensions:osx.bzl", "osx")
+use_repo(osx, "macos_sdk")
+
+tel = use_extension("@aspect_tools_telemetry//:extension.bzl", "telemetry")
+use_repo(tel, "aspect_tools_telemetry_report")
+
+crate = use_extension("//rs:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "rrra",
+    cargo_lock = "//tools/rust_analyzer:Cargo.lock",
+    cargo_toml = "//tools/rust_analyzer:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+crate.from_cargo(
+    name = "rrprd",
+    cargo_lock = "//rs/private/prost:Cargo.lock",
+    cargo_toml = "//rs/private/prost:Cargo.toml",
+    platform_triples = [
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-gnullvm",
+        "aarch64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-gnullvm",
+        "x86_64-pc-windows-msvc",
+    ],
+)
+crate.annotation(
+    crate = "protoc-gen-prost",
+    gen_binaries = ["protoc-gen-prost"],
+)
+crate.annotation(
+    crate = "protoc-gen-tonic",
+    gen_binaries = ["protoc-gen-tonic"],
+)
+use_repo(crate, "rrra")
+use_repo(crate, "rrprd")
+
+rules_rust_prost = use_extension("//rs:rules_rust_prost.bzl", "rules_rust_prost")
+use_repo(rules_rust_prost, "rules_rust_prost")
+
+bazel_dep(name = "rules_go", version = "0.59.0", dev_dependency = True)
+bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.2", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "6.1.2", dev_dependency = True)
+
+register_toolchains(
+    "@default_rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)

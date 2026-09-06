@@ -1,0 +1,689 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_nasm//nasm:defs.bzl", "nasm_cc_library")
+
+licenses(["notice"])
+
+# =============================================================================
+# Symbol Prefixing
+# =============================================================================
+
+PREFIX = "ring_core_0_17_14__"
+
+SYMBOLS_TO_RENAME = [
+    ("ecp_nistz256_point_double", "p256_point_double"),
+    ("ecp_nistz256_point_add", "p256_point_add"),
+    ("ecp_nistz256_point_add_affine", "p256_point_add_affine"),
+    ("ecp_nistz256_ord_mul_mont", "p256_scalar_mul_mont"),
+    ("ecp_nistz256_ord_sqr_mont", "p256_scalar_sqr_rep_mont"),
+    ("ecp_nistz256_mul_mont", "p256_mul_mont"),
+    ("ecp_nistz256_sqr_mont", "p256_sqr_mont"),
+]
+
+SYMBOLS_TO_PREFIX = [
+    "CRYPTO_memcmp",
+    "CRYPTO_poly1305_finish",
+    "CRYPTO_poly1305_finish_neon",
+    "CRYPTO_poly1305_init",
+    "CRYPTO_poly1305_init_neon",
+    "CRYPTO_poly1305_update",
+    "CRYPTO_poly1305_update_neon",
+    "ChaCha20_ctr32",
+    "ChaCha20_ctr32_avx2",
+    "ChaCha20_ctr32_neon",
+    "ChaCha20_ctr32_nohw",
+    "ChaCha20_ctr32_ssse3",
+    "ChaCha20_ctr32_ssse3_4x",
+    "LIMB_is_zero",
+    "LIMB_shr",
+    "LIMBS_add_mod",
+    "LIMBS_are_zero",
+    "LIMBS_equal",
+    "LIMBS_less_than",
+    "LIMBS_reduce_once",
+    "LIMBS_select_512_32",
+    "LIMBS_shl_mod",
+    "LIMBS_sub_mod",
+    "LIMBS_window5_split_window",
+    "LIMBS_window5_unsplit_window",
+    "OPENSSL_cpuid_setup",
+    "adx_bmi2_available",
+    "aes_gcm_dec_kernel",
+    "aes_gcm_dec_update_vaes_avx2",
+    "aes_gcm_enc_kernel",
+    "aes_gcm_enc_update_vaes_avx2",
+    "aes_hw_ctr32_encrypt_blocks",
+    "aes_hw_set_encrypt_key",
+    "aes_hw_set_encrypt_key_alt",
+    "aes_hw_set_encrypt_key_base",
+    "aes_nohw_ctr32_encrypt_blocks",
+    "aes_nohw_encrypt",
+    "aes_nohw_set_encrypt_key",
+    "aesni_gcm_decrypt",
+    "aesni_gcm_encrypt",
+    "avx2_available",
+    "bn_from_montgomery_in_place",
+    "bn_gather5",
+    "bn_mul4x_mont",
+    "bn_mul4x_mont_gather5",
+    "bn_mul8x_mont_neon",
+    "bn_mul_mont",
+    "bn_mul_mont_nohw",
+    "bn_mulx4x_mont",
+    "bn_mulx4x_mont_gather5",
+    "bn_neg_inv_mod_r_u64",
+    "bn_power5_nohw",
+    "bn_powerx5",
+    "bn_scatter5",
+    "bn_sqr8x_internal",
+    "bn_sqr8x_mont",
+    "bn_sqrx8x_internal",
+    "bsaes_ctr32_encrypt_blocks",
+    "bssl_constant_time_test_conditional_memcpy",
+    "bssl_constant_time_test_conditional_memxor",
+    "bssl_constant_time_test_main",
+    "chacha20_poly1305_open",
+    "chacha20_poly1305_open_avx2",
+    "chacha20_poly1305_open_sse41",
+    "chacha20_poly1305_seal",
+    "chacha20_poly1305_seal_avx2",
+    "chacha20_poly1305_seal_sse41",
+    "ecp_nistz256_mul_mont_adx",
+    "ecp_nistz256_mul_mont_nohw",
+    "ecp_nistz256_neg",
+    "ecp_nistz256_ord_mul_mont_adx",
+    "ecp_nistz256_ord_mul_mont_nohw",
+    "ecp_nistz256_ord_sqr_mont_adx",
+    "ecp_nistz256_ord_sqr_mont_nohw",
+    "ecp_nistz256_point_add_adx",
+    "ecp_nistz256_point_add_affine_adx",
+    "ecp_nistz256_point_add_affine_nohw",
+    "ecp_nistz256_point_add_nohw",
+    "ecp_nistz256_point_double_adx",
+    "ecp_nistz256_point_double_nohw",
+    "ecp_nistz256_select_w5",
+    "ecp_nistz256_select_w5_avx2",
+    "ecp_nistz256_select_w5_nohw",
+    "ecp_nistz256_select_w7",
+    "ecp_nistz256_select_w7_avx2",
+    "ecp_nistz256_select_w7_nohw",
+    "ecp_nistz256_sqr_mont_adx",
+    "ecp_nistz256_sqr_mont_nohw",
+    "fiat_curve25519_adx_mul",
+    "fiat_curve25519_adx_square",
+    "gcm_ghash_avx",
+    "gcm_ghash_clmul",
+    "gcm_ghash_neon",
+    "gcm_ghash_vpclmulqdq_avx2_1",
+    "gcm_gmult_clmul",
+    "gcm_gmult_neon",
+    "gcm_init_avx",
+    "gcm_init_clmul",
+    "gcm_init_neon",
+    "gcm_init_vpclmulqdq_avx2",
+    "k25519Precomp",
+    "limbs_mul_add_limb",
+    "little_endian_bytes_from_scalar",
+    "neon_available",
+    "openssl_poly1305_neon2_addmulmod",
+    "openssl_poly1305_neon2_blocks",
+    "p256_mul_mont",
+    "p256_point_add",
+    "p256_point_add_affine",
+    "p256_point_double",
+    "p256_point_mul",
+    "p256_point_mul_base",
+    "p256_point_mul_base_vartime",
+    "p256_scalar_mul_mont",
+    "p256_scalar_sqr_rep_mont",
+    "p256_sqr_mont",
+    "p384_elem_div_by_2",
+    "p384_elem_mul_mont",
+    "p384_elem_neg",
+    "p384_elem_sub",
+    "p384_point_add",
+    "p384_point_double",
+    "p384_point_mul",
+    "p384_scalar_mul_mont",
+    "sha256_block_data_order",
+    "sha256_block_data_order_avx",
+    "sha256_block_data_order_hw",
+    "sha256_block_data_order_neon",
+    "sha256_block_data_order_nohw",
+    "sha256_block_data_order_ssse3",
+    "sha512_block_data_order",
+    "sha512_block_data_order_avx",
+    "sha512_block_data_order_hw",
+    "sha512_block_data_order_neon",
+    "sha512_block_data_order_nohw",
+    "vpaes_ctr32_encrypt_blocks",
+    "vpaes_encrypt",
+    "vpaes_encrypt_key_to_bsaes",
+    "vpaes_set_encrypt_key",
+    "x25519_NEON",
+    "x25519_fe_invert",
+    "x25519_fe_isnegative",
+    "x25519_fe_mul_ttt",
+    "x25519_fe_neg",
+    "x25519_fe_tobytes",
+    "x25519_ge_double_scalarmult_vartime",
+    "x25519_ge_frombytes_vartime",
+    "x25519_ge_scalarmult_base",
+    "x25519_ge_scalarmult_base_adx",
+    "x25519_public_from_private_generic_masked",
+    "x25519_sc_mask",
+    "x25519_sc_muladd",
+    "x25519_sc_reduce",
+    "x25519_scalar_mult_adx",
+    "x25519_scalar_mult_generic_masked",
+]
+
+# Derived symbol lines for each header variant.
+
+_C_RENAME_LINES = ["#define {} {}".format(old, new) for old, new in SYMBOLS_TO_RENAME]
+
+_C_PREFIX_LINES = ["#define {} {}{}".format(s, PREFIX, s) for s in SYMBOLS_TO_PREFIX]
+
+_C_RENAME_APPLE_LINES = ["#define _{} _{}".format(old, new) for old, new in SYMBOLS_TO_RENAME]
+
+_C_PREFIX_APPLE_LINES = ["#define _{} _{}{}".format(s, PREFIX, s) for s in SYMBOLS_TO_PREFIX]
+
+_NASM_RENAME_LINES = ["%define {} {}".format(old, new) for old, new in SYMBOLS_TO_RENAME]
+
+_NASM_PREFIX_LINES = ["%define {} {}{}".format(s, PREFIX, s) for s in SYMBOLS_TO_PREFIX]
+
+_NASM_RENAME_WIN32_LINES = ["%define _{} _{}".format(old, new) for old, new in SYMBOLS_TO_RENAME]
+
+_NASM_PREFIX_WIN32_LINES = ["%define _{} _{}{}".format(s, PREFIX, s) for s in SYMBOLS_TO_PREFIX]
+
+write_file(
+    name = "prefix_symbols_h",
+    out = "include/ring_core_generated/prefix_symbols.h",
+    content = [
+        "#ifndef ring_core_generated_PREFIX_SYMBOLS_H",
+        "#define ring_core_generated_PREFIX_SYMBOLS_H",
+        "",
+    ] + _C_RENAME_LINES + _C_PREFIX_LINES + [
+        "",
+        "#endif",
+        "",
+    ],
+)
+
+write_file(
+    name = "prefix_symbols_asm_h",
+    out = "include/ring_core_generated/prefix_symbols_asm.h",
+    content = [
+        "#ifndef ring_core_generated_PREFIX_SYMBOLS_ASM_H",
+        "#define ring_core_generated_PREFIX_SYMBOLS_ASM_H",
+        "",
+        "#if defined(__APPLE__)",
+    ] + _C_RENAME_APPLE_LINES + _C_PREFIX_APPLE_LINES + [
+        "#else",
+    ] + _C_RENAME_LINES + _C_PREFIX_LINES + [
+        "#endif",
+        "",
+        "#endif",
+        "",
+    ],
+)
+
+write_file(
+    name = "prefix_symbols_nasm_inc",
+    out = "include/ring_core_generated/prefix_symbols_nasm.inc",
+    content = [
+        "%ifndef ring_core_generated_PREFIX_SYMBOLS_NASM_INC",
+        "%define ring_core_generated_PREFIX_SYMBOLS_NASM_INC",
+        "",
+        "%ifidn __OUTPUT_FORMAT__,win32",
+    ] + _NASM_RENAME_WIN32_LINES + _NASM_PREFIX_WIN32_LINES + [
+        "%else",
+    ] + _NASM_RENAME_LINES + _NASM_PREFIX_LINES + [
+        "%endif",
+        "",
+        "%endif",
+        "",
+    ],
+)
+
+# =============================================================================
+# PerlAsm Assembly Generation
+# =============================================================================
+
+filegroup(
+    name = "perlasm_support",
+    srcs = glob(["crypto/perlasm/*.pl"]),
+)
+
+PERLASM_X86_64 = [
+    ("crypto/chacha/asm/chacha-x86_64.pl", "chacha-x86_64"),
+    ("crypto/cipher/asm/chacha20_poly1305_x86_64.pl", "chacha20_poly1305_x86_64"),
+    ("crypto/fipsmodule/aes/asm/aes-gcm-avx2-x86_64.pl", "aes-gcm-avx2-x86_64"),
+    ("crypto/fipsmodule/aes/asm/aesni-gcm-x86_64.pl", "aesni-gcm-x86_64"),
+    ("crypto/fipsmodule/aes/asm/aesni-x86_64.pl", "aesni-x86_64"),
+    ("crypto/fipsmodule/aes/asm/ghash-x86_64.pl", "ghash-x86_64"),
+    ("crypto/fipsmodule/aes/asm/vpaes-x86_64.pl", "vpaes-x86_64"),
+    ("crypto/fipsmodule/bn/asm/x86_64-mont.pl", "x86_64-mont"),
+    ("crypto/fipsmodule/bn/asm/x86_64-mont5.pl", "x86_64-mont5"),
+    ("crypto/fipsmodule/ec/asm/p256-x86_64-asm.pl", "p256-x86_64-asm"),
+    ("crypto/fipsmodule/sha/asm/sha512-x86_64.pl", "sha512-x86_64"),
+    ("crypto/fipsmodule/sha/asm/sha512-x86_64.pl", "sha256-x86_64"),
+]
+
+PERLASM_AARCH64 = [
+    ("crypto/chacha/asm/chacha-armv8.pl", "chacha-armv8"),
+    ("crypto/cipher/asm/chacha20_poly1305_armv8.pl", "chacha20_poly1305_armv8"),
+    ("crypto/fipsmodule/aes/asm/aesv8-armx.pl", "aesv8-armx"),
+    ("crypto/fipsmodule/aes/asm/aesv8-gcm-armv8.pl", "aesv8-gcm-armv8"),
+    ("crypto/fipsmodule/aes/asm/ghash-neon-armv8.pl", "ghash-neon-armv8"),
+    ("crypto/fipsmodule/aes/asm/ghashv8-armx.pl", "ghashv8-armx"),
+    ("crypto/fipsmodule/aes/asm/vpaes-armv8.pl", "vpaes-armv8"),
+    ("crypto/fipsmodule/bn/asm/armv8-mont.pl", "armv8-mont"),
+    ("crypto/fipsmodule/ec/asm/p256-armv8-asm.pl", "p256-armv8-asm"),
+    ("crypto/fipsmodule/sha/asm/sha512-armv8.pl", "sha512-armv8"),
+    ("crypto/fipsmodule/sha/asm/sha512-armv8.pl", "sha256-armv8"),
+]
+
+PERLASM_X86 = [
+    ("crypto/chacha/asm/chacha-x86.pl", "chacha-x86"),
+    ("crypto/fipsmodule/aes/asm/aesni-x86.pl", "aesni-x86"),
+    ("crypto/fipsmodule/aes/asm/ghash-x86.pl", "ghash-x86"),
+    ("crypto/fipsmodule/aes/asm/vpaes-x86.pl", "vpaes-x86"),
+    ("crypto/fipsmodule/bn/asm/x86-mont.pl", "x86-mont"),
+]
+
+PERLASM_ARM = [
+    ("crypto/chacha/asm/chacha-armv4.pl", "chacha-armv4"),
+    ("crypto/fipsmodule/aes/asm/bsaes-armv7.pl", "bsaes-armv7"),
+    ("crypto/fipsmodule/aes/asm/ghash-armv4.pl", "ghash-armv4"),
+    ("crypto/fipsmodule/aes/asm/vpaes-armv7.pl", "vpaes-armv7"),
+    ("crypto/fipsmodule/bn/asm/armv4-mont.pl", "armv4-mont"),
+    ("crypto/fipsmodule/sha/asm/sha256-armv4.pl", "sha256-armv4"),
+    ("crypto/fipsmodule/sha/asm/sha512-armv4.pl", "sha512-armv4"),
+]
+
+FORMATS_X86_64 = [
+    ("elf", "S"),
+    ("macosx", "S"),
+    ("nasm", "asm"),
+]
+
+FORMATS_AARCH64 = [
+    ("linux64", "S"),
+    ("ios64", "S"),
+    ("win64", "S"),
+]
+
+FORMATS_X86 = [
+    ("elf", "S"),
+    ("win32n", "asm"),
+]
+
+FORMATS_ARM = [("linux32", "S")]
+
+[
+    genrule(
+        name = "{}-{}".format(stem, fmt),
+        srcs = [
+            src,
+            ":perlasm_support",
+        ],
+        outs = ["{}-{}.{}".format(stem, fmt, ext)],
+        cmd = "$(PERL) $(execpath {}) {} $@".format(src, fmt),
+        cmd_bat = "$(PERL) $(execpath {}) {} $@".format(src, fmt),
+        # TODO: This is insufficient for cross-compilation. Please
+        # pull in https://github.com/bazel-contrib/rules_perl/pull/100
+        toolchains = ["@rules_perl//perl:current_toolchain"],
+    )
+    for src, stem in PERLASM_X86_64
+    for fmt, ext in FORMATS_X86_64
+]
+
+[
+    genrule(
+        name = "{}-{}".format(stem, fmt),
+        srcs = [
+            src,
+            ":perlasm_support",
+        ],
+        outs = ["{}-{}.{}".format(stem, fmt, ext)],
+        cmd = "$(PERL) $(execpath {}) {} $@".format(src, fmt),
+        cmd_bat = "$(PERL) $(execpath {}) {} $@".format(src, fmt),
+        # TODO: This is insufficient for cross-compilation. Please
+        # pull in https://github.com/bazel-contrib/rules_perl/pull/100
+        toolchains = ["@rules_perl//perl:current_toolchain"],
+    )
+    for src, stem in PERLASM_AARCH64
+    for fmt, ext in FORMATS_AARCH64
+]
+
+[
+    genrule(
+        name = "{}-{}".format(stem, fmt),
+        srcs = [
+            src,
+            ":perlasm_support",
+        ],
+        outs = ["{}-{}.{}".format(stem, fmt, ext)],
+        cmd = "$(PERL) $(execpath {}) {} -fPIC $@".format(src, fmt),
+        cmd_bat = "$(PERL) $(execpath {}) {} -fPIC $@".format(src, fmt),
+        # TODO: This is insufficient for cross-compilation. Please
+        # pull in https://github.com/bazel-contrib/rules_perl/pull/100
+        toolchains = ["@rules_perl//perl:current_toolchain"],
+    )
+    for src, stem in PERLASM_X86
+    for fmt, ext in FORMATS_X86
+]
+
+[
+    genrule(
+        name = "{}-{}".format(stem, fmt),
+        srcs = [
+            src,
+            ":perlasm_support",
+        ],
+        outs = ["{}-{}.{}".format(stem, fmt, ext)],
+        cmd = "$(PERL) $(execpath {}) {} $@".format(src, fmt),
+        cmd_bat = "$(PERL) $(execpath {}) {} $@".format(src, fmt),
+        # TODO: This is insufficient for cross-compilation. Please
+        # pull in https://github.com/bazel-contrib/rules_perl/pull/100
+        toolchains = ["@rules_perl//perl:current_toolchain"],
+    )
+    for src, stem in PERLASM_ARM
+    for fmt, ext in FORMATS_ARM
+]
+
+# =============================================================================
+# NASM Assembly Libraries (Windows)
+# =============================================================================
+
+nasm_cc_library(
+    name = "ring_asm_nasm_x86_64",
+    srcs = [":{}-nasm".format(stem) for _, stem in PERLASM_X86_64],
+    includes = ["include"],
+    preincs = [":prefix_symbols_nasm_inc"],
+)
+
+nasm_cc_library(
+    name = "ring_asm_nasm_x86",
+    srcs = [":{}-win32n".format(stem) for _, stem in PERLASM_X86],
+    includes = ["include"],
+    preincs = [":prefix_symbols_nasm_inc"],
+)
+
+# =============================================================================
+# Config Settings
+# =============================================================================
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_aarch64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "linux_x86",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+config_setting(
+    name = "linux_arm",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:arm",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "macos_aarch64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "android_x86_64",
+    constraint_values = [
+        "@platforms//os:android",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "android_aarch64",
+    constraint_values = [
+        "@platforms//os:android",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "android_x86",
+    constraint_values = [
+        "@platforms//os:android",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+config_setting(
+    name = "android_arm",
+    constraint_values = [
+        "@platforms//os:android",
+        "@platforms//cpu:arm",
+    ],
+)
+
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "windows_x86",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+config_setting(
+    name = "windows_aarch64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+# =============================================================================
+# Source File Lists
+# =============================================================================
+
+COMMON_C_SRCS = [
+    "crypto/curve25519/curve25519.c",
+    "crypto/fipsmodule/aes/aes_nohw.c",
+    "crypto/fipsmodule/bn/montgomery.c",
+    "crypto/fipsmodule/bn/montgomery_inv.c",
+    "crypto/fipsmodule/ec/ecp_nistz.c",
+    "crypto/fipsmodule/ec/gfp_p256.c",
+    "crypto/fipsmodule/ec/gfp_p384.c",
+    "crypto/fipsmodule/ec/p256.c",
+    "crypto/limbs/limbs.c",
+    "crypto/mem.c",
+    "crypto/poly1305/poly1305.c",
+]
+
+HDRS = glob([
+    "include/ring-core/*.h",
+    "crypto/**/*.h",
+    "crypto/**/*.inl",
+    "third_party/fiat/*.h",
+]) + [
+    ":prefix_symbols_h",
+    ":prefix_symbols_asm_h",
+]
+
+# Per-architecture C sources, matching build.rs RING_SRCS.
+_X86_64_SRCS = [
+    "crypto/crypto.c",
+    "crypto/cpu_intel.c",
+    "crypto/curve25519/curve25519_64_adx.c",
+    "crypto/fipsmodule/ec/p256-nistz.c",
+]
+
+_AARCH64_SRCS = [
+    "crypto/fipsmodule/ec/p256-nistz.c",
+]
+
+_X86_SRCS = [
+    "crypto/crypto.c",
+    "crypto/cpu_intel.c",
+]
+
+_ARM_SRCS = [
+    "crypto/crypto.c",
+    "crypto/poly1305/poly1305_arm.c",
+]
+
+# Hand-written assembly (not PerlAsm-generated).
+_X86_64_HAND_ASM = [
+    "third_party/fiat/asm/fiat_curve25519_adx_mul.S",
+    "third_party/fiat/asm/fiat_curve25519_adx_square.S",
+]
+
+_ARM_HAND_ASM = [
+    "crypto/curve25519/asm/x25519-asm-arm.S",
+    "crypto/poly1305/poly1305_arm_asm.S",
+]
+
+# PerlAsm-generated assembly output labels per (arch, format).
+_X86_64_ELF = [":{}-elf".format(stem) for _, stem in PERLASM_X86_64]
+
+_X86_64_MACOSX = [":{}-macosx".format(stem) for _, stem in PERLASM_X86_64]
+
+_AARCH64_LINUX64 = [":{}-linux64".format(stem) for _, stem in PERLASM_AARCH64]
+
+_AARCH64_IOS64 = [":{}-ios64".format(stem) for _, stem in PERLASM_AARCH64]
+
+_AARCH64_WIN64 = [":{}-win64".format(stem) for _, stem in PERLASM_AARCH64]
+
+_X86_ELF = [":{}-elf".format(stem) for _, stem in PERLASM_X86]
+
+_ARM_LINUX32 = [":{}-linux32".format(stem) for _, stem in PERLASM_ARM]
+
+# =============================================================================
+# Compiler Flags
+# =============================================================================
+
+NON_MSVC_COPTS = [
+    "-fvisibility=hidden",
+    "-w",
+]
+
+RING_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "//conditions:default": NON_MSVC_COPTS,
+})
+
+# =============================================================================
+# ring_core Library
+# =============================================================================
+
+cc_library(
+    name = "ring_core",
+    srcs = COMMON_C_SRCS + select({
+        "@platforms//cpu:aarch64": _AARCH64_SRCS,
+        "@platforms//cpu:arm": _ARM_SRCS,
+        "@platforms//cpu:x86_32": _X86_SRCS,
+        "@platforms//cpu:x86_64": _X86_64_SRCS,
+        "//conditions:default": [],
+    }) + select({
+        ":android_aarch64": _AARCH64_LINUX64,
+        ":android_arm": _ARM_LINUX32 + _ARM_HAND_ASM,
+        ":android_x86": _X86_ELF,
+        ":android_x86_64": _X86_64_ELF + _X86_64_HAND_ASM,
+        ":linux_aarch64": _AARCH64_LINUX64,
+        # arm
+        ":linux_arm": _ARM_LINUX32 + _ARM_HAND_ASM,
+        ":linux_x86": _X86_ELF,
+        ":linux_x86_64": _X86_64_ELF + _X86_64_HAND_ASM,
+        # aarch64
+        ":macos_aarch64": _AARCH64_IOS64,
+        # x86_64: compound settings override the CPU-only fallback.
+        ":macos_x86_64": _X86_64_MACOSX + _X86_64_HAND_ASM,
+        ":windows_aarch64": _AARCH64_WIN64,
+        # x86
+        ":windows_x86": [],
+        ":windows_x86_64": [],
+        "//conditions:default": [],
+    }),
+    hdrs = HDRS,
+    copts = RING_COPTS,
+    includes = ["include"],
+    local_defines = ["NDEBUG"],
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":windows_x86": [":ring_asm_nasm_x86"],
+        ":windows_x86_64": [":ring_asm_nasm_x86_64"],
+        "//conditions:default": [],
+    }),
+)
+
+# =============================================================================
+# ring_core_test Library
+# =============================================================================
+
+cc_library(
+    name = "ring_core_test",
+    testonly = True,
+    srcs = ["crypto/constant_time_test.c"],
+    copts = RING_COPTS,
+    local_defines = ["NDEBUG"],
+    deps = [":ring_core"],
+)
+
+write_file(
+    name = "constant_time_test_main",
+    out = "constant_time_test_main.c",
+    content = [
+        "#include <ring_core_generated/prefix_symbols.h>",
+        "int bssl_constant_time_test_main(void);",
+        "int main(void) { return bssl_constant_time_test_main() ? 0 : 1; }",
+    ],
+)
+
+cc_test(
+    name = "constant_time_test",
+    srcs = [
+        "crypto/constant_time_test.c",
+        ":constant_time_test_main",
+    ],
+    copts = RING_COPTS,
+    local_defines = ["NDEBUG"],
+    deps = [":ring_core"],
+)

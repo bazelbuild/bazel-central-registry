@@ -1,0 +1,1112 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "BUILDING_MHD_LIB=1",
+] + select({
+    "@platforms//os:linux": [
+        "_GNU_SOURCE",
+        "_XOPEN_SOURCE=700",
+    ],
+    "@platforms//os:macos": ["_DARWIN_C_SOURCE"],
+    "//conditions:default": [],
+})
+
+# =============================================================================
+# Package info (AC_INIT)
+# =============================================================================
+
+package_info(
+    name = "mhd_package_info",
+    package_name = "GNU libmicrohttpd",
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "libmicrohttpd@gnu.org",
+    package_url = "https://www.gnu.org/software/libmicrohttpd/",
+)
+
+# =============================================================================
+# m4/mhd_bool.m4 -- MHD_BOOL (configure.ac line 764)
+# Checks for bool, true, false keyword support and stdbool.h
+# =============================================================================
+
+autoconf(
+    name = "mhd_bool",
+    checks = [
+        checks.AC_CHECK_HEADER(
+            "stdbool.h",
+            define = "HAVE_STDBOOL_H",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { bool b = true; b = false; return (int)b; }
+""",
+            define = "HAVE_BUILTIN_TYPE_BOOL",
+        ),
+    ],
+)
+
+# =============================================================================
+# m4/mhd_check_func_gettimeofday.m4 -- MHD_CHECK_FUNC_GETTIMEOFDAY
+# (configure.ac line 3132)
+# =============================================================================
+
+autoconf(
+    name = "mhd_check_func_gettimeofday",
+    checks = [
+        checks.AC_CHECK_FUNC(
+            "gettimeofday",
+            define = "HAVE_GETTIMEOFDAY",
+        ),
+    ],
+)
+
+# =============================================================================
+# m4/mhd_shutdown_socket_trigger.m4 -- MHD_CHECK_SOCKET_SHUTDOWN_TRIGGER
+# (configure.ac line 1557)
+# =============================================================================
+
+autoconf(
+    name = "mhd_shutdown_socket_trigger",
+    checks = select({
+        "@platforms//os:linux": [
+            checks.AC_DEFINE("HAVE_LISTEN_SHUTDOWN", "1"),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_DEFINE("HAVE_LISTEN_SHUTDOWN", "1"),
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# =============================================================================
+# m4/ax_pthread.m4 -- AX_PTHREAD (configure.ac line 1215)
+# Pthread detection, thread model selection, and thread name functions
+# =============================================================================
+
+autoconf(
+    name = "ax_pthread",
+    checks = select({
+        "@platforms//os:linux": [
+            checks.AC_CHECK_HEADER(
+                "pthread.h",
+                define = "HAVE_PTHREAD_H",
+            ),
+            checks.AC_DEFINE("MHD_USE_POSIX_THREADS", "1"),
+            checks.AC_CHECK_FUNC(
+                "pthread_sigmask",
+                define = "HAVE_PTHREAD_SIGMASK",
+            ),
+            checks.AC_DEFINE("HAVE_PTHREAD_SETNAME_NP_GNU", "1"),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_CHECK_HEADER(
+                "pthread.h",
+                define = "HAVE_PTHREAD_H",
+            ),
+            checks.AC_DEFINE("MHD_USE_POSIX_THREADS", "1"),
+            checks.AC_CHECK_FUNC(
+                "pthread_sigmask",
+                define = "HAVE_PTHREAD_SIGMASK",
+            ),
+            checks.AC_DEFINE("HAVE_PTHREAD_SETNAME_NP_DARWIN", "1"),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("MHD_USE_W32_THREADS", "1"),
+        ],
+        "//conditions:default": [
+            checks.AC_CHECK_HEADER(
+                "pthread.h",
+                define = "HAVE_PTHREAD_H",
+            ),
+            checks.AC_DEFINE("MHD_USE_POSIX_THREADS", "1"),
+        ],
+    }),
+)
+
+# =============================================================================
+# Main configure target (configure.ac)
+# Aggregates all inline checks from configure.ac and m4 module deps
+# =============================================================================
+
+autoconf(
+    name = "configure_ac",
+    checks = [
+        # --- Package metadata ---
+        checks.AC_DEFINE("PACKAGE", '"libmicrohttpd"'),
+        checks.AC_DEFINE("VERSION", '"1.0.2"'),
+
+        # --- Header checks (AC_CHECK_HEADERS in configure.ac) ---
+        checks.AC_CHECK_HEADER(
+            "stdio.h",
+            define = "HAVE_STDIO_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "string.h",
+            define = "HAVE_STRING_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "strings.h",
+            define = "HAVE_STRINGS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdint.h",
+            define = "HAVE_STDINT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "errno.h",
+            define = "HAVE_ERRNO_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "limits.h",
+            define = "HAVE_LIMITS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "fcntl.h",
+            define = "HAVE_FCNTL_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stddef.h",
+            define = "HAVE_STDDEF_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdlib.h",
+            define = "HAVE_STDLIB_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "inttypes.h",
+            define = "HAVE_INTTYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/types.h",
+            define = "HAVE_SYS_TYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/stat.h",
+            define = "HAVE_SYS_STAT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "time.h",
+            define = "HAVE_TIME_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "signal.h",
+            define = "HAVE_SIGNAL_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "search.h",
+            define = "HAVE_SEARCH_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdalign.h",
+            define = "HAVE_STDALIGN_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "dlfcn.h",
+            define = "HAVE_DLFCN_H",
+        ),
+
+        # --- Function checks (MHD_CHECK_FUNC / AC_CHECK_FUNCS in configure.ac) ---
+        checks.AC_CHECK_FUNC(
+            "snprintf",
+            define = "HAVE_SNPRINTF",
+        ),
+        checks.AC_CHECK_FUNC(
+            "random",
+            define = "HAVE_RANDOM",
+        ),
+        checks.AC_CHECK_FUNC(
+            "rand",
+            define = "HAVE_RAND",
+        ),
+        checks.AC_CHECK_FUNC(
+            "calloc",
+            define = "HAVE_CALLOC",
+        ),
+        checks.AC_CHECK_FUNC(
+            "timespec_get",
+            define = "HAVE_TIMESPEC_GET",
+        ),
+        checks.AC_CHECK_FUNC(
+            "nanosleep",
+            define = "HAVE_NANOSLEEP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "usleep",
+            define = "HAVE_USLEEP",
+        ),
+
+        # --- Compiler feature detection ---
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { const char *s = __func__; (void)s; return 0; }
+""",
+            define = "HAVE___FUNC__",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { const char *s = __FUNCTION__; (void)s; return 0; }
+""",
+            define = "HAVE___FUNCTION__",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { const char *s = __PRETTY_FUNCTION__; (void)s; return 0; }
+""",
+            define = "HAVE___PRETTY_FUNCTION__",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { return (int)__builtin_bswap32(0x12345678); }
+""",
+            define = "MHD_HAVE___BUILTIN_BSWAP32",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { return (int)__builtin_bswap64(0x1234567890abcdefULL); }
+""",
+            define = "MHD_HAVE___BUILTIN_BSWAP64",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <stddef.h>
+#ifndef __STDC_VERSION__
+#error Not a C compiler
+#endif
+#if __STDC_VERSION__ < 201112L
+#error Not C11
+#endif
+#ifdef __STDC_NO_VLA__
+int dummy = 1;
+#else
+int dummy = 2;
+#endif
+int main(void) { int x = (int)_Alignof(int); (void)x; return 0; }
+""",
+            define = "HAVE_C_ALIGNOF",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+int main(void) { int n = 5; int arr[n]; arr[0] = 0; return arr[0]; }
+""",
+            define = "HAVE_C_VARARRAYS",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+static inline int test_inline(int x) { return x + 1; }
+int main(void) { return test_inline(0); }
+""",
+            define = "HAVE_INLINE_FUNCS",
+        ),
+
+        # --- Feature flags (matching ./configure defaults) ---
+        checks.AC_DEFINE("HAVE_MESSAGES", "1"),
+        checks.AC_DEFINE("HAVE_POSTPROCESSOR", "1"),
+        checks.AC_DEFINE("BAUTH_SUPPORT", "1"),
+        checks.AC_DEFINE("DAUTH_SUPPORT", "1"),
+        checks.AC_DEFINE("UPGRADE_SUPPORT", "1"),
+        checks.AC_DEFINE("COOKIE_SUPPORT", "1"),
+        checks.AC_DEFINE("MHD_MD5_SUPPORT", "1"),
+        checks.AC_DEFINE("MHD_SHA256_SUPPORT", "1"),
+        checks.AC_DEFINE("MHD_SHA512_256_SUPPORT", "1"),
+        checks.AC_DEFINE("MHD_DAUTH_DEF_TIMEOUT_", "90"),
+        checks.AC_DEFINE("MHD_DAUTH_DEF_MAX_NC_", "1000"),
+    ] + select({
+        # --- Platform-specific headers ---
+        "@platforms//os:linux": [
+            checks.AC_CHECK_HEADER(
+                "endian.h",
+                define = "HAVE_ENDIAN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "features.h",
+                define = "HAVE_FEATURES_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sched.h",
+                define = "HAVE_SCHED_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "unistd.h",
+                define = "HAVE_UNISTD_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/time.h",
+                define = "HAVE_SYS_TIME_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/socket.h",
+                define = "HAVE_SYS_SOCKET_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/select.h",
+                define = "HAVE_SYS_SELECT_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/ioctl.h",
+                define = "HAVE_SYS_IOCTL_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/uio.h",
+                define = "HAVE_SYS_UIO_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/mman.h",
+                define = "HAVE_SYS_MMAN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/msg.h",
+                define = "HAVE_SYS_MSG_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/param.h",
+                define = "HAVE_SYS_PARAM_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/sysctl.h",
+                define = "HAVE_SYS_SYSCTL_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/in_systm.h",
+                define = "HAVE_NETINET_IN_SYSTM_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/in.h",
+                define = "HAVE_NETINET_IN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "arpa/inet.h",
+                define = "HAVE_ARPA_INET_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/ip.h",
+                define = "HAVE_NETINET_IP_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/tcp.h",
+                define = "HAVE_NETINET_TCP_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "net/if.h",
+                define = "HAVE_NET_IF_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netdb.h",
+                define = "HAVE_NETDB_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "poll.h",
+                define = "HAVE_POLL_H",
+            ),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_CHECK_HEADER(
+                "machine/endian.h",
+                define = "HAVE_MACHINE_ENDIAN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "machine/param.h",
+                define = "HAVE_MACHINE_PARAM_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/param.h",
+                define = "HAVE_SYS_PARAM_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "unistd.h",
+                define = "HAVE_UNISTD_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/time.h",
+                define = "HAVE_SYS_TIME_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/socket.h",
+                define = "HAVE_SYS_SOCKET_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/select.h",
+                define = "HAVE_SYS_SELECT_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/ioctl.h",
+                define = "HAVE_SYS_IOCTL_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/uio.h",
+                define = "HAVE_SYS_UIO_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/mman.h",
+                define = "HAVE_SYS_MMAN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/msg.h",
+                define = "HAVE_SYS_MSG_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/sysctl.h",
+                define = "HAVE_SYS_SYSCTL_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/in_systm.h",
+                define = "HAVE_NETINET_IN_SYSTM_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/in.h",
+                define = "HAVE_NETINET_IN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "arpa/inet.h",
+                define = "HAVE_ARPA_INET_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/ip.h",
+                define = "HAVE_NETINET_IP_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/tcp.h",
+                define = "HAVE_NETINET_TCP_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "net/if.h",
+                define = "HAVE_NET_IF_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netdb.h",
+                define = "HAVE_NETDB_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "poll.h",
+                define = "HAVE_POLL_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sched.h",
+                define = "HAVE_SCHED_H",
+            ),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_CHECK_HEADER(
+                "winsock2.h",
+                define = "HAVE_WINSOCK2_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "ws2tcpip.h",
+                define = "HAVE_WS2TCPIP_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "windows.h",
+                define = "HAVE_WINDOWS_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sdkddkver.h",
+                define = "HAVE_SDKDDKVER_H",
+            ),
+        ],
+        "//conditions:default": [
+            checks.AC_CHECK_HEADER(
+                "unistd.h",
+                define = "HAVE_UNISTD_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/time.h",
+                define = "HAVE_SYS_TIME_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/socket.h",
+                define = "HAVE_SYS_SOCKET_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sys/select.h",
+                define = "HAVE_SYS_SELECT_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/in.h",
+                define = "HAVE_NETINET_IN_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "arpa/inet.h",
+                define = "HAVE_ARPA_INET_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netinet/tcp.h",
+                define = "HAVE_NETINET_TCP_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "netdb.h",
+                define = "HAVE_NETDB_H",
+            ),
+            checks.AC_CHECK_HEADER(
+                "poll.h",
+                define = "HAVE_POLL_H",
+            ),
+        ],
+    }) + select({
+        # --- Platform-specific function checks ---
+        "@platforms//os:linux": [
+            checks.AC_CHECK_FUNC(
+                "poll",
+                define = "HAVE_POLL",
+            ),
+            checks.AC_CHECK_FUNC(
+                "writev",
+                define = "HAVE_WRITEV",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sendmsg",
+                define = "HAVE_SENDMSG",
+            ),
+            checks.AC_CHECK_FUNC(
+                "accept4",
+                define = "HAVE_ACCEPT4",
+            ),
+            checks.AC_CHECK_FUNC(
+                "gmtime_r",
+                define = "HAVE_GMTIME_R",
+            ),
+            checks.AC_CHECK_FUNC(
+                "memmem",
+                define = "HAVE_MEMMEM",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sysconf",
+                define = "HAVE_SYSCONF",
+            ),
+            checks.AC_CHECK_FUNC(
+                "clock_gettime",
+                define = "HAVE_CLOCK_GETTIME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "getsockname",
+                define = "MHD_USE_GETSOCKNAME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "pipe2",
+                define = "HAVE_PIPE2_FUNC",
+            ),
+            checks.AC_CHECK_FUNC(
+                "epoll_create1",
+                define = "HAVE_EPOLL_CREATE1",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sendfile64",
+                define = "HAVE_SENDFILE64",
+            ),
+            checks.AC_CHECK_FUNC(
+                "lseek64",
+                define = "HAVE_LSEEK64",
+            ),
+            checks.AC_CHECK_FUNC(
+                "pread",
+                define = "HAVE_PREAD",
+            ),
+            checks.AC_CHECK_FUNC(
+                "pread64",
+                define = "HAVE_PREAD64",
+            ),
+            checks.AC_CHECK_FUNC(
+                "fork",
+                define = "HAVE_FORK",
+            ),
+            checks.AC_CHECK_FUNC(
+                "waitpid",
+                define = "HAVE_WAITPID",
+            ),
+            checks.AC_CHECK_FUNC(
+                "getpid",
+                define = "HAVE_GETPID",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sched_getaffinity",
+                define = "HAVE_SCHED_GETAFFINITY",
+            ),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_CHECK_FUNC(
+                "poll",
+                define = "HAVE_POLL",
+            ),
+            checks.AC_CHECK_FUNC(
+                "writev",
+                define = "HAVE_WRITEV",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sendmsg",
+                define = "HAVE_SENDMSG",
+            ),
+            checks.AC_CHECK_FUNC(
+                "gmtime_r",
+                define = "HAVE_GMTIME_R",
+            ),
+            checks.AC_CHECK_FUNC(
+                "memmem",
+                define = "HAVE_MEMMEM",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sysconf",
+                define = "HAVE_SYSCONF",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sysctl",
+                define = "HAVE_SYSCTL",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sysctlbyname",
+                define = "HAVE_SYSCTLBYNAME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "clock_gettime",
+                define = "HAVE_CLOCK_GETTIME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "clock_get_time",
+                define = "HAVE_CLOCK_GET_TIME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "getsockname",
+                define = "MHD_USE_GETSOCKNAME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "pread",
+                define = "HAVE_PREAD",
+            ),
+            checks.AC_CHECK_FUNC(
+                "fork",
+                define = "HAVE_FORK",
+            ),
+            checks.AC_CHECK_FUNC(
+                "waitpid",
+                define = "HAVE_WAITPID",
+            ),
+            checks.AC_CHECK_FUNC(
+                "getpid",
+                define = "HAVE_GETPID",
+            ),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_CHECK_FUNC(
+                "WSAPoll",
+                define = "HAVE_WSAPOLL",
+            ),
+        ],
+        "//conditions:default": [
+            checks.AC_CHECK_FUNC(
+                "poll",
+                define = "HAVE_POLL",
+            ),
+            checks.AC_CHECK_FUNC(
+                "writev",
+                define = "HAVE_WRITEV",
+            ),
+            checks.AC_CHECK_FUNC(
+                "gmtime_r",
+                define = "HAVE_GMTIME_R",
+            ),
+            checks.AC_CHECK_FUNC(
+                "sysconf",
+                define = "HAVE_SYSCONF",
+            ),
+            checks.AC_CHECK_FUNC(
+                "clock_gettime",
+                define = "HAVE_CLOCK_GETTIME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "getsockname",
+                define = "MHD_USE_GETSOCKNAME",
+            ),
+            checks.AC_CHECK_FUNC(
+                "pread",
+                define = "HAVE_PREAD",
+            ),
+            checks.AC_CHECK_FUNC(
+                "fork",
+                define = "HAVE_FORK",
+            ),
+            checks.AC_CHECK_FUNC(
+                "waitpid",
+                define = "HAVE_WAITPID",
+            ),
+            checks.AC_CHECK_FUNC(
+                "getpid",
+                define = "HAVE_GETPID",
+            ),
+        ],
+    }) + select({
+        # --- Platform detection (OS-specific defines from configure.ac) ---
+        "@platforms//os:linux": [
+            checks.AC_DEFINE("LINUX", "1"),
+            checks.AC_DEFINE("_REENTRANT", "1"),
+            checks.AC_DEFINE("EPOLL_SUPPORT", "1"),
+            checks.AC_DEFINE("HAVE_LINUX_SENDFILE", "1"),
+            checks.AC_DEFINE("_MHD_ITC_EVENTFD", "1"),
+            checks.AC_DEFINE("HAS_FD_SETSIZE_OVERRIDABLE", "1"),
+            checks.AC_DEFINE("MHD_USE_SYS_TSEARCH", "1"),
+            checks.AC_DEFINE("STDC_HEADERS", "1"),
+            checks.AC_DEFINE("HAVE_ASSERT", "1"),
+            checks.AC_DEFINE("HAVE_FSEEKO", "1"),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_DEFINE("OSX", "1"),
+            checks.AC_DEFINE("SOMEBSD", "1"),
+            checks.AC_DEFINE("HAVE_DARWIN_SENDFILE", "1"),
+            checks.AC_DEFINE("_MHD_ITC_PIPE", "1"),
+            checks.AC_DEFINE("MHD_USE_SYS_TSEARCH", "1"),
+            checks.AC_DEFINE("HAVE_INET6", "1"),
+            checks.AC_DEFINE("STDC_HEADERS", "1"),
+            checks.AC_DEFINE("HAVE_ASSERT", "1"),
+            checks.AC_DEFINE("HAVE_FSEEKO", "1"),
+            checks.AC_DEFINE("HAVE_STRUCT_SOCKADDR_SA_LEN", "1"),
+            checks.AC_DEFINE("HAVE_STRUCT_SOCKADDR_IN_SIN_LEN", "1"),
+            checks.AC_DEFINE("HAVE_STRUCT_SOCKADDR_IN6_SIN6_LEN", "1"),
+            checks.AC_DEFINE("HAVE_STRUCT_SOCKADDR_STORAGE_SS_LEN", "1"),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("WINDOWS", "1"),
+            checks.AC_DEFINE("MINGW", "1"),
+            checks.AC_DEFINE("_MHD_ITC_SOCKETPAIR", "1"),
+            checks.AC_DEFINE("HAVE_INET6", "1"),
+            checks.AC_DEFINE("STDC_HEADERS", "1"),
+            checks.AC_DEFINE("HAS_SIGNED_SOCKET", "1"),
+            checks.AC_DEFINE("HAVE_W32_GMTIME_S", "1"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("OTHEROS", "1"),
+            checks.AC_DEFINE("_MHD_ITC_PIPE", "1"),
+            checks.AC_DEFINE("MHD_USE_SYS_TSEARCH", "1"),
+            checks.AC_DEFINE("STDC_HEADERS", "1"),
+        ],
+    }) + select({
+        "@platforms//cpu:aarch64": [
+            checks.AC_DEFINE("SIZEOF_INT", "4"),
+            checks.AC_DEFINE("SIZEOF_UNSIGNED_INT", "4"),
+            checks.AC_DEFINE("SIZEOF_INT64_T", "8"),
+            checks.AC_DEFINE("SIZEOF_UINT64_T", "8"),
+            checks.AC_DEFINE("SIZEOF_SIZE_T", "8"),
+            checks.AC_DEFINE("SIZEOF_UNSIGNED_LONG_LONG", "8"),
+            checks.AC_DEFINE("SIZEOF_STRUCT_TIMEVAL_TV_SEC", "8"),
+        ],
+        # --- Sizeof checks (hardcoded per CPU, not cross-compile safe) ---
+        "@platforms//cpu:x86_64": [
+            checks.AC_DEFINE("SIZEOF_INT", "4"),
+            checks.AC_DEFINE("SIZEOF_UNSIGNED_INT", "4"),
+            checks.AC_DEFINE("SIZEOF_INT64_T", "8"),
+            checks.AC_DEFINE("SIZEOF_UINT64_T", "8"),
+            checks.AC_DEFINE("SIZEOF_SIZE_T", "8"),
+            checks.AC_DEFINE("SIZEOF_UNSIGNED_LONG_LONG", "8"),
+            checks.AC_DEFINE("SIZEOF_STRUCT_TIMEVAL_TV_SEC", "8"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("SIZEOF_INT", "4"),
+            checks.AC_DEFINE("SIZEOF_UNSIGNED_INT", "4"),
+            checks.AC_DEFINE("SIZEOF_INT64_T", "8"),
+            checks.AC_DEFINE("SIZEOF_UINT64_T", "8"),
+            checks.AC_DEFINE("SIZEOF_SIZE_T", "4"),
+            checks.AC_DEFINE("SIZEOF_UNSIGNED_LONG_LONG", "8"),
+            checks.AC_DEFINE("SIZEOF_STRUCT_TIMEVAL_TV_SEC", "4"),
+        ],
+    }) + select({
+        # --- Compiler/visibility defines ---
+        "@platforms//os:linux": [
+            checks.AC_DEFINE("_MHD_EXTERN", '__attribute__((visibility("default"))) extern'),
+            checks.AC_DEFINE("_MHD_static_inline", "static inline"),
+            checks.AC_DEFINE("_MHD_NORETURN", "_Noreturn"),
+            checks.AC_DEFINE("HAVE_DECL__SC_NPROCESSORS_ONLN", "1"),
+            checks.AC_DEFINE("HAVE_DECL__SC_NPROCESSORS_CONF", "1"),
+            checks.AC_DEFINE("HAVE_DECL_CPU_SETSIZE", "1"),
+            checks.AC_DEFINE("HAVE_CPU_COUNT", "1"),
+            checks.AC_DEFINE("HAVE_CPU_COUNT_S", "1"),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_DEFINE("_MHD_EXTERN", '__attribute__((visibility("default"))) extern'),
+            checks.AC_DEFINE("_MHD_static_inline", "static inline"),
+            checks.AC_DEFINE("_MHD_NORETURN", "_Noreturn"),
+            checks.AC_DEFINE("HAVE_DECL_CTL_HW", "1"),
+            checks.AC_DEFINE("HAVE_DECL_HW_NCPU", "1"),
+            checks.AC_DEFINE("HAVE_DECL_HW_NCPUONLINE", "1"),
+            checks.AC_DEFINE("HAVE_DECL_HW_AVAILCPU", "1"),
+            checks.AC_DEFINE("HAVE_DECL__SC_NPROCESSORS_ONLN", "1"),
+            checks.AC_DEFINE("HAVE_DECL__SC_NPROCESSORS_CONF", "1"),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("_MHD_EXTERN", "__declspec(dllexport) extern"),
+            checks.AC_DEFINE("_MHD_static_inline", "static __forceinline"),
+            checks.AC_DEFINE("_MHD_NORETURN", "__declspec(noreturn)"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("_MHD_EXTERN", "extern"),
+            checks.AC_DEFINE("_MHD_static_inline", "static inline"),
+            checks.AC_DEFINE("_MHD_NORETURN", "_Noreturn"),
+        ],
+    }) + select({
+        # --- Socket/struct checks and FD_SETSIZE ---
+        "@platforms//os:linux": [
+            checks.AC_DEFINE("MHD_SYS_FD_SETSIZE_", "1024"),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <sys/socket.h>
+#include <netinet/in.h>
+int main(void) {
+    struct sockaddr_in6 sa;
+    sa.sin6_family = AF_INET6;
+    (void)sa;
+    return 0;
+}
+""",
+                define = "HAVE_INET6",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <sys/socket.h>
+int main(void) { int x = SOCK_NONBLOCK; (void)x; return 0; }
+""",
+                define = "HAVE_SOCK_NONBLOCK",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <limits.h>
+int main(void) { long p = PAGESIZE; (void)p; return 0; }
+""",
+                define = "MHD_USE_PAGESIZE_MACRO",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <unistd.h>
+#include <limits.h>
+int main(void) { long p = PAGE_SIZE; (void)p; return 0; }
+""",
+                define = "MHD_USE_PAGE_SIZE_MACRO",
+            ),
+        ],
+        "@platforms//os:macos": [
+            checks.AC_DEFINE("MHD_SYS_FD_SETSIZE_", "1024"),
+        ],
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("MHD_SYS_FD_SETSIZE_", "64"),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE("MHD_SYS_FD_SETSIZE_", "1024"),
+        ],
+    }),
+    deps = [
+        ":ax_pthread",
+        ":mhd_bool",
+        ":mhd_check_func_gettimeofday",
+        ":mhd_package_info",
+        ":mhd_shutdown_socket_trigger",
+    ],
+)
+
+# =============================================================================
+# Generate MHD_config.h from template
+# =============================================================================
+
+autoconf_hdr(
+    name = "MHD_config_h",
+    # Normally this is generated in in the root but to avoid `rules_cc`
+    # complaining about `includes = ["."]` it's put in the include dir.
+    out = "src/include/MHD_config.h",
+    template = "MHD_config.h.in",
+    deps = [":configure_ac"],
+)
+
+# =============================================================================
+# Source file lists
+# =============================================================================
+
+MHD_CORE_SRCS = [
+    "src/microhttpd/connection.c",
+    "src/microhttpd/reason_phrase.c",
+    "src/microhttpd/daemon.c",
+    "src/microhttpd/internal.c",
+    "src/microhttpd/memorypool.c",
+    "src/microhttpd/mhd_mono_clock.c",
+    "src/microhttpd/mhd_str.c",
+    "src/microhttpd/mhd_send.c",
+    "src/microhttpd/mhd_sockets.c",
+    "src/microhttpd/mhd_itc.c",
+    "src/microhttpd/mhd_compat.c",
+    "src/microhttpd/mhd_panic.c",
+    "src/microhttpd/response.c",
+]
+
+# Threading sources (USE_POSIX_THREADS || USE_W32_THREADS -- always enabled)
+MHD_THREAD_SRCS = [
+    "src/microhttpd/mhd_threads.c",
+]
+
+# Postprocessor (HAVE_POSTPROCESSOR -- enabled by default)
+MHD_POSTPROCESSOR_SRCS = [
+    "src/microhttpd/postprocessor.c",
+]
+
+# Auth support (HAVE_ANYAUTH = ENABLE_BAUTH || ENABLE_DAUTH)
+MHD_AUTH_SRCS = [
+    "src/microhttpd/gen_auth.c",
+]
+
+# Basic auth (ENABLE_BAUTH)
+MHD_BAUTH_SRCS = [
+    "src/microhttpd/basicauth.c",
+]
+
+# Digest auth (ENABLE_DAUTH)
+MHD_DAUTH_SRCS = [
+    "src/microhttpd/digestauth.c",
+]
+
+# MD5 built-in (ENABLE_MD5 && !ENABLE_MD5_EXT)
+MHD_MD5_SRCS = [
+    "src/microhttpd/md5.c",
+]
+
+# SHA-256 built-in (ENABLE_SHA256 && !ENABLE_SHA256_EXT)
+MHD_SHA256_SRCS = [
+    "src/microhttpd/sha256.c",
+]
+
+# SHA-512/256 (ENABLE_SHA512_256)
+MHD_SHA512_256_SRCS = [
+    "src/microhttpd/sha512_256.c",
+]
+
+MHD_INTERNAL_HDRS = glob(
+    include = [
+        "src/microhttpd/*.h",
+        "src/include/*.h",
+    ],
+    exclude = [
+        "src/include/microhttpd.h",
+        "src/microhttpd/test_helpers.h",
+    ],
+)
+
+# =============================================================================
+# Main library target
+# =============================================================================
+
+cc_library(
+    name = "microhttpd",
+    srcs = MHD_CORE_SRCS +
+           MHD_THREAD_SRCS +
+           MHD_POSTPROCESSOR_SRCS +
+           MHD_AUTH_SRCS +
+           MHD_BAUTH_SRCS +
+           MHD_DAUTH_SRCS +
+           MHD_MD5_SRCS +
+           MHD_SHA256_SRCS +
+           MHD_SHA512_256_SRCS +
+           MHD_INTERNAL_HDRS + [
+        "src/include/MHD_config.h",
+    ] + select({
+        "@platforms//os:linux": [
+            "src/microhttpd/sysfdsetsize.c",
+        ],
+        "@platforms//os:macos": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "src/include/microhttpd.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:clang": [
+            "-w",
+            "-std=c11",
+            "-fvisibility=hidden",
+        ],
+        "@rules_cc//cc/compiler:gcc": [
+            "-w",
+            "-std=c11",
+            "-fvisibility=hidden",
+        ],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/wd4116",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "src/include",
+        "src/microhttpd",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": [],
+        "@platforms//os:windows": [
+            "-lws2_32",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libmicrohttpd",
+    actual = ":microhttpd",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+TEST_COPTS = select({
+    "@rules_cc//cc/compiler:clang": ["-w"],
+    "@rules_cc//cc/compiler:gcc": ["-w"],
+    "//conditions:default": [],
+})
+
+TEST_DEFINES = [
+    "HAVE_CONFIG_H",
+] + select({
+    "@platforms//os:linux": [
+        "_GNU_SOURCE",
+        "_XOPEN_SOURCE=700",
+    ],
+    "@platforms//os:macos": ["_DARWIN_C_SOURCE"],
+    "//conditions:default": [],
+})
+
+cc_test(
+    name = "test_mhd_version",
+    srcs = ["src/microhttpd/test_mhd_version.c"],
+    copts = TEST_COPTS,
+    local_defines = TEST_DEFINES,
+    deps = [":microhttpd"],
+)
+
+cc_test(
+    name = "test_response_entries",
+    srcs = ["src/microhttpd/test_response_entries.c"],
+    copts = TEST_COPTS,
+    local_defines = TEST_DEFINES,
+    deps = [":microhttpd"],
+)
+
+cc_test(
+    name = "test_start_stop",
+    srcs = ["src/microhttpd/test_start_stop.c"],
+    copts = TEST_COPTS,
+    local_defines = TEST_DEFINES,
+    deps = [":microhttpd"],
+)
+
+cc_test(
+    name = "test_daemon",
+    srcs = ["src/microhttpd/test_daemon.c"],
+    copts = TEST_COPTS,
+    local_defines = TEST_DEFINES,
+    deps = [":microhttpd"],
+)
+
+cc_test(
+    name = "test_options",
+    srcs = ["src/microhttpd/test_options.c"],
+    copts = TEST_COPTS,
+    local_defines = TEST_DEFINES,
+    deps = [":microhttpd"],
+)

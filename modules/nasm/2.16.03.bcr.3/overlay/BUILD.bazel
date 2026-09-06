@@ -1,0 +1,108 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+COPTS = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [
+        "-w",
+        "-DHAVE_CONFIG_H",
+    ],
+})
+
+copy_file(
+    name = "config_src",
+    src = select({
+        "@platforms//os:macos": "config_macos.h",
+        "//conditions:default": "config_linux.h",
+    }),
+    out = "config/config.h",
+)
+
+cc_library(
+    name = "nasm_hdrs_asm",
+    hdrs = glob(["asm/*.h"]),
+    strip_include_prefix = "asm",
+)
+
+cc_library(
+    name = "nasm_hdrs_include",
+    hdrs = glob(["include/*.h"]),
+    strip_include_prefix = "include",
+)
+
+cc_library(
+    name = "nasm_hdrs_output",
+    hdrs = glob(["output/*.h"]),
+    strip_include_prefix = "output",
+)
+
+cc_library(
+    name = "nasm_hdrs_x86",
+    hdrs = glob(["x86/*.h"]),
+    strip_include_prefix = "x86",
+)
+
+cc_library(
+    name = "nasm_hdrs",
+    hdrs = glob([
+        "*.h",
+        "autoconf/*.h",
+        "config/*.h",
+        "disasm/*.h",
+        "nasmlib/*.h",
+    ]) + [
+        ":config_src",
+    ],
+    deps = [
+        ":nasm_hdrs_asm",
+        ":nasm_hdrs_include",
+        ":nasm_hdrs_output",
+        ":nasm_hdrs_x86",
+    ],
+)
+
+cc_library(
+    name = "nasm_2_16_03",
+    srcs = glob(
+        include = [
+            "asm/*.c",
+            "common/*.c",
+            "disasm/*.c",
+            "macros/*.c",
+            "nasmlib/*.c",
+            "output/*.c",
+            "stdlib/*.c",
+            "x86/*.c",
+        ],
+        exclude = [
+            "asm/nasm.c",
+        ],
+    ),
+    copts = COPTS,
+    deps = [":nasm_hdrs"],
+)
+
+cc_binary(
+    name = "nasm",
+    srcs = [
+        "asm/nasm.c",
+    ],
+    copts = COPTS,
+    includes = [
+        "include",
+        "x86",
+        "asm",
+        "disasm",
+        "output",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":nasm_2_16_03",
+        ":nasm_hdrs_include",
+    ],
+)

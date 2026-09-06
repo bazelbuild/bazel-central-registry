@@ -1,0 +1,83 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(":tools.bzl", "test_set")
+
+cc_library(
+    name = "runfiles_shim",
+    srcs = ["runfiles_shim.cc"],
+    hdrs = ["runfiles_shim.h"],
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+cc_library(
+    name = "unity-win",
+    srcs = ["unity_setup.c"],
+)
+
+filegroup(
+    name = "test_inputs",
+    srcs = glob(["inputs/*"]),
+)
+
+filegroup(
+    name = "patch-test_inputs",
+    srcs = glob(["json-patch-tests/*.json"]),
+)
+
+DEPS = [
+    ":runfiles_shim",
+    "//:cjson",
+    "//:cjson_tests",
+    "//:cjson_utils",
+    "//tests/unity",
+    "//tests/unity:unity-examples",
+] + select({
+    "@platforms//os:windows": [":unity-win"],
+    "//conditions:default": [],
+})
+
+DATA = [
+    ":patch-test_inputs",
+    ":test_inputs",
+]
+
+HDRS = glob(["*.h"])
+
+test_suite(
+    name = "unity_tests",
+    tests = test_set(
+        srcs = HDRS,
+        data = DATA,
+        test_files = glob(
+            ["*.c"],
+            exclude = [
+                "unity_setup.c",
+                "parse_examples.c",
+                "json_patch_tests.c",
+            ],
+        ),
+        deps = DEPS,
+    ),
+)
+
+cc_test(
+    name = "parse_examples",
+    srcs = HDRS + ["parse_examples.c"],
+    copts = [
+        "-DINPUT1_RLOCATIONPATH=\\\"$(rlocationpath inputs/test1)\\\"",
+    ],
+    data = glob(["inputs/*"]),
+    deps = DEPS,
+)
+
+cc_test(
+    name = "json_patch_tests",
+    srcs = HDRS + ["json_patch_tests.c"],
+    copts = [
+        "-DTEST_JSON_RLOCATIONPATH=\\\"$(rlocationpath json-patch-tests/tests.json)\\\"",
+        "-DCJSON_UTILS_TESTS_JSON_RLOCATIONPATH=\\\"$(rlocationpath json-patch-tests/cjson-utils-tests.json)\\\"",
+        "-DSPEC_TESTS_JSON_RLOCATIONPATH=\\\"$(rlocationpath json-patch-tests/spec_tests.json)\\\"",
+    ],
+    data = glob(["json-patch-tests/*.json"]),
+    deps = DEPS,
+)

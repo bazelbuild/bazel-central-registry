@@ -1,0 +1,622 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Matt Clarkson <matthew.clarkson@arm.com>
+Date: Fri, 19 Jan 2024 09:52:42 +0000
+Subject: [PATCH] refactor: rename to `toolchain_utils` for BCR
+
+---
+ MODULE.bazel                             |   2 +-
+ MODULE.bazel.lock                        |  50 ++++++---
+ e2e/MODULE.bazel                         |  12 +-
+ e2e/MODULE.bazel.lock                    | 134 +++++++++++++++--------
+ e2e/local/triplet/BUILD.bazel            |   4 +-
+ e2e/toolchain/echo/BUILD.bazel           |   8 +-
+ toolchain/local/triplet/triplet.tmpl.bzl |   2 +-
+ toolchain/local/which/BUILD.tmpl.bazel   |   2 +-
+ toolchain/resolved/resolved.tmpl.bzl     |   2 +-
+ 9 files changed, 142 insertions(+), 74 deletions(-)
+
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 249bb1d..dde114f 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -1,5 +1,5 @@
+ module(
+-    name = "rules_toolchain",
++    name = "toolchain_utils",
+     version = "1.0.0-alpha.16",
+     bazel_compatibility = [
+         ">=7.0.0",
+diff --git a/MODULE.bazel.lock b/MODULE.bazel.lock
+index c5fd09a..d255bf3 100644
+--- a/MODULE.bazel.lock
++++ b/MODULE.bazel.lock
+@@ -1,6 +1,6 @@
+ {
+   "lockFileVersion": 3,
+-  "moduleFileHash": "903e61c59d8500c0616898a6fa8efbf2fd6c9b8936db0d502880b5ead514bb02",
++  "moduleFileHash": "d3e230e9f44e5059103a27e7d644707c102a621625ee5e51b01cafa600b0c1b6",
+   "flags": {
+     "cmdRegistries": [
+       "https://bcr.bazel.build/"
+@@ -17,10 +17,10 @@
+   },
+   "moduleDepGraph": {
+     "<root>": {
+-      "name": "rules_toolchain",
+-      "version": "0.0.0",
++      "name": "toolchain_utils",
++      "version": "1.0.0-alpha.16",
+       "key": "<root>",
+-      "repoName": "rules_toolchain",
++      "repoName": "toolchain_utils",
+       "executionPlatformsToRegister": [],
+       "toolchainsToRegister": [],
+       "extensionUsages": [
+@@ -47,7 +47,7 @@
+               "devDependency": false,
+               "location": {
+                 "file": "@@//:MODULE.bazel",
+-                "line": 14,
++                "line": 15,
+                 "column": 8
+               }
+             },
+@@ -59,7 +59,7 @@
+               "devDependency": false,
+               "location": {
+                 "file": "@@//:MODULE.bazel",
+-                "line": 20,
++                "line": 21,
+                 "column": 9
+               }
+             }
+@@ -669,7 +669,7 @@
+   "moduleExtensions": {
+     "//:MODULE.bazel%_repo_rules": {
+       "general": {
+-        "bzlTransitiveDigest": "qXc+t+XkxFhCAlOIhCr8I+ndLztHFOWGoNs6UXtP95k=",
++        "bzlTransitiveDigest": "N8Ehl02dLIrmCn7Ff5iLyKwfbBa0ZnVCw5quAS8d+Yw=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+@@ -687,7 +687,8 @@
+               "name": "_main~_repo_rules~launcher"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+     "@@apple_support~1.5.0//crosstool:setup.bzl%apple_cc_configure_extension": {
+@@ -710,12 +711,13 @@
+               "name": "apple_support~1.5.0~apple_cc_configure_extension~local_config_apple_cc_toolchains"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+     "@@bazel_tools//tools/cpp:cc_configure.bzl%cc_configure_extension": {
+       "general": {
+-        "bzlTransitiveDigest": "O9sf6ilKWU9Veed02jG9o2HM/xgV/UAyciuFBuxrFRY=",
++        "bzlTransitiveDigest": "mcsWHq3xORJexV5/4eCvNOLxFOQKV6eli3fkr+tEaqE=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+@@ -733,7 +735,14 @@
+               "name": "bazel_tools~cc_configure_extension~local_config_cc_toolchains"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": [
++          [
++            "bazel_tools",
++            "bazel_tools",
++            "bazel_tools"
++          ]
++        ]
+       }
+     },
+     "@@bazel_tools//tools/sh:sh_configure.bzl%sh_configure_extension": {
+@@ -749,12 +758,13 @@
+               "name": "bazel_tools~sh_configure_extension~local_config_sh"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+     "@@rules_java~7.1.0//java:extensions.bzl%toolchains": {
+       "general": {
+-        "bzlTransitiveDigest": "iUIRqCK7tkhvcDJCAfPPqSd06IHG0a8HQD0xeQyVAqw=",
++        "bzlTransitiveDigest": "D02GmifxnV/IhYgspsJMDZ/aE8HxAjXgek5gi6FSto4=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+@@ -1289,7 +1299,19 @@
+               "build_file": "\nconfig_setting(\n    name = \"prefix_version_setting\",\n    values = {\"java_runtime_version\": \"remotejdk_21\"},\n    visibility = [\"//visibility:private\"],\n)\nconfig_setting(\n    name = \"version_setting\",\n    values = {\"java_runtime_version\": \"21\"},\n    visibility = [\"//visibility:private\"],\n)\nalias(\n    name = \"version_or_prefix_version_setting\",\n    actual = select({\n        \":version_setting\": \":version_setting\",\n        \"//conditions:default\": \":prefix_version_setting\",\n    }),\n    visibility = [\"//visibility:private\"],\n)\ntoolchain(\n    name = \"toolchain\",\n    target_compatible_with = [\"@platforms//os:windows\", \"@platforms//cpu:x86_64\"],\n    target_settings = [\":version_or_prefix_version_setting\"],\n    toolchain_type = \"@bazel_tools//tools/jdk:runtime_toolchain_type\",\n    toolchain = \"@remotejdk21_win//:jdk\",\n)\ntoolchain(\n    name = \"bootstrap_runtime_toolchain\",\n    # These constraints are not required for correctness, but prevent fetches of remote JDK for\n    # different architectures. As every Java compilation toolchain depends on a bootstrap runtime in\n    # the same configuration, this constraint will not result in toolchain resolution failures.\n    exec_compatible_with = [\"@platforms//os:windows\", \"@platforms//cpu:x86_64\"],\n    target_settings = [\":version_or_prefix_version_setting\"],\n    toolchain_type = \"@bazel_tools//tools/jdk:bootstrap_runtime_toolchain_type\",\n    toolchain = \"@remotejdk21_win//:jdk\",\n)\n"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": [
++          [
++            "rules_java~7.1.0",
++            "bazel_tools",
++            "bazel_tools"
++          ],
++          [
++            "rules_java~7.1.0",
++            "remote_java_tools",
++            "rules_java~7.1.0~toolchains~remote_java_tools"
++          ]
++        ]
+       }
+     }
+   }
+diff --git a/e2e/MODULE.bazel b/e2e/MODULE.bazel
+index 88c84df..c592319 100644
+--- a/e2e/MODULE.bazel
++++ b/e2e/MODULE.bazel
+@@ -6,19 +6,19 @@ module(
+ )
+ 
+ bazel_dep(name = "bazel_skylib", version = "1.4.2")
+-bazel_dep(name = "rules_toolchain", version = "0.0.0")
++bazel_dep(name = "toolchain_utils", version = "0.0.0")
+ local_path_override(
+-    module_name = "rules_toolchain",
++    module_name = "toolchain_utils",
+     path = "..",
+ )
+ 
+-which = use_repo_rule("@rules_toolchain//toolchain/local/which:defs.bzl", "toolchain_local_which")
++which = use_repo_rule("@toolchain_utils//toolchain/local/which:defs.bzl", "toolchain_local_which")
+ 
+ which(
+     name = "which-echo",
+ )
+ 
+-resolved = use_repo_rule("@rules_toolchain//toolchain/resolved:defs.bzl", "toolchain_resolved")
++resolved = use_repo_rule("@toolchain_utils//toolchain/resolved:defs.bzl", "toolchain_resolved")
+ 
+ resolved(
+     name = "resolved-echo",
+@@ -53,7 +53,7 @@ fixture(
+     name = "fixture-amd64-macos-darwin",
+ )
+ 
+-select = use_repo_rule("@rules_toolchain//toolchain/local/select:defs.bzl", "toolchain_local_select")
++select = use_repo_rule("@toolchain_utils//toolchain/local/select:defs.bzl", "toolchain_local_select")
+ 
+ select(
+     name = "fixture",
+@@ -67,7 +67,7 @@ select(
+     },
+ )
+ 
+-export = use_extension("@rules_toolchain//toolchain/export:defs.bzl", "toolchain_export")
++export = use_extension("@toolchain_utils//toolchain/export:defs.bzl", "toolchain_export")
+ export.symlink(
+     name = "export",
+     target = "@fixture",
+diff --git a/e2e/MODULE.bazel.lock b/e2e/MODULE.bazel.lock
+index a482e31..d97279a 100644
+--- a/e2e/MODULE.bazel.lock
++++ b/e2e/MODULE.bazel.lock
+@@ -1,6 +1,6 @@
+ {
+   "lockFileVersion": 3,
+-  "moduleFileHash": "297f2866ac15a1b665de4491ce5b56c8537ce27bfaad34eb6038e7e1057c4fe6",
++  "moduleFileHash": "2efe8f961c3423407b29fe9d647d1f50ac6eae250f1a75ebeced5a1544ac1ad3",
+   "flags": {
+     "cmdRegistries": [
+       "https://bcr.bazel.build/"
+@@ -13,7 +13,7 @@
+     "compatibilityMode": "ERROR"
+   },
+   "localOverrideHashes": {
+-    "rules_toolchain": "903e61c59d8500c0616898a6fa8efbf2fd6c9b8936db0d502880b5ead514bb02",
++    "toolchain_utils": "d3e230e9f44e5059103a27e7d644707c102a621625ee5e51b01cafa600b0c1b6",
+     "bazel_tools": "922ea6752dc9105de5af957f7a99a6933c0a6a712d23df6aad16a9c399f7e787"
+   },
+   "moduleDepGraph": {
+@@ -44,12 +44,13 @@
+             "fixture-arm-linux-musl": "fixture-arm-linux-musl",
+             "fixture-windows-ucrt": "fixture-windows-ucrt",
+             "fixture-arm64-macos-darwin": "fixture-arm64-macos-darwin",
++            "fixture-amd64-macos-darwin": "fixture-amd64-macos-darwin",
+             "fixture": "fixture"
+           },
+           "devImports": [],
+           "tags": [
+             {
+-              "tagName": "@rules_toolchain//toolchain/local/which:defs.bzl%toolchain_local_which",
++              "tagName": "@toolchain_utils//toolchain/local/which:defs.bzl%toolchain_local_which",
+               "attributeValues": {
+                 "name": "which-echo"
+               },
+@@ -61,7 +62,7 @@
+               }
+             },
+             {
+-              "tagName": "@rules_toolchain//toolchain/resolved:defs.bzl%toolchain_resolved",
++              "tagName": "@toolchain_utils//toolchain/resolved:defs.bzl%toolchain_resolved",
+               "attributeValues": {
+                 "toolchain_type": "//toolchain/echo:type",
+                 "name": "resolved-echo"
+@@ -134,21 +135,34 @@
+               }
+             },
+             {
+-              "tagName": "@rules_toolchain//toolchain/local/select:defs.bzl%toolchain_local_select",
++              "tagName": "//test/fixture:repository.bzl%fixture",
++              "attributeValues": {
++                "name": "fixture-amd64-macos-darwin"
++              },
++              "devDependency": false,
++              "location": {
++                "file": "@@//:MODULE.bazel",
++                "line": 52,
++                "column": 8
++              }
++            },
++            {
++              "tagName": "@toolchain_utils//toolchain/local/select:defs.bzl%toolchain_local_select",
+               "attributeValues": {
+                 "map": {
+                   "amd64-linux-gnu": "@fixture-amd64-linux-gnu",
+                   "arm64-linux-gnu": "@fixture-arm64-linux-gnu",
+                   "arm-linux-musl": "@fixture-arm-linux-musl",
+                   "windows-ucrt": "@fixture-windows-ucrt",
+-                  "arm64-macos-darwin": "@fixture-arm64-macos-darwin"
++                  "arm64-macos-darwin": "@fixture-arm64-macos-darwin",
++                  "amd64-macos-darwin": "@fixture-amd64-macos-darwin"
+                 },
+                 "name": "fixture"
+               },
+               "devDependency": false,
+               "location": {
+                 "file": "@@//:MODULE.bazel",
+-                "line": 54,
++                "line": 58,
+                 "column": 7
+               }
+             }
+@@ -157,12 +171,12 @@
+           "hasNonDevUseExtension": true
+         },
+         {
+-          "extensionBzlFile": "@rules_toolchain//toolchain/export:defs.bzl",
++          "extensionBzlFile": "@toolchain_utils//toolchain/export:defs.bzl",
+           "extensionName": "toolchain_export",
+           "usingModule": "<root>",
+           "location": {
+             "file": "@@//:MODULE.bazel",
+-            "line": 65,
++            "line": 70,
+             "column": 23
+           },
+           "imports": {
+@@ -179,7 +193,7 @@
+               "devDependency": false,
+               "location": {
+                 "file": "@@//:MODULE.bazel",
+-                "line": 66,
++                "line": 71,
+                 "column": 15
+               }
+             }
+@@ -190,7 +204,7 @@
+       ],
+       "deps": {
+         "bazel_skylib": "bazel_skylib@1.4.2",
+-        "rules_toolchain": "rules_toolchain@_",
++        "toolchain_utils": "toolchain_utils@_",
+         "bazel_tools": "bazel_tools@_",
+         "local_config_platform": "local_config_platform@_"
+       }
+@@ -226,20 +240,20 @@
+         }
+       }
+     },
+-    "rules_toolchain@_": {
+-      "name": "rules_toolchain",
+-      "version": "0.0.0",
+-      "key": "rules_toolchain@_",
+-      "repoName": "rules_toolchain",
++    "toolchain_utils@_": {
++      "name": "toolchain_utils",
++      "version": "1.0.0-alpha.16",
++      "key": "toolchain_utils@_",
++      "repoName": "toolchain_utils",
+       "executionPlatformsToRegister": [],
+       "toolchainsToRegister": [],
+       "extensionUsages": [
+         {
+           "extensionBzlFile": "//:MODULE.bazel",
+           "extensionName": "_repo_rules",
+-          "usingModule": "rules_toolchain@_",
++          "usingModule": "toolchain_utils@_",
+           "location": {
+-            "file": "@@rules_toolchain~override//:MODULE.bazel",
++            "file": "@@toolchain_utils~override//:MODULE.bazel",
+             "line": 0,
+             "column": 0
+           },
+@@ -256,8 +270,8 @@
+               },
+               "devDependency": false,
+               "location": {
+-                "file": "@@rules_toolchain~override//:MODULE.bazel",
+-                "line": 14,
++                "file": "@@toolchain_utils~override//:MODULE.bazel",
++                "line": 15,
+                 "column": 8
+               }
+             },
+@@ -268,8 +282,8 @@
+               },
+               "devDependency": false,
+               "location": {
+-                "file": "@@rules_toolchain~override//:MODULE.bazel",
+-                "line": 20,
++                "file": "@@toolchain_utils~override//:MODULE.bazel",
++                "line": 21,
+                 "column": 9
+               }
+             }
+@@ -853,14 +867,14 @@
+         "envVariables": {},
+         "generatedRepoSpecs": {
+           "which-echo": {
+-            "bzlFile": "@@rules_toolchain~override//toolchain/local/which:repository.bzl",
++            "bzlFile": "@@toolchain_utils~override//toolchain/local/which:repository.bzl",
+             "ruleClassName": "which",
+             "attributes": {
+               "name": "_main~_repo_rules~which-echo"
+             }
+           },
+           "resolved-echo": {
+-            "bzlFile": "@@rules_toolchain~override//toolchain/resolved:repository.bzl",
++            "bzlFile": "@@toolchain_utils~override//toolchain/resolved:repository.bzl",
+             "ruleClassName": "resolved",
+             "attributes": {
+               "toolchain_type": "@@//toolchain/echo:type",
+@@ -902,8 +916,15 @@
+               "name": "_main~_repo_rules~fixture-arm64-macos-darwin"
+             }
+           },
++          "fixture-amd64-macos-darwin": {
++            "bzlFile": "@@//test/fixture:repository.bzl",
++            "ruleClassName": "fixture",
++            "attributes": {
++              "name": "_main~_repo_rules~fixture-amd64-macos-darwin"
++            }
++          },
+           "fixture": {
+-            "bzlFile": "@@rules_toolchain~override//toolchain/local/select:repository.bzl",
++            "bzlFile": "@@toolchain_utils~override//toolchain/local/select:repository.bzl",
+             "ruleClassName": "select",
+             "attributes": {
+               "map": {
+@@ -911,12 +932,14 @@
+                 "arm64-linux-gnu": "@fixture-arm64-linux-gnu",
+                 "arm-linux-musl": "@fixture-arm-linux-musl",
+                 "windows-ucrt": "@fixture-windows-ucrt",
+-                "arm64-macos-darwin": "@fixture-arm64-macos-darwin"
++                "arm64-macos-darwin": "@fixture-arm64-macos-darwin",
++                "amd64-macos-darwin": "@fixture-amd64-macos-darwin"
+               },
+               "name": "_main~_repo_rules~fixture"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+     "@@apple_support~1.5.0//crosstool:setup.bzl%apple_cc_configure_extension": {
+@@ -939,12 +962,13 @@
+               "name": "apple_support~1.5.0~apple_cc_configure_extension~local_config_apple_cc_toolchains"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+     "@@bazel_tools//tools/cpp:cc_configure.bzl%cc_configure_extension": {
+       "general": {
+-        "bzlTransitiveDigest": "O9sf6ilKWU9Veed02jG9o2HM/xgV/UAyciuFBuxrFRY=",
++        "bzlTransitiveDigest": "mcsWHq3xORJexV5/4eCvNOLxFOQKV6eli3fkr+tEaqE=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+@@ -962,7 +986,14 @@
+               "name": "bazel_tools~cc_configure_extension~local_config_cc_toolchains"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": [
++          [
++            "bazel_tools",
++            "bazel_tools",
++            "bazel_tools"
++          ]
++        ]
+       }
+     },
+     "@@bazel_tools//tools/sh:sh_configure.bzl%sh_configure_extension": {
+@@ -978,12 +1009,13 @@
+               "name": "bazel_tools~sh_configure_extension~local_config_sh"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+     "@@rules_java~7.1.0//java:extensions.bzl%toolchains": {
+       "general": {
+-        "bzlTransitiveDigest": "iUIRqCK7tkhvcDJCAfPPqSd06IHG0a8HQD0xeQyVAqw=",
++        "bzlTransitiveDigest": "D02GmifxnV/IhYgspsJMDZ/aE8HxAjXgek5gi6FSto4=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+@@ -1518,47 +1550,61 @@
+               "build_file": "\nconfig_setting(\n    name = \"prefix_version_setting\",\n    values = {\"java_runtime_version\": \"remotejdk_21\"},\n    visibility = [\"//visibility:private\"],\n)\nconfig_setting(\n    name = \"version_setting\",\n    values = {\"java_runtime_version\": \"21\"},\n    visibility = [\"//visibility:private\"],\n)\nalias(\n    name = \"version_or_prefix_version_setting\",\n    actual = select({\n        \":version_setting\": \":version_setting\",\n        \"//conditions:default\": \":prefix_version_setting\",\n    }),\n    visibility = [\"//visibility:private\"],\n)\ntoolchain(\n    name = \"toolchain\",\n    target_compatible_with = [\"@platforms//os:windows\", \"@platforms//cpu:x86_64\"],\n    target_settings = [\":version_or_prefix_version_setting\"],\n    toolchain_type = \"@bazel_tools//tools/jdk:runtime_toolchain_type\",\n    toolchain = \"@remotejdk21_win//:jdk\",\n)\ntoolchain(\n    name = \"bootstrap_runtime_toolchain\",\n    # These constraints are not required for correctness, but prevent fetches of remote JDK for\n    # different architectures. As every Java compilation toolchain depends on a bootstrap runtime in\n    # the same configuration, this constraint will not result in toolchain resolution failures.\n    exec_compatible_with = [\"@platforms//os:windows\", \"@platforms//cpu:x86_64\"],\n    target_settings = [\":version_or_prefix_version_setting\"],\n    toolchain_type = \"@bazel_tools//tools/jdk:bootstrap_runtime_toolchain_type\",\n    toolchain = \"@remotejdk21_win//:jdk\",\n)\n"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": [
++          [
++            "rules_java~7.1.0",
++            "bazel_tools",
++            "bazel_tools"
++          ],
++          [
++            "rules_java~7.1.0",
++            "remote_java_tools",
++            "rules_java~7.1.0~toolchains~remote_java_tools"
++          ]
++        ]
+       }
+     },
+-    "@@rules_toolchain~override//:MODULE.bazel%_repo_rules": {
++    "@@toolchain_utils~override//:MODULE.bazel%_repo_rules": {
+       "general": {
+-        "bzlTransitiveDigest": "qXc+t+XkxFhCAlOIhCr8I+ndLztHFOWGoNs6UXtP95k=",
++        "bzlTransitiveDigest": "N8Ehl02dLIrmCn7Ff5iLyKwfbBa0ZnVCw5quAS8d+Yw=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+           "local": {
+-            "bzlFile": "@@rules_toolchain~override//toolchain/local/triplet:repository.bzl",
++            "bzlFile": "@@toolchain_utils~override//toolchain/local/triplet:repository.bzl",
+             "ruleClassName": "triplet",
+             "attributes": {
+-              "name": "rules_toolchain~override~_repo_rules~local"
++              "name": "toolchain_utils~override~_repo_rules~local"
+             }
+           },
+           "launcher": {
+-            "bzlFile": "@@rules_toolchain~override//toolchain/launcher:repository.bzl",
++            "bzlFile": "@@toolchain_utils~override//toolchain/launcher:repository.bzl",
+             "ruleClassName": "launcher",
+             "attributes": {
+-              "name": "rules_toolchain~override~_repo_rules~launcher"
++              "name": "toolchain_utils~override~_repo_rules~launcher"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     },
+-    "@@rules_toolchain~override//toolchain/export:defs.bzl%toolchain_export": {
++    "@@toolchain_utils~override//toolchain/export:defs.bzl%toolchain_export": {
+       "general": {
+         "bzlTransitiveDigest": "BzNop8Xd2QfFtwy+F4thyq9O+CpaFjHeMWKDF15GMaM=",
+         "accumulatedFileDigests": {},
+         "envVariables": {},
+         "generatedRepoSpecs": {
+           "export": {
+-            "bzlFile": "@@rules_toolchain~override//toolchain/export/symlink:repository.bzl",
++            "bzlFile": "@@toolchain_utils~override//toolchain/export/symlink:repository.bzl",
+             "ruleClassName": "symlink",
+             "attributes": {
+-              "name": "rules_toolchain~override~toolchain_export~export",
++              "name": "toolchain_utils~override~toolchain_export~export",
+               "target": "@@_main~_repo_rules~fixture//:fixture"
+             }
+           }
+-        }
++        },
++        "recordedRepoMappingEntries": []
+       }
+     }
+   }
+diff --git a/e2e/local/triplet/BUILD.bazel b/e2e/local/triplet/BUILD.bazel
+index 9b542a7..81d2210 100644
+--- a/e2e/local/triplet/BUILD.bazel
++++ b/e2e/local/triplet/BUILD.bazel
+@@ -1,4 +1,4 @@
+-load("@rules_toolchain//toolchain/triplet:local.bzl", "TRIPLET")
++load("@toolchain_utils//toolchain/triplet:local.bzl", "TRIPLET")
+ load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+ load("@bazel_skylib//rules:write_file.bzl", "write_file")
+ 
+@@ -12,5 +12,5 @@ diff_test(
+     name = "test",
+     size = "small",
+     file1 = ":expected",
+-    file2 = "@rules_toolchain//toolchain/triplet:local",
++    file2 = "@toolchain_utils//toolchain/triplet:local",
+ )
+diff --git a/e2e/toolchain/echo/BUILD.bazel b/e2e/toolchain/echo/BUILD.bazel
+index c4affce..4b02d54 100644
+--- a/e2e/toolchain/echo/BUILD.bazel
++++ b/e2e/toolchain/echo/BUILD.bazel
+@@ -1,5 +1,5 @@
+-load("@rules_toolchain//toolchain/symlink/target:defs.bzl", "toolchain_symlink_target")
+-load("@rules_toolchain//toolchain/test:defs.bzl", "toolchain_test")
++load("@toolchain_utils//toolchain/symlink/target:defs.bzl", "toolchain_symlink_target")
++load("@toolchain_utils//toolchain/test:defs.bzl", "toolchain_test")
+ load("@bazel_skylib//rules:build_test.bzl", "build_test")
+ 
+ toolchain_type(
+@@ -16,7 +16,7 @@ toolchain(
+ toolchain_symlink_target(
+     name = "script",
+     target = select({
+-        "@rules_toolchain//toolchain/constraint/os:windows": ":echo.bat",
++        "@toolchain_utils//toolchain/constraint/os:windows": ":echo.bat",
+         "//conditions:default": ":echo.sh",
+     }),
+ )
+@@ -42,7 +42,7 @@ toolchain_test(
+ build_test(
+     name = "entrypoint",
+     target_compatible_with = [
+-        "@rules_toolchain//toolchain/constraint/os:linux",
++        "@toolchain_utils//toolchain/constraint/os:linux",
+     ],
+     targets = ["@which-echo//:entrypoint"],
+ )
+diff --git a/toolchain/local/triplet/triplet.tmpl.bzl b/toolchain/local/triplet/triplet.tmpl.bzl
+index 844f04e..2bca136 100644
+--- a/toolchain/local/triplet/triplet.tmpl.bzl
++++ b/toolchain/local/triplet/triplet.tmpl.bzl
+@@ -1,4 +1,4 @@
+-load("@rules_toolchain//toolchain/triplet:defs.bzl", "ToolchainTripletInfo")
++load("@toolchain_utils//toolchain/triplet:defs.bzl", "ToolchainTripletInfo")
+ 
+ visibility("public")
+ 
+diff --git a/toolchain/local/which/BUILD.tmpl.bazel b/toolchain/local/which/BUILD.tmpl.bazel
+index 8110835..b187870 100644
+--- a/toolchain/local/which/BUILD.tmpl.bazel
++++ b/toolchain/local/which/BUILD.tmpl.bazel
+@@ -1,4 +1,4 @@
+-load("@rules_toolchain//toolchain/symlink/path:defs.bzl", "toolchain_symlink_path")
++load("@toolchain_utils//toolchain/symlink/path:defs.bzl", "toolchain_symlink_path")
+ 
+ package(default_visibility = ["//visibility:public"])
+ 
+diff --git a/toolchain/resolved/resolved.tmpl.bzl b/toolchain/resolved/resolved.tmpl.bzl
+index 56a4226..208fd1f 100644
+--- a/toolchain/resolved/resolved.tmpl.bzl
++++ b/toolchain/resolved/resolved.tmpl.bzl
+@@ -1,4 +1,4 @@
+-load("@rules_toolchain//toolchain:resolved.bzl", _resolved = "export")
++load("@toolchain_utils//toolchain:resolved.bzl", _resolved = "export")
+ 
+ DOC = _resolved.doc
+ 

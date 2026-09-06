@@ -1,0 +1,73 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@bazel_skylib//rules:build_test.bzl", "build_test")
+load("@rules_perl//perl:perl_binary.bzl", "perl_binary")
+load(":colordiff.bzl", "colordiff_script")
+
+colordiff_script(
+    name = "colordiff_script",
+    out = "colordiff_bazel.pl",
+    cmd_cmp = "@diffutils//:cmp",
+    cmd_diff = "@diffutils//:diff",
+    cmd_diff3 = "@diffutils//:diff3",
+    cmd_sdiff = "@diffutils//:sdiff",
+    template = "colordiff.pl",
+)
+
+perl_binary(
+    name = "colordiff",
+    srcs = [":colordiff_bazel.pl"],
+    data = [
+        "@diffutils//:cmp",
+        "@diffutils//:diff",
+        "@diffutils//:diff3",
+        "@diffutils//:sdiff",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["@rules_perl//perl/runfiles"],
+)
+
+write_file(
+    name = "demo_file1",
+    testonly = True,
+    out = "demo_file1.txt",
+    content = [
+        "first line",
+        "second line",
+        "common line",
+        "only in file1",
+    ],
+    newline = "unix",
+)
+
+write_file(
+    name = "demo_file2",
+    testonly = True,
+    out = "demo_file2.txt",
+    content = [
+        "first line",
+        "changed second",
+        "common line",
+        "only in file2",
+    ],
+    newline = "unix",
+)
+
+genrule(
+    name = "colordiff_demo",
+    testonly = True,
+    srcs = [
+        ":demo_file1",
+        ":demo_file2",
+    ],
+    outs = ["colordiff_demo_output.txt"],
+    cmd = "$(execpath :colordiff) $(execpath :demo_file1) $(execpath :demo_file2) > $@ || true",
+    cmd_bat = "$(execpath :colordiff) $(execpath :demo_file1) $(execpath :demo_file2) > $@ || exit /b 0",
+    tools = [":colordiff"],
+)
+
+build_test(
+    name = "colordiff_demo_build_test",
+    targets = [
+        ":colordiff_demo_output.txt",
+    ],
+)

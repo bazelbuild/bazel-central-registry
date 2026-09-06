@@ -1,0 +1,196 @@
+diff --git a/.bazelrc b/.bazelrc
+index 85399b9..64c77fe 100644
+--- a/.bazelrc
++++ b/.bazelrc
+@@ -1,6 +1,6 @@
+ # Emboss (at least notionally) supports C++11 until (at least) 2027.  However,
+-# Googletest requires C++14, which means that all of the Emboss unit tests
+-# require C++14 to run.
++# Googletest 1.17+ requires C++17, which means that all of the Emboss unit tests
++# require C++17 to run.
+ #
+ # TODO(bolms): Find and port to a C++11-compatible unit test framework.
+-build --copt=-std=c++14
++build --copt=-std=c++17
+diff --git a/MODULE.bazel b/MODULE.bazel
+index f5d06a2..cbb288b 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -1,17 +1,18 @@
+ module(
+     name = "emboss",
+-    version = "0.0.0",
++    version = "2025.1003.000719",
+     repo_name = "com_google_emboss",
+ )
+ 
+ bazel_dep(
+     name = "abseil-cpp",
+-    version = "20230125.1",
++    version = "20240722.0",
+     repo_name = "com_google_absl",
+ )
+ bazel_dep(
+     name = "googletest",
+-    version = "1.14.0.bcr.1",
++    version = "1.17.0.bcr.2",
+     repo_name = "com_google_googletest",
+ )
+-bazel_dep(name = "rules_python", version = "0.31.0")
++bazel_dep(name = "rules_python", version = "1.0.0")
++bazel_dep(name = "rules_cc", version = "0.1.0")
+diff --git a/build_defs.bzl b/build_defs.bzl
+index 781f99e..7363e1a 100644
+--- a/build_defs.bzl
++++ b/build_defs.bzl
+@@ -24,7 +24,10 @@ There is also a convenience macro, `emboss_cc_library()`, which creates an
+ `emboss_library` and a `cc_emboss_library` based on it.
+ """
+ 
+-load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
++load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
++load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
+ 
+ def emboss_cc_library(name, srcs, deps = [], import_dirs = [], enable_enum_traits = True, **kwargs):
+     """Constructs a C++ library from an .emb file."""
+@@ -160,7 +163,7 @@ EmbossCcHeaderInfo = provider(
+ )
+ 
+ def _cc_emboss_aspect_impl(target, ctx):
+-    cc_toolchain = find_cpp_toolchain(ctx, mandatory = True)
++    cc_toolchain = find_cc_toolchain(ctx, mandatory = True)
+     emboss_cc_compiler = ctx.executable._emboss_cc_compiler
+     emboss_info = target[EmbossInfo]
+     feature_configuration = cc_common.configure_features(
+@@ -216,7 +219,7 @@ _cc_emboss_aspect = aspect(
+     required_providers = [EmbossInfo],
+     attrs = {
+         "_cc_toolchain": attr.label(
+-            default = "@bazel_tools//tools/cpp:current_cc_toolchain",
++            default = "@rules_cc//cc:current_cc_toolchain",
+         ),
+         "_emboss_cc_compiler": attr.label(
+             executable = True,
+@@ -230,7 +233,7 @@ _cc_emboss_aspect = aspect(
+             default = True,
+         ),
+     },
+-    toolchains = ["@bazel_tools//tools/cpp:toolchain_type"],
++    toolchains = use_cc_toolchain(),
+ )
+ 
+ def _cc_emboss_library_impl(ctx):
+diff --git a/compiler/back_end/cpp/BUILD b/compiler/back_end/cpp/BUILD
+index 14eac6a..bdd6e61 100644
+--- a/compiler/back_end/cpp/BUILD
++++ b/compiler/back_end/cpp/BUILD
+@@ -16,6 +16,7 @@
+ 
+ load("@rules_python//python:py_binary.bzl", "py_binary")
+ load("@rules_python//python:py_library.bzl", "py_library")
++load("@rules_python//python:py_test.bzl", "py_test")
+ load(":build_defs.bzl", "cpp_golden_test", "emboss_cc_test")
+ 
+ package(
+diff --git a/compiler/back_end/cpp/build_defs.bzl b/compiler/back_end/cpp/build_defs.bzl
+index 78d22f3..087dfca 100644
+--- a/compiler/back_end/cpp/build_defs.bzl
++++ b/compiler/back_end/cpp/build_defs.bzl
+@@ -16,28 +16,29 @@
+ # vim:set ft=blazebuild:
+ """Rule to generate cc_tests with and without system-specific optimizations."""
+ 
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
+ load("@rules_python//python:py_test.bzl", "py_test")
+ 
+ def emboss_cc_test(name, copts = None, no_w_sign_compare = False, **kwargs):
+     """Generates cc_test rules with and without -DEMBOSS_NO_OPTIMIZATIONS."""
+-    native.cc_test(
++    cc_test(
+         name = name,
+         copts = copts or [],
+         **kwargs
+     )
+-    native.cc_test(
++    cc_test(
+         name = name + "_no_opts",
+         copts = [
+             "-DEMBOSS_NO_OPTIMIZATIONS",
+         ] + ([] if no_w_sign_compare else ["-Wsign-compare"]) + (copts or []),
+         **kwargs
+     )
+-    native.cc_test(
++    cc_test(
+         name = name + "_no_checks",
+         copts = ["-DEMBOSS_SKIP_CHECKS"] + (copts or []),
+         **kwargs
+     )
+-    native.cc_test(
++    cc_test(
+         name = name + "_no_checks_no_opts",
+         copts = [
+             "-DEMBOSS_NO_OPTIMIZATIONS",
+diff --git a/integration/googletest/BUILD b/integration/googletest/BUILD
+index 9c96f08..badd291 100644
+--- a/integration/googletest/BUILD
++++ b/integration/googletest/BUILD
+@@ -12,6 +12,9 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
++
+ cc_library(
+     name = "emboss_test_util",
+     testonly = 1,
+diff --git a/runtime/cpp/BUILD b/runtime/cpp/BUILD
+index 5d9df81..47ee169 100644
+--- a/runtime/cpp/BUILD
++++ b/runtime/cpp/BUILD
+@@ -14,6 +14,8 @@
+ 
+ # Emboss C++ Runtime.
+ 
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
+ filegroup(
+     name = "raw_headers",
+     srcs = [
+diff --git a/runtime/cpp/test/BUILD b/runtime/cpp/test/BUILD
+index 6aecbf3..11c5ed6 100644
+--- a/runtime/cpp/test/BUILD
++++ b/runtime/cpp/test/BUILD
+@@ -14,6 +14,7 @@
+ 
+ # Emboss public definitions.
+ 
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
+ load(
+     ":build_defs.bzl",
+     "emboss_cc_util_test",
+diff --git a/runtime/cpp/test/build_defs.bzl b/runtime/cpp/test/build_defs.bzl
+index 40b977b..9cd51d5 100644
+--- a/runtime/cpp/test/build_defs.bzl
++++ b/runtime/cpp/test/build_defs.bzl
+@@ -17,14 +17,16 @@
+ 
+ """Macro to run tests both with and without optimizations."""
+ 
++load("@rules_cc//cc:cc_test.bzl", "cc_test")
++
+ def emboss_cc_util_test(name, copts = [], **kwargs):
+     """Constructs two cc_test targets, with and without optimizations."""
+-    native.cc_test(
++    cc_test(
+         name = name,
+         copts = copts + ["-Wsign-compare"],
+         **kwargs
+     )
+-    native.cc_test(
++    cc_test(
+         name = name + "_no_opts",
+         copts = copts + [
+             # This is generally a dangerous flag for an individual target, but

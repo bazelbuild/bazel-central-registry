@@ -1,0 +1,377 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//:opencv.bzl", "CONFIG", "opencv_module")
+
+write_file(
+    name = "_private/version_string.inc",
+    out = "private/version_string.inc",
+    content = ["\"4.11.0\""],
+)
+
+write_file(
+    name = "_opencv2/opencv_modules.hpp",
+    out = "opencv2/opencv_modules.hpp",
+    content = ["".join([
+        "#define HAVE_OPENCV_{}\n".format(x.upper())
+        for x in CONFIG["modules"]
+    ])],
+)
+
+write_file(
+    name = "_custom_hal.hpp",
+    out = "custom_hal.hpp",
+    content = [
+        "#ifndef _CUSTOM_HAL_INCLUDED_",
+        "#define _CUSTOM_HAL_INCLUDED_",
+        "#endif",
+    ],
+)
+
+write_file(
+    name = "_opencv_data_config.hpp",
+    out = "opencv_data_config.hpp",
+    content = [
+        "#define OPENCV_INSTALL_PREFIX \"\"",
+        "#define OPENCV_DATA_INSTALL_PATH \"\"",
+        "#define OPENCV_BUILD_DIR \"\"",
+        "#define OPENCV_DATA_BUILD_DIR_SEARCH_PATHS \"\"",
+        "#define OPENCV_INSTALL_DATA_DIR_RELATIVE \"\"",
+    ],
+)
+
+# https://github.com/opencv/opencv/wiki/CPU-optimizations-build-options
+# OpenCV has a lot of options to enable certain features
+# one of those is perf optimizations via certain simd instructions
+# However, not all of these features are available on all platforms
+write_file(
+    name = "_cv_cpu_config.h",
+    out = "cv_cpu_config.h",
+    content = [
+        "#define CV_CPU_DISPATCH_FEATURES 0",
+    ] + select({
+        "@platforms//cpu:aarch64": [
+            "#define CV_CPU_BASELINE_FEATURES 0",
+        ],
+        "@platforms//cpu:x86_64": [
+            "#define CV_CPU_COMPILE_SSE 1",
+            "#define CV_CPU_BASELINE_COMPILE_SSE 1",
+            "#define CV_CPU_COMPILE_SSE2 1",
+            "#define CV_CPU_BASELINE_COMPILE_SSE2 1",
+            "#define CV_CPU_COMPILE_SSE3 1",
+            "#define CV_CPU_BASELINE_COMPILE_SSE3 1",
+            "#define CV_CPU_COMPILE_SSSE3 1",
+            "#define CV_CPU_BASELINE_COMPILE_SSSE3 1",
+            "#define CV_CPU_COMPILE_SSE4_1 1",
+            "#define CV_CPU_BASELINE_COMPILE_SSE4_1 1",
+            "#define CV_CPU_COMPILE_POPCNT 1",
+            "#define CV_CPU_BASELINE_COMPILE_POPCNT 1",
+            "#define CV_CPU_COMPILE_SSE4_2 1",
+            "#define CV_CPU_BASELINE_COMPILE_SSE4_2 1",
+            "#define CV_CPU_COMPILE_FP16 1",
+            "#define CV_CPU_BASELINE_COMPILE_FP16 1",
+            "#define CV_CPU_COMPILE_FMA3 1",
+            "#define CV_CPU_BASELINE_COMPILE_FMA3 1",
+            "#define CV_CPU_COMPILE_AVX 1",
+            "#define CV_CPU_BASELINE_COMPILE_AVX 1",
+            "#define CV_CPU_COMPILE_AVX2 1",
+            "#define CV_CPU_BASELINE_COMPILE_AVX2 1",
+            "#define CV_CPU_BASELINE_FEATURES 0,CV_CPU_SSE,CV_CPU_SSE2,CV_CPU_SSE3,CV_CPU_SSSE3,CV_CPU_SSE4_1,CV_CPU_POPCNT,CV_CPU_SSE4_2,CV_CPU_FP16,CV_CPU_FMA3,CV_CPU_AVX,CV_CPU_AVX2",
+        ],
+    }),
+)
+
+# Opencv has a lot of options to enable certain features
+# Leverage this, cv_cpu_config.h, and cpu opts to enable these features
+expand_template(
+    name = "expand_cvconfig.h.in",
+    out = "cvconfig.h",
+    substitutions = {
+        "#cmakedefine BUILD_SHARED_LIBS": "/* BUILD_SHARED_LIBS */",
+        "#cmakedefine CV_ENABLE_INTRINSICS": "#define CV_ENABLE_INTRINSICS",
+        "#cmakedefine CV_DISABLE_OPTIMIZATION": "/* CV_DISABLE_OPTIMIZATION */",
+        "${OPENCV_CUDA_ARCH_BIN}": "",
+        "#cmakedefine CUDA_ARCH_BIN_OR_PTX_10": "/* CUDA_ARCH_BIN_OR_PTX_10 */",
+        "${OPENCV_CUDA_ARCH_FEATURES}": "",
+        "${OPENCV_CUDA_ARCH_PTX}": "",
+        "#cmakedefine HAVE_AVFOUNDATION": "/* HAVE_AVFOUNDATION */",
+        "#cmakedefine HAVE_AVIF": "/* HAVE_AVIF */",
+        "#cmakedefine HAVE_CAMV4L\n": "/* HAVE_CAMV4L */\n",
+        "#cmakedefine HAVE_CAMV4L2": "#define HAVE_CAMV4L2",
+        "#cmakedefine HAVE_CARBON": "/* HAVE_CARBON */",
+        "#cmakedefine HAVE_CLAMDBLAS": "/* HAVE_CLAMDBLAS */",
+        "#cmakedefine HAVE_CLAMDFFT": "/* HAVE_CLAMDFFT */",
+        "#cmakedefine HAVE_CLP": "/* HAVE_CLP */",
+        "#cmakedefine HAVE_COCOA": "/* HAVE_COCOA */",
+        "#cmakedefine HAVE_CSTRIPES": "/* HAVE_CSTRIPES */",
+        "#cmakedefine HAVE_CUBLAS": "/* HAVE_CUBLAS */",
+        "#cmakedefine HAVE_CUDA": "/* HAVE_CUDA */",
+        "#cmakedefine HAVE_CUFFT": "/* HAVE_CUFFT */",
+        "#cmakedefine HAVE_DC1394\n": "/* HAVE_DC1394 */\n",
+        "#cmakedefine HAVE_DC1394_2": "/* HAVE_DC1394_2 */",
+        "#cmakedefine HAVE_DIRECTX\n": "/* HAVE_DIRECTX */\n",
+        "#cmakedefine HAVE_DIRECTX_NV12": "/* HAVE_DIRECTX_NV12 */",
+        "#cmakedefine HAVE_D3D11": "/* HAVE_D3D11 */",
+        "#cmakedefine HAVE_D3D10": "/* HAVE_D3D10 */",
+        "#cmakedefine HAVE_D3D9": "/* HAVE_D3D9 */",
+        "#cmakedefine HAVE_DSHOW": "/* HAVE_DSHOW */",
+        "#cmakedefine HAVE_EIGEN": "#define HAVE_EIGEN",
+        "#cmakedefine HAVE_FFMPEG": "#define HAVE_FFMPEG",
+        "#cmakedefine HAVE_GDAL": "/* HAVE_GDAL */",
+        "#cmakedefine HAVE_GSTREAMER": "/* HAVE_GSTREAMER */",
+        "#cmakedefine HAVE_GTHREAD": "#define HAVE_GTHREAD",
+        "#cmakedefine HAVE_GTK": "/* HAVE_GTK */",
+        "#cmakedefine HAVE_HALIDE": "/* HAVE_HALIDE */",
+        "#cmakedefine HAVE_INTTYPES_H 1": "/* HAVE_INTTYPES_H */",
+        "#cmakedefine HAVE_INTELPERC": "/* HAVE_INTELPERC */",
+        "#cmakedefine HAVE_IPP\n": "/* HAVE_IPP */\n",
+        "#cmakedefine HAVE_IPP_IW_LL": "/* HAVE_IPP_IW_LL */",
+        "#cmakedefine HAVE_IPP_ICV": "/* HAVE_IPP_ICV */",
+        "#cmakedefine HAVE_IPP_IW": "/* HAVE_IPP_IW */",
+        "#cmakedefine HAVE_IPP_A": "/* HAVE_IPP_A */",
+        "#cmakedefine HAVE_JASPER": "/* HAVE_JASPER */",
+        "#cmakedefine HAVE_JPEG": "#define HAVE_JPEG 1",
+        "#cmakedefine HAVE_LIBPNG_PNG_H": "#define HAVE_LIBPNG_PNG_H 1",
+        "#cmakedefine HAVE_GDCM": "/* HAVE_GDCM */",
+        "#cmakedefine HAVE_LIBV4L": "/* HAVE_LIBV4L */",
+        "#cmakedefine HAVE_MSMF": "/* HAVE_MSMF */",
+        "#cmakedefine HAVE_NVCUVID_HEADER": "/* HAVE_NVCUVID_HEADER */",
+        "#cmakedefine HAVE_NVCUVID": "/* HAVE_NVCUVID */",
+        "#cmakedefine HAVE_NVCUVENC": "/* HAVE_NVCUVENC */",
+        "#cmakedefine HAVE_OPENCL\n": "/* HAVE_OPENCL */\n",
+        "#cmakedefine HAVE_OPENCL_STATIC": "/* HAVE_OPENCL_STATIC */",
+        "#cmakedefine HAVE_OPENCL_SVM": "/* HAVE_OPENCL_SVM */",
+        "#cmakedefine HAVE_OPENEXR": "/* HAVE_OPENEXR */",
+        "#cmakedefine HAVE_OPENGL": "/* HAVE_OPENGL */",
+        "#cmakedefine HAVE_OPENNI\n": "/* HAVE_OPENNI */\n",
+        "#cmakedefine HAVE_OPENNI2": "/* HAVE_OPENNI2 */",
+        "#cmakedefine HAVE_PNG": "#define HAVE_PNG 1",
+        "#cmakedefine HAVE_PTHREAD": "#define HAVE_PTHREAD",
+        "#cmakedefine HAVE_PTHREADS_PF": "#define HAVE_PTHREADS_PF",
+        "#cmakedefine HAVE_QT\n": "/* HAVE_QT */\n",
+        "#cmakedefine HAVE_QT_OPENGL": "/* HAVE_QT_OPENGL */",
+        "#cmakedefine HAVE_QUICKTIME": "/* HAVE_QUICKTIME */",
+        "#cmakedefine HAVE_QTKIT": "/* HAVE_QTKIT */",
+        "#cmakedefine HAVE_TBB": "/* HAVE_TBB */",
+        "#cmakedefine HAVE_TIFF": "/* HAVE_TIFF */",
+        "#cmakedefine HAVE_UNICAP": "/* HAVE_UNICAP */",
+        "#cmakedefine HAVE_VFW": "/* HAVE_VFW */",
+        "#cmakedefine HAVE_VIDEOIO": "/* HAVE_VIDEOIO */",
+        "#cmakedefine HAVE_WIN32UI": "/* HAVE_WIN32UI */",
+        "#cmakedefine HAVE_XIMEA": "/* HAVE_XIMEA */",
+        "#cmakedefine HAVE_XINE": "/* HAVE_XINE */",
+        "#cmakedefine WORDS_BIGENDIAN": "/* WORDS_BIGENDIAN */",
+        "#cmakedefine HAVE_GPHOTO2": "/* HAVE_GPHOTO2 */",
+        "#cmakedefine HAVE_VA\n": "/* HAVE_VA */\n",
+        "#cmakedefine HAVE_VA_INTEL": "/* HAVE_VA_INTEL */",
+        "#cmakedefine HAVE_MFX": "/* HAVE_MFX */",
+        "#cmakedefine HAVE_LAPACK": "/* HAVE_LAPACK */",
+        "#cmakedefine ENABLE_INSTRUMENTATION": "/* ENABLE_INSTRUMENTATION */",
+        "#cmakedefine HAVE_OPENVX": "/* HAVE_OPENVX */",
+        "#cmakedefine OPENCV_TRACE": "#define OPENCV_TRACE",
+        "#cmakedefine HAVE_QUIRC": "/* HAVE_QUIRC */",
+        "#cmakedefine HAVE_CUDNN": "/* HAVE_CUDNN */",
+        "#cmakedefine HAVE_VULKAN": "/* HAVE_VULKAN */",
+        "#cmakedefine HAVE_OPENJPEG": "/* HAVE_OPENJPEG */",
+        "#cmakedefine HAVE_DYNLINK_NVCUVID_HEADER": "/* HAVE_DYNLINK_NVCUVID_HEADER */",
+        "#cmakedefine HAVE_OPENCL_D3D11_NV": "/* HAVE_OPENCL_D3D11_NV */",
+        "#cmakedefine HAVE_SPNG": "/* HAVE_SPNG */",
+        "#cmakedefine HAVE_HPX": "/* HAVE_HPX */",
+    },
+    template = "@opencv//:cmake/templates/cvconfig.h.in",
+)
+
+cc_library(
+    name = "_base_headers",
+    hdrs = [
+        "custom_hal.hpp",
+        "cv_cpu_config.h",
+        "cvconfig.h",
+        "include/opencv2/opencv.hpp",
+        "opencv2/opencv_modules.hpp",
+        "opencv_data_config.hpp",
+    ],
+    includes = [
+        ".",
+        "include",
+        "opencv2",
+        "private",
+    ],
+    textual_hdrs = [
+        "private/version_string.inc",
+    ],
+)
+
+cc_library(
+    name = "opencv",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":calib3d",
+        ":core",
+        ":features2d",
+        ":flann",
+        ":imgcodecs",
+        ":imgproc",
+    ],
+)
+
+opencv_module(
+    name = "flann",
+    visibility = ["//visibility:public"],
+    deps = [":core"],
+)
+
+opencv_module(
+    name = "core",
+    dispatched_files = {
+        "stat": [
+            "avx2",
+            "sse4_2",
+        ],
+        "mathfuncs_core": [
+            "avx2",
+            "avx",
+        ],
+        "convert": ["avx2"],
+        "count_non_zero": ["avx2"],
+        "convert_scale": ["avx2"],
+        "arithm": [
+            "avx2",
+            "sse4_1",
+        ],
+        "matmul": [
+            "avx2",
+            "sse4_1",
+        ],
+        "mean": ["avx2"],
+        "merge": ["avx2"],
+        "split": ["avx2"],
+        "sum": ["avx2"],
+        "has_non_zero": ["avx2"],
+    },
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@eigen",
+        "@zlib",
+    ],
+)
+
+opencv_module(
+    name = "imgproc",
+    copts = [
+        "-Wno-deprecated-enum-float-conversion",
+        "-Wno-deprecated-volatile",
+    ],
+    dispatched_files = {
+        "accum": [
+            "avx2",
+            "avx",
+            "sse4_1",
+        ],
+        "sumpixels": [
+            "avx2",
+            "sse2",
+        ],
+        "smooth": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "morph": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "median_blur": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "color_yuv": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "color_rgb": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "color_hsv": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "filter": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "box_filter": [
+            "avx2",
+            "sse2",
+            "sse4_1",
+        ],
+        "bilateral_filter": [
+            "avx2",
+            "sse2",
+        ],
+    },
+    visibility = ["//visibility:public"],
+    deps = [":core"],
+)
+
+opencv_module(
+    name = "features2d",
+    copts = [
+        "-Wno-deprecated-enum-float-conversion",
+        "-Wno-deprecated-volatile",
+    ],
+    dispatched_files = {
+        "sift": [
+            "avx2",
+            "sse4_1",
+        ],
+    },
+    visibility = ["//visibility:public"],
+    deps = [
+        ":flann",
+        ":imgproc",
+    ],
+)
+
+opencv_module(
+    name = "calib3d",
+    copts = [
+        "-Wno-deprecated-enum-float-conversion",
+    ],
+    dispatched_files = {
+        "undistort": [
+            "avx2",
+            "sse2",
+        ],
+    },
+    visibility = ["//visibility:public"],
+    deps = [
+        ":features2d",
+        ":imgproc",
+    ],
+)
+
+opencv_module(
+    name = "imgcodecs",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":imgproc",
+        "@libjpeg_turbo//:jpeg",
+        "@libpng",
+    ],
+)

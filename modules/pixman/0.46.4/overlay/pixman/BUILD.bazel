@@ -1,0 +1,148 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+selects.config_setting_group(
+    name = "is_x86",
+    match_any = [
+        "@platforms//cpu:x86_32",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+alias(
+    name = "use_intrinsics",
+    actual = select({
+        "@platforms//os:windows": "@platforms//os:linux", # Force no match.
+        "//conditions:default": ":is_x86",
+    }),
+)
+
+cc_library(
+    name = "pixman_config",
+    hdrs = ["pixman-config.h"],
+    deps = ["@rules_autoconf//:config"],
+    defines = select({
+        ":use_intrinsics": [
+            "USE_X86_MMX",
+            "USE_SSE2",
+            "USE_SSSE3",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+expand_template(
+    name = "pixman_version_h",
+    template = "pixman-version.h.in",
+    out = "pixman-version.h",
+    substitutions = {
+        "@PIXMAN_VERSION_MAJOR@": "0",
+        "@PIXMAN_VERSION_MINOR@": "46",
+        "@PIXMAN_VERSION_MICRO@": "4",
+    },
+)
+
+_HDRS = glob(["**/*.h"]) + ["pixman-version.h"]
+
+cc_library(
+    name = "pixman",
+    srcs = [
+        "pixman.c",
+        "pixman-access.c",
+        "pixman-access-accessors.c",
+        "pixman-arm.c",
+        "pixman-bits-image.c",
+        "pixman-combine32.c",
+        "pixman-combine-float.c",
+        "pixman-conical-gradient.c",
+        "pixman-edge.c",
+        "pixman-edge-accessors.c",
+        "pixman-fast-path.c",
+        "pixman-filter.c",
+        "pixman-glyph.c",
+        "pixman-general.c",
+        "pixman-gradient-walker.c",
+        "pixman-image.c",
+        "pixman-implementation.c",
+        "pixman-linear-gradient.c",
+        "pixman-matrix.c",
+        "pixman-mips.c",
+        "pixman-noop.c",
+        "pixman-ppc.c",
+        "pixman-radial-gradient.c",
+        "pixman-region16.c",
+        "pixman-region32.c",
+        "pixman-region64f.c",
+        "pixman-riscv.c",
+        "pixman-solid-fill.c",
+        "pixman-timer.c",
+        "pixman-trap.c",
+        "pixman-utils.c",
+        "pixman-x86.c",
+    ] + _HDRS,
+    hdrs = [
+        "pixman.h",
+        "pixman-version.h",
+    ],
+    textual_hdrs = [
+        "pixman-access.c",
+        "pixman-edge.c",
+        "pixman-region.c",
+    ],
+    copts = [
+        "-fno-strict-aliasing",
+        "-fvisibility=hidden",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-Wno-unused-local-typedefs",
+            "-Wno-unknown-attributes",
+        ],
+    }),
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [":pixman_config"] + select({
+        ":use_intrinsics": [
+            ":pixman_mmx",
+            ":pixman_sse2",
+            ":pixman_ssse3",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["."],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "pixman_mmx",
+    srcs = ["pixman-mmx.c"] + _HDRS,
+    target_compatible_with = [":use_intrinsics"],
+    copts = ["-mmmx"],
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [":pixman_config"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "pixman_sse2",
+    srcs = ["pixman-sse2.c"] + _HDRS,
+    target_compatible_with = [":use_intrinsics"],
+    copts = ["-msse2"],
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [":pixman_config"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "pixman_ssse3",
+    srcs = ["pixman-ssse3.c"] + _HDRS,
+    target_compatible_with = [":use_intrinsics"],
+    copts = ["-mssse3"],
+    local_defines = ["HAVE_CONFIG_H"],
+    deps = [":pixman_config"],
+    includes = ["."],
+)

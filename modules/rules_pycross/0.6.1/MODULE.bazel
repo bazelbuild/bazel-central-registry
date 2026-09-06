@@ -1,0 +1,69 @@
+"""rules_pycross"""
+
+module(
+    name = "rules_pycross",
+    version = "0.6.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "aspect_bazel_lib", version = "1.38.1")
+bazel_dep(name = "bazel_features", version = "1.11.0")
+bazel_dep(name = "bazel_skylib", version = "1.4.2")
+bazel_dep(name = "platforms", version = "0.0.4")
+bazel_dep(name = "rules_python", version = "0.29.0")
+
+# Change this value to set the Python version we use in our repo venv.
+PYTHON_VERSION = "3.12"
+
+py_underscore_version = PYTHON_VERSION.replace(".", "_")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = PYTHON_VERSION)
+use_repo(
+    python,
+    "python_%s" % py_underscore_version,
+    "python_%s_host" % py_underscore_version,
+    "python_versions",
+    "pythons_hub",
+)
+
+pycross = use_extension("@rules_pycross//pycross/extensions:pycross.bzl", "pycross")
+pycross.configure_environments()
+pycross.configure_interpreter(
+    python_defs_file = "@python_%s//:defs.bzl" % py_underscore_version,
+    python_interpreter_target = "@python_%s_host//:python" % py_underscore_version,
+)
+pycross.configure_toolchains()
+
+# TODO(jvolkman): Is there an easy way to not have to list these file repos?
+use_repo(
+    pycross,
+    "rules_pycross_internal",
+    "rules_pycross_internal_deps_wheel_dacite_1.6.0_py3_none_any",
+    "rules_pycross_internal_deps_wheel_installer_0.7.0_py3_none_any",
+    "rules_pycross_internal_deps_wheel_packaging_23.2_py3_none_any",
+    "rules_pycross_internal_deps_wheel_pip_23.3.1_py3_none_any",
+    "rules_pycross_internal_deps_wheel_poetry_core_1.8.1_py3_none_any",
+    "rules_pycross_internal_deps_wheel_tomli_2.0.1_py3_none_any",
+)
+
+toolchains = use_extension("@rules_pycross//pycross/private/bzlmod:toolchains.bzl", "toolchains")
+toolchains.create_for_python_toolchains(name = "pycross_toolchains")
+use_repo(toolchains, "pycross_toolchains")
+
+register_toolchains("@pycross_toolchains//...")
+
+environments = use_extension("@rules_pycross//pycross/extensions:environments.bzl", "environments")
+environments.create_for_python_toolchains(name = "pycross_environments")
+use_repo(environments, "pycross_environments")
+
+lock_import = use_extension("@rules_pycross//pycross/extensions:lock_import.bzl", "lock_import")
+use_repo(lock_import, "lock_import_repos_hub")
+
+lock_repos = use_extension("@rules_pycross//pycross/extensions:lock_repos.bzl", "lock_repos")
+lock_repos.create()
+
+# Currently development-only
+bazel_dep(name = "gazelle", version = "0.35.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.6.2", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.5.0", dev_dependency = True)

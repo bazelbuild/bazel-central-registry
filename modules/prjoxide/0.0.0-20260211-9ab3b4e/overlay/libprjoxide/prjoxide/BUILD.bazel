@@ -1,0 +1,91 @@
+load("@rules_rust//rust:rust_binary.bzl", "rust_binary")
+load("@rules_rust//rust:rust_library.bzl", "rust_library")
+load("//bazel:capnp.bzl", "capnp_rust_gen")
+
+# `capnp_gen` produces References_capnp.rs, LogicalNetlist_capnp.rs, and
+# DeviceResources_capnp.rs in an OUT_DIR and exposes it via a rules_rust
+# `BuildInfo`, which is what makes `include!(concat!(env!("OUT_DIR"), ...))`
+# in upstream `src/schema.rs` resolve. Only consumed under `:interchange_enabled`.
+capnp_rust_gen(
+    name = "capnp_gen",
+    srcs = [
+        "@fpga_interchange_schema//:interchange/DeviceResources.capnp",
+        "@fpga_interchange_schema//:interchange/LogicalNetlist.capnp",
+        "@fpga_interchange_schema//:interchange/References.capnp",
+    ],
+    parent_module = "schema",
+    tags = ["manual"],
+)
+
+rust_library(
+    name = "prjoxide",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/bin/**/*.rs"],
+    ),
+    crate_features = select({
+        "//:interchange_enabled": ["interchange"],
+        "//conditions:default": [],
+    }),
+    edition = "2018",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@prjoxide_crates//:clap",
+        "@prjoxide_crates//:include_dir",
+        "@prjoxide_crates//:itertools",
+        "@prjoxide_crates//:lazy_static",
+        "@prjoxide_crates//:log",
+        "@prjoxide_crates//:multimap",
+        "@prjoxide_crates//:num-bigint",
+        "@prjoxide_crates//:pulldown-cmark",
+        "@prjoxide_crates//:regex",
+        "@prjoxide_crates//:ron",
+        "@prjoxide_crates//:serde",
+        "@prjoxide_crates//:serde_json",
+    ] + select({
+        "//:interchange_enabled": [
+            ":capnp_gen",
+            "@prjoxide_crates//:capnp",
+            "@prjoxide_crates//:flate2",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+rust_binary(
+    name = "bin/prjoxide",
+    srcs = ["src/bin/prjoxide.rs"],
+    crate_features = select({
+        "//:interchange_enabled": ["interchange"],
+        "//conditions:default": [],
+    }),
+    data = [
+        # The per-file label is needed because `$(rlocationpath ...)` below
+        # requires the file to be a declared prerequisite; the filegroup
+        # brings the rest of the db into runfiles.
+        "@prjoxide-db//:devices.json",
+        "@prjoxide-db//:prjoxide-db",
+    ],
+    edition = "2018",
+    rustc_env = {
+        "PRJOXIDE_DB_RLOC": "$(rlocationpath @prjoxide-db//:devices.json)",
+    },
+    visibility = ["//visibility:public"],
+    deps = [
+        "//libprjoxide/prjoxide",
+        "@prjoxide_crates//:clap",
+        "@rules_rust//tools/runfiles",
+    ] + select({
+        "//:interchange_enabled": [
+            "@prjoxide_crates//:capnp",
+            "@prjoxide_crates//:flate2",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+alias(
+    name = "prjoxide_bin",
+    actual = ":bin/prjoxide",
+    visibility = ["//visibility:public"],
+)

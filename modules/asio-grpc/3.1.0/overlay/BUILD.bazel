@@ -1,0 +1,178 @@
+"""Bazel build file for asio-grpc (https://github.com/Tradias/asio-grpc)."""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@grpc//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+load("@protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@protobuf//bazel:proto_library.bzl", "proto_library")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(default_applicable_licenses = [":license"])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:Apache-2.0"],
+    license_text = "LICENSE",
+)
+
+# NOTE: Unifex is not supported yet.
+
+# Default to using boost.asio instead of stand-alone asio.
+bool_flag(
+    name = "use_standalone_asio",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "use_standalone_asio_setting",
+    flag_values = {":use_standalone_asio": "True"},
+)
+
+cc_library(
+    name = "asio-grpc",
+    hdrs = glob(
+        ["src/agrpc/**/*.hpp"],
+        exclude = ["src/agrpc/detail/execution_unifex.hpp"],
+    ),
+    defines = select({
+        ":use_standalone_asio_setting": ["AGRPC_STANDALONE_ASIO"],
+        "//conditions:default": ["AGRPC_BOOST_ASIO"],
+    }),
+    features = ["parse_headers"],
+    includes = ["src"],
+    textual_hdrs = glob(["src/agrpc/**/*.ipp"]),
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":use_standalone_asio_setting": ["@asio"],
+        "//conditions:default": ["@boost.asio"],
+    }) + ["@grpc//:grpc++"],
+)
+
+cc_test(
+    name = "asio-grpc_cpp20_test",
+    size = "small",
+    srcs = glob(
+        ["test/src/*_20.cpp"],
+        exclude = ["test/src/test_unifex_20.cpp"],
+    ),
+    local_defines = select({
+        ":use_standalone_asio_setting": ['ASIO_GRPC_TEST_CPP_VERSION=\'\"Boost.Asio C++20\"\''],
+        "//conditions:default": ['ASIO_GRPC_TEST_CPP_VERSION=\'\"Standalone Asio C++20\"\''],
+    }),
+    deps = select({
+        ":use_standalone_asio_setting": ["@asio"],
+        "//conditions:default": ["@boost.asio"],
+    }) + [
+        ":asio-grpc",
+        ":test_service_cc_gprc",
+        ":test_utils",
+        "@boost.coroutine",
+        "@boost.interprocess",
+        "@boost.thread",
+        "@grpc//:grpc++",
+    ],
+)
+
+cc_test(
+    name = "asio-grpc_cpp17_test",
+    size = "small",
+    srcs = glob(
+        ["test/src/*_17.cpp"],
+        exclude = ["test/src/test_test_17.cpp"],
+    ),
+    local_defines = select({
+        ":use_standalone_asio_setting": ['ASIO_GRPC_TEST_CPP_VERSION=\'\"Boost.Asio C++17\"\''],
+        "//conditions:default": ['ASIO_GRPC_TEST_CPP_VERSION=\'\"Standalone Asio C++17\"\''],
+    }),
+    deps = select({
+        ":use_standalone_asio_setting": ["@asio"],
+        "//conditions:default": ["@boost.asio"],
+    }) + [
+        ":asio-grpc",
+        ":health_service_cc_gprc",
+        ":test_service_cc_gprc",
+        ":test_utils",
+        "@boost.coroutine",
+        "@boost.interprocess",
+        "@boost.thread",
+        "@grpc//:grpc++",
+    ],
+)
+
+cc_library(
+    name = "test_utils",
+    srcs = glob(["test/utils/utils/*.cpp"]),
+    hdrs = glob(["test/utils/utils/*.hpp"]),
+    defines = select({
+        ":use_standalone_asio_setting": [
+            "ASIO_SEPARATE_COMPILATION",
+            "ASIO_NO_TS_EXECUTORS",
+        ],
+        "//conditions:default": [
+            "BOOST_ASIO_NO_TS_EXECUTORS",
+            "BOOST_ASIO_SEPARATE_COMPILATION",
+        ],
+    }),
+    includes = ["test/utils"],
+    deps = select({
+        ":use_standalone_asio_setting": ["@asio"],
+        "//conditions:default": ["@boost.asio"],
+    }) + [
+        ":asio-grpc",
+        ":test_service_cc_gprc",
+        "@boost.coroutine",
+        "@boost.filesystem",
+        "@boost.interprocess",
+        "@doctest//doctest",
+        "@googletest//:gtest",
+        "@grpc//:grpc++",
+        "@protobuf",
+    ],
+)
+
+proto_library(
+    name = "test_message_proto",
+    srcs = ["test/proto/test/msg/message.proto"],
+    strip_import_prefix = "test/proto",
+)
+
+cc_proto_library(
+    name = "test_message_cc_proto",
+    deps = [":test_message_proto"],
+)
+
+proto_library(
+    name = "test_service_proto",
+    srcs = ["test/proto/test/v1/test.proto"],
+    deps = [":test_message_proto"],
+)
+
+cc_proto_library(
+    name = "test_service_cc_proto",
+    deps = [":test_service_proto"],
+)
+
+cc_grpc_library(
+    name = "test_service_cc_gprc",
+    srcs = [":test_service_proto"],
+    generate_mocks = True,
+    grpc_only = True,
+    deps = [":test_service_cc_proto"],
+)
+
+proto_library(
+    name = "health_service_proto",
+    srcs = ["test/proto/grpc/health/v1/health.proto"],
+)
+
+cc_proto_library(
+    name = "health_service_cc_proto",
+    deps = [":health_service_proto"],
+)
+
+cc_grpc_library(
+    name = "health_service_cc_gprc",
+    srcs = [":health_service_proto"],
+    grpc_only = True,
+    deps = [":health_service_cc_proto"],
+)

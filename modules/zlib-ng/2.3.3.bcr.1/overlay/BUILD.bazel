@@ -1,0 +1,434 @@
+# Native Bazel BUILD file for zlib-ng.
+# Based on envoyproxy/toolshed bazel-registry/modules/zlib-ng BUILD file,
+# which is derived from LLVM's zlib-ng.BUILD.
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+copy_file(
+    # The input template is identical to the CMake output.
+    name = "zconf_gen",
+    src = "zconf.h.in",
+    out = "zconf.h",
+    allow_symlink = True,
+)
+
+expand_template(
+    name = "zlib_gen",
+    out = "zlib.h",
+    substitutions = {"@ZLIB_SYMBOL_PREFIX@": ""},
+    template = "zlib.h.in",
+)
+
+copy_file(
+    # Use the empty name mangling header for ZLIB_COMPAT mode (no symbol prefix).
+    name = "zlib_name_mangling_gen",
+    src = "zlib_name_mangling.h.empty",
+    out = "zlib_name_mangling.h",
+    allow_symlink = True,
+)
+
+expand_template(
+    name = "gzread_gen",
+    out = "gzread_mangle.h",
+    substitutions = {"@ZLIB_SYMBOL_PREFIX@": ""},
+    template = "gzread_mangle.h.in",
+)
+
+cc_library(
+    name = "zlib-ng",
+    srcs = [
+        "adler32.c",
+        "adler32_p.h",
+        "arch_functions.h",
+        "chunkset_tpl.h",
+        "compare256_rle.h",
+        "compress.c",
+        "cpu_features.c",
+        "cpu_features.h",
+        "crc32.c",
+        "crc32.h",
+        "crc32_braid_comb.c",
+        "crc32_braid_comb_p.h",
+        "crc32_braid_p.h",
+        "crc32_braid_tbl.h",
+        "deflate.c",
+        "deflate.h",
+        "deflate_fast.c",
+        "deflate_huff.c",
+        "deflate_medium.c",
+        "deflate_p.h",
+        "deflate_quick.c",
+        "deflate_rle.c",
+        "deflate_slow.c",
+        "deflate_stored.c",
+        "fallback_builtins.h",
+        "functable.c",
+        "functable.h",
+        "gzguts.h",
+        "gzlib.c",
+        "gzread.c",
+        "gzwrite.c",
+        "infback.c",
+        "inffast_tpl.h",
+        "inffixed_tbl.h",
+        "inflate.c",
+        "inflate.h",
+        "inflate_p.h",
+        "inftrees.c",
+        "inftrees.h",
+        "insert_string.c",
+        "insert_string_roll.c",
+        "insert_string_tpl.h",
+        "match_tpl.h",
+        "trees.c",
+        "trees.h",
+        "trees_emit.h",
+        "trees_tbl.h",
+        "uncompr.c",
+        "zbuild.h",
+        "zendian.h",
+        "zmemory.h",
+        "zutil.c",
+        "zutil.h",
+        "zutil_p.h",
+        # Generic architecture files - required for arch/generic/generic_functions.h.
+        "arch/generic/adler32_c.c",
+        "arch/generic/adler32_fold_c.c",
+        "arch/generic/chunkset_c.c",
+        "arch/generic/compare256_c.c",
+        "arch/generic/crc32_braid_c.c",
+        "arch/generic/crc32_chorba_c.c",
+        "arch/generic/crc32_fold_c.c",
+        "arch/generic/slide_hash_c.c",
+        "arch/generic/chunk_128bit_perm_idx_lut.h",
+        "arch/generic/chunk_256bit_perm_idx_lut.h",
+        "arch/generic/chunk_permute_table.h",
+        "arch/generic/compare256_p.h",
+        "arch/generic/generic_functions.h",
+        # Generated files.
+        ":gzread_gen",
+        ":zconf_gen",
+        ":zlib_name_mangling_gen",
+    ],
+    hdrs = [
+        ":zlib_gen",
+    ],
+    copts = select({
+        "@platforms//os:windows": [
+            "/wd4127",  # conditional expression is constant
+            "/wd4131",  # old-style declarator
+            "/wd4244",  # possible loss of data
+            "/wd4245",  # signed/unsigned mismatch
+            "/wd4267",  # conversion from size_t
+            "/wd4996",  # deprecated functions
+        ],
+        "@platforms//os:macos": [
+            "-std=c11",
+            "-Wno-deprecated-non-prototype",
+            "-Wno-unused-variable",
+            "-Wno-implicit-function-declaration",
+        ],
+        "//conditions:default": [
+            "-std=c11",
+            "-Wno-deprecated-non-prototype",
+            "-Wno-unused-variable",
+            "-Wno-implicit-function-declaration",
+        ],
+    }),
+    features = ["-parse_headers"],
+    # Needed for arch/generic includes and strip_include_prefix for zlib.h.
+    includes = ["."],
+    local_defines = [
+        "ZLIB_COMPAT",
+        "WITH_GZFILEOP",
+        "WITH_OPTIM",
+        "WITH_NEW_STRATEGIES",
+        # Enable all generic C fallbacks for the function table.
+        # This ensures the functable is properly initialized on all platforms.
+        "WITH_ALL_FALLBACKS",
+    ] + select({
+        "@platforms//os:windows": ["_CRT_NONSTDC_NO_WARNINGS"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = ".",
+    visibility = ["//visibility:public"],
+)
+
+# Alias for compatibility with references expecting `:zlib`.
+alias(
+    name = "zlib",
+    actual = ":zlib-ng",
+    visibility = ["//visibility:public"],
+)
+
+copy_file(
+    name = "zlib_ng_native_config_gen",
+    src = "zconf-ng.h.in",
+    out = "zconf-ng.h",
+    allow_symlink = True,
+)
+
+expand_template(
+    name = "zlib_ng_native_header_gen",
+    out = "zlib-ng.h",
+    substitutions = {"@ZLIB_SYMBOL_PREFIX@": ""},
+    template = "zlib-ng.h.in",
+)
+
+expand_template(
+    name = "zlib_ng_native_mangling_gen",
+    out = "zlib_name_mangling-ng.h",
+    substitutions = {"@ZLIB_SYMBOL_PREFIX@": ""},
+    template = "zlib_name_mangling-ng.h.in",
+)
+
+config_setting(
+    name = "zlib_ng_native_linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "zlib_ng_native_linux_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "zlib_ng_native_macos_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:macos",
+    ],
+)
+
+config_setting(
+    name = "zlib_ng_native_macos_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:macos",
+    ],
+)
+
+_NATIVE_DEFINES = [
+    "WITH_ALL_FALLBACKS",
+    "WITH_NEW_STRATEGIES",
+    "WITH_OPTIM",
+] + select({
+    ":zlib_ng_native_linux_x86_64": [
+        "HAVE_BUILTIN_CTZ",
+        "HAVE_CPUID_GNU",
+        "X86_FEATURES",
+        "X86_SSE2",
+        "X86_SSSE3",
+    ],
+    ":zlib_ng_native_macos_x86_64": [
+        "HAVE_BUILTIN_CTZ",
+        "HAVE_CPUID_GNU",
+        "X86_FEATURES",
+        "X86_SSE2",
+        "X86_SSSE3",
+    ],
+    ":zlib_ng_native_linux_aarch64": [
+        "ARM_AUXV_HAS_CRC32",
+        "ARM_CRC32",
+        "ARM_CRC32_INTRIN",
+        "ARM_FEATURES",
+        "ARM_NEON",
+        "ARM_NEON_HASLD4",
+        "HAVE_ARM_ACLE_H",
+        "HAVE_BUILTIN_CTZ",
+        "HAVE_SYS_AUXV_H",
+    ],
+    ":zlib_ng_native_macos_aarch64": [
+        "ARM_CRC32",
+        "ARM_CRC32_INTRIN",
+        "ARM_FEATURES",
+        "ARM_NEON",
+        "ARM_NEON_HASLD4",
+        "HAVE_ARM_ACLE_H",
+        "HAVE_BUILTIN_CTZ",
+    ],
+    "//conditions:default": [],
+})
+
+_NATIVE_COPTS = select({
+    "@platforms//os:windows": [
+        "/wd4127",
+        "/wd4131",
+        "/wd4244",
+        "/wd4245",
+        "/wd4267",
+        "/wd4996",
+    ],
+    "//conditions:default": [
+        "-std=c11",
+        "-Wno-deprecated-non-prototype",
+        "-Wno-implicit-function-declaration",
+        "-Wno-unused-variable",
+    ],
+})
+
+cc_library(
+    name = "zlib_ng_native_headers",
+    hdrs = glob([
+        "*.h",
+        "arch/**/*.h",
+    ]) + [
+        ":zlib_ng_native_config_gen",
+        ":zlib_ng_native_header_gen",
+        ":zlib_ng_native_mangling_gen",
+    ],
+    features = ["-parse_headers"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "zlib_ng_native_neon",
+    srcs = [
+        "arch/arm/adler32_neon.c",
+        "arch/arm/chunkset_neon.c",
+        "arch/arm/compare256_neon.c",
+        "arch/arm/slide_hash_neon.c",
+    ],
+    copts = _NATIVE_COPTS,
+    local_defines = _NATIVE_DEFINES,
+    target_compatible_with = select({
+        ":zlib_ng_native_linux_aarch64": [],
+        ":zlib_ng_native_macos_aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":zlib_ng_native_headers"],
+)
+
+cc_library(
+    name = "zlib_ng_native_arm_crc32",
+    srcs = ["arch/arm/crc32_armv8.c"],
+    copts = _NATIVE_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-march=armv8-a+crc"],
+    }),
+    local_defines = _NATIVE_DEFINES,
+    target_compatible_with = select({
+        ":zlib_ng_native_linux_aarch64": [],
+        ":zlib_ng_native_macos_aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":zlib_ng_native_headers"],
+)
+
+cc_library(
+    name = "zlib_ng_native_sse2",
+    srcs = [
+        "arch/x86/chorba_sse2.c",
+        "arch/x86/chunkset_sse2.c",
+        "arch/x86/compare256_sse2.c",
+        "arch/x86/slide_hash_sse2.c",
+    ],
+    copts = _NATIVE_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-msse2"],
+    }),
+    local_defines = _NATIVE_DEFINES,
+    target_compatible_with = select({
+        ":zlib_ng_native_linux_x86_64": [],
+        ":zlib_ng_native_macos_x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":zlib_ng_native_headers"],
+)
+
+cc_library(
+    name = "zlib_ng_native_ssse3",
+    srcs = [
+        "arch/x86/adler32_ssse3.c",
+        "arch/x86/chunkset_ssse3.c",
+    ],
+    copts = _NATIVE_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-mssse3"],
+    }),
+    local_defines = _NATIVE_DEFINES,
+    target_compatible_with = select({
+        ":zlib_ng_native_linux_x86_64": [],
+        ":zlib_ng_native_macos_x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":zlib_ng_native_headers"],
+)
+
+cc_library(
+    name = "zlib_ng_native",
+    srcs = [
+        "adler32.c",
+        "arch/generic/adler32_c.c",
+        "arch/generic/adler32_fold_c.c",
+        "arch/generic/chunkset_c.c",
+        "arch/generic/compare256_c.c",
+        "arch/generic/crc32_braid_c.c",
+        "arch/generic/crc32_chorba_c.c",
+        "arch/generic/crc32_fold_c.c",
+        "arch/generic/slide_hash_c.c",
+        "compress.c",
+        "cpu_features.c",
+        "crc32.c",
+        "crc32_braid_comb.c",
+        "deflate.c",
+        "deflate_fast.c",
+        "deflate_huff.c",
+        "deflate_medium.c",
+        "deflate_quick.c",
+        "deflate_rle.c",
+        "deflate_slow.c",
+        "deflate_stored.c",
+        "functable.c",
+        "infback.c",
+        "inflate.c",
+        "inftrees.c",
+        "insert_string.c",
+        "insert_string_roll.c",
+        "trees.c",
+        "uncompr.c",
+        "zutil.c",
+    ] + select({
+        ":zlib_ng_native_linux_x86_64": ["arch/x86/x86_features.c"],
+        ":zlib_ng_native_macos_x86_64": ["arch/x86/x86_features.c"],
+        ":zlib_ng_native_linux_aarch64": ["arch/arm/arm_features.c"],
+        ":zlib_ng_native_macos_aarch64": ["arch/arm/arm_features.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = [":zlib_ng_native_header_gen"],
+    copts = _NATIVE_COPTS,
+    features = ["-parse_headers"],
+    includes = ["."],
+    local_defines = _NATIVE_DEFINES + select({
+        "@platforms//os:windows": ["_CRT_NONSTDC_NO_WARNINGS"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":zlib_ng_native_headers"] + select({
+        ":zlib_ng_native_linux_x86_64": [
+            ":zlib_ng_native_sse2",
+            ":zlib_ng_native_ssse3",
+        ],
+        ":zlib_ng_native_macos_x86_64": [
+            ":zlib_ng_native_sse2",
+            ":zlib_ng_native_ssse3",
+        ],
+        ":zlib_ng_native_linux_aarch64": [
+            ":zlib_ng_native_arm_crc32",
+            ":zlib_ng_native_neon",
+        ],
+        ":zlib_ng_native_macos_aarch64": [
+            ":zlib_ng_native_arm_crc32",
+            ":zlib_ng_native_neon",
+        ],
+        "//conditions:default": [],
+    }),
+)

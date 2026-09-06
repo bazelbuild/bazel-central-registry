@@ -1,0 +1,44 @@
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+# dvipsk's config.h #includes <c-auto.h>. Force-include our c-auto.h so
+# the include resolves before dvipsk's config.h tries to find it.
+_DVIPSK_COPTS = force_include_copts("texlive-c-auto.h")
+
+# afm2tfm.c does #include "config.h" expecting dvipsk's own config.h (which
+# defines WRITEBIN etc.). Without listing it in the binary's hdrs, the file
+# is not in the sandbox at source-relative depth, and the include resolves
+# to kpathsea/config.h via -I instead, leaving WRITEBIN undefined.
+texk_program(
+    name = "afm2tfm",
+    srcs = ["afm2tfm.c"],
+    hdrs = [
+        "config.h",
+        "debug.h",
+        "dvips.h",
+        "paths.h",
+        "protos.h",
+        "protos_add.h",
+    ],
+    copts = _DVIPSK_COPTS,
+    local_defines = ["SHIFTLOWCHARS"],
+    deps = ["//:common_config"],
+)
+
+texk_program(
+    name = "dvips",
+    srcs = glob(
+        ["*.c"],
+        exclude = ["afm2tfm.c"],
+    ),
+    hdrs = glob(["*.h"]),
+    copts = _DVIPSK_COPTS,
+    local_defines = ["SHIFTLOWCHARS"],
+    tags = ["manual"],  # search.c has parse errors needing more investigation.
+    deps = ["//:common_config"],
+)
+
+alias(
+    name = "dvipsk",
+    actual = ":dvips",
+    visibility = ["//visibility:public"],
+)

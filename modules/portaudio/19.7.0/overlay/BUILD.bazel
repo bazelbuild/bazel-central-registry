@@ -1,0 +1,184 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+exports_files(["LICENSE.txt"])
+
+bool_flag(
+    name = "pa_use_alsa",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "pa_use_alsa_setting",
+    flag_values = {":pa_use_alsa": "true"},
+    visibility = ["//visibility:public"],
+)
+
+selects.config_setting_group(
+    name = "linux_pa_use_alsa_setting",
+    match_all = [
+        "@platforms//os:linux",
+        ":pa_use_alsa_setting",
+    ],
+)
+
+bool_flag(
+    name = "pa_use_jack",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "pa_use_jack_setting",
+    flag_values = {":pa_use_jack": "true"},
+    visibility = ["//visibility:public"],
+)
+
+selects.config_setting_group(
+    name = "linux_pa_use_jack_setting",
+    match_all = [
+        "@platforms//os:linux",
+        ":pa_use_jack_setting",
+    ],
+)
+
+filegroup(
+    name = "linux_srcs",
+    srcs = glob([
+        "src/os/unix/*.c",
+    ]) + select({
+        ":pa_use_jack_setting": glob([
+            "src/hostapi/jack/*.c",
+        ]),
+        "//conditions:default": [],
+    }) + select({
+        ":pa_use_alsa_setting": glob([
+            "src/hostapi/alsa/*.c",
+        ]),
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "alsa",
+    linkopts = ["-lasound"],
+    tags = ["manual"],
+)
+
+cc_library(
+    name = "jack",
+    linkopts = ["-ljack"],
+    tags = ["manual"],
+)
+
+LINUX_DEFINES = select({
+    ":linux_pa_use_alsa_setting": ["PA_USE_ALSA=1"],
+    ":linux_pa_use_jack_setting": ["PA_USE_JACK=1"],
+    "//conditions:default": [],
+})
+
+cc_library(
+    name = "portaudio",
+    srcs = glob([
+        "src/common/*.c",
+    ]) + select({
+        "@platforms//os:linux": [":linux_srcs"],
+        "@platforms//os:macos": glob([
+            "src/hostapi/coreaudio/*.c",
+            "src/os/unix/*.c",
+        ]),
+        "@platforms//os:windows": glob([
+            "src/hostapi/wmme/*.c",
+            "src/os/win/*.c",
+        ]),
+        "//conditions:default": [],
+    }),
+    hdrs = ["include/portaudio.h"],
+    copts = ["-w"],
+    defines = LINUX_DEFINES + select({
+        "@platforms//os:macos": ["PA_USE_COREAUDIO=1"],
+        "@platforms//os:windows": ["PA_USE_WMME=1"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "include",
+        "src/common",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["src/os/unix"],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+        ],
+        "@platforms//os:macos": [
+            "-framework AudioUnit",
+            "-framework CoreAudio",
+            "-framework AudioToolbox",
+            "-framework Carbon",
+        ],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = glob([
+        "src/common/*.h",
+        "include/*.h",
+    ]) + select({
+        "@platforms//os:linux": glob([
+            "src/os/unix/*.h",
+        ]),
+        "@platforms//os:macos": glob([
+            "src/hostapi/coreaudio/*.h",
+            "src/os/unix/*.h",
+        ]),
+        "@platforms//os:windows": glob([
+            "src/os/win/*.h",
+        ]),
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":linux_pa_use_alsa_setting": [":alsa"],
+        "//conditions:default": [],
+    }) + select({
+        ":linux_pa_use_jack_setting": [":jack"],
+        "//conditions:default": [],
+    }),
+)
+
+[
+    cc_test(
+        name = test[:-len(".c")],
+        srcs = [test],
+        deps = [":portaudio"],
+    )
+    for test in glob(
+        include = [
+            "test/*.c",
+        ],
+        exclude = [
+            "test/pa_minlat.c",
+            "test/patest_converters.c",
+            "test/patest_dsound_find_best_latency_params.c",
+            "test/patest_dsound_low_level_latency_params.c",
+            "test/patest_dsound_surround.c",
+            "test/patest_jack_wasapi.c",
+            "test/patest_latency.c",
+            "test/patest_mono.c",
+            "test/patest_read_record.c",
+            "test/patest_sine_channelmaps.c",
+            "test/patest_sine_formats.c",
+            "test/patest_stop_playout.c",
+            "test/patest_suggested_vs_streaminfo_latency.c",
+            "test/patest_timing.c",
+            "test/patest_unplug.c",
+            "test/patest_wire.c",
+            "test/patest_wmme_find_best_latency_params.c",
+            "test/patest_wmme_low_level_latency_params.c",
+            "test/patest_write_stop_hang_illegal.c",
+            "test/patest_write_stop.c",
+            "test/patest1.c",
+        ],
+    )
+]

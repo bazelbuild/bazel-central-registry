@@ -1,0 +1,78 @@
+module(
+    name = "claro-lang",
+    repo_name = "claro-lang",
+    version = "0.1.368",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.4.2")
+bazel_dep(name = "rules_proto", version = "5.3.0-21.7")
+bazel_dep(name = "rules_jvm_external", version = "5.3")
+# -- bazel_dep definitions -- #
+
+# TODO(steving) For now, I'm re-exporting the maven module extension from @rules_jvm_external via my own .bzl file
+# TODO(steving)   literally just to avoid the unavoidable warning message:
+# TODO(steving)     "The maven repository 'maven' is used in two different bazel modules, originally in 'claro-lang' and now in 'protobuf'"
+# TODO(steving)   Apparently this is a known issue: https://bazelbuild.slack.com/archives/CEH3YH9RC/p1694506396048019
+# TODO(steving)   Eventually, I'm hoping that Bzlmod will mature enough that this workaround can be dropped.
+#maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven = use_extension(":maven_extension.bzl", "maven")
+maven.install(
+    artifacts =
+        # First, I'll hardcode the maven artifacts that are needed for the jflex_rules
+        [
+            # JFLEX_ARTIFACTS
+            "de.jflex:jflex:jar:1.9.1",
+            "com.github.vbmacher:java-cup-runtime:jar:11b-20160615-1",
+            # THIRD_PARTY_ARTIFACTS
+            "com.github.vbmacher:java-cup:jar:11b-20160615",
+        ] +
+        [
+            "com.github.pcj:google-options:jar:1.0.0",
+            "com.google.auto.value:auto-value:1.5.3",
+            "com.google.guava:guava:jar:32.1.2-jre",
+            "com.google.protobuf:protobuf-java-util:3.24.3",
+            "com.googlecode.lanterna:lanterna:3.1.1",
+            "com.squareup.okhttp3:okhttp:4.11.0",
+            # Not using latest retrofit 2.9.0 because it seems there's a JDK warning of illegal reflection in retrofit2.
+            # The maintainers responded to this calling it something they explicitly won't fix since it's just a warning
+            # but I think that for now it makes Claro look bad, so I'm intentionally downgrading in the meantime until
+            # this is resolved. Re: https://github.com/square/retrofit/issues/3341
+            "com.squareup.retrofit2:retrofit:2.7.2",
+            "com.google.code.gson:gson:2.10.1",
+            "com.github.ben-manes.caffeine:caffeine:3.1.8",
+            "net.javacrumbs.future-converter:future-converter-java8-guava:1.2.0",
+
+            ############################################################################################################
+            # BEGIN ACTIVE J
+            #   These deps come in a group, so if the version number ever gets bumped, must do it as a whole.
+            ############################################################################################################
+            "io.activej:activej-common:5.4.3",
+            "io.activej:activej-eventloop:5.4.3",
+            "io.activej:activej-http:5.4.3",
+            "io.activej:activej-promise:5.4.3",
+            ############################################################################################################
+            # END ACTIVE J
+            ############################################################################################################
+
+            # This addresses unwanted missing StaticLoggerBinder warning logs from SLF4J. This shouldn't be necessary
+            # anymore once Claro has proper logging support. See: https://www.slf4j.org/codes.html#StaticLoggerBinder
+            "org.slf4j:slf4j-nop:2.0.7",
+        ],
+#    lock_file = "//:maven_install.json",
+    lock_file = "//:rules_jvm_external~5.3~maven~maven_install.json",
+    repositories = [
+        "https://jcenter.bintray.com/",
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+    version_conflict_policy = "pinned",
+)
+# Update pinned Maven deps using the following command.
+#   bazel run @unpinned_maven//:pin --enable_bzlmod
+use_repo(maven, "maven", "unpinned_maven")
+# End of extension `maven`
+
+non_module_deps = use_extension("//:non_module_deps.bzl", "non_module_deps")
+use_repo(non_module_deps, "jflex_rules")
+use_repo(non_module_deps, "bootstrapping_claro_compiler_tarfile")
+# End of extension `non_module_deps`

@@ -1,0 +1,62 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+UPSTREAM_VERSION_MAJOR = UPSTREAM_VERSION.split(".")[0]
+
+UPSTREAM_VERSION_MINOR = UPSTREAM_VERSION.split(".")[1]
+
+UPSTREAM_VERSION_PATCH = UPSTREAM_VERSION.split(".")[2]
+
+expand_template(
+    name = "config_h",
+    out = "src/config.h",
+    substitutions = {
+        "{LIBXCURSOR_VERSION}": UPSTREAM_VERSION,
+        "{LIBXCURSOR_VERSION_MAJOR}": UPSTREAM_VERSION_MAJOR,
+        "{LIBXCURSOR_VERSION_MINOR}": UPSTREAM_VERSION_MINOR,
+        "{LIBXCURSOR_VERSION_PATCH}": UPSTREAM_VERSION_PATCH,
+    },
+    template = "src/config.h.in",
+)
+
+expand_template(
+    name = "xcursor_h",
+    out = "include/X11/Xcursor/Xcursor.h",
+    substitutions = {
+        "#undef XCURSOR_LIB_MAJOR": "#define XCURSOR_LIB_MAJOR {}".format(UPSTREAM_VERSION_MAJOR),
+        "#undef XCURSOR_LIB_MINOR": "#define XCURSOR_LIB_MINOR {}".format(UPSTREAM_VERSION_MINOR),
+        "#undef XCURSOR_LIB_REVISION": "#define XCURSOR_LIB_REVISION {}".format(UPSTREAM_VERSION_PATCH),
+    },
+    template = "include/X11/Xcursor/Xcursor.h.in",
+)
+
+cc_library(
+    name = "xcursor",
+    srcs = glob([
+        "src/*.c",
+        "src/*.h",
+    ]) + [
+        "src/config.h",
+    ],
+    hdrs = [":xcursor_h"],
+    copts = [
+        "-DHAVE_CONFIG_H",
+    ],
+    includes = [
+        "include",
+        "include/X11/Xcursor",
+    ],
+    deps = [
+        "@libx11",
+        "@libxfixes",
+        "@libxrender",
+    ],
+)
+
+alias(
+    name = "libxcursor",
+    actual = ":xcursor",
+    visibility = ["//visibility:public"],
+)

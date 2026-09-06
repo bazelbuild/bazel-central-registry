@@ -1,0 +1,233 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+cc_library(
+    name = "tcp_proxy",
+    srcs = ["utils/tcp_proxy.c"],
+    hdrs = [
+        "utils/tcp_proxy.h",
+    ],
+    includes = ["utils"],
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "assert_helpers",
+    hdrs = [
+        "utils/assert_helpers.h",
+    ],
+    includes = ["utils"],
+)
+
+# Unit tests (thos commented out aren't included in the cmake test suite)
+# TODO: enable targets which are commented out and python test
+
+[
+    cc_test(
+        name = name,
+        srcs = ["{}.c".format(name)],
+        copts = select({
+            "@platforms//os:windows": [
+                "/experimental:c11atomics",
+                "/std:c11",
+            ],
+            "//conditions:default": [
+            ],
+        }),
+        tags = ["requires-network"],
+        deps = [
+            ":assert_helpers",
+            "@zenoh-pico//:zenoh-pico",
+        ],
+    )
+    for name in [
+        "z_api_bytes_test",
+        "z_api_double_drop_test",
+        "z_api_encoding_test",
+        "z_api_null_drop_test",
+        "z_bytes_test",
+        "z_cancellation_token_test",
+        "z_channels_test",
+        "z_collections_test",
+        "z_condvar_wait_until_test",
+        "z_data_struct_test",
+        "z_endpoint_test",
+        "z_iobuf_test",
+        "z_keyexpr_test",
+        "z_local_loopback_test",
+        "z_lru_cache_test",
+        "z_msgcodec_test",
+        # "z_perf_rx",
+        # "z_perf_tx",
+        "z_refcount_test",
+        "z_scheduler_test",
+        "z_sync_group_test",
+        # "z_test_fragment_rx",
+        # "z_test_fragment_tx",
+        "z_test_peer_multicast",
+        "z_test_peer_unicast",
+        "z_tls_config_test",
+        "z_tls_test",
+        "z_utils_test",
+    ]
+]
+
+# API tests
+
+API_TESTS = [
+    "z_api_alignment_test",
+    "z_session_test",
+    "z_wildcard_subscription_test",
+    "z_api_liveliness_test",
+    "z_api_cancellation_test",
+    "z_api_matching_test",
+    "z_api_source_info_test",
+    "z_api_queryable_test",
+    "z_api_scheduler_test",
+    "z_api_advanced_pubsub_test",
+    "z_api_local_queryable_test",
+    "z_api_local_subscriber_test",
+]
+
+[
+    cc_binary(
+        name = "{}_bin".format(name),
+        srcs = ["{}.c".format(name)],
+        copts = select({
+            "@platforms//os:windows": [
+                "/experimental:c11atomics",
+                "/std:c11",
+            ],
+            "//conditions:default": [
+            ],
+        }),
+        deps = [
+            ":assert_helpers",
+            "@zenoh-pico//:zenoh-pico",
+        ],
+    )
+    for name in API_TESTS
+    if name != "z_api_advanced_pubsub_test"
+]
+
+cc_binary(
+    name = "z_api_advanced_pubsub_test_bin",
+    srcs = ["z_api_advanced_pubsub_test.c"],
+    copts = select({
+        "@platforms//os:windows": [
+            "/experimental:c11atomics",
+            "/std:c11",
+        ],
+        "//conditions:default": [
+        ],
+    }),
+    deps = [
+        ":assert_helpers",
+        "@zenoh-pico//:zenoh-pico",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [":tcp_proxy"],
+    }),
+)
+
+alias(
+    name = "zenohd",
+    actual = "@zenoh_pico_bindeps//:zenohd__zenohd",
+)
+
+[
+    sh_test(
+        name = name,
+        srcs = ["api.sh"],
+        args = [
+            "$(location :{}_bin)".format(name),
+            "$(location //:zenohd)",
+        ],
+        data = [
+            ":{}_bin".format(name),
+            "//:zenohd",
+        ],
+        tags = [
+            "exclusive",
+            "requires-network",
+        ],
+    )
+    for name in API_TESTS
+]
+
+#  CLIENT TESTS
+
+cc_binary(
+    name = "z_client_test_bin",
+    srcs = ["z_client_test.c"],
+    copts = select({
+        "@platforms//os:windows": [
+            "/experimental:c11atomics",
+            "/std:c11",
+        ],
+        "//conditions:default": [
+        ],
+    }),
+    deps = [
+        ":assert_helpers",
+        "@zenoh-pico//:zenoh-pico",
+    ],
+)
+
+sh_test(
+    name = "z_client_test",
+    srcs = ["routed.sh"],
+    args = [
+        "$(location :z_client_test_bin)",
+        "--enable-tls",
+        "$(location //:zenohd)",
+        "$(location @openssl)",
+    ],
+    data = [
+        ":z_client_test_bin",
+        "//:zenohd",
+        "@openssl",
+    ],
+    tags = [
+        "exclusive",
+        "requires-network",
+    ],
+)
+
+#  TLS TESTS
+
+sh_test(
+    name = "z_tls_verify_test",
+    srcs = ["tls_verify.sh"],
+    args = [
+        "$(location :z_client_test_bin)",
+        "$(location //:zenohd)",
+        "$(location @openssl)",
+    ],
+    data = [
+        ":z_client_test_bin",
+        "//:zenohd",
+        "@openssl",
+    ],
+    tags = [
+        "exclusive",
+        "requires-network",
+    ],
+)

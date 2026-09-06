@@ -1,0 +1,95 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+expand_template(
+    name = "config_h",
+    out = "libusb/config.h",
+    substitutions = {
+        "{LIBUSB_VERSION}": UPSTREAM_VERSION,
+    },
+    template = select({
+        "@platforms//os:windows": "msvc/config.h",
+        "@platforms//os:macos": "config.h-macos",
+        "//conditions:default": "config.h-linux",
+    }),
+)
+
+cc_library(
+    name = "libusb_config",
+    hdrs = [":config_h"],
+    includes = ["libusb"],
+)
+
+cc_library(
+    name = "usb",
+    srcs = [
+        "libusb/core.c",
+        "libusb/descriptor.c",
+        "libusb/hotplug.c",
+        "libusb/io.c",
+        "libusb/libusb.h",
+        "libusb/libusbi.h",
+        "libusb/strerror.c",
+        "libusb/sync.c",
+        "libusb/version.h",
+        "libusb/version_nano.h",
+    ] + select({
+        "@platforms//os:windows": [
+            "libusb/os/events_windows.c",
+            "libusb/os/events_windows.h",
+            "libusb/os/threads_windows.c",
+            "libusb/os/threads_windows.h",
+            "libusb/os/windows_common.c",
+            "libusb/os/windows_common.h",
+            "libusb/os/windows_usbdk.c",
+            "libusb/os/windows_usbdk.h",
+            "libusb/os/windows_winusb.c",
+            "libusb/os/windows_winusb.h",
+        ],
+        "@platforms//os:macos": [
+            "libusb/os/darwin_usb.c",
+            "libusb/os/darwin_usb.h",
+            "libusb/os/events_posix.c",
+            "libusb/os/events_posix.h",
+            "libusb/os/threads_posix.c",
+            "libusb/os/threads_posix.h",
+        ],
+        "//conditions:default": [
+            "libusb/os/events_posix.c",
+            "libusb/os/events_posix.h",
+            "libusb/os/linux_netlink.c",
+            "libusb/os/linux_usbfs.c",
+            "libusb/os/linux_usbfs.h",
+            "libusb/os/threads_posix.c",
+            "libusb/os/threads_posix.h",
+        ],
+    }),
+    hdrs = [
+        "libusb/libusb.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": ["/utf-8"],
+        "//conditions:default": [],
+    }),
+    includes = ["libusb"],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework Foundation",
+            "-framework IOKit",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "libusb",
+    implementation_deps = [
+        ":libusb_config",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libusb",
+    actual = ":usb",
+    visibility = ["//visibility:public"],
+)

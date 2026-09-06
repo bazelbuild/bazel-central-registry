@@ -1,0 +1,248 @@
+commit 15e6efd2de5c8acc13b8da039204c0920a322cfd
+Author: Yun Peng <pcloudy@google.com>
+Date:   Wed Dec 10 12:29:51 2025 +0000
+
+    Fix build with Bazel 9
+
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 4231d3e..834550b 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -10,6 +10,6 @@ bazel_dep(name = "rules_shell", version = "0.6.1")
+ non_module_deps = use_extension("//internal:non_module_deps.bzl", "non_module_deps")
+ use_repo(
+     non_module_deps,
+-    "jvm__jarjar_abrams_assembly",
+     "jvm__com_twitter__scalding_args",
++    "jvm__jarjar_abrams_assembly",
+ )
+diff --git a/internal/jar_jar.bzl b/internal/jar_jar.bzl
+index f06101f..18ff29e 100644
+--- a/internal/jar_jar.bzl
++++ b/internal/jar_jar.bzl
+@@ -1,5 +1,6 @@
+ load("@bazel_tools//tools/jdk:toolchain_utils.bzl", "find_java_toolchain")
+ load("@rules_java//java/common:java_common.bzl", "java_common")
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
+ 
+ def _jar_jar_impl(ctx):
+     rule_file = ctx.file.rules
+@@ -11,12 +12,12 @@ def _jar_jar_impl(ctx):
+         rule_file = ctx.actions.declare_file("jar_jar-rules-" + ctx.label.name + ".tmp")
+         ctx.actions.write(
+             output = rule_file,
+-            content = "\n".join(ctx.attr.inline_rules)
++            content = "\n".join(ctx.attr.inline_rules),
+         )
+ 
+     args = ctx.actions.args()
+     if ctx.attr.jvm_flags:
+-        args.add_joined(ctx.attr.jvm_flags, join_with=" ", format_joined="--jvm_flags=%s")
++        args.add_joined(ctx.attr.jvm_flags, join_with = " ", format_joined = "--jvm_flags=%s")
+     args.add("process")
+     args.add(rule_file)
+     args.add(ctx.file.input_jar)
+@@ -52,7 +53,7 @@ jar_jar = rule(
+         "output_jar": attr.output(mandatory = True),
+         "input_jar": attr.label(allow_single_file = True),
+         "rules": attr.label(allow_single_file = True),
+-        "inline_rules" : attr.string_list(),
++        "inline_rules": attr.string_list(),
+         "jvm_flags": attr.string_list(),
+         "_jarjar_runner": attr.label(executable = True, cfg = "exec", default = "//src/main/java/com/github/johnynek/jarjar:app"),
+         "_java_toolchain": attr.label(
+diff --git a/jar_jar_aspect.bzl b/jar_jar_aspect.bzl
+index abb10d0..5849d4e 100644
+--- a/jar_jar_aspect.bzl
++++ b/jar_jar_aspect.bzl
+@@ -1,3 +1,6 @@
++load("@rules_java//java/common:java_common.bzl", "java_common")
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
++
+ # This is the provider we pass up along to the outer thin_jar_jar rule.
+ ShadedJars = provider(fields = [
+     "java_info",
+@@ -8,8 +11,8 @@ ShadedJars = provider(fields = [
+ 
+ ExtraDependencyInfo = provider(
+     fields = {
+-        "extra_java_deps": "Depset[JavaInfo] with extra java dependencies to include in the list of jars to be shaded"
+-    }
++        "extra_java_deps": "Depset[JavaInfo] with extra java dependencies to include in the list of jars to be shaded",
++    },
+ )
+ 
+ def merge_shaded_jars_info(shaded_jars):
+@@ -83,7 +86,7 @@ def _jar_jar_aspect_impl(target, ctx):
+     if len(current_jars) == 0:
+         current_jars = [_build_nosrc_jar(ctx)]
+ 
+-    transitive_shaded=[]
++    transitive_shaded = []
+     if hasattr(ctx.rule.attr, "runtime_deps"):
+         for d in ctx.rule.attr.runtime_deps:
+             if ShadedJars in d:
+@@ -101,7 +104,6 @@ def _jar_jar_aspect_impl(target, ctx):
+                 transitive_shaded.append(shaded_jars.transitive_shaded)
+                 java_info_exports.append(shaded_jars.java_info)
+ 
+-    
+     java_info_deps = []
+     for d in ctx.rule.attr.deps:
+         if ShadedJars in d:
+@@ -127,7 +129,7 @@ def _jar_jar_aspect_impl(target, ctx):
+         )
+         flags = []
+         if duplicate_to_warn:
+-            flags.append("-DduplicateClassToWarn={duplicate_to_warn}".format(duplicate_to_warn=duplicate_to_warn))
++            flags.append("-DduplicateClassToWarn={duplicate_to_warn}".format(duplicate_to_warn = duplicate_to_warn))
+ 
+         args = ctx.actions.args()
+         for flag in flags:
+@@ -149,7 +151,7 @@ def _jar_jar_aspect_impl(target, ctx):
+             java_info = java_common.make_non_strict(java_common.merge(java_outputs)),
+             output_files = depset(output_files),
+             tags = ctx.rule.attr.tags or [],
+-            transitive_shaded = depset(transitive=transitive_shaded)
++            transitive_shaded = depset(transitive = transitive_shaded),
+         ),
+     ]
+ 
+@@ -159,9 +161,7 @@ jar_jar_aspect = aspect(
+     required_aspect_providers = [
+         [JavaInfo],
+         [ShadedJars],
+-        # Allows this to pass through java proto libraries
+-        ['proto_java'],
+-        []
++        [],
+     ],
+     attrs = {
+         "_java_toolchain": attr.label(
+@@ -172,9 +172,8 @@ jar_jar_aspect = aspect(
+             cfg = "exec",
+             default = Label("@bazel_tools//tools/zip:zipper"),
+             allow_files = True,
+-        )
++        ),
+     },
+-
+     toolchains = [
+         "//toolchains:toolchain_type",
+     ],
+diff --git a/jar_jar_toolchain.bzl b/jar_jar_toolchain.bzl
+index 92826af..0e3eff2 100644
+--- a/jar_jar_toolchain.bzl
++++ b/jar_jar_toolchain.bzl
+@@ -13,6 +13,6 @@ jar_jar_toolchain = rule(
+         "rules": attr.label(allow_single_file = True),
+         "duplicate_class_to_warn": attr.bool(mandatory = False, default = False),
+         "jar_jar_runner": attr.label(executable = True, cfg = "exec", default = "//src/main/java/com/github/johnynek/jarjar:app"),
+-        "jar_jar_is_native_image": attr.bool(default = False)
++        "jar_jar_is_native_image": attr.bool(default = False),
+     },
+ )
+diff --git a/src/main/java/com/github/johnynek/jarjar/BUILD.bazel b/src/main/java/com/github/johnynek/jarjar/BUILD.bazel
+index 7573b20..200ea8b 100644
+--- a/src/main/java/com/github/johnynek/jarjar/BUILD.bazel
++++ b/src/main/java/com/github/johnynek/jarjar/BUILD.bazel
+@@ -2,8 +2,8 @@ load("@rules_java//java:defs.bzl", "java_binary")
+ 
+ java_binary(
+     name = "app",
+-    main_class = "com.github.johnynek.jarjar.Main",
+     srcs = ["Main.java"],
++    main_class = "com.github.johnynek.jarjar.Main",
+     visibility = ["//visibility:public"],
+     deps = ["@jvm__jarjar_abrams_assembly//jar"],
+ )
+diff --git a/src/test/bazel/BUILD.bazel b/src/test/bazel/BUILD.bazel
+index 6f5a9b6..4c2767c 100644
+--- a/src/test/bazel/BUILD.bazel
++++ b/src/test/bazel/BUILD.bazel
+@@ -7,8 +7,8 @@ load(
+ jar_jar(
+     name = "scalding_args__shaded",
+     input_jar = "@jvm__com_twitter__scalding_args//jar",
+-    rules = "shade_rule",
+     output_jar = "scalding_args__shaded.jar",
++    rules = "shade_rule",
+ )
+ 
+ sh_test(
+diff --git a/test/jar_jar/example/BUILD b/test/jar_jar/example/BUILD
+index e12c07b..7f468dc 100644
+--- a/test/jar_jar/example/BUILD
++++ b/test/jar_jar/example/BUILD
+@@ -2,6 +2,8 @@ load(
+     "@com_github_johnynek_bazel_jar_jar//:jar_jar.bzl",
+     "jar_jar",
+ )
++load("@rules_java//java:java_import.bzl", "java_import")
++load("@rules_java//java:java_library.bzl", "java_library")
+ 
+ alias(
+     name = "file_output",
+@@ -16,18 +18,18 @@ alias(
+ jar_jar(
+     name = "shaded_args_custom_out",
+     input_jar = "@com_twitter_scalding_args",
+-    rules = "shade_rule",
+     output_jar = "custom_name.jar",
++    rules = "shade_rule",
+ )
+ 
+ jar_jar(
+     name = "shaded_args",
+     input_jar = "@com_twitter_scalding_args",
+-    rules = "shade_rule",
+     jvm_flags = [
+-        "-Xmx2g", 
++        "-Xmx2g",
+         "-Xms256m",
+-    ]
++    ],
++    rules = "shade_rule",
+ )
+ 
+ java_import(
+diff --git a/test/jar_jar/inline_example/BUILD b/test/jar_jar/inline_example/BUILD
+index 85ad918..c9fc661 100644
+--- a/test/jar_jar/inline_example/BUILD
++++ b/test/jar_jar/inline_example/BUILD
+@@ -2,11 +2,13 @@ load(
+     "@com_github_johnynek_bazel_jar_jar//:jar_jar.bzl",
+     "jar_jar",
+ )
++load("@rules_java//java:java_import.bzl", "java_import")
++load("@rules_java//java:java_library.bzl", "java_library")
+ 
+ jar_jar(
+     name = "shaded_args",
+-    input_jar = "@com_twitter_scalding_args",
+     inline_rules = ["rule com.twitter.scalding.** foo.@1"],
++    input_jar = "@com_twitter_scalding_args",
+ )
+ 
+ java_import(
+diff --git a/test/jar_jar_aspect/example/BUILD b/test/jar_jar_aspect/example/BUILD
+index 367344b..50649e4 100644
+--- a/test/jar_jar_aspect/example/BUILD
++++ b/test/jar_jar_aspect/example/BUILD
+@@ -2,6 +2,7 @@ load(
+     "@com_github_johnynek_bazel_jar_jar//:thin_jar_jar.bzl",
+     "thin_jar_jar",
+ )
++load("@rules_java//java:java_library.bzl", "java_library")
+ 
+ java_library(
+     name = "using_unshaded",
+diff --git a/thin_jar_jar.bzl b/thin_jar_jar.bzl
+index 573e2f8..f6b9de8 100644
+--- a/thin_jar_jar.bzl
++++ b/thin_jar_jar.bzl
+@@ -1,3 +1,4 @@
++load("@rules_java//java/common:java_info.bzl", "JavaInfo")
+ load("//:jar_jar_aspect.bzl", "ShadedJars", "jar_jar_aspect", "merge_shaded_jars_info")
+ 
+ def _thin_jar_jar_impl(ctx):

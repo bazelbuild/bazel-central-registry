@@ -1,0 +1,291 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# JPEG is available in BCR via libjpeg_turbo
+bool_flag(
+    name = "with_jpeg",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_with_jpeg",
+    flag_values = {":with_jpeg": "True"},
+)
+
+# SIMD opt-out flags (mirrors LIBYUV_DISABLE_* defines from row.h).
+# All SIMD paths are enabled by default with architecture guards in the
+# source code; these flags force-disable them even on matching hardware.
+
+bool_flag(
+    name = "disable_x86",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_disable_x86",
+    flag_values = {":disable_x86": "True"},
+)
+
+bool_flag(
+    name = "disable_neon",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_disable_neon",
+    flag_values = {":disable_neon": "True"},
+)
+
+bool_flag(
+    name = "disable_msa",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_disable_msa",
+    flag_values = {":disable_msa": "True"},
+)
+
+bool_flag(
+    name = "disable_mmi",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "_disable_mmi",
+    flag_values = {":disable_mmi": "True"},
+)
+
+# GCC 9 NEON workaround: GCC 9 on aarch64 generates invalid assembly
+# for .8h MOV instructions (fixed in GCC 11+).  Clang handles NEON fine.
+
+selects.config_setting_group(
+    name = "_aarch64_gcc",
+    match_all = [
+        "@platforms//cpu:aarch64",
+        "@rules_cc//cc/compiler:gcc",
+    ],
+)
+
+# ===== Internal headers ========================================================
+
+cc_library(
+    name = "_hdrs",
+    hdrs = [
+        "include/libyuv.h",
+        "include/libyuv/basic_types.h",
+        "include/libyuv/compare.h",
+        "include/libyuv/compare_row.h",
+        "include/libyuv/convert.h",
+        "include/libyuv/convert_argb.h",
+        "include/libyuv/convert_from.h",
+        "include/libyuv/convert_from_argb.h",
+        "include/libyuv/cpu_id.h",
+        "include/libyuv/macros_msa.h",
+        "include/libyuv/mjpeg_decoder.h",
+        "include/libyuv/planar_functions.h",
+        "include/libyuv/rotate.h",
+        "include/libyuv/rotate_argb.h",
+        "include/libyuv/rotate_row.h",
+        "include/libyuv/row.h",
+        "include/libyuv/scale.h",
+        "include/libyuv/scale_argb.h",
+        "include/libyuv/scale_row.h",
+        "include/libyuv/scale_uv.h",
+        "include/libyuv/version.h",
+        "include/libyuv/video_common.h",
+    ],
+    includes = ["include"],
+)
+
+# ===== Architecture-specific acceleration ======================================
+
+# NEON (matches upstream libyuv_neon OBJECT library from BUILD.gn).
+# Tagged "manual" so @libyuv//... does not attempt to build on non-ARM
+# platforms; pulled in only via the ARM selects in :yuv deps.
+# On aarch64 Linux the library falls back to scalar C code via
+# LIBYUV_DISABLE_NEON because GCC 9 generates invalid assembly for
+# .8h MOV instructions (fixed in GCC 11+).
+cc_library(
+    name = "_neon",
+    srcs = [
+        "source/compare_neon.cc",
+        "source/compare_neon64.cc",
+        "source/rotate_neon.cc",
+        "source/rotate_neon64.cc",
+        "source/row_neon.cc",
+        "source/row_neon64.cc",
+        "source/scale_neon.cc",
+        "source/scale_neon64.cc",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-w",
+            "-ffp-contract=fast",
+        ],
+    }) + select({
+        # 32-bit ARM needs -mfpu=neon (upstream BUILD.gn sets this).
+        # 64-bit ARM has NEON unconditionally; no extra flags needed.
+        "@platforms//cpu:armv7": ["-mfpu=neon"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        ":_disable_neon": ["LIBYUV_DISABLE_NEON"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    deps = [":_hdrs"],
+)
+
+# MSA (matches upstream libyuv_msa OBJECT library from BUILD.gn).
+cc_library(
+    name = "_msa",
+    srcs = [
+        "source/compare_msa.cc",
+        "source/rotate_msa.cc",
+        "source/row_msa.cc",
+        "source/scale_msa.cc",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-w",
+            "-ffp-contract=fast",
+        ],
+    }),
+    local_defines = select({
+        ":_disable_msa": ["LIBYUV_DISABLE_MSA"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    deps = [":_hdrs"],
+)
+
+# MMI (matches upstream libyuv_mmi OBJECT library from BUILD.gn).
+cc_library(
+    name = "_mmi",
+    srcs = [
+        "source/compare_mmi.cc",
+        "source/rotate_mmi.cc",
+        "source/row_mmi.cc",
+        "source/scale_mmi.cc",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-w",
+            "-ffp-contract=fast",
+        ],
+    }),
+    local_defines = select({
+        ":_disable_mmi": ["LIBYUV_DISABLE_MMI"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    deps = [":_hdrs"],
+)
+
+# Indirection for the GCC 9 workaround: on aarch64 + GCC the NEON sources
+# cannot be compiled, so this target resolves to an empty dep.  Every other
+# aarch64 toolchain (Clang, MSVC) gets the real _neon library.
+cc_library(
+    name = "_arm64_neon",
+    tags = ["manual"],
+    deps = select({
+        ":_aarch64_gcc": [],
+        "//conditions:default": [":_neon"],
+    }),
+)
+
+# ===== Library =================================================================
+
+alias(
+    name = "libyuv",
+    actual = ":yuv",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "yuv",
+    srcs = [
+        "source/compare.cc",
+        "source/compare_common.cc",
+        "source/compare_gcc.cc",
+        "source/compare_win.cc",
+        "source/convert.cc",
+        "source/convert_argb.cc",
+        "source/convert_from.cc",
+        "source/convert_from_argb.cc",
+        "source/convert_jpeg.cc",
+        "source/convert_to_argb.cc",
+        "source/convert_to_i420.cc",
+        "source/cpu_id.cc",
+        "source/mjpeg_decoder.cc",
+        "source/mjpeg_validate.cc",
+        "source/planar_functions.cc",
+        "source/rotate.cc",
+        "source/rotate_any.cc",
+        "source/rotate_argb.cc",
+        "source/rotate_common.cc",
+        "source/rotate_gcc.cc",
+        "source/rotate_win.cc",
+        "source/row_any.cc",
+        "source/row_common.cc",
+        "source/row_gcc.cc",
+        "source/row_win.cc",
+        "source/scale.cc",
+        "source/scale_any.cc",
+        "source/scale_argb.cc",
+        "source/scale_common.cc",
+        "source/scale_gcc.cc",
+        "source/scale_uv.cc",
+        "source/scale_win.cc",
+        "source/video_common.cc",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/W0"],
+        "//conditions:default": [
+            "-w",
+            "-ffp-contract=fast",
+        ],
+    }),
+    local_defines = select({
+        ":_with_jpeg": ["HAVE_JPEG"],
+        "//conditions:default": [],
+    }) + select({
+        ":_disable_x86": ["LIBYUV_DISABLE_X86"],
+        "//conditions:default": [],
+    }) + select({
+        ":_disable_neon": ["LIBYUV_DISABLE_NEON"],
+        "//conditions:default": [],
+    }) + select({
+        # GCC 9 on aarch64 generates invalid NEON assembly (mov v0.8h);
+        # disable NEON dispatch so the scalar C fallback is used instead.
+        ":_aarch64_gcc": ["LIBYUV_DISABLE_NEON"],
+        "//conditions:default": [],
+    }) + select({
+        ":_disable_msa": ["LIBYUV_DISABLE_MSA"],
+        "//conditions:default": [],
+    }) + select({
+        ":_disable_mmi": ["LIBYUV_DISABLE_MMI"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":_hdrs"] +
+           select({
+               "@platforms//cpu:aarch64": [":_arm64_neon"],
+               "@platforms//cpu:armv7": [":_neon"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_with_jpeg": ["@libjpeg_turbo//:jpeg"],
+               "//conditions:default": [],
+           }),
+)

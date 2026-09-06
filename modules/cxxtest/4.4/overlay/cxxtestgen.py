@@ -1,0 +1,3 @@
+import cxxtest.cxxtestgen
+
+cxxtest.cxxtestgen.main()

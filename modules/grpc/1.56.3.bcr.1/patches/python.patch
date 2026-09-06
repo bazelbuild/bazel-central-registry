@@ -1,0 +1,131 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index caf4f829d4..6a3ceb08e8 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -34,3 +34,35 @@ use_repo(
+ grpc_extra_deps_ext = use_extension("//bazel:grpc_extra_deps.bzl", "grpc_extra_deps_ext")
+ 
+ use_repo(grpc_extra_deps_ext, "com_google_googleapis_imports")
++
++bazel_dep(name = "rules_python", version = "0.29.0")
++
++PYTHON_VERSIONS = [
++    "3.8",
++    "3.9",
++    "3.10",
++    "3.11",
++    "3.12",
++]
++
++python = use_extension("@rules_python//python/extensions:python.bzl", "python")
++[
++    python.toolchain(
++        is_default = python_version == PYTHON_VERSIONS[-1],
++        python_version = python_version,
++    )
++    for python_version in PYTHON_VERSIONS
++]
++
++pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
++[
++    pip.parse(
++        hub_name = "grpc_python_dependencies",
++        python_version = python_version,
++        requirements_lock = "//:requirements.bazel.txt",
++    )
++    for python_version in PYTHON_VERSIONS
++]
++use_repo(pip, "grpc_python_dependencies")
++grpc_python_deps_ext = use_extension("//bazel:grpc_python_deps.bzl", "grpc_python_deps_ext")
++use_repo(grpc_python_deps_ext, "cython")
+diff --git a/bazel/cython_library.bzl b/bazel/cython_library.bzl
+index dc2ef7a890..fd2881ed8c 100644
+--- a/bazel/cython_library.bzl
++++ b/bazel/cython_library.bzl
+@@ -72,7 +72,7 @@ def pyx_library(name, deps = [], py_deps = [], srcs = [], **kwargs):
+         native.cc_binary(
+             name = shared_object_name,
+             srcs = [stem + ".cpp"],
+-            deps = deps + ["@local_config_python//:python_headers"],
++            deps = deps + ["@rules_python//python/cc:current_py_cc_headers"],
+             defines = defines,
+             linkshared = 1,
+         )
+diff --git a/bazel/grpc_python_deps.bzl b/bazel/grpc_python_deps.bzl
+index 39893eef6e..172933e062 100644
+--- a/bazel/grpc_python_deps.bzl
++++ b/bazel/grpc_python_deps.bzl
+@@ -16,6 +16,18 @@
+ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+ load("@com_github_grpc_grpc//third_party/py:python_configure.bzl", "python_configure")
+ 
++# buildifier: disable=unnamed-macro
++def cython():
++    http_archive(
++        name = "cython",
++        build_file = "@com_github_grpc_grpc//third_party:cython.BUILD",
++        sha256 = "a2da56cc22be823acf49741b9aa3aa116d4f07fa8e8b35a3cb08b8447b37c607",
++        strip_prefix = "cython-0.29.35",
++        urls = [
++            "https://github.com/cython/cython/archive/0.29.35.tar.gz",
++        ],
++    )
++
+ # buildifier: disable=unnamed-macro
+ def grpc_python_deps():
+     """Loads dependencies for gRPC Python."""
+@@ -36,12 +48,6 @@ def grpc_python_deps():
+     )
+ 
+     if "cython" not in native.existing_rules():
+-        http_archive(
+-            name = "cython",
+-            build_file = "@com_github_grpc_grpc//third_party:cython.BUILD",
+-            sha256 = "a2da56cc22be823acf49741b9aa3aa116d4f07fa8e8b35a3cb08b8447b37c607",
+-            strip_prefix = "cython-0.29.35",
+-            urls = [
+-                "https://github.com/cython/cython/archive/0.29.35.tar.gz",
+-            ],
+-        )
++        cython()
++
++grpc_python_deps_ext = module_extension(implementation = lambda ctx: cython())
+diff --git a/requirements.bazel.txt b/requirements.bazel.txt
+index f2dbfd7af8..ea81395c14 100644
+--- a/requirements.bazel.txt
++++ b/requirements.bazel.txt
+@@ -1,17 +1,25 @@
+ # GRPC Python setup requirements
++cachetools==4.2.4
++certifi==2017.4.17
++chardet==3.0.4
+ coverage==4.5.4
+ cython==0.29.21
+-protobuf>=3.5.0.post1, < 4.0dev
+-wheel==0.36.2
++gevent==22.8.0
+ google-auth==1.24.0
++googleapis-common-protos==1.5.5
++greenlet==1.1.3.post0
++grpcio==1.56.2
++idna==2.7
+ oauth2client==4.1.0
++protobuf>=3.5.0.post1, < 4.0dev
++pyasn1==0.5.1
++pyasn1-modules==0.3.0
+ requests==2.25.1
++rsa==4.9
++setuptools==69.0.3
++six==1.16.0
+ urllib3==1.26.5
+-chardet==3.0.4
+-certifi==2017.4.17
+-idna==2.7
+-googleapis-common-protos==1.5.5
+-gevent==22.08.0
+-zope.event==4.5.0
+-setuptools==44.1.1
++wheel==0.36.2
+ xds-protos==0.0.11
++zope-event==4.5.0
++zope-interface==6.1

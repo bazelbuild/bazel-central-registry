@@ -1,0 +1,109 @@
+"Bazel dependencies"
+
+module(
+    name = "rules_playwright",
+    version = "0.2.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.4.1")
+bazel_dep(name = "platforms", version = "0.0.10")
+bazel_dep(name = "aspect_bazel_lib", version = "2.11.0")
+
+bazel_dep(name = "toolchains_musl", version = "0.1.20", dev_dependency = True)
+
+toolchains_musl = use_extension("@toolchains_musl//:toolchains_musl.bzl", "toolchains_musl", dev_dependency = True)
+toolchains_musl.config(
+    extra_target_compatible_with = ["@//tools/linkers:musl"],
+)
+
+bazel_dep(name = "toolchains_llvm", version = "1.2.0", dev_dependency = True)
+
+# Configure and register the toolchain.
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+llvm.toolchain(
+    llvm_version = "16.0.0",
+    stdlib = {
+        "darwin-x86_64": "none",
+        "darwin-aarch64": "none",
+        "linux-x86_64": "none",
+        "linux-aarch64": "none",
+    },
+)
+use_repo(llvm, "llvm_toolchain")
+
+register_toolchains(
+    "@llvm_toolchain//:all",
+    dev_dependency = True,
+)
+
+bazel_dep(name = "buildifier_prebuilt", version = "6.1.2", dev_dependency = True)
+
+playwright = use_extension("//playwright:extensions.bzl", "playwright", dev_dependency = True)
+playwright.repo(
+    name = "playwright-1.49.1",
+    playwright_version = "1.49.1",
+)
+use_repo(playwright, "playwright-1.49.1")
+playwright.repo(
+    name = "playwright-1.50.1",
+    browsers_json = "//playwright/tests:browsers.1.50.1.json",
+)
+use_repo(playwright, "playwright-1.50.1")
+
+bazel_dep(
+    name = "rules_rust",
+    version = "0.56.0",
+    dev_dependency = True,
+)
+
+rust = use_extension(
+    "@rules_rust//rust:extensions.bzl",
+    "rust",
+    dev_dependency = True,
+)
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = {
+        "aarch64-apple-darwin": [
+            "@platforms//cpu:arm64",
+            "@platforms//os:macos",
+        ],
+        "aarch64-unknown-linux-musl": [
+            "@platforms//cpu:arm64",
+            "@platforms//os:linux",
+            "@//tools/linkers:musl",
+        ],
+        "x86_64-apple-darwin": [
+            "@platforms//cpu:x86_64",
+            "@platforms//os:macos",
+        ],
+        "x86_64-unknown-linux-musl": [
+            "@platforms//cpu:x86_64",
+            "@platforms//os:linux",
+            "@//tools/linkers:musl",
+        ],
+    },
+    versions = ["1.84.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+crate = use_extension(
+    "@rules_rust//crate_universe:extension.bzl",
+    "crate",
+    dev_dependency = True,
+)
+crate.from_cargo(
+    name = "crate_index",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = [
+        "//:Cargo.toml",
+        "//playwright/private/cli:Cargo.toml",
+    ],
+)
+use_repo(crate, "crate_index")

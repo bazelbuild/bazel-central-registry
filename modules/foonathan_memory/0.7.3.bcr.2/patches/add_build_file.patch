@@ -1,0 +1,76 @@
+diff --git BUILD.bazel BUILD.bazel
+new file mode 100644
+index 0000000..6035b60
+--- /dev/null
++++ BUILD.bazel
+@@ -0,0 +1,70 @@
++""" Builds foonathan_memory.
++"""
++
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
++load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
++
++cc_binary(
++    name = "foonathan_memory_node_size_debugger",
++    srcs = [
++	"tool/test_types.hpp",
++        "tool/node_size_debugger.hpp",
++        "tool/node_size_debugger.cpp",
++    ],
++    copts = [
++        "-DVERSION=0.7"
++    ]
++)
++
++genrule(
++    name = "container_node_sizes_impl",
++    srcs = [":foonathan_memory_node_size_debugger"],
++    outs = [
++	"container_node_sizes_impl.hpp"
++    ],
++    cmd = "$(location :foonathan_memory_node_size_debugger) --code $@"
++)
++
++cmake_configure_file(
++    name = "config",
++    src = "src/config.hpp.in",
++    out = "include/foonathan/memory/config_impl.hpp",
++    cmakelists = [
++        "src/CMakeLists.txt",
++    ],
++    defines = [
++        "FOONATHAN_MEMORY_DEBUG_FENCE=8",
++        "FOONATHAN_MEMORY_DEFAULT_ALLOCATOR=heap_allocator",
++        "FOONATHAN_MEMORY_TEMPORARY_STACK_MODE=2",
++    ],
++    visibility = ["//visibility:private"],
++)
++
++cc_library(
++    name = "detail_header",
++    hdrs = glob([
++        "include/foonathan/memory/detail/*.hpp",
++    ]),
++    includes = ["include/foonathan/memory"],
++    strip_include_prefix = "include",
++)
++
++cc_library(
++    name = "foonathan_memory",
++    srcs = glob([
++        "src/*.cpp",
++        "src/detail/*.cpp",
++        "src/detail/*.hpp",
++    ]) + [
++        ":container_node_sizes_impl",
++    ],
++    hdrs = glob([
++        "include/foonathan/memory/*.hpp",
++    ]) + [
++	":config",
++    ],
++    deps = [":detail_header"],
++    strip_include_prefix = "include",
++    visibility = ["//visibility:public"],
++)
++

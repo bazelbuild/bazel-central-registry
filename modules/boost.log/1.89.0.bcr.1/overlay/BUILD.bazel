@@ -1,0 +1,146 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# See https://www.boost.org/doc/libs/1_87_0/libs/log/doc/html/log/installation/config.html
+
+_TEXTUAL_HDRS = [
+    "include/boost/log/detail/adaptive_mutex.hpp",
+    "include/boost/log/detail/attribute_get_value_impl.hpp",
+    "include/boost/log/detail/footer.hpp",
+    "include/boost/log/detail/generate_overloads.hpp",
+    "include/boost/log/detail/light_function_pp.hpp",
+    "include/boost/log/detail/named_scope_fmt_pp.hpp",
+    "include/boost/log/detail/trivial_keyword.hpp",
+]
+
+bool_flag(
+    name = "use_avx2",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "use_avx2_setting",
+    constraint_values = ["@platforms//cpu:x86_64"],
+    flag_values = {":use_avx2": "true"},
+)
+
+cc_library(
+    name = "boost.log",
+    srcs = glob(
+        [
+            "src/*.*pp",
+            "src/setup/*.*pp",
+        ],
+        exclude = [
+            "src/dump_avx2.cpp",
+            "src/dump_ssse3.cpp",
+        ],
+    ) + select({
+        "@platforms//os:linux": glob(["src/posix/*.*pp"]),
+        "@platforms//os:windows": glob(["src/windows/*.*pp"]),
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//cpu:x86_64": ["src/dump_ssse3.cpp"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_avx2_setting": ["src/dump_avx2.cpp"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(
+        ["include/**/*.hpp"],
+        exclude = [
+            "include/boost/log/support/xpressive.hpp",
+            "include/boost/log/support/spirit_classic.hpp",
+            "include/boost/log/support/spirit_qi.hpp",
+        ] + _TEXTUAL_HDRS,
+    ),
+    copts = select({
+        "@platforms//cpu:x86_64": ["-mssse3"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_avx2_setting": ["-mavx2"],
+        "//conditions:default": [],
+    }),
+    defines = ["BOOST_LOG_NO_LIB"],
+    features = ["parse_headers"],
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lrt"],
+        "@platforms//os:windows": [
+            "secur32.lib",
+            "psapi.lib",
+            "ws2_32.lib",
+            "mswsock.lib",
+            "advapi32.lib",
+            "synchronization.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "__STDC_CONSTANT_MACROS",
+        "BOOST_LOG_BUILDING_THE_LIB",
+        "BOOST_LOG_SETUP_BUILDING_THE_LIB",
+        "BOOST_LOG_USE_STD_REGEX",
+        "BOOST_SPIRIT_USE_PHOENIX_V3=1",
+        "BOOST_THREAD_DONT_USE_CHRONO",
+    ] + select({
+        "@platforms//cpu:x86_64": ["BOOST_LOG_USE_SSSE3"],
+        "//conditions:default": [],
+    }) + select({
+        ":use_avx2_setting": ["BOOST_LOG_USE_AVX2"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:linux": [
+            "BOOST_LOG_USE_NATIVE_SYSLOG",
+            "_XOPEN_SOURCE=600",
+        ],
+        "@platforms//os:macos": [
+            "BOOST_LOG_USE_NATIVE_SYSLOG",
+            "BOOST_LOG_WITHOUT_IPC",  # TODO: ld: symbol(s) not found for architecture
+        ],
+        "@platforms//os:windows": [
+            "_CRT_SECURE_NO_DEPRECATE",
+            "_CRT_SECURE_NO_WARNINGS",
+            "_SCL_SECURE_NO_DEPRECATE",
+            "_SCL_SECURE_NO_WARNINGS",
+            "BOOST_LOG_WITHOUT_EVENT_LOG",  # TODO: compile simple_event_log.mc
+            "BOOST_USE_WINDOWS_H",
+            "NOMINMAX",
+            "SECURITY_WIN32",
+            "WIN32_LEAN_AND_MEAN",
+        ],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = _TEXTUAL_HDRS,
+    deps = [
+        "@boost.align",
+        "@boost.asio",
+        "@boost.assert",
+        "@boost.atomic",
+        "@boost.bind",
+        "@boost.config",
+        "@boost.core",
+        "@boost.exception",
+        "@boost.filesystem",
+        "@boost.fusion",
+        "@boost.interprocess",
+        "@boost.iterator",
+        "@boost.move",
+        "@boost.mpl",
+        "@boost.optional",
+        "@boost.parameter",
+        "@boost.phoenix",
+        "@boost.preprocessor",
+        "@boost.property_tree",
+        "@boost.random",
+        "@boost.smart_ptr",
+        "@boost.thread",
+        "@boost.throw_exception",
+        "@boost.type_traits",
+    ],
+)

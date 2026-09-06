@@ -1,0 +1,120 @@
+module(
+    name = "hermetic_launcher",
+    version = "0.0.8",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "bazel_lib", version = "3.2.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+non_module_dependencies = use_extension("//launcher/private:extensions.bzl", "non_module_dependencies")
+use_repo(non_module_dependencies, "finalize_stub_aarch64_linux", "finalize_stub_aarch64_macos", "finalize_stub_aarch64_windows", "finalize_stub_s390x_linux", "finalize_stub_x86_64_linux", "finalize_stub_x86_64_macos", "finalize_stub_x86_64_windows", "runfiles_stub_aarch64_linux", "runfiles_stub_aarch64_macos", "runfiles_stub_aarch64_windows", "runfiles_stub_s390x_linux", "runfiles_stub_x86_64_linux", "runfiles_stub_x86_64_macos", "runfiles_stub_x86_64_windows")
+
+register_toolchains("//launcher/private/prebuilt:all")
+
+###################################
+
+bazel_dep(name = "rules_cc", version = "0.2.18", dev_dependency = True)
+bazel_dep(name = "rules_platform", version = "0.1.0", dev_dependency = True)
+bazel_dep(name = "rules_rs", version = "0.0.64", dev_dependency = True)
+single_version_override(
+    module_name = "rules_rs",
+    patch_strip = 1,
+    patches = ["//patches:rules-rs-windows-rust-linker.patch"],
+    version = "0.0.64",
+)
+
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains", dev_dependency = True)
+toolchains.toolchain(
+    edition = "2021",
+    version = "1.95.0",
+)
+use_repo(
+    toolchains,
+    "default_rust_toolchains",
+)
+
+register_toolchains("@default_rust_toolchains//:all", dev_dependency = True)
+
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust", dev_dependency = True)
+rules_rust.patch(
+    patches = ["//patches:rules-rust-skip-unused-cc-runtime.patch"],
+    strip = 1,
+)
+use_repo(rules_rust, "rules_rust")
+
+RUST_TRIPLES = [
+    "aarch64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "aarch64-pc-windows-gnullvm",
+    "aarch64-pc-windows-msvc",
+    "s390x-unknown-linux-gnu",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-gnullvm",
+    "x86_64-pc-windows-msvc",
+]
+
+# TODO(zbarsky): Use a workspace instead of 3 packages?
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate", dev_dependency = True)
+crate.from_cargo(
+    name = "finalize_crates",
+    cargo_lock = "//finalize-stub:Cargo.lock",
+    cargo_toml = "//finalize-stub:Cargo.toml",
+    platform_triples = RUST_TRIPLES,
+)
+crate.from_cargo(
+    name = "runfiles_crates",
+    cargo_lock = "//runfiles-stub:Cargo.lock",
+    cargo_toml = "//runfiles-stub:Cargo.toml",
+    platform_triples = RUST_TRIPLES,
+)
+crate.from_cargo(
+    name = "integration_crates",
+    cargo_lock = "//integration-tests:Cargo.lock",
+    cargo_toml = "//integration-tests:Cargo.toml",
+    platform_triples = RUST_TRIPLES,
+)
+use_repo(crate, "finalize_crates", "integration_crates", "runfiles_crates")
+
+bazel_dep(name = "bzip2", version = "1.0.8.bcr.3")
+
+crate.annotation(
+    crate = "bzip2-sys",
+    gen_build_script = "off",
+    deps = ["@bzip2//:bz2"],
+)
+
+inject_repo(crate, "bzip2")
+
+bazel_dep(name = "xz", version = "5.4.5.bcr.8")
+single_version_override(
+    module_name = "xz",
+    patch_strip = 1,
+    patches = ["//patches:xz-s390x-support.patch"],
+    version = "5.4.5.bcr.8",
+)
+
+crate.annotation(
+    crate = "lzma-sys",
+    gen_build_script = "off",
+    deps = ["@xz//:lzma"],
+)
+
+inject_repo(crate, "xz")
+
+bazel_dep(name = "llvm", version = "0.7.9", dev_dependency = True)
+single_version_override(
+    module_name = "llvm",
+    version = "0.7.9",
+)
+
+osx = use_extension("@llvm//extensions:osx.bzl", "osx", dev_dependency = True)
+use_repo(osx, "macos_sdk")
+
+register_toolchains(
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)

@@ -1,0 +1,157 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+MODULES_LC = glob(["modules/lc/**/*.c"])
+
+MODULES_OM = glob(["modules/om/**/*.c"])
+
+MODULES_IM = [
+    "modules/im/ximcp/imCallbk.c",
+    "modules/im/ximcp/imDefFlt.c",
+    "modules/im/ximcp/imDefIc.c",
+    "modules/im/ximcp/imDefIm.c",
+    "modules/im/ximcp/imDefLkup.c",
+    "modules/im/ximcp/imDispch.c",
+    "modules/im/ximcp/imEvToWire.c",
+    "modules/im/ximcp/imExten.c",
+    "modules/im/ximcp/imImSw.c",
+    "modules/im/ximcp/imInt.c",
+    "modules/im/ximcp/imInsClbk.c",
+    "modules/im/ximcp/imLcFlt.c",
+    "modules/im/ximcp/imLcGIc.c",
+    "modules/im/ximcp/imLcIc.c",
+    "modules/im/ximcp/imLcIm.c",
+    "modules/im/ximcp/imLcLkup.c",
+    "modules/im/ximcp/imLcPrs.c",
+    "modules/im/ximcp/imLcSIc.c",
+    "modules/im/ximcp/imRm.c",
+    "modules/im/ximcp/imRmAttr.c",
+    "modules/im/ximcp/imThaiFlt.c",
+    "modules/im/ximcp/imThaiIc.c",
+    "modules/im/ximcp/imThaiIm.c",
+    "modules/im/ximcp/imTrans.c",
+    "modules/im/ximcp/imTransR.c",
+    "modules/im/ximcp/imTrX.c",
+]
+
+LIBI18N_SRCS = glob(
+    [
+        "src/xlibi18n/**/*.c",
+        "src/xlibi18n/**/*.h",
+    ],
+    exclude = [
+        "src/xlibi18n/lcUniConv/8bit_tab_to_h.c",
+        "src/xlibi18n/lcUniConv/cjk_tab_to_h.c",
+    ],
+)
+
+XCMS_SRCS = glob([
+    "src/xcms/**/*.c",
+    "src/xcms/**/*.h",
+])
+
+XKB_SRCS = glob([
+    "src/xkb/**/*.c",
+    "src/xkb/**/*.h",
+])
+
+expand_template(
+    name = "xlibconf_h",
+    out = "include/X11/XlibConf.h",
+    substitutions = {
+        "#undef XTHREADS": "#define XTHREADS 1",
+        "#undef XUSE_MTSAFE_API": "#define XUSE_MTSAFE_API 1",
+    },
+    template = "include/X11/XlibConf.h.in",
+)
+
+cc_binary(
+    name = "makekeys",
+    srcs = ["src/util/makekeys.c"],
+)
+
+genrule(
+    name = "ks_tables",
+    srcs = ["@xorgproto//:include/X11/" + x for x in [
+        "keysymdef.h",
+        "XF86keysym.h",
+        "Sunkeysym.h",
+        "DECkeysym.h",
+        "HPkeysym.h",
+    ]],
+    outs = ["ks_tables.h"],
+    cmd = "$(location :makekeys) $(SRCS) > $@",
+    tools = [":makekeys"],
+)
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+UPSTREAM_VERSION_MAJOR = UPSTREAM_VERSION.split(".")[0]
+
+UPSTREAM_VERSION_MINOR = UPSTREAM_VERSION.split(".")[1]
+
+UPSTREAM_VERSION_PATCH = UPSTREAM_VERSION.split(".")[2]
+
+expand_template(
+    name = "config_h",
+    out = "src/config.h",
+    substitutions = {
+        "{LIBX11_VERSION}": UPSTREAM_VERSION,
+        "{LIBX11_VERSION_MAJOR}": UPSTREAM_VERSION_MAJOR,
+        "{LIBX11_VERSION_MINOR}": UPSTREAM_VERSION_MINOR,
+        "{LIBX11_VERSION_PATCH}": UPSTREAM_VERSION_PATCH,
+    } | select({
+        "@platforms//os:macos": {},
+        "//conditions:default": {
+            "#define BSD44SOCKETS 1": "/* #undef BSD44SOCKETS */",
+            "#define HAVE_SYS_FILIO_H 1": "/* #undef HAVE_SYS_FILIO_H */",
+        },
+    }),
+    template = "src/config.h.in",
+)
+
+cc_library(
+    name = "x11",
+    srcs = glob(
+        [
+            "src/*.c",
+            "src/*.h",
+        ],
+        exclude = ["src/os2Stubs.c"],
+    ) + XCMS_SRCS + XKB_SRCS + LIBI18N_SRCS + MODULES_LC + MODULES_OM + MODULES_IM,
+    hdrs = glob(["include/X11/**/*.h"]) + [
+        "//:config_h",
+        "//:ks_tables",
+        "//:xlibconf_h",
+    ],
+    copts = [
+        "-Wno-implicit-function-declaration",
+        "-Wno-int-conversion",
+        "-DHAVE_CONFIG_H",
+    ],
+    defines = [
+        "XCMSDIR=\\\"src/xcms\\\"",
+        "XLOCALELIBDIR=\\\"/tmp\\\"",
+    ],
+    includes = [
+        "include",
+        "include/X11",
+        "src",
+        "src/xcms",
+        "src/xkb",
+        "src/xlibi18n",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libxau",
+        "@libxcb",
+        "@libxtrans",
+        "@xorgproto",
+    ],
+)
+
+alias(
+    name = "libx11",
+    actual = ":x11",
+    visibility = ["//visibility:public"],
+)

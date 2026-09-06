@@ -1,0 +1,131 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+PROJ_CPP_API_SRCS = [
+    "unit/test_util.cpp",
+    "unit/test_common.cpp",
+    "unit/test_coordinates.cpp",
+    "unit/test_crs.cpp",
+    "unit/test_metadata.cpp",
+    "unit/test_io.cpp",
+    "unit/test_operation.cpp",
+    "unit/test_datum.cpp",
+    "unit/test_factory.cpp",
+    "unit/test_c_api.cpp",
+    "unit/test_grids.cpp",
+    "unit/test_projinfo_lib.cpp",
+]
+
+PROJ_CPP_API_SOURCE_DATA = [
+    "@proj//:data/tests/egm96_15_uncompressed_truncated.tif",
+    "@proj//:data/tests/nkgrf03vel_realigned_extract.tif",
+    "@proj//:data/tests/nkgrf03vel_realigned_extract_tiled_256x256.tif",
+    "@proj//:data/tests/simple_model_degree_3d.json",
+    "@proj//:data/tests/test_3d_grid_projected.tif",
+    "@proj//:data/tests/test_hgrid.tif",
+    "@proj//:data/tests/test_hgrid_with_subgrid.tif",
+    "@proj//:data/tests/test_hgrid_with_two_level_of_subgrids_no_grid_name.tif",
+    "@proj//:data/tests/test_nodata.gtx",
+    "@proj//:data/tests/test_vgrid_int16.tif",
+]
+
+TEST_DEFINES = [
+    "CURL_ENABLED",
+    "PROJ_HAS_PTHREADS",
+    "TIFF_ENABLED",
+]
+
+PROJ_RUNTIME_DATA = [
+    "@proj//:data/proj.ini",
+    "@proj//:proj_runtime_data",
+]
+
+COMMON_TEST_SRCS = [
+    "unit/main.cpp",
+    "unit/gtest_include.h",
+    "unit/test_primitives.hpp",
+]
+
+COMMON_TEST_DEPS = [
+    "@googletest//:gtest",
+    "@rules_cc//cc/runfiles:runfiles",
+    "@proj",
+]
+
+TEST_SPECS = [
+    {
+        "name": "proj_errno_string_test",
+        "srcs": ["unit/proj_errno_string_test.cpp"],
+    },
+    {
+        "name": "proj_angular_io_test",
+        "srcs": ["unit/proj_angular_io_test.cpp"],
+    },
+    {
+        "name": "proj_context_test",
+        "srcs": ["unit/proj_context_test.cpp"],
+    },
+    {
+        "name": "pj_phi2_test",
+        "srcs": ["unit/pj_phi2_test.cpp"],
+    },
+    {
+        "name": "proj_test_cpp_api",
+        "srcs": PROJ_CPP_API_SRCS,
+        "args": [
+            "--gtest_filter=-CApi.proj_create_crs_to_crs_with_only_ballpark_transformations:CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_WGS84_to_WGS84_G1762:CApi.proj_create_crs_to_crs_from_custom_compound_crs_with_NAD83_2011_and_geoidgrid_ref_against_NAD83_2011_to_WGS84_G1762",
+            "--proj-test-source-data-marker=$(rlocationpath @proj//:data/tests/test_hgrid.tif)",
+        ],
+        "data": PROJ_CPP_API_SOURCE_DATA,
+        "timeout": "long",
+    },
+    {
+        "name": "gie_self_tests",
+        "srcs": ["unit/gie_self_tests.cpp"],
+        "args": [
+            "--proj-test-source-data-marker=$(rlocationpath @proj//:data/tests/test_hgrid.tif)",
+        ],
+        "data": ["@proj//:data/tests/test_hgrid.tif"],
+    },
+    {
+        "name": "test_defmodel",
+        "srcs": ["unit/test_defmodel.cpp"],
+    },
+    {
+        "name": "test_tinshift",
+        "srcs": ["unit/test_tinshift.cpp"],
+    },
+    {
+        "name": "test_misc",
+        "srcs": ["unit/test_misc.cpp"],
+    },
+]
+
+[
+    cc_test(
+        name = spec["name"],
+        srcs = COMMON_TEST_SRCS + spec["srcs"],
+        args = [
+            "--proj-test-proj-ini=$(rlocationpath @proj//:data/proj.ini)",
+        ] + spec.get("args", []),
+        data = PROJ_RUNTIME_DATA + spec.get("data", []),
+        timeout = spec.get("timeout"),
+        defines = TEST_DEFINES,
+        deps = COMMON_TEST_DEPS,
+    )
+    for spec in TEST_SPECS
+]
+
+test_suite(
+    name = "proj_unit_test",
+    tests = [
+        ":gie_self_tests",
+        ":pj_phi2_test",
+        ":proj_angular_io_test",
+        ":proj_context_test",
+        ":proj_errno_string_test",
+        ":proj_test_cpp_api",
+        ":test_defmodel",
+        ":test_misc",
+        ":test_tinshift",
+    ],
+)

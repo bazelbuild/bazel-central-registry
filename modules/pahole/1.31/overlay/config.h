@@ -1,0 +1,6 @@
+#ifndef PAHOLE_CONFIG_H
+#define PAHOLE_CONFIG_H
+
+#define HAVE_DWFL_MODULE_BUILD_ID 1
+
+#endif

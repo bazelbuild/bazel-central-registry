@@ -1,0 +1,79 @@
+"rules_elm"
+
+module(
+    name = "rules_elm",
+    version = "1.1.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "aspect_rules_js", version = "2.9.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
+bazel_dep(name = "rules_nodejs", version = "6.7.3")
+bazel_dep(name = "protobuf", version = "33.4", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_python", version = "1.6.3")
+
+bazel_dep(name = "cgrindel_bazel_starlib", version = "0.28.0", dev_dependency = True)
+bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0", dev_dependency = True)
+bazel_dep(name = "rules_bazel_integration_test", version = "0.35.0", dev_dependency = True)
+bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True, repo_name = "bazel_gazelle")
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.9.0", dev_dependency = True)
+
+elm = use_extension("//elm:extensions.bzl", "elm")
+elm.toolchain()
+use_repo(
+    elm,
+    "elm_compiler_toolchains",
+    # TODO: define as elm_repository and link Parser.js via rules_js
+    "com_github_rtfeldman_node_test_runner",
+)
+
+register_toolchains("@elm_compiler_toolchains//:all")
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "rules_elm_npm",
+    link_workspace = "rules_elm",
+    pnpm_lock = "//tools/npm:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "rules_elm_npm")
+
+nix_repo = use_extension("@rules_nixpkgs_core//extensions:repository.bzl", "nix_repo", dev_dependency = True)
+
+nix_pkg = use_extension("@rules_nixpkgs_core//extensions:package.bzl", "nix_pkg", dev_dependency = True)
+
+nix_repo.file(
+    name = "nixpkgs",
+    file = "//:nix/nixpkgs.nix",
+    file_deps = [
+        "//:flake.lock",
+    ],
+)
+use_repo(nix_repo, "nixpkgs")
+
+nix_pkg.attr(
+    name = "nixpkgs_nodejs",
+    attr = "nodejs",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "nixpkgs_nodejs")
+
+bazel_binaries = use_extension(
+    "@rules_bazel_integration_test//:extensions.bzl",
+    "bazel_binaries",
+    dev_dependency = True,
+)
+bazel_binaries.download(version = "8.4.2")
+bazel_binaries.download(version = "7.7.1")
+use_repo(bazel_binaries,
+         "bazel_binaries",
+         "bazel_binaries_bazelisk",
+         "build_bazel_bazel_7_7_1",
+         "build_bazel_bazel_8_4_2")
+
+# inject_repo(
+# bazel_binaries,
+# "rules_bazel_integration_test"
+# )

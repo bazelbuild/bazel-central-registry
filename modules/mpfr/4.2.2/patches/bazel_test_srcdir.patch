@@ -1,0 +1,60 @@
+diff --git a/tests/tests.c b/tests/tests.c
+index 5c5b12d..440eb09 100644
+--- a/tests/tests.c
++++ b/tests/tests.c
+@@ -65,6 +65,10 @@ If not, see <https://www.gnu.org/licenses/>. */
+ 
+ #include "mpfr-test.h"
+ 
++#ifdef MPFR_BAZEL_TEST
++#include "bazel/runfiles_util.h"
++#endif
++
+ #ifdef MPFR_FPU_PREC
+ /* This option allows to test MPFR on x86 processors when the FPU
+  * rounding precision has been changed. As MPFR is a library, this can
+@@ -661,7 +665,43 @@ FILE *
+ src_fopen (const char *filename, const char *mode)
+ {
+ #ifndef SRCDIR
+-  return fopen (filename, mode);
++  FILE *f;
++
++  f = fopen (filename, mode);
++  if (f != NULL)
++    return f;
++
++#ifdef MPFR_BAZEL_TEST
++  {
++    const char *srcdir_file = getenv ("MPFR_SRCDIR");
++    if (srcdir_file != NULL)
++      {
++        char *resolved = mpfr_rlocation (srcdir_file);
++        if (resolved != NULL)
++          {
++            const char *sep = strrchr (resolved, '/');
++            if (sep == NULL)
++              sep = strrchr (resolved, '\\');
++            if (sep != NULL)
++              {
++                size_t dirlen = (size_t)(sep - resolved);
++                size_t buflen = dirlen + strlen (filename) + 2;
++                char *buffer = (char *) tests_allocate (buflen);
++                if (buffer != NULL)
++                  {
++                    memcpy (buffer, resolved, dirlen);
++                    buffer[dirlen] = '/';
++                    strcpy (buffer + dirlen + 1, filename);
++                    f = fopen (buffer, mode);
++                    tests_free (buffer, buflen);
++                  }
++              }
++            free (resolved);
++          }
++      }
++  }
++#endif
++  return f;
+ #else
+   const char *srcdir = SRCDIR;
+   char *buffer;

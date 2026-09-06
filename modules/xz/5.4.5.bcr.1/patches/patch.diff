@@ -1,0 +1,5372 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+index 0000000..0cd0bfe
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,372 @@
++# Description
++#    lzma is a general purpose data compression library https://tukaani.org/xz/
++#    Public Domain
++
++load("@bazel_skylib//lib:selects.bzl", "selects")
++load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
++load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
++load("//:tools.bzl", "multi_test")
++
++package(default_visibility = ["//visibility:private"])
++
++config_setting(
++    name = "osx_arm64",
++    constraint_values = [
++        "@platforms//os:osx",
++        "@platforms//cpu:aarch64",
++    ],
++)
++
++config_setting(
++    name = "osx_x86_64",
++    constraint_values = [
++        "@platforms//os:osx",
++        "@platforms//cpu:x86_64",
++    ],
++)
++
++config_setting(
++    name = "linux_arm64",
++    constraint_values = [
++        "@platforms//os:linux",
++        "@platforms//cpu:aarch64",
++    ],
++)
++
++config_setting(
++    name = "linux_x86_64",
++    constraint_values = [
++        "@platforms//os:linux",
++        "@platforms//cpu:x86_64",
++    ],
++)
++
++expand_template(
++    name = "config_linux_arm64",
++    out = "config.lzma-linux-arm64.h",
++    substitutions = {
++        "{HAVE_IMMINTRIN_H}": "#undef HAVE_IMMINTRIN_H",
++        "{HAVE_CPUID_H}": "#undef HAVE_CPUID_H",
++        "{HAVE_USABLE_CLMUL}": "#undef HAVE_USABLE_CLMUL",
++    },
++    template = "config.lzma-linux.h",
++)
++
++expand_template(
++    name = "config_linux_x86_64",
++    out = "config.lzma-linux-x86_64.h",
++    substitutions = {
++        "{HAVE_IMMINTRIN_H}": """\
++#if defined __has_include
++  #if __has_include (<immintrin.h>)
++    #define HAVE_IMMINTRIN_H 1
++  #endif
++#endif""",
++        "{HAVE_CPUID_H}": "#define HAVE_CPUID_H 1",
++        "{HAVE_USABLE_CLMUL}": "#define HAVE_USABLE_CLMUL 1",
++    },
++    template = "config.lzma-linux.h",
++)
++
++copy_file(
++    name = "copy_config",
++    src = selects.with_or({
++        "@platforms//os:android": "config.lzma-android.h",
++        ":linux_arm64": "config.lzma-linux-arm64.h",
++        ":linux_x86_64": "config.lzma-linux-x86_64.h",
++        ":osx_arm64": "config.lzma-osx-arm64.h",
++        ":osx_x86_64": "config.lzma-osx-x86_64.h",
++        ("@platforms//os:ios", "@platforms//os:watchos", "@platforms//os:tvos"): "apple_config",
++        "@platforms//os:windows": "config.lzma-windows.h",
++    }),
++    out = "src/liblzma/api/config.h",  # minimize the number of exported include paths
++)
++
++# Configuration is the same across iOS, watchOS, and tvOS
++alias(
++    name = "apple_config",
++    actual = select({
++        "@platforms//cpu:arm64": "config.lzma-ios-arm64.h",
++        "@platforms//cpu:armv7": "config.lzma-ios-armv7.h",
++        "@platforms//cpu:x86_64": "config.lzma-osx-x86_64.h",  # Configuration same as macOS
++        "@platforms//cpu:x86_32": "config.lzma-ios-i386.h",
++    }),
++)
++
++# Note: lzma is bundled with Apple platforms, but sadly, not considered public API because its header is not exposed. lzma is not bundled on Android.
++
++cc_library(
++    name = "lzma",
++    srcs = [
++        "src/common/tuklib_cpucores.c",
++        "src/common/tuklib_physmem.c",
++    ] + glob(
++        [
++            "src/**/*.h",
++            "src/liblzma/**/*.c",
++        ],
++        exclude = [
++            "src/liblzma/check/crc*_small.c",
++            "src/liblzma/**/*_tablegen.c",
++        ],
++    ),
++    hdrs = [
++        "src/liblzma/api/lzma.h",  # Publicly exported header
++    ],
++    copts = select({
++        "@platforms//os:windows": [],
++        "//conditions:default": ["-std=c99"],
++    }),
++    defines = select({
++        "@platforms//os:windows": ["LZMA_API_STATIC"],
++        "//conditions:default": [],
++    }),
++    linkopts = select({
++        "@platforms//os:android": [],
++        "//conditions:default": ["-lpthread"],
++    }),
++    linkstatic = select({
++        "@platforms//os:windows": True,
++        "//conditions:default": False,
++    }),
++    strip_include_prefix = "src/liblzma/api",  # Allows public header without the path and without COPTS -I or includes = []
++    visibility = ["//visibility:public"],
++    deps = [
++        "//:lzma_src_common",
++        "//:lzma_src_liblzma",
++        "//:lzma_src_liblzma_api",
++        "//:lzma_src_liblzma_check",
++        "//:lzma_src_liblzma_common",
++        "//:lzma_src_liblzma_delta",
++        "//:lzma_src_liblzma_lz",
++        "//:lzma_src_liblzma_lzma",
++        "//:lzma_src_liblzma_rangecoder",
++        "//:lzma_src_liblzma_simpler",
++    ],
++)
++
++cc_binary(
++    name = "xz",
++    srcs = glob(
++        ["src/xz/*.c"],
++        # exclude = ["src/xz/list.c"], # TODO Conditional this?
++    ) + [
++        "src/common/tuklib_mbstr_fw.c",
++        "src/common/tuklib_mbstr_width.c",
++        "src/common/tuklib_open_stdxxx.c",
++    ],
++    #  + select({
++    #     "//conditions:COND_MAIN_DECODER": ["list.c"], # TODO Conditional this?
++    #     "//conditions:default": [],
++    # })
++    copts = [
++        '-DLOCALEDIR=\\"/usr/share/locale\\"',  #TODO Help? Where do we get the locale directory from in bazel?
++    ],
++    # linkopts = [
++    # "$(CAPSICUM_LIB)",  #TODO Help?
++    # "-llibintl",  # Replace with actual libintl target if available  #TODO Help?
++    # ],
++    visibility = ["//visibility:public"],
++    deps = [
++        "//:lzma",
++        "//:lzma_src_common",
++        "//:lzma_src_liblzma_api",
++    ],
++    #  + select({
++    #     "@platforms//os:windows": ["//:xz_win_resources"],
++    #     "//conditions:default": [],
++    # }),
++)
++
++# cc_library(
++#     name = "xz_win_resources",
++#     srcs = ["xz_w32res.rc"],
++# )
++
++XZDEC_SRCS = [
++    "src/xzdec/xzdec.c",
++]
++
++XZDEC_DEPS = [
++    "//:lzma",
++    "//:lzma_src_liblzma_common",
++]
++#  + select({
++#     "@platforms//os:windows": ["//:xzdec_win_resources"],
++#     "//conditions:default": [],
++# })
++
++# cc_library(
++#     name = "xzdec_win_resources",
++#     srcs = ["xzdec_w32res.rc"],
++# )
++
++cc_binary(
++    name = "xzdec",
++    srcs = XZDEC_SRCS,
++    copts = [
++        "-DTUKLIB_GETTEXT=0",
++    ],
++    visibility = ["//visibility:public"],
++    # linkopts = ["-llibintl"],  # Replace with actual libintl target if available #TODO Help?
++    deps = XZDEC_DEPS,
++)
++
++cc_binary(
++    name = "lzmadec",
++    srcs = XZDEC_SRCS,  # lzmadec uses the same source with a define
++    copts = [
++        "-DTUKLIB_GETTEXT=0",
++        "-DLZMADEC",
++    ],
++    visibility = ["//visibility:public"],
++    # linkopts = ["-llibintl"],  # Replace with actual libintl target if available #TODO Help?
++    deps = XZDEC_DEPS,
++)
++
++cc_library(
++    name = "lzma_src_common",
++    srcs = [
++        "src/common/tuklib_exit.c",
++        "src/common/tuklib_progname.c",
++    ],
++    hdrs = glob(["src/common/*.h"]),
++    defines = ["HAVE_CONFIG_H"] + select({
++        "@platforms//os:windows": [
++            "LZMA_API_STATIC",
++            "TUKLIB_GETTEXT=0",  # Disable libintl for windows
++        ],
++        "//conditions:default": [],
++    }),
++    strip_include_prefix = "src/common",
++    deps = [
++        "//:lzma_src_liblzma_api",
++    ],
++)
++
++cc_library(
++    name = "lzma_src_liblzma",
++    hdrs = glob(["src/liblzma/*.h"]),
++    strip_include_prefix = "src/liblzma",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_api",
++    hdrs = [
++        "src/liblzma/api/config.h",  # Generated above, so missed by glob. In srcs so it's not public like the other headers
++    ] + glob(
++        [
++            "src/liblzma/api/**/*.h",
++        ],
++        exclude = [
++            "src/liblzma/api/lzma.h",  # The public header, only used in hdrs of main lib (//visibility:public)
++        ],
++    ),
++    strip_include_prefix = "src/liblzma/api",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_check",
++    hdrs = glob(["src/liblzma/check/*.h"]),
++    strip_include_prefix = "src/liblzma/check",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_common",
++    hdrs = glob(["src/liblzma/common/*.h"]),
++    includes = ["src/liblzma"],  # Needed as well as some usages use common/*.h instead of just the header
++    strip_include_prefix = "src/liblzma/common",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_delta",
++    hdrs = glob(["src/liblzma/delta/*.h"]),
++    strip_include_prefix = "src/liblzma/delta",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_lz",
++    hdrs = glob(["src/liblzma/lz/*.h"]),
++    strip_include_prefix = "src/liblzma/lz",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_lzma",
++    hdrs = glob(["src/liblzma/lzma/*.h"]),
++    strip_include_prefix = "src/liblzma/lzma",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_rangecoder",
++    hdrs = glob(["src/liblzma/rangecoder/*.h"]),
++    strip_include_prefix = "src/liblzma/rangecoder",
++)
++
++cc_library(
++    name = "lzma_src_liblzma_simpler",
++    hdrs = glob(["src/liblzma/simple/*.h"]),
++    strip_include_prefix = "src/liblzma/simple",
++)
++
++# Test header files
++cc_library(
++    name = "tests_hdrs",
++    testonly = True,
++    hdrs = [
++        "tests/tests.h",
++        "tests/tuktest.h",
++    ],
++)
++
++# Suite of tests, much tidier using the custom macro from the tools.bzl
++test_suite(
++    name = "all_tests",
++    tests = multi_test(
++        size = "small",
++        data = glob(["tests/files/**/*"]),
++        defines = select({
++            "@platforms//os:windows": ["HAVE_LZIP_DECODER=1"],
++            "//conditions:default": [],
++        }),
++        names = [
++            "bcj_test",
++            "create_compress_files",
++            "test_bcj_exact_size",
++            "test_block_header",
++            "test_check",
++            "test_filter_flags",
++            "test_filter_str",
++            "test_hardware",
++            "test_index",
++            "test_index_hash",
++            "test_lzip_decoder",
++            "test_memlimit",
++            "test_stream_flags",
++            "test_vli",
++        ],
++        deps = [
++            ":lzma",
++            ":tests_hdrs",
++        ],
++    ) + [
++        # "ossfuzz", # Currently disabled, as the fuzzer doesn't seem to be reliably available for linking on all systems. I don't have experience in this area :)
++    ],
++    visibility = ["//visibility:public"],
++)
++
++# Fuzz test, not currently implemented
++cc_test(
++    name = "ossfuzz",
++    srcs = ["tests/ossfuzz/fuzz.c"],
++    copts = [
++        "-fsanitize=fuzzer",
++    ],
++    data = glob(["files/**"]),
++    linkopts = [
++        "-fsanitize=fuzzer",
++    ],
++    deps = [
++        ":tests_hdrs",
++        "//:lzma",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000..c2c0d12
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,7 @@
++module(
++    name = "xz",
++    version = "5.4.5.bcr.1",
++)
++
++bazel_dep(name = "platforms", version = "0.0.8")
++bazel_dep(name = "bazel_skylib", version = "1.5.0")
+diff --git a/config.lzma-android.h b/config.lzma-android.h
+new file mode 100644
+index 0000000..2c6afd0
+--- /dev/null
++++ b/config.lzma-android.h
+@@ -0,0 +1,501 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++#define ENABLE_NLS 1
++
++/* Define to 1 if bswap_16 is available. */
++#define HAVE_BSWAP_16 1
++
++/* Define to 1 if bswap_32 is available. */
++#define HAVE_BSWAP_32 1
++
++/* Define to 1 if bswap_64 is available. */
++#define HAVE_BSWAP_64 1
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++#define HAVE_BYTESWAP_H 1
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function CFLocaleCopyCurrent in the
++   CoreFoundation framework. */
++/* #undef HAVE_CFLOCALECOPYCURRENT */
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++/* #undef HAVE_CFPREFERENCESCOPYAPPVALUE */
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++#define HAVE_DCGETTEXT 1
++
++/* Define to 1 if you have the declaration of `CLOCK_MONOTONIC', and to 0 if
++   you don't. */
++#define HAVE_DECL_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the declaration of `program_invocation_name', and
++   to 0 if you don't. */
++#define HAVE_DECL_PROGRAM_INVOCATION_NAME 1
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++#define HAVE_GETTEXT 1
++
++/* Define if you have the iconv() function and it works. */
++/* #undef HAVE_ICONV */
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++#undef HAVE_IMMINTRIN_H
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 if you have the <memory.h> header file. */
++#define HAVE_MEMORY_H 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++/* #undef HAVE_OPTRESET */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++#define HAVE_POSIX_FADVISE 1
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++#define HAVE_PTHREAD_CONDATTR_SETCLOCK 1
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC */
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC 1
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++#define HAVE__MM_MOVEMASK_EPI8 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "lasse.collin@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.2.3"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "http://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.2.3"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 8
++
++/* Define to 1 if you have the ANSI C header files. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++#define TUKLIB_CPUCORES_SCHED_GETAFFINITY 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++/* #undef TUKLIB_CPUCORES_SYSCTL */
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit and
++   32-bit integers. */
++#undef TUKLIB_FAST_UNALIGNED_ACCESS
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++#define _ALL_SOURCE 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE 1
++#endif
++/* Enable threading extensions on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++#define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++#define _TANDEM_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++#define __EXTENSIONS__ 1
++#endif
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++#if defined __BIG_ENDIAN__
++#define WORDS_BIGENDIAN 1
++#endif
++#else
++#ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++#endif
++#endif
++
++/* Enable large inode numbers on Mac OS X 10.5.  */
++#ifndef _DARWIN_USE_64_BIT_INODE
++#define _DARWIN_USE_64_BIT_INODE 1
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define to 1 if on MINIX. */
++/* #undef _MINIX */
++
++/* Define to 2 if the system does not provide POSIX.1 features except with
++   this defined. */
++/* #undef _POSIX_1_SOURCE */
++
++/* Define to 1 if you need to in order for `stat' and other things to work. */
++/* #undef _POSIX_SOURCE */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-ios-arm64.h b/config.lzma-ios-arm64.h
+new file mode 100644
+index 0000000..5286a94
+--- /dev/null
++++ b/config.lzma-ios-arm64.h
+@@ -0,0 +1,602 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++/* #undef ENABLE_NLS */
++
++/* Define to 1 if bswap_16 is available. */
++/* #undef HAVE_BSWAP_16 */
++
++/* Define to 1 if bswap_32 is available. */
++/* #undef HAVE_BSWAP_32 */
++
++/* Define to 1 if bswap_64 is available. */
++/* #undef HAVE_BSWAP_64 */
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function
++   CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
++#define HAVE_CFLOCALECOPYPREFERREDLANGUAGES 1
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++#define HAVE_CFPREFERENCESCOPYAPPVALUE 1
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if `CLOCK_MONOTONIC' is declared in <time.h>. */
++#define HAVE_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define to 1 if you have the <cpuid.h> header file. */
++/* #undef HAVE_CPUID_H */
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++/* #undef HAVE_DCGETTEXT */
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if arm64 decoder is enabled. */
++#define HAVE_DECODER_ARM64 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if arm64 encoder is enabled. */
++#define HAVE_ENCODER_ARM64 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if __attribute__((__constructor__)) is supported for functions.
++   */
++#define HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++/* #undef HAVE_GETTEXT */
++
++/* Define if you have the iconv() function and it works. */
++#define HAVE_ICONV 1
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++/* #undef HAVE_IMMINTRIN_H */
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if .lz (lzip) decompression support is enabled. */
++#define HAVE_LZIP_DECODER 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if you have the <minix/config.h> header file. */
++/* #undef HAVE_MINIX_CONFIG_H */
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++#define HAVE_OPTRESET 1
++
++/* Define to 1 if you have the `pledge' function. */
++/* #undef HAVE_PLEDGE */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++/* #undef HAVE_POSIX_FADVISE */
++
++/* Define to 1 if `program_invocation_name' is declared in <errno.h>. */
++/* #undef HAVE_PROGRAM_INVOCATION_NAME */
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++/* #undef HAVE_PTHREAD_CONDATTR_SETCLOCK */
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC 1
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC */
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 to if GNU/Linux-specific details are unconditionally wanted for
++   symbol versioning. Define to 2 to if these are wanted only if also PIC is
++   defined (allows building both shared and static liblzma at the same time
++   with Libtool if neither --with-pic nor --without-pic is used). This define
++   must be used together with liblzma_linux.map. */
++/* #undef HAVE_SYMBOL_VERSIONS_LINUX */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if _mm_set_epi64x and _mm_clmulepi64_si128 are usable. See
++   configure.ac for details. */
++/* #undef HAVE_USABLE_CLMUL */
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#define HAVE_WCHAR_H 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++/* #undef HAVE__MM_MOVEMASK_EPI8 */
++
++/* Define to 1 if the GNU C extension __builtin_assume_aligned is supported.
++   */
++#define HAVE___BUILTIN_ASSUME_ALIGNED 1
++
++/* Define to 1 if the GNU C extensions __builtin_bswap16/32/64 are supported.
++   */
++#define HAVE___BUILTIN_BSWAPXX 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xz@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.4.2"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.4.2"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 8
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++/* #undef TUKLIB_CPUCORES_SCHED_GETAFFINITY */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++#define TUKLIB_CPUCORES_SYSCTL 1
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit, 32-bit,
++   and 64-bit integers. */
++#define TUKLIB_FAST_UNALIGNED_ACCESS 1
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Define to 1 to use unsafe type punning, e.g. char *x = ...; *(int *)x =
++   123; which violates strict aliasing rules and thus is undefined behavior
++   and might result in broken code. */
++/* #undef TUKLIB_USE_UNSAFE_TYPE_PUNNING */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++# define _ALL_SOURCE 1
++#endif
++/* Enable general extensions on macOS.  */
++#ifndef _DARWIN_C_SOURCE
++# define _DARWIN_C_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++# define __EXTENSIONS__ 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++# define _GNU_SOURCE 1
++#endif
++/* Enable X/Open compliant socket functions that do not require linking
++   with -lxnet on HP-UX 11.11.  */
++#ifndef _HPUX_ALT_XOPEN_SOCKET_API
++# define _HPUX_ALT_XOPEN_SOCKET_API 1
++#endif
++/* Identify the host operating system as Minix.
++   This macro does not affect the system headers' behavior.
++   A future release of Autoconf may stop defining this macro.  */
++#ifndef _MINIX
++/* # undef _MINIX */
++#endif
++/* Enable general extensions on NetBSD.
++   Enable NetBSD compatibility extensions on Minix.  */
++#ifndef _NETBSD_SOURCE
++# define _NETBSD_SOURCE 1
++#endif
++/* Enable OpenBSD compatibility extensions on NetBSD.
++   Oddly enough, this does nothing on OpenBSD.  */
++#ifndef _OPENBSD_SOURCE
++# define _OPENBSD_SOURCE 1
++#endif
++/* Define to 1 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_SOURCE
++/* # undef _POSIX_SOURCE */
++#endif
++/* Define to 2 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_1_SOURCE
++/* # undef _POSIX_1_SOURCE */
++#endif
++/* Enable POSIX-compatible threading on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++# define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-5:2014.  */
++#ifndef __STDC_WANT_IEC_60559_ATTRIBS_EXT__
++# define __STDC_WANT_IEC_60559_ATTRIBS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-1:2014.  */
++#ifndef __STDC_WANT_IEC_60559_BFP_EXT__
++# define __STDC_WANT_IEC_60559_BFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-2:2015.  */
++#ifndef __STDC_WANT_IEC_60559_DFP_EXT__
++# define __STDC_WANT_IEC_60559_DFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-4:2015.  */
++#ifndef __STDC_WANT_IEC_60559_FUNCS_EXT__
++# define __STDC_WANT_IEC_60559_FUNCS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-3:2015.  */
++#ifndef __STDC_WANT_IEC_60559_TYPES_EXT__
++# define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TR 24731-2:2010.  */
++#ifndef __STDC_WANT_LIB_EXT2__
++# define __STDC_WANT_LIB_EXT2__ 1
++#endif
++/* Enable extensions specified by ISO/IEC 24747:2009.  */
++#ifndef __STDC_WANT_MATH_SPEC_FUNCS__
++# define __STDC_WANT_MATH_SPEC_FUNCS__ 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++# define _TANDEM_SOURCE 1
++#endif
++/* Enable X/Open extensions.  Define to 500 only if necessary
++   to make mbstate_t available.  */
++#ifndef _XOPEN_SOURCE
++/* # undef _XOPEN_SOURCE */
++#endif
++
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++# if defined __BIG_ENDIAN__
++#  define WORDS_BIGENDIAN 1
++# endif
++#else
++# ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++# endif
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-ios-armv7.h b/config.lzma-ios-armv7.h
+new file mode 100644
+index 0000000..e2cd638
+--- /dev/null
++++ b/config.lzma-ios-armv7.h
+@@ -0,0 +1,602 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++/* #undef ENABLE_NLS */
++
++/* Define to 1 if bswap_16 is available. */
++/* #undef HAVE_BSWAP_16 */
++
++/* Define to 1 if bswap_32 is available. */
++/* #undef HAVE_BSWAP_32 */
++
++/* Define to 1 if bswap_64 is available. */
++/* #undef HAVE_BSWAP_64 */
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function
++   CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
++#define HAVE_CFLOCALECOPYPREFERREDLANGUAGES 1
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++#define HAVE_CFPREFERENCESCOPYAPPVALUE 1
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if `CLOCK_MONOTONIC' is declared in <time.h>. */
++#define HAVE_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define to 1 if you have the <cpuid.h> header file. */
++/* #undef HAVE_CPUID_H */
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++/* #undef HAVE_DCGETTEXT */
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if arm64 decoder is enabled. */
++#define HAVE_DECODER_ARM64 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if arm64 encoder is enabled. */
++#define HAVE_ENCODER_ARM64 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if __attribute__((__constructor__)) is supported for functions.
++   */
++#define HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++/* #undef HAVE_GETTEXT */
++
++/* Define if you have the iconv() function and it works. */
++#define HAVE_ICONV 1
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++/* #undef HAVE_IMMINTRIN_H */
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if .lz (lzip) decompression support is enabled. */
++#define HAVE_LZIP_DECODER 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if you have the <minix/config.h> header file. */
++/* #undef HAVE_MINIX_CONFIG_H */
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++#define HAVE_OPTRESET 1
++
++/* Define to 1 if you have the `pledge' function. */
++/* #undef HAVE_PLEDGE */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++/* #undef HAVE_POSIX_FADVISE */
++
++/* Define to 1 if `program_invocation_name' is declared in <errno.h>. */
++/* #undef HAVE_PROGRAM_INVOCATION_NAME */
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++/* #undef HAVE_PTHREAD_CONDATTR_SETCLOCK */
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC 1
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC */
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 to if GNU/Linux-specific details are unconditionally wanted for
++   symbol versioning. Define to 2 to if these are wanted only if also PIC is
++   defined (allows building both shared and static liblzma at the same time
++   with Libtool if neither --with-pic nor --without-pic is used). This define
++   must be used together with liblzma_linux.map. */
++/* #undef HAVE_SYMBOL_VERSIONS_LINUX */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if _mm_set_epi64x and _mm_clmulepi64_si128 are usable. See
++   configure.ac for details. */
++/* #undef HAVE_USABLE_CLMUL */
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#define HAVE_WCHAR_H 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++/* #undef HAVE__MM_MOVEMASK_EPI8 */
++
++/* Define to 1 if the GNU C extension __builtin_assume_aligned is supported.
++   */
++#define HAVE___BUILTIN_ASSUME_ALIGNED 1
++
++/* Define to 1 if the GNU C extensions __builtin_bswap16/32/64 are supported.
++   */
++#define HAVE___BUILTIN_BSWAPXX 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xz@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.4.2"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.4.2"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 4
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++/* #undef TUKLIB_CPUCORES_SCHED_GETAFFINITY */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++#define TUKLIB_CPUCORES_SYSCTL 1
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit, 32-bit,
++   and 64-bit integers. */
++#define TUKLIB_FAST_UNALIGNED_ACCESS 1
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Define to 1 to use unsafe type punning, e.g. char *x = ...; *(int *)x =
++   123; which violates strict aliasing rules and thus is undefined behavior
++   and might result in broken code. */
++/* #undef TUKLIB_USE_UNSAFE_TYPE_PUNNING */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++# define _ALL_SOURCE 1
++#endif
++/* Enable general extensions on macOS.  */
++#ifndef _DARWIN_C_SOURCE
++# define _DARWIN_C_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++# define __EXTENSIONS__ 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++# define _GNU_SOURCE 1
++#endif
++/* Enable X/Open compliant socket functions that do not require linking
++   with -lxnet on HP-UX 11.11.  */
++#ifndef _HPUX_ALT_XOPEN_SOCKET_API
++# define _HPUX_ALT_XOPEN_SOCKET_API 1
++#endif
++/* Identify the host operating system as Minix.
++   This macro does not affect the system headers' behavior.
++   A future release of Autoconf may stop defining this macro.  */
++#ifndef _MINIX
++/* # undef _MINIX */
++#endif
++/* Enable general extensions on NetBSD.
++   Enable NetBSD compatibility extensions on Minix.  */
++#ifndef _NETBSD_SOURCE
++# define _NETBSD_SOURCE 1
++#endif
++/* Enable OpenBSD compatibility extensions on NetBSD.
++   Oddly enough, this does nothing on OpenBSD.  */
++#ifndef _OPENBSD_SOURCE
++# define _OPENBSD_SOURCE 1
++#endif
++/* Define to 1 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_SOURCE
++/* # undef _POSIX_SOURCE */
++#endif
++/* Define to 2 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_1_SOURCE
++/* # undef _POSIX_1_SOURCE */
++#endif
++/* Enable POSIX-compatible threading on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++# define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-5:2014.  */
++#ifndef __STDC_WANT_IEC_60559_ATTRIBS_EXT__
++# define __STDC_WANT_IEC_60559_ATTRIBS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-1:2014.  */
++#ifndef __STDC_WANT_IEC_60559_BFP_EXT__
++# define __STDC_WANT_IEC_60559_BFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-2:2015.  */
++#ifndef __STDC_WANT_IEC_60559_DFP_EXT__
++# define __STDC_WANT_IEC_60559_DFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-4:2015.  */
++#ifndef __STDC_WANT_IEC_60559_FUNCS_EXT__
++# define __STDC_WANT_IEC_60559_FUNCS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-3:2015.  */
++#ifndef __STDC_WANT_IEC_60559_TYPES_EXT__
++# define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TR 24731-2:2010.  */
++#ifndef __STDC_WANT_LIB_EXT2__
++# define __STDC_WANT_LIB_EXT2__ 1
++#endif
++/* Enable extensions specified by ISO/IEC 24747:2009.  */
++#ifndef __STDC_WANT_MATH_SPEC_FUNCS__
++# define __STDC_WANT_MATH_SPEC_FUNCS__ 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++# define _TANDEM_SOURCE 1
++#endif
++/* Enable X/Open extensions.  Define to 500 only if necessary
++   to make mbstate_t available.  */
++#ifndef _XOPEN_SOURCE
++/* # undef _XOPEN_SOURCE */
++#endif
++
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++# if defined __BIG_ENDIAN__
++#  define WORDS_BIGENDIAN 1
++# endif
++#else
++# ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++# endif
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-ios-i386.h b/config.lzma-ios-i386.h
+new file mode 100644
+index 0000000..f4c6182
+--- /dev/null
++++ b/config.lzma-ios-i386.h
+@@ -0,0 +1,602 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++/* #undef ENABLE_NLS */
++
++/* Define to 1 if bswap_16 is available. */
++/* #undef HAVE_BSWAP_16 */
++
++/* Define to 1 if bswap_32 is available. */
++/* #undef HAVE_BSWAP_32 */
++
++/* Define to 1 if bswap_64 is available. */
++/* #undef HAVE_BSWAP_64 */
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function
++   CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
++#define HAVE_CFLOCALECOPYPREFERREDLANGUAGES 1
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++#define HAVE_CFPREFERENCESCOPYAPPVALUE 1
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if `CLOCK_MONOTONIC' is declared in <time.h>. */
++#define HAVE_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define to 1 if you have the <cpuid.h> header file. */
++#define HAVE_CPUID_H 1
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++/* #undef HAVE_DCGETTEXT */
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if arm64 decoder is enabled. */
++#define HAVE_DECODER_ARM64 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if arm64 encoder is enabled. */
++#define HAVE_ENCODER_ARM64 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if __attribute__((__constructor__)) is supported for functions.
++   */
++#define HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++/* #undef HAVE_GETTEXT */
++
++/* Define if you have the iconv() function and it works. */
++#define HAVE_ICONV 1
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++#define HAVE_IMMINTRIN_H 1
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if .lz (lzip) decompression support is enabled. */
++#define HAVE_LZIP_DECODER 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if you have the <minix/config.h> header file. */
++/* #undef HAVE_MINIX_CONFIG_H */
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++#define HAVE_OPTRESET 1
++
++/* Define to 1 if you have the `pledge' function. */
++/* #undef HAVE_PLEDGE */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++/* #undef HAVE_POSIX_FADVISE */
++
++/* Define to 1 if `program_invocation_name' is declared in <errno.h>. */
++/* #undef HAVE_PROGRAM_INVOCATION_NAME */
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++/* #undef HAVE_PTHREAD_CONDATTR_SETCLOCK */
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC 1
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC */
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 to if GNU/Linux-specific details are unconditionally wanted for
++   symbol versioning. Define to 2 to if these are wanted only if also PIC is
++   defined (allows building both shared and static liblzma at the same time
++   with Libtool if neither --with-pic nor --without-pic is used). This define
++   must be used together with liblzma_linux.map. */
++/* #undef HAVE_SYMBOL_VERSIONS_LINUX */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if _mm_set_epi64x and _mm_clmulepi64_si128 are usable. See
++   configure.ac for details. */
++#define HAVE_USABLE_CLMUL 1
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#define HAVE_WCHAR_H 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++#define HAVE__MM_MOVEMASK_EPI8 1
++
++/* Define to 1 if the GNU C extension __builtin_assume_aligned is supported.
++   */
++#define HAVE___BUILTIN_ASSUME_ALIGNED 1
++
++/* Define to 1 if the GNU C extensions __builtin_bswap16/32/64 are supported.
++   */
++#define HAVE___BUILTIN_BSWAPXX 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xz@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.4.2"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.4.2"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 4
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++/* #undef TUKLIB_CPUCORES_SCHED_GETAFFINITY */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++#define TUKLIB_CPUCORES_SYSCTL 1
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit, 32-bit,
++   and 64-bit integers. */
++/* #undef TUKLIB_FAST_UNALIGNED_ACCESS */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Define to 1 to use unsafe type punning, e.g. char *x = ...; *(int *)x =
++   123; which violates strict aliasing rules and thus is undefined behavior
++   and might result in broken code. */
++/* #undef TUKLIB_USE_UNSAFE_TYPE_PUNNING */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++# define _ALL_SOURCE 1
++#endif
++/* Enable general extensions on macOS.  */
++#ifndef _DARWIN_C_SOURCE
++# define _DARWIN_C_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++# define __EXTENSIONS__ 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++# define _GNU_SOURCE 1
++#endif
++/* Enable X/Open compliant socket functions that do not require linking
++   with -lxnet on HP-UX 11.11.  */
++#ifndef _HPUX_ALT_XOPEN_SOCKET_API
++# define _HPUX_ALT_XOPEN_SOCKET_API 1
++#endif
++/* Identify the host operating system as Minix.
++   This macro does not affect the system headers' behavior.
++   A future release of Autoconf may stop defining this macro.  */
++#ifndef _MINIX
++/* # undef _MINIX */
++#endif
++/* Enable general extensions on NetBSD.
++   Enable NetBSD compatibility extensions on Minix.  */
++#ifndef _NETBSD_SOURCE
++# define _NETBSD_SOURCE 1
++#endif
++/* Enable OpenBSD compatibility extensions on NetBSD.
++   Oddly enough, this does nothing on OpenBSD.  */
++#ifndef _OPENBSD_SOURCE
++# define _OPENBSD_SOURCE 1
++#endif
++/* Define to 1 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_SOURCE
++/* # undef _POSIX_SOURCE */
++#endif
++/* Define to 2 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_1_SOURCE
++/* # undef _POSIX_1_SOURCE */
++#endif
++/* Enable POSIX-compatible threading on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++# define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-5:2014.  */
++#ifndef __STDC_WANT_IEC_60559_ATTRIBS_EXT__
++# define __STDC_WANT_IEC_60559_ATTRIBS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-1:2014.  */
++#ifndef __STDC_WANT_IEC_60559_BFP_EXT__
++# define __STDC_WANT_IEC_60559_BFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-2:2015.  */
++#ifndef __STDC_WANT_IEC_60559_DFP_EXT__
++# define __STDC_WANT_IEC_60559_DFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-4:2015.  */
++#ifndef __STDC_WANT_IEC_60559_FUNCS_EXT__
++# define __STDC_WANT_IEC_60559_FUNCS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-3:2015.  */
++#ifndef __STDC_WANT_IEC_60559_TYPES_EXT__
++# define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TR 24731-2:2010.  */
++#ifndef __STDC_WANT_LIB_EXT2__
++# define __STDC_WANT_LIB_EXT2__ 1
++#endif
++/* Enable extensions specified by ISO/IEC 24747:2009.  */
++#ifndef __STDC_WANT_MATH_SPEC_FUNCS__
++# define __STDC_WANT_MATH_SPEC_FUNCS__ 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++# define _TANDEM_SOURCE 1
++#endif
++/* Enable X/Open extensions.  Define to 500 only if necessary
++   to make mbstate_t available.  */
++#ifndef _XOPEN_SOURCE
++/* # undef _XOPEN_SOURCE */
++#endif
++
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++# if defined __BIG_ENDIAN__
++#  define WORDS_BIGENDIAN 1
++# endif
++#else
++# ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++# endif
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-linux.h b/config.lzma-linux.h
+new file mode 100644
+index 0000000..298cc0b
+--- /dev/null
++++ b/config.lzma-linux.h
+@@ -0,0 +1,604 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++#define ENABLE_NLS 1
++
++/* Define to 1 if bswap_16 is available. */
++/* #undef HAVE_BSWAP_16 */
++
++/* Define to 1 if bswap_32 is available. */
++/* #undef HAVE_BSWAP_32 */
++
++/* Define to 1 if bswap_64 is available. */
++/* #undef HAVE_BSWAP_64 */
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function
++   CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
++/* #undef HAVE_CFLOCALECOPYPREFERREDLANGUAGES */
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++/* #undef HAVE_CFPREFERENCESCOPYAPPVALUE */
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define to 1 if you have the <cpuid.h> header file. */
++{HAVE_CPUID_H}
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++#define HAVE_DCGETTEXT 1
++
++/* Define to 1 if you have the declaration of `CLOCK_MONOTONIC', and to 0 if
++   you don't. */
++#define HAVE_DECL_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the declaration of `program_invocation_name', and
++   to 0 if you don't. */
++#define HAVE_DECL_PROGRAM_INVOCATION_NAME 1
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if arm64 decoder is enabled. */
++#define HAVE_DECODER_ARM64 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if arm64 encoder is enabled. */
++#define HAVE_ENCODER_ARM64 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if __attribute__((__constructor__)) is supported for functions.
++   */
++#define HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++#define HAVE_GETTEXT 1
++
++/* Define if you have the iconv() function and it works. */
++/* #undef HAVE_ICONV */
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++{HAVE_IMMINTRIN_H}
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if .lz (lzip) decompression support is enabled. */
++#define HAVE_LZIP_DECODER 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if you have the <minix/config.h> header file. */
++/* #undef HAVE_MINIX_CONFIG_H */
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++/* #undef HAVE_OPTRESET */
++
++/* Define to 1 if you have the `pledge' function. */
++/* #undef HAVE_PLEDGE */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++#define HAVE_POSIX_FADVISE 1
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++#define HAVE_PTHREAD_CONDATTR_SETCLOCK 1
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC */
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC 1
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 to if GNU/Linux-specific details are unconditionally wanted for
++   symbol versioning. Define to 2 to if these are wanted only if also PIC is
++   defined (allows building both shared and static liblzma at the same time
++   with Libtool if neither --with-pic nor --without-pic is used). This define
++   must be used together with liblzma_linux.map. */
++#define HAVE_SYMBOL_VERSIONS_LINUX 2
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if _mm_clmulepi64_si128 is usable. See configure.ac for
++   details. */
++{HAVE_USABLE_CLMUL}
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#define HAVE_WCHAR_H 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++#define HAVE__MM_MOVEMASK_EPI8 1
++
++/* Define to 1 if the GNU C extension __builtin_assume_aligned is supported.
++   */
++#define HAVE___BUILTIN_ASSUME_ALIGNED 1
++
++/* Define to 1 if the GNU C extensions __builtin_bswap16/32/64 are supported.
++   */
++#define HAVE___BUILTIN_BSWAPXX 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xz@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.4.0"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.4.0"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 8
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++#define TUKLIB_CPUCORES_SCHED_GETAFFINITY 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++/* #undef TUKLIB_CPUCORES_SYSCTL */
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit, 32-bit,
++   and 64-bit integers. */
++#define TUKLIB_FAST_UNALIGNED_ACCESS 1
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Define to 1 to use unsafe type punning, e.g. char *x = ...; *(int *)x =
++   123; which violates strict aliasing rules and thus is undefined behavior
++   and might result in broken code. */
++/* #undef TUKLIB_USE_UNSAFE_TYPE_PUNNING */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++# define _ALL_SOURCE 1
++#endif
++/* Enable general extensions on macOS.  */
++#ifndef _DARWIN_C_SOURCE
++# define _DARWIN_C_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++# define __EXTENSIONS__ 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++# define _GNU_SOURCE 1
++#endif
++/* Enable X/Open compliant socket functions that do not require linking
++   with -lxnet on HP-UX 11.11.  */
++#ifndef _HPUX_ALT_XOPEN_SOCKET_API
++# define _HPUX_ALT_XOPEN_SOCKET_API 1
++#endif
++/* Identify the host operating system as Minix.
++   This macro does not affect the system headers' behavior.
++   A future release of Autoconf may stop defining this macro.  */
++#ifndef _MINIX
++/* # undef _MINIX */
++#endif
++/* Enable general extensions on NetBSD.
++   Enable NetBSD compatibility extensions on Minix.  */
++#ifndef _NETBSD_SOURCE
++# define _NETBSD_SOURCE 1
++#endif
++/* Enable OpenBSD compatibility extensions on NetBSD.
++   Oddly enough, this does nothing on OpenBSD.  */
++#ifndef _OPENBSD_SOURCE
++# define _OPENBSD_SOURCE 1
++#endif
++/* Define to 1 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_SOURCE
++/* # undef _POSIX_SOURCE */
++#endif
++/* Define to 2 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_1_SOURCE
++/* # undef _POSIX_1_SOURCE */
++#endif
++/* Enable POSIX-compatible threading on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++# define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-5:2014.  */
++#ifndef __STDC_WANT_IEC_60559_ATTRIBS_EXT__
++# define __STDC_WANT_IEC_60559_ATTRIBS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-1:2014.  */
++#ifndef __STDC_WANT_IEC_60559_BFP_EXT__
++# define __STDC_WANT_IEC_60559_BFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-2:2015.  */
++#ifndef __STDC_WANT_IEC_60559_DFP_EXT__
++# define __STDC_WANT_IEC_60559_DFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-4:2015.  */
++#ifndef __STDC_WANT_IEC_60559_FUNCS_EXT__
++# define __STDC_WANT_IEC_60559_FUNCS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-3:2015.  */
++#ifndef __STDC_WANT_IEC_60559_TYPES_EXT__
++# define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TR 24731-2:2010.  */
++#ifndef __STDC_WANT_LIB_EXT2__
++# define __STDC_WANT_LIB_EXT2__ 1
++#endif
++/* Enable extensions specified by ISO/IEC 24747:2009.  */
++#ifndef __STDC_WANT_MATH_SPEC_FUNCS__
++# define __STDC_WANT_MATH_SPEC_FUNCS__ 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++# define _TANDEM_SOURCE 1
++#endif
++/* Enable X/Open extensions.  Define to 500 only if necessary
++   to make mbstate_t available.  */
++#ifndef _XOPEN_SOURCE
++/* # undef _XOPEN_SOURCE */
++#endif
++
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++# if defined __BIG_ENDIAN__
++#  define WORDS_BIGENDIAN 1
++# endif
++#else
++# ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++# endif
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-osx-arm64.h b/config.lzma-osx-arm64.h
+new file mode 100644
+index 0000000..1a5c936
+--- /dev/null
++++ b/config.lzma-osx-arm64.h
+@@ -0,0 +1,602 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++/* #undef ENABLE_NLS */
++
++/* Define to 1 if bswap_16 is available. */
++/* #undef HAVE_BSWAP_16 */
++
++/* Define to 1 if bswap_32 is available. */
++/* #undef HAVE_BSWAP_32 */
++
++/* Define to 1 if bswap_64 is available. */
++/* #undef HAVE_BSWAP_64 */
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function
++   CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
++#define HAVE_CFLOCALECOPYPREFERREDLANGUAGES 1
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++#define HAVE_CFPREFERENCESCOPYAPPVALUE 1
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if `CLOCK_MONOTONIC' is declared in <time.h>. */
++#define HAVE_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define to 1 if you have the <cpuid.h> header file. */
++#undef HAVE_CPUID_H
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++/* #undef HAVE_DCGETTEXT */
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if arm64 decoder is enabled. */
++#define HAVE_DECODER_ARM64 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if arm64 encoder is enabled. */
++#define HAVE_ENCODER_ARM64 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if __attribute__((__constructor__)) is supported for functions.
++   */
++#define HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++/* #undef HAVE_GETTEXT */
++
++/* Define if you have the iconv() function and it works. */
++#define HAVE_ICONV 1
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++/* #undef HAVE_IMMINTRIN_H */
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if .lz (lzip) decompression support is enabled. */
++#define HAVE_LZIP_DECODER 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if you have the <minix/config.h> header file. */
++/* #undef HAVE_MINIX_CONFIG_H */
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++#define HAVE_OPTRESET 1
++
++/* Define to 1 if you have the `pledge' function. */
++/* #undef HAVE_PLEDGE */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++/* #undef HAVE_POSIX_FADVISE */
++
++/* Define to 1 if `program_invocation_name' is declared in <errno.h>. */
++/* #undef HAVE_PROGRAM_INVOCATION_NAME */
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++/* #undef HAVE_PTHREAD_CONDATTR_SETCLOCK */
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC 1
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC */
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 to if GNU/Linux-specific details are unconditionally wanted for
++   symbol versioning. Define to 2 to if these are wanted only if also PIC is
++   defined (allows building both shared and static liblzma at the same time
++   with Libtool if neither --with-pic nor --without-pic is used). This define
++   must be used together with liblzma_linux.map. */
++/* #undef HAVE_SYMBOL_VERSIONS_LINUX */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if _mm_set_epi64x and _mm_clmulepi64_si128 are usable. See
++   configure.ac for details. */
++/* #undef HAVE_USABLE_CLMUL */
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#define HAVE_WCHAR_H 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++/* #undef HAVE__MM_MOVEMASK_EPI8 */
++
++/* Define to 1 if the GNU C extension __builtin_assume_aligned is supported.
++   */
++#define HAVE___BUILTIN_ASSUME_ALIGNED 1
++
++/* Define to 1 if the GNU C extensions __builtin_bswap16/32/64 are supported.
++   */
++#define HAVE___BUILTIN_BSWAPXX 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xz@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.4.2"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.4.2"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 8
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++/* #undef TUKLIB_CPUCORES_SCHED_GETAFFINITY */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++#define TUKLIB_CPUCORES_SYSCTL 1
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit, 32-bit,
++   and 64-bit integers. */
++#define TUKLIB_FAST_UNALIGNED_ACCESS 1
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Define to 1 to use unsafe type punning, e.g. char *x = ...; *(int *)x =
++   123; which violates strict aliasing rules and thus is undefined behavior
++   and might result in broken code. */
++/* #undef TUKLIB_USE_UNSAFE_TYPE_PUNNING */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++# define _ALL_SOURCE 1
++#endif
++/* Enable general extensions on macOS.  */
++#ifndef _DARWIN_C_SOURCE
++# define _DARWIN_C_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++# define __EXTENSIONS__ 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++# define _GNU_SOURCE 1
++#endif
++/* Enable X/Open compliant socket functions that do not require linking
++   with -lxnet on HP-UX 11.11.  */
++#ifndef _HPUX_ALT_XOPEN_SOCKET_API
++# define _HPUX_ALT_XOPEN_SOCKET_API 1
++#endif
++/* Identify the host operating system as Minix.
++   This macro does not affect the system headers' behavior.
++   A future release of Autoconf may stop defining this macro.  */
++#ifndef _MINIX
++/* # undef _MINIX */
++#endif
++/* Enable general extensions on NetBSD.
++   Enable NetBSD compatibility extensions on Minix.  */
++#ifndef _NETBSD_SOURCE
++# define _NETBSD_SOURCE 1
++#endif
++/* Enable OpenBSD compatibility extensions on NetBSD.
++   Oddly enough, this does nothing on OpenBSD.  */
++#ifndef _OPENBSD_SOURCE
++# define _OPENBSD_SOURCE 1
++#endif
++/* Define to 1 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_SOURCE
++/* # undef _POSIX_SOURCE */
++#endif
++/* Define to 2 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_1_SOURCE
++/* # undef _POSIX_1_SOURCE */
++#endif
++/* Enable POSIX-compatible threading on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++# define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-5:2014.  */
++#ifndef __STDC_WANT_IEC_60559_ATTRIBS_EXT__
++# define __STDC_WANT_IEC_60559_ATTRIBS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-1:2014.  */
++#ifndef __STDC_WANT_IEC_60559_BFP_EXT__
++# define __STDC_WANT_IEC_60559_BFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-2:2015.  */
++#ifndef __STDC_WANT_IEC_60559_DFP_EXT__
++# define __STDC_WANT_IEC_60559_DFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-4:2015.  */
++#ifndef __STDC_WANT_IEC_60559_FUNCS_EXT__
++# define __STDC_WANT_IEC_60559_FUNCS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-3:2015.  */
++#ifndef __STDC_WANT_IEC_60559_TYPES_EXT__
++# define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TR 24731-2:2010.  */
++#ifndef __STDC_WANT_LIB_EXT2__
++# define __STDC_WANT_LIB_EXT2__ 1
++#endif
++/* Enable extensions specified by ISO/IEC 24747:2009.  */
++#ifndef __STDC_WANT_MATH_SPEC_FUNCS__
++# define __STDC_WANT_MATH_SPEC_FUNCS__ 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++# define _TANDEM_SOURCE 1
++#endif
++/* Enable X/Open extensions.  Define to 500 only if necessary
++   to make mbstate_t available.  */
++#ifndef _XOPEN_SOURCE
++/* # undef _XOPEN_SOURCE */
++#endif
++
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++# if defined __BIG_ENDIAN__
++#  define WORDS_BIGENDIAN 1
++# endif
++#else
++# ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++# endif
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-osx-x86_64.h b/config.lzma-osx-x86_64.h
+new file mode 100644
+index 0000000..529b41c
+--- /dev/null
++++ b/config.lzma-osx-x86_64.h
+@@ -0,0 +1,602 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++/* #undef ENABLE_NLS */
++
++/* Define to 1 if bswap_16 is available. */
++/* #undef HAVE_BSWAP_16 */
++
++/* Define to 1 if bswap_32 is available. */
++/* #undef HAVE_BSWAP_32 */
++
++/* Define to 1 if bswap_64 is available. */
++/* #undef HAVE_BSWAP_64 */
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function
++   CFLocaleCopyPreferredLanguages in the CoreFoundation framework. */
++#define HAVE_CFLOCALECOPYPREFERREDLANGUAGES 1
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++#define HAVE_CFPREFERENCESCOPYAPPVALUE 1
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if `CLOCK_MONOTONIC' is declared in <time.h>. */
++#define HAVE_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define to 1 if you have the <cpuid.h> header file. */
++#define HAVE_CPUID_H 1
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++   */
++/* #undef HAVE_DCGETTEXT */
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if arm64 decoder is enabled. */
++#define HAVE_DECODER_ARM64 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if arm64 encoder is enabled. */
++#define HAVE_ENCODER_ARM64 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if __attribute__((__constructor__)) is supported for functions.
++   */
++#define HAVE_FUNC_ATTRIBUTE_CONSTRUCTOR 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++/* #undef HAVE_GETTEXT */
++
++/* Define if you have the iconv() function and it works. */
++#define HAVE_ICONV 1
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++#define HAVE_IMMINTRIN_H 1
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if .lz (lzip) decompression support is enabled. */
++#define HAVE_LZIP_DECODER 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if you have the <minix/config.h> header file. */
++/* #undef HAVE_MINIX_CONFIG_H */
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++#define HAVE_OPTRESET 1
++
++/* Define to 1 if you have the `pledge' function. */
++/* #undef HAVE_PLEDGE */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++/* #undef HAVE_POSIX_FADVISE */
++
++/* Define to 1 if `program_invocation_name' is declared in <errno.h>. */
++/* #undef HAVE_PROGRAM_INVOCATION_NAME */
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++/* #undef HAVE_PTHREAD_CONDATTR_SETCLOCK */
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdio.h> header file. */
++#define HAVE_STDIO_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++#define HAVE_STRINGS_H 1
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC 1
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC */
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 to if GNU/Linux-specific details are unconditionally wanted for
++   symbol versioning. Define to 2 to if these are wanted only if also PIC is
++   defined (allows building both shared and static liblzma at the same time
++   with Libtool if neither --with-pic nor --without-pic is used). This define
++   must be used together with liblzma_linux.map. */
++/* #undef HAVE_SYMBOL_VERSIONS_LINUX */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if _mm_set_epi64x and _mm_clmulepi64_si128 are usable. See
++   configure.ac for details. */
++#define HAVE_USABLE_CLMUL 1
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the <wchar.h> header file. */
++#define HAVE_WCHAR_H 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++#define HAVE__MM_MOVEMASK_EPI8 1
++
++/* Define to 1 if the GNU C extension __builtin_assume_aligned is supported.
++   */
++#define HAVE___BUILTIN_ASSUME_ALIGNED 1
++
++/* Define to 1 if the GNU C extensions __builtin_bswap16/32/64 are supported.
++   */
++#define HAVE___BUILTIN_BSWAPXX 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++#define MYTHREAD_POSIX 1
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++/* #undef MYTHREAD_VISTA */
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "xz@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.4.2"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "https://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.4.2"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 8
++
++/* Define to 1 if all of the C90 standard headers exist (not just the ones
++   required in a freestanding environment). This macro is provided for
++   backward compatibility; new code need not use it. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++/* #undef TUKLIB_CPUCORES_SCHED_GETAFFINITY */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++#define TUKLIB_CPUCORES_SYSCTL 1
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit, 32-bit,
++   and 64-bit integers. */
++/* #undef TUKLIB_FAST_UNALIGNED_ACCESS */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++   */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Define to 1 to use unsafe type punning, e.g. char *x = ...; *(int *)x =
++   123; which violates strict aliasing rules and thus is undefined behavior
++   and might result in broken code. */
++/* #undef TUKLIB_USE_UNSAFE_TYPE_PUNNING */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++# define _ALL_SOURCE 1
++#endif
++/* Enable general extensions on macOS.  */
++#ifndef _DARWIN_C_SOURCE
++# define _DARWIN_C_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++# define __EXTENSIONS__ 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++# define _GNU_SOURCE 1
++#endif
++/* Enable X/Open compliant socket functions that do not require linking
++   with -lxnet on HP-UX 11.11.  */
++#ifndef _HPUX_ALT_XOPEN_SOCKET_API
++# define _HPUX_ALT_XOPEN_SOCKET_API 1
++#endif
++/* Identify the host operating system as Minix.
++   This macro does not affect the system headers' behavior.
++   A future release of Autoconf may stop defining this macro.  */
++#ifndef _MINIX
++/* # undef _MINIX */
++#endif
++/* Enable general extensions on NetBSD.
++   Enable NetBSD compatibility extensions on Minix.  */
++#ifndef _NETBSD_SOURCE
++# define _NETBSD_SOURCE 1
++#endif
++/* Enable OpenBSD compatibility extensions on NetBSD.
++   Oddly enough, this does nothing on OpenBSD.  */
++#ifndef _OPENBSD_SOURCE
++# define _OPENBSD_SOURCE 1
++#endif
++/* Define to 1 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_SOURCE
++/* # undef _POSIX_SOURCE */
++#endif
++/* Define to 2 if needed for POSIX-compatible behavior.  */
++#ifndef _POSIX_1_SOURCE
++/* # undef _POSIX_1_SOURCE */
++#endif
++/* Enable POSIX-compatible threading on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++# define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-5:2014.  */
++#ifndef __STDC_WANT_IEC_60559_ATTRIBS_EXT__
++# define __STDC_WANT_IEC_60559_ATTRIBS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-1:2014.  */
++#ifndef __STDC_WANT_IEC_60559_BFP_EXT__
++# define __STDC_WANT_IEC_60559_BFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-2:2015.  */
++#ifndef __STDC_WANT_IEC_60559_DFP_EXT__
++# define __STDC_WANT_IEC_60559_DFP_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-4:2015.  */
++#ifndef __STDC_WANT_IEC_60559_FUNCS_EXT__
++# define __STDC_WANT_IEC_60559_FUNCS_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TS 18661-3:2015.  */
++#ifndef __STDC_WANT_IEC_60559_TYPES_EXT__
++# define __STDC_WANT_IEC_60559_TYPES_EXT__ 1
++#endif
++/* Enable extensions specified by ISO/IEC TR 24731-2:2010.  */
++#ifndef __STDC_WANT_LIB_EXT2__
++# define __STDC_WANT_LIB_EXT2__ 1
++#endif
++/* Enable extensions specified by ISO/IEC 24747:2009.  */
++#ifndef __STDC_WANT_MATH_SPEC_FUNCS__
++# define __STDC_WANT_MATH_SPEC_FUNCS__ 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++# define _TANDEM_SOURCE 1
++#endif
++/* Enable X/Open extensions.  Define to 500 only if necessary
++   to make mbstate_t available.  */
++#ifndef _XOPEN_SOURCE
++/* # undef _XOPEN_SOURCE */
++#endif
++
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++# if defined __BIG_ENDIAN__
++#  define WORDS_BIGENDIAN 1
++# endif
++#else
++# ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++# endif
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/config.lzma-windows.h b/config.lzma-windows.h
+new file mode 100644
+index 0000000..c0442e5
+--- /dev/null
++++ b/config.lzma-windows.h
+@@ -0,0 +1,501 @@
++/* config.h.  Generated from config.h.in by configure.  */
++/* config.h.in.  Generated from configure.ac by autoheader.  */
++
++/* Define if building universal (internal helper macro) */
++/* #undef AC_APPLE_UNIVERSAL_BUILD */
++
++/* How many MiB of RAM to assume if the real amount cannot be determined. */
++#define ASSUME_RAM 128
++
++/* Define to 1 if translation of program messages to the user's native
++   language is requested. */
++#define ENABLE_NLS 1
++
++/* Define to 1 if bswap_16 is available. */
++#define HAVE_BSWAP_16 1
++
++/* Define to 1 if bswap_32 is available. */
++#define HAVE_BSWAP_32 1
++
++/* Define to 1 if bswap_64 is available. */
++#define HAVE_BSWAP_64 1
++
++/* Define to 1 if you have the <byteswap.h> header file. */
++/* #undef HAVE_BYTESWAP_H */
++
++/* Define to 1 if Capsicum is available. */
++/* #undef HAVE_CAPSICUM */
++
++/* Define to 1 if the system has the type `CC_SHA256_CTX'. */
++/* #undef HAVE_CC_SHA256_CTX */
++
++/* Define to 1 if you have the `CC_SHA256_Init' function. */
++/* #undef HAVE_CC_SHA256_INIT */
++
++/* Define to 1 if you have the Mac OS X function CFLocaleCopyCurrent in the
++   CoreFoundation framework. */
++/* #undef HAVE_CFLOCALECOPYCURRENT */
++
++/* Define to 1 if you have the Mac OS X function CFPreferencesCopyAppValue in
++   the CoreFoundation framework. */
++/* #undef HAVE_CFPREFERENCESCOPYAPPVALUE */
++
++/* Define to 1 if crc32 integrity check is enabled. */
++#define HAVE_CHECK_CRC32 1
++
++/* Define to 1 if crc64 integrity check is enabled. */
++#define HAVE_CHECK_CRC64 1
++
++/* Define to 1 if sha256 integrity check is enabled. */
++#define HAVE_CHECK_SHA256 1
++
++/* Define to 1 if you have the `clock_gettime' function. */
++#define HAVE_CLOCK_GETTIME 1
++
++/* Define to 1 if you have the <CommonCrypto/CommonDigest.h> header file. */
++/* #undef HAVE_COMMONCRYPTO_COMMONDIGEST_H */
++
++/* Define if the GNU dcgettext() function is already present or preinstalled.
++ */
++#define HAVE_DCGETTEXT 1
++
++/* Define to 1 if you have the declaration of `CLOCK_MONOTONIC', and to 0 if
++   you don't. */
++#define HAVE_DECL_CLOCK_MONOTONIC 1
++
++/* Define to 1 if you have the declaration of `program_invocation_name', and
++   to 0 if you don't. */
++#define HAVE_DECL_PROGRAM_INVOCATION_NAME 1
++
++/* Define to 1 if any of HAVE_DECODER_foo have been defined. */
++#define HAVE_DECODERS 1
++
++/* Define to 1 if arm decoder is enabled. */
++#define HAVE_DECODER_ARM 1
++
++/* Define to 1 if armthumb decoder is enabled. */
++#define HAVE_DECODER_ARMTHUMB 1
++
++/* Define to 1 if delta decoder is enabled. */
++#define HAVE_DECODER_DELTA 1
++
++/* Define to 1 if ia64 decoder is enabled. */
++#define HAVE_DECODER_IA64 1
++
++/* Define to 1 if lzma1 decoder is enabled. */
++#define HAVE_DECODER_LZMA1 1
++
++/* Define to 1 if lzma2 decoder is enabled. */
++#define HAVE_DECODER_LZMA2 1
++
++/* Define to 1 if powerpc decoder is enabled. */
++#define HAVE_DECODER_POWERPC 1
++
++/* Define to 1 if sparc decoder is enabled. */
++#define HAVE_DECODER_SPARC 1
++
++/* Define to 1 if x86 decoder is enabled. */
++#define HAVE_DECODER_X86 1
++
++/* Define to 1 if you have the <dlfcn.h> header file. */
++#define HAVE_DLFCN_H 1
++
++/* Define to 1 if any of HAVE_ENCODER_foo have been defined. */
++#define HAVE_ENCODERS 1
++
++/* Define to 1 if arm encoder is enabled. */
++#define HAVE_ENCODER_ARM 1
++
++/* Define to 1 if armthumb encoder is enabled. */
++#define HAVE_ENCODER_ARMTHUMB 1
++
++/* Define to 1 if delta encoder is enabled. */
++#define HAVE_ENCODER_DELTA 1
++
++/* Define to 1 if ia64 encoder is enabled. */
++#define HAVE_ENCODER_IA64 1
++
++/* Define to 1 if lzma1 encoder is enabled. */
++#define HAVE_ENCODER_LZMA1 1
++
++/* Define to 1 if lzma2 encoder is enabled. */
++#define HAVE_ENCODER_LZMA2 1
++
++/* Define to 1 if powerpc encoder is enabled. */
++#define HAVE_ENCODER_POWERPC 1
++
++/* Define to 1 if sparc encoder is enabled. */
++#define HAVE_ENCODER_SPARC 1
++
++/* Define to 1 if x86 encoder is enabled. */
++#define HAVE_ENCODER_X86 1
++
++/* Define to 1 if you have the <fcntl.h> header file. */
++#define HAVE_FCNTL_H 1
++
++/* Define to 1 if you have the `futimens' function. */
++#define HAVE_FUTIMENS 1
++
++/* Define to 1 if you have the `futimes' function. */
++/* #undef HAVE_FUTIMES */
++
++/* Define to 1 if you have the `futimesat' function. */
++/* #undef HAVE_FUTIMESAT */
++
++/* Define to 1 if you have the <getopt.h> header file. */
++#define HAVE_GETOPT_H 1
++
++/* Define to 1 if you have the `getopt_long' function. */
++#define HAVE_GETOPT_LONG 1
++
++/* Define if the GNU gettext() function is already present or preinstalled. */
++#define HAVE_GETTEXT 1
++
++/* Define if you have the iconv() function and it works. */
++/* #undef HAVE_ICONV */
++
++/* Define to 1 if you have the <immintrin.h> header file. */
++#define HAVE_IMMINTRIN_H 1
++
++/* Define to 1 if you have the <inttypes.h> header file. */
++#define HAVE_INTTYPES_H 1
++
++/* Define to 1 if you have the <limits.h> header file. */
++#define HAVE_LIMITS_H 1
++
++/* Define to 1 if mbrtowc and mbstate_t are properly declared. */
++#define HAVE_MBRTOWC 1
++
++/* Define to 1 if you have the <memory.h> header file. */
++#define HAVE_MEMORY_H 1
++
++/* Define to 1 to enable bt2 match finder. */
++#define HAVE_MF_BT2 1
++
++/* Define to 1 to enable bt3 match finder. */
++#define HAVE_MF_BT3 1
++
++/* Define to 1 to enable bt4 match finder. */
++#define HAVE_MF_BT4 1
++
++/* Define to 1 to enable hc3 match finder. */
++#define HAVE_MF_HC3 1
++
++/* Define to 1 to enable hc4 match finder. */
++#define HAVE_MF_HC4 1
++
++/* Define to 1 if getopt.h declares extern int optreset. */
++/* #undef HAVE_OPTRESET */
++
++/* Define to 1 if you have the `posix_fadvise' function. */
++#define HAVE_POSIX_FADVISE 1
++
++/* Define to 1 if you have the `pthread_condattr_setclock' function. */
++#define HAVE_PTHREAD_CONDATTR_SETCLOCK 1
++
++/* Have PTHREAD_PRIO_INHERIT. */
++#define HAVE_PTHREAD_PRIO_INHERIT 1
++
++/* Define to 1 if you have the `SHA256Init' function. */
++/* #undef HAVE_SHA256INIT */
++
++/* Define to 1 if the system has the type `SHA256_CTX'. */
++/* #undef HAVE_SHA256_CTX */
++
++/* Define to 1 if you have the <sha256.h> header file. */
++/* #undef HAVE_SHA256_H */
++
++/* Define to 1 if you have the `SHA256_Init' function. */
++/* #undef HAVE_SHA256_INIT */
++
++/* Define to 1 if the system has the type `SHA2_CTX'. */
++/* #undef HAVE_SHA2_CTX */
++
++/* Define to 1 if you have the <sha2.h> header file. */
++/* #undef HAVE_SHA2_H */
++
++/* Define to 1 if optimizing for size. */
++/* #undef HAVE_SMALL */
++
++/* Define to 1 if stdbool.h conforms to C99. */
++#define HAVE_STDBOOL_H 1
++
++/* Define to 1 if you have the <stdint.h> header file. */
++#define HAVE_STDINT_H 1
++
++/* Define to 1 if you have the <stdlib.h> header file. */
++#define HAVE_STDLIB_H 1
++
++/* Define to 1 if you have the <strings.h> header file. */
++/* #undef HAVE_STRINGS_H */
++
++/* Define to 1 if you have the <string.h> header file. */
++#define HAVE_STRING_H 1
++
++/* Define to 1 if `st_atimensec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMENSEC */
++
++/* Define to 1 if `st_atimespec.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC */
++
++/* Define to 1 if `st_atim.st__tim.tv_nsec' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC */
++
++/* Define to 1 if `st_atim.tv_nsec' is a member of `struct stat'. */
++#define HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC 1
++
++/* Define to 1 if `st_uatime' is a member of `struct stat'. */
++/* #undef HAVE_STRUCT_STAT_ST_UATIME */
++
++/* Define to 1 if you have the <sys/byteorder.h> header file. */
++/* #undef HAVE_SYS_BYTEORDER_H */
++
++/* Define to 1 if you have the <sys/capsicum.h> header file. */
++/* #undef HAVE_SYS_CAPSICUM_H */
++
++/* Define to 1 if you have the <sys/endian.h> header file. */
++/* #undef HAVE_SYS_ENDIAN_H */
++
++/* Define to 1 if you have the <sys/param.h> header file. */
++#define HAVE_SYS_PARAM_H 1
++
++/* Define to 1 if you have the <sys/stat.h> header file. */
++#define HAVE_SYS_STAT_H 1
++
++/* Define to 1 if you have the <sys/time.h> header file. */
++#define HAVE_SYS_TIME_H 1
++
++/* Define to 1 if you have the <sys/types.h> header file. */
++#define HAVE_SYS_TYPES_H 1
++
++/* Define to 1 if the system has the type `uintptr_t'. */
++#define HAVE_UINTPTR_T 1
++
++/* Define to 1 if you have the <unistd.h> header file. */
++#define HAVE_UNISTD_H 1
++
++/* Define to 1 if you have the `utime' function. */
++/* #undef HAVE_UTIME */
++
++/* Define to 1 if you have the `utimes' function. */
++/* #undef HAVE_UTIMES */
++
++/* Define to 1 or 0, depending whether the compiler supports simple visibility
++   declarations. */
++#define HAVE_VISIBILITY 1
++
++/* Define to 1 if you have the `wcwidth' function. */
++#define HAVE_WCWIDTH 1
++
++/* Define to 1 if the system has the type `_Bool'. */
++#define HAVE__BOOL 1
++
++/* Define to 1 if you have the `_futime' function. */
++/* #undef HAVE__FUTIME */
++
++/* Define to 1 if _mm_movemask_epi8 is available. */
++#define HAVE__MM_MOVEMASK_EPI8 1
++
++/* Define to the sub-directory where libtool stores uninstalled libraries. */
++#define LT_OBJDIR ".libs/"
++
++/* Define to 1 when using POSIX threads (pthreads). */
++/* #undef MYTHREAD_POSIX */
++
++/* Define to 1 when using Windows Vista compatible threads. This uses features
++   that are not available on Windows XP. */
++#define MYTHREAD_VISTA 1
++
++/* Define to 1 when using Windows 95 (and thus XP) compatible threads. This
++   avoids use of features that were added in Windows Vista. */
++/* #undef MYTHREAD_WIN95 */
++
++/* Define to 1 to disable debugging code. */
++#define NDEBUG 1
++
++/* Name of package */
++#define PACKAGE "xz"
++
++/* Define to the address where bug reports for this package should be sent. */
++#define PACKAGE_BUGREPORT "lasse.collin@tukaani.org"
++
++/* Define to the full name of this package. */
++#define PACKAGE_NAME "XZ Utils"
++
++/* Define to the full name and version of this package. */
++#define PACKAGE_STRING "XZ Utils 5.2.3"
++
++/* Define to the one symbol short name of this package. */
++#define PACKAGE_TARNAME "xz"
++
++/* Define to the home page for this package. */
++#define PACKAGE_URL "http://tukaani.org/xz/"
++
++/* Define to the version of this package. */
++#define PACKAGE_VERSION "5.2.3"
++
++/* Define to necessary symbol if this constant uses a non-standard name on
++   your system. */
++/* #undef PTHREAD_CREATE_JOINABLE */
++
++/* The size of `size_t', as computed by sizeof. */
++#define SIZEOF_SIZE_T 8
++
++/* Define to 1 if you have the ANSI C header files. */
++#define STDC_HEADERS 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   cpuset(2). */
++/* #undef TUKLIB_CPUCORES_CPUSET */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   pstat_getdynamic(). */
++/* #undef TUKLIB_CPUCORES_PSTAT_GETDYNAMIC */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sched_getaffinity() */
++#define TUKLIB_CPUCORES_SCHED_GETAFFINITY 1
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysconf(_SC_NPROCESSORS_ONLN) or sysconf(_SC_NPROC_ONLN). */
++/* #undef TUKLIB_CPUCORES_SYSCONF */
++
++/* Define to 1 if the number of available CPU cores can be detected with
++   sysctl(). */
++/* #undef TUKLIB_CPUCORES_SYSCTL */
++
++/* Define to 1 if the system supports fast unaligned access to 16-bit and
++   32-bit integers. */
++#define TUKLIB_FAST_UNALIGNED_ACCESS 1
++
++/* Define to 1 if the amount of physical memory can be detected with
++   _system_configuration.physmem. */
++/* #undef TUKLIB_PHYSMEM_AIX */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getinvent_r(). */
++/* #undef TUKLIB_PHYSMEM_GETINVENT_R */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   getsysinfo(). */
++/* #undef TUKLIB_PHYSMEM_GETSYSINFO */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   pstat_getstatic(). */
++/* #undef TUKLIB_PHYSMEM_PSTAT_GETSTATIC */
++
++/* Define to 1 if the amount of physical memory can be detected with
++   sysconf(_SC_PAGESIZE) and sysconf(_SC_PHYS_PAGES). */
++#define TUKLIB_PHYSMEM_SYSCONF 1
++
++/* Define to 1 if the amount of physical memory can be detected with sysctl().
++ */
++/* #undef TUKLIB_PHYSMEM_SYSCTL */
++
++/* Define to 1 if the amount of physical memory can be detected with Linux
++   sysinfo(). */
++/* #undef TUKLIB_PHYSMEM_SYSINFO */
++
++/* Enable extensions on AIX 3, Interix.  */
++#ifndef _ALL_SOURCE
++#define _ALL_SOURCE 1
++#endif
++/* Enable GNU extensions on systems that have them.  */
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE 1
++#endif
++/* Enable threading extensions on Solaris.  */
++#ifndef _POSIX_PTHREAD_SEMANTICS
++#define _POSIX_PTHREAD_SEMANTICS 1
++#endif
++/* Enable extensions on HP NonStop.  */
++#ifndef _TANDEM_SOURCE
++#define _TANDEM_SOURCE 1
++#endif
++/* Enable general extensions on Solaris.  */
++#ifndef __EXTENSIONS__
++#define __EXTENSIONS__ 1
++#endif
++
++/* Version number of package */
++#define VERSION "5.4.5"
++
++/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
++   significant byte first (like Motorola and SPARC, unlike Intel). */
++#if defined AC_APPLE_UNIVERSAL_BUILD
++#if defined __BIG_ENDIAN__
++#define WORDS_BIGENDIAN 1
++#endif
++#else
++#ifndef WORDS_BIGENDIAN
++/* #  undef WORDS_BIGENDIAN */
++#endif
++#endif
++
++/* Enable large inode numbers on Mac OS X 10.5.  */
++#ifndef _DARWIN_USE_64_BIT_INODE
++#define _DARWIN_USE_64_BIT_INODE 1
++#endif
++
++/* Number of bits in a file offset, on hosts where this is settable. */
++/* #undef _FILE_OFFSET_BITS */
++
++/* Define for large files, on AIX-style hosts. */
++/* #undef _LARGE_FILES */
++
++/* Define to 1 if on MINIX. */
++/* #undef _MINIX */
++
++/* Define to 2 if the system does not provide POSIX.1 features except with
++   this defined. */
++/* #undef _POSIX_1_SOURCE */
++
++/* Define to 1 if you need to in order for `stat' and other things to work. */
++/* #undef _POSIX_SOURCE */
++
++/* Define for Solaris 2.5.1 so the uint32_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT32_T */
++
++/* Define for Solaris 2.5.1 so the uint64_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT64_T */
++
++/* Define for Solaris 2.5.1 so the uint8_t typedef from <sys/synch.h>,
++   <pthread.h>, or <semaphore.h> is not used. If the typedef were allowed, the
++   #define below would cause a syntax error. */
++/* #undef _UINT8_T */
++
++/* Define to rpl_ if the getopt replacement functions and variables should be
++   used. */
++/* #undef __GETOPT_PREFIX */
++
++/* Define to the type of a signed integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int32_t */
++
++/* Define to the type of a signed integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef int64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 16 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint16_t */
++
++/* Define to the type of an unsigned integer type of width exactly 32 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint32_t */
++
++/* Define to the type of an unsigned integer type of width exactly 64 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint64_t */
++
++/* Define to the type of an unsigned integer type of width exactly 8 bits if
++   such a type exists and the standard includes do not define it. */
++/* #undef uint8_t */
++
++/* Define to the type of an unsigned integer type wide enough to hold a
++   pointer, if such a type exists, and if the system does not define it. */
++/* #undef uintptr_t */
+diff --git a/tests/test_bcj_exact_size.c b/tests/test_bcj_exact_size.c
+index 551166c..2faf384 100644
+--- a/tests/test_bcj_exact_size.c
++++ b/tests/test_bcj_exact_size.c
+@@ -96,7 +96,7 @@ test_empty_block(void)
+ 	// An empty file with one Block using PowerPC BCJ and LZMA2.
+ 	size_t in_size;
+ 	uint8_t *empty_bcj_lzma2 = tuktest_file_from_srcdir(
+-			"files/good-1-empty-bcj-lzma2.xz", &in_size);
++			"tests/files/good-1-empty-bcj-lzma2.xz", &in_size);
+ 
+ 	// Decompress without giving any output space.
+ 	uint64_t memlimit = 1 << 20;
+diff --git a/tests/test_check.c b/tests/test_check.c
+index cb1ad25..fd55e31 100644
+--- a/tests/test_check.c
++++ b/tests/test_check.c
+@@ -358,25 +358,25 @@ main(int argc, char **argv)
+ 	tuktest_start(argc, argv);
+ 
+ 	no_check_xz_data = tuktest_file_from_srcdir(
+-			"files/good-1-check-none.xz", &no_check_size);
++			"tests/files/good-1-check-none.xz", &no_check_size);
+ 
+ 	unsupported_check_xz_data = tuktest_file_from_srcdir(
+-			"files/unsupported-check.xz",
++			"tests/files/unsupported-check.xz",
+ 			&unsupported_check_size);
+ 
+ #ifdef HAVE_CHECK_CRC32
+ 	crc32_xz_data = tuktest_file_from_srcdir(
+-			"files/good-1-check-crc32.xz", &crc32_size);
++			"tests/files/good-1-check-crc32.xz", &crc32_size);
+ #endif
+ 
+ #ifdef HAVE_CHECK_CRC64
+ 	crc64_xz_data = tuktest_file_from_srcdir(
+-			"files/good-1-check-crc64.xz", &crc64_size);
++			"tests/files/good-1-check-crc64.xz", &crc64_size);
+ #endif
+ 
+ #ifdef HAVE_CHECK_SHA256
+ 	sha256_xz_data = tuktest_file_from_srcdir(
+-			"files/good-1-check-sha256.xz", &sha256_size);
++			"tests/files/good-1-check-sha256.xz", &sha256_size);
+ #endif
+ 
+ 	tuktest_run(test_lzma_crc32);
+diff --git a/tests/test_lzip_decoder.c b/tests/test_lzip_decoder.c
+index 3743d43..3dfa42a 100644
+--- a/tests/test_lzip_decoder.c
++++ b/tests/test_lzip_decoder.c
+@@ -101,7 +101,7 @@ test_v0_decode(void)
+ 	// This tests if liblzma can decode lzip version 0 files.
+ 	// lzip 1.17 and older can decompress this, but lzip 1.18
+ 	// and newer can no longer decode these files.
+-	basic_lzip_decode("files/good-1-v0.lz", hello_world_crc);
++	basic_lzip_decode("tests/files/good-1-v0.lz", hello_world_crc);
+ }
+ 
+ 
+@@ -109,7 +109,7 @@ static void
+ test_v1_decode(void)
+ {
+ 	// This tests decoding a basic lzip v1 file
+-	basic_lzip_decode("files/good-1-v1.lz", hello_world_crc);
++	basic_lzip_decode("tests/files/good-1-v1.lz", hello_world_crc);
+ }
+ 
+ 
+@@ -205,7 +205,7 @@ decode_expect_error(const char *src, lzma_ret expected_error)
+ static void
+ test_v0_trailing(void)
+ {
+-	trailing_helper("files/good-1-v0-trailing-1.lz", hello_world_crc,
++	trailing_helper("tests/files/good-1-v0-trailing-1.lz", hello_world_crc,
+ 			trailing_garbage_crc);
+ }
+ 
+@@ -213,21 +213,21 @@ test_v0_trailing(void)
+ static void
+ test_v1_trailing(void)
+ {
+-	trailing_helper("files/good-1-v1-trailing-1.lz", hello_world_crc,
++	trailing_helper("tests/files/good-1-v1-trailing-1.lz", hello_world_crc,
+ 			trailing_garbage_crc);
+ 
+-	// The second files/good-1-v1-trailing-2.lz will have the same
++	// The second tests/files/good-1-v1-trailing-2.lz will have the same
+ 	// expected output and trailing output as
+-	// files/good-1-v1-trailing-1.lz, but this tests if the prefix
++	// tests/files/good-1-v1-trailing-1.lz, but this tests if the prefix
+ 	// to the trailing data contains lzip magic bytes.
+ 	// When this happens, the expected behavior is to silently ignore
+ 	// the magic byte prefix and consume it from the input file.
+-	trailing_helper("files/good-1-v1-trailing-2.lz", hello_world_crc,
++	trailing_helper("tests/files/good-1-v1-trailing-2.lz", hello_world_crc,
+ 			trailing_garbage_crc);
+ 
+ 	// Expect LZMA_BUF error if a file ends with the lzip magic bytes
+ 	// but does not contain any data after
+-	decode_expect_error("files/bad-1-v1-trailing-magic.lz",
++	decode_expect_error("tests/files/bad-1-v1-trailing-magic.lz",
+ 			LZMA_BUF_ERROR);
+ }
+ 
+@@ -241,7 +241,7 @@ test_concatentated(void)
+ 
+ 	lzma_stream strm = LZMA_STREAM_INIT;
+ 	size_t file_size;
+-	uint8_t *v0_v1 = tuktest_file_from_srcdir("files/good-2-v0-v1.lz",
++	uint8_t *v0_v1 = tuktest_file_from_srcdir("tests/files/good-2-v0-v1.lz",
+ 		&file_size);
+ 
+ 	assert_lzma_ret(lzma_lzip_decoder(&strm, MEMLIMIT,
+@@ -262,7 +262,7 @@ test_concatentated(void)
+ 	assert_uint_eq(checksum, hello_world_crc);
+ 
+ 	// The second file contains one v1 member and one v2 member
+-	uint8_t *v1_v0 = tuktest_file_from_srcdir("files/good-2-v1-v0.lz",
++	uint8_t *v1_v0 = tuktest_file_from_srcdir("tests/files/good-2-v1-v0.lz",
+ 		&file_size);
+ 
+ 	assert_lzma_ret(lzma_lzip_decoder(&strm, MEMLIMIT,
+@@ -280,7 +280,7 @@ test_concatentated(void)
+ 	assert_uint_eq(checksum, hello_world_crc);
+ 
+ 	// The third file contains 2 v1 members
+-	uint8_t *v1_v1 = tuktest_file_from_srcdir("files/good-2-v1-v1.lz",
++	uint8_t *v1_v1 = tuktest_file_from_srcdir("tests/files/good-2-v1-v1.lz",
+ 		&file_size);
+ 
+ 	assert_lzma_ret(lzma_lzip_decoder(&strm, MEMLIMIT,
+@@ -307,7 +307,7 @@ test_crc(void)
+ 	// Test invalid checksum
+ 	lzma_stream strm = LZMA_STREAM_INIT;
+ 	size_t file_size;
+-	uint8_t *data = tuktest_file_from_srcdir("files/bad-1-v1-crc32.lz",
++	uint8_t *data = tuktest_file_from_srcdir("tests/files/bad-1-v1-crc32.lz",
+ 			&file_size);
+ 
+ 	assert_lzma_ret(lzma_lzip_decoder(&strm, MEMLIMIT,
+@@ -385,7 +385,7 @@ test_invalid_version(void)
+ {
+ 	// The file contains a version number that is not 0 or 1,
+ 	// so it should cause an error
+-	decode_expect_error("files/unsupported-1-v234.lz",
++	decode_expect_error("tests/files/unsupported-1-v234.lz",
+ 			LZMA_OPTIONS_ERROR);
+ }
+ 
+@@ -394,10 +394,10 @@ static void
+ test_invalid_dictionary_size(void)
+ {
+ 	// First file has too small dictionary size field
+-	decode_expect_error("files/bad-1-v1-dict-1.lz", LZMA_DATA_ERROR);
++	decode_expect_error("tests/files/bad-1-v1-dict-1.lz", LZMA_DATA_ERROR);
+ 
+ 	// Second file has too large dictionary size field
+-	decode_expect_error("files/bad-1-v1-dict-2.lz", LZMA_DATA_ERROR);
++	decode_expect_error("tests/files/bad-1-v1-dict-2.lz", LZMA_DATA_ERROR);
+ }
+ 
+ 
+@@ -405,11 +405,11 @@ static void
+ test_invalid_uncomp_size(void)
+ {
+ 	// Test invalid v0 lzip file uncomp size
+-	decode_expect_error("files/bad-1-v0-uncomp-size.lz",
++	decode_expect_error("tests/files/bad-1-v0-uncomp-size.lz",
+ 			LZMA_DATA_ERROR);
+ 
+ 	// Test invalid v1 lzip file uncomp size
+-	decode_expect_error("files/bad-1-v1-uncomp-size.lz",
++	decode_expect_error("tests/files/bad-1-v1-uncomp-size.lz",
+ 			LZMA_DATA_ERROR);
+ }
+ 
+@@ -417,7 +417,7 @@ test_invalid_uncomp_size(void)
+ static void
+ test_invalid_member_size(void)
+ {
+-	decode_expect_error("files/bad-1-v1-member-size.lz",
++	decode_expect_error("tests/files/bad-1-v1-member-size.lz",
+ 			LZMA_DATA_ERROR);
+ }
+ 
+@@ -428,7 +428,7 @@ test_invalid_memlimit(void)
+ 	// A very low memlimit should prevent decoding.
+ 	// Should be able to update the memlimit after failing
+ 	size_t file_size;
+-	uint8_t *data = tuktest_file_from_srcdir("files/good-1-v1.lz",
++	uint8_t *data = tuktest_file_from_srcdir("tests/files/good-1-v1.lz",
+ 			&file_size);
+ 
+ 	uint8_t output_buffer[DECODE_CHUNK_SIZE];
+diff --git a/tests/test_memlimit.c b/tests/test_memlimit.c
+index c45a44b..09bf82c 100644
+--- a/tests/test_memlimit.c
++++ b/tests/test_memlimit.c
+@@ -104,7 +104,7 @@ test_memlimit_alone_decoder(void)
+ #else
+ 	size_t alone_size;
+ 	uint8_t *alone_buf = tuktest_file_from_srcdir(
+-			"files/good-unknown_size-with_eopm.lzma", &alone_size);
++			"tests/files/good-unknown_size-with_eopm.lzma", &alone_size);
+ 
+ 	lzma_stream strm = LZMA_STREAM_INIT;
+ 	assert_lzma_ret(lzma_alone_decoder(&strm, MEMLIMIT_TOO_LOW), LZMA_OK);
+@@ -162,7 +162,7 @@ main(int argc, char **argv)
+ {
+ 	tuktest_start(argc, argv);
+ 
+-	in = tuktest_file_from_srcdir("files/good-1-check-crc32.xz", &in_size);
++	in = tuktest_file_from_srcdir("tests/files/good-1-check-crc32.xz", &in_size);
+ 
+ 	tuktest_run(test_memlimit_stream_decoder);
+ 	tuktest_run(test_memlimit_stream_decoder_mt);
+diff --git a/tools.bzl b/tools.bzl
+new file mode 100644
+index 0000000..88a1322
+--- /dev/null
++++ b/tools.bzl
+@@ -0,0 +1,13 @@
++def multi_test(
++        names = [],
++        **kwargs):
++    tests = []
++    for name in names:
++        native.cc_test(
++            name = name,
++            srcs = ["tests/" + name + ".c"],
++            **kwargs
++        )
++        tests.append(":" + name)
++
++    return tests
+diff --git a/update_lzma_config_header.sh b/update_lzma_config_header.sh
+new file mode 100755
+index 0000000..e9aefb4
+--- /dev/null
++++ b/update_lzma_config_header.sh
+@@ -0,0 +1,74 @@
++#!/usr/bin/env bash
++
++# This is a helper script to update the config header for LZMA, i.e.
++# - config.lzma-android.h,
++# - config.lzma-ios-arm64.h
++# - config.lzma-ios-armv7.h
++# - config.lzma-ios-i386.h
++# - config.lzma-linux.h
++# - config.lzma-osx-arm64.h
++# - config.lzma-osx-x86_64.h
++# - config.lzma-windows.h
++#
++# Those files are dependent on the target OS and architecture.
++# Every time the version number of xz is bumped the corresponding config headers should be updated.
++# Note: This script has to be executed on macOS, Linux, and Windows since the configuration of the headers is specific to the underlying OS environment
++
++# Fail on error, etc.
++set -euxo pipefail
++
++# Get script location
++script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
++
++# Path where the WORKSPACE file is located
++rules_boost_dir=$script_dir 
++
++# Create a temporary directory
++tmpdir=$(mktemp -d) 
++
++# Get rid of temporary files when script exits
++trap "rm -rf $tmpdir" EXIT 
++
++# Version number of xz
++xz_version_number="5.4.2"
++
++# Download, and untar xz
++cd "$tmpdir"
++curl -sL 'https://github.com/tukaani-project/xz/releases/download/v'$xz_version_number'/xz-'$xz_version_number'.tar.gz' --output 'xz-'$xz_version_number'.tar.gz'
++tar -xf 'xz-'$xz_version_number'.tar.gz'
++
++# Switch to xz directory
++cd 'xz-'$xz_version_number
++
++# config header files depend on the specific OS
++if [[ "$OSTYPE" == "linux-gnu"* ]]; then
++    ./configure
++    cp config.h "${rules_boost_dir}/config.lzma-linux.h"
++elif [[ "$OSTYPE" == "darwin"* ]]; then
++    CC="clang -arch x86_64" ./configure --host=$MACHTYPE
++    cp config.h "${rules_boost_dir}/config.lzma-osx-x86_64.h"
++
++    CC="clang -arch arm64" ./configure --host=$MACHTYPE
++    cp config.h "${rules_boost_dir}/config.lzma-osx-arm64.h"
++
++    CC="clang -arch arm64 \
++    -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" \
++    ./configure --host=$MACHTYPE
++    cp config.h "${rules_boost_dir}/config.lzma-ios-arm64.h"
++
++    CC="clang -arch armv7 \
++    -isysroot $(xcrun --sdk iphoneos --show-sdk-path)" \
++    ./configure --host=$MACHTYPE
++    cp config.h "${rules_boost_dir}/config.lzma-ios-armv7.h"
++
++    CC="clang -arch i386 \
++    -isysroot $(xcrun --sdk iphonesimulator --show-sdk-path)" \
++    ./configure --host=$MACHTYPE
++    cp config.h "${rules_boost_dir}/config.lzma-ios-i386.h"
++elif [[ "$OSTYPE" == "msys"* ]]; then
++    ./configure
++    cp config.h "${rules_boost_dir}/config.lzma-windows.h"
++else
++    echo "Unsupported OS"
++    echo "$OSTYPE"
++fi

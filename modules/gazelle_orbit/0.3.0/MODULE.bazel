@@ -1,0 +1,122 @@
+"""gazelle_orbit — a Gazelle language plugin that generates vhdl_library and
+verilog_library Bazel targets from HDL sources, using an embedded orbit
+binary as the parser/analyzer backend."""
+
+module(
+    name = "gazelle_orbit",
+    version = "0.3.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_cc", version = "0.2.10")
+bazel_dep(name = "rules_rust", version = "0.72.0")
+bazel_dep(name = "openssl", version = "3.5.5.bcr.4")
+bazel_dep(name = "curl", version = "8.12.0.bcr.1")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1")
+bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "gazelle", version = "0.51.0")
+bazel_dep(name = "rules_vhdl", version = "0.4.1")
+bazel_dep(name = "rules_verilog", version = "1.4.2")
+
+# orbit source — fetched as an http_archive instead of via a cargo git dep so
+# crate_universe doesn't need to invoke git_repository under the hood. The
+# overlay at //3rdparty/orbit:BUILD.orbit.bazel exposes orbit as both a
+# rust_library (so other Rust code can link against it) and a rust_binary
+# (the CLI the gazelle plugin embeds as a runfile).
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "orbit",
+    build_file = "//3rdparty/orbit:BUILD.orbit.bazel",
+    integrity = "sha256-jkt+jMOzpmcr6Ol2Wqyx4Y4zVTP21SqH6cwUfHL9S+A=",
+    strip_prefix = "orbit-0.29.3",
+    urls = ["https://github.com/chaseruskin/orbit/releases/download/0.29.3/orbit-0.29.3-source.tar.gz"],
+)
+
+# Rust toolchain (1.89.0 is the minimum — orbit uses std::fs file_lock APIs stabilized there).
+# Marked dev_dependency so downstream consumers register their own rust toolchain
+# rather than inheriting the exact version we build against.
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust", dev_dependency = True)
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.89.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "gazelle_orbit_crates",
+    cargo_lockfile = "@orbit//:Cargo.lock",
+    lockfile = "//:cargo-bazel-lock.json",
+    manifests = ["@orbit//:Cargo.toml"],
+)
+crate.annotation(
+    # curl-sys ships libcurl's C source and normally builds it with cc-rs
+    # via its build script. We'd rather link the BCR `curl` module's
+    # cc_library — keeps the C toolchain config out of cc-rs and pulls in
+    # libcurl through the standard CcInfo provider chain. Disabling the
+    # build script suppresses the source compile + skips its pkg-config /
+    # vendored-build dance; the `deps` entry below provides the link.
+    #
+    # We don't link `@curl` directly — //3rdparty/curl wraps it in an
+    # outgoing transition that forces `--@curl//:ssl_lib=openssl`, so
+    # consumers don't have to set that flag themselves. See
+    # //3rdparty/curl/defs.bzl for the rationale.
+    #
+    # Note: rules_rust currently emits a deprecation warning for cc_library
+    # in `deps`, recommending `link_deps` instead. crate.annotation doesn't
+    # yet support `link_deps` (only `deps` and `build_script_link_deps`),
+    # so this is the only working form until that attribute is added —
+    # tracked at https://github.com/bazelbuild/rules_rust upstream.
+    crate = "curl-sys",
+    gen_build_script = "off",
+    label_injections = {
+        "@gazelle_orbit//3rdparty/curl": "@gazelle_orbit//3rdparty/curl",
+    },
+    link_deps = ["@gazelle_orbit//3rdparty/curl"],
+    repositories = ["gazelle_orbit_crates"],
+)
+crate.annotation(
+    build_script_data = ["@openssl//:install"],
+    build_script_env = {
+        "OPENSSL_DIR": "$(execpath @openssl//:install)",
+        "OPENSSL_NO_VENDOR": "1",
+        "OPENSSL_STATIC": "1",
+    },
+    compile_data = ["@openssl//:install"],
+    crate = "openssl-sys",
+    label_injections = {
+        "@openssl": "@openssl",
+    },
+    repositories = ["gazelle_orbit_crates"],
+)
+crate.annotation(
+    crate = "zstd-sys",
+    gen_build_script = "off",
+    label_injections = {
+        "@zstd": "@zstd",
+    },
+    link_deps = ["@zstd"],
+    repositories = ["gazelle_orbit_crates"],
+)
+use_repo(
+    crate,
+    "gazelle_orbit_crates",
+)
+
+# Go toolchain — dev-only so downstream picks their own Go SDK.
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk.download(version = "1.24.12")
+
+# Go module dependencies — resolved from go.mod
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_bazelbuild_buildtools",
+)

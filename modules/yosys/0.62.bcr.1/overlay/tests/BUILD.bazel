@@ -1,0 +1,67 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_python//python:py_test.bzl", "py_test")
+
+# Comprehensive C++ test binary for yosys functionality using Google Test
+cc_test(
+    name = "yosys_binary_test",
+    size = "small",
+    srcs = ["yosys_binary_test.cc"],
+    data = ["@yosys"],
+    env = {"YOSYS": "$(rlocationpath @yosys)"},
+    deps = [
+        "@googletest//:gtest",
+        "@googletest//:gtest_main",
+        "@rules_cc//cc/runfiles",
+    ],
+)
+
+# .ys script regression tests — one py_test per script file.
+[
+    py_test(
+        name = "ys_" + _f.replace("/", "__").replace(".", "_"),
+        size = "small",
+        srcs = [":run_ys_test.py"],
+        data = glob(
+            [_f.rpartition("/")[0] + "/*"],
+            exclude = [_f.rpartition("/")[0] + "/*.ys"],
+        ) + [
+            _f,
+            "@yosys",
+        ],
+        env = {
+            "YOSYS": "$(rlocationpath @yosys)",
+            "YS_SCRIPT": "$(rlocationpath " + _f + ")",
+        },
+        main = "run_ys_test.py",
+        deps = ["@rules_python//python/runfiles"],
+    )
+    for _f in glob(
+        [
+            "opt/*.ys",
+            "proc/*.ys",
+            "various/*.ys",
+            "verilog/*.ys",
+            "techmap/*.ys",
+            "select/*.ys",
+            "rtlil/*.ys",
+        ],
+        exclude = [
+            "opt/opt_lut.ys",  # synth_ice40 cmd not linked
+            "various/stat.ys",  # Reads file with relative path that doesnt exit is bazel
+            "various/stat_hierarchy.ys",  # Reads file with relative path that doesnt exit is bazel
+            "various/check.ys",  # read command old?
+            "various/check_2.ys",  # read command old?
+            "various/check_3.ys",  # read command old?
+            "various/check_4.ys",  # read command old?
+            "various/hierarchy_defer.ys",  # read command
+            "various/dynamic_part_select.ys",  # data file missing
+            "various/celledges_shift.ys",  # test_cell cmd not there
+            "various/bug4865.ys",  # ice40_dsp command not implemented
+            "various/ice40_mince_abc9.ys",  # ice40_dsp command not implemented
+            "various/aiger2.ys",  # read_aiger2 cmd not linked
+            "techmap/xaiger2-5169.ys",  # write_aiger2 cmd not linked
+            "techmap/booth.ys",  # test_cell cmd not linked
+            "select/no_warn_prefixed_arg_memb.ys",  # data file missing
+        ],
+    )
+]

@@ -1,0 +1,139 @@
+"""rules_pycross"""
+
+module(
+    name = "rules_pycross",
+    version = "2.0.0-alpha.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_lib", version = "3.1.0")
+bazel_dep(name = "bazel_features", version = "1.11.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "0.0.4")
+bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "toml.bzl", version = "0.4.1")
+
+bazel_dep(name = "rules_testing", version = "0.9.0", dev_dependency = True)
+
+# Change this value to set the Python version we use in our repo venv.
+PYTHON_VERSION = "3.13"
+
+py_underscore_version = PYTHON_VERSION.replace(".", "_")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = PYTHON_VERSION)
+use_repo(
+    python,
+    "python_%s" % py_underscore_version,
+    "python_%s_host" % py_underscore_version,
+    "python_versions",
+    "pythons_hub",
+)
+
+pycross = use_extension("@rules_pycross//pycross/extensions:pycross.bzl", "pycross")
+pycross.configure_environments()
+pycross.configure_interpreter(
+    python_defs_file = "@python_%s//:defs.bzl" % py_underscore_version,
+    python_interpreter_target = "@python_%s_host//:python" % py_underscore_version,
+)
+pycross.configure_toolchains()
+use_repo(
+    pycross,
+    "rules_pycross_internal",
+    "rules_pycross_internal_config",
+)
+
+backends = use_extension("@rules_pycross//pycross/extensions:backends.bzl", "backends")
+backends.register(
+    name = "meson_build",
+    override_json = "@meson_overrides//:overrides.json",
+    pyproject_backends = [
+        "mesonpy",
+        "mesonbuild",
+    ],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:meson_build.bzl",
+    tool_packages = [
+        "meson",
+        "ninja",
+        "meson-python",
+    ],
+)
+backends.register(
+    name = "cmake_build",
+    override_json = "@cmake_overrides//:overrides.json",
+    pyproject_backends = ["scikit_build_core.build"],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:cmake_build.bzl",
+    tool_packages = [
+        "cmake",
+        "ninja",
+        "scikit-build-core",
+    ],
+)
+backends.register(
+    name = "setuptools_build",
+    override_json = "@setuptools_overrides//:overrides.json",
+    pyproject_backends = [
+        "setuptools.build_meta",
+        "setuptools.build_meta:__legacy__",
+    ],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:setuptools_build.bzl",
+    tool_packages = [
+        "setuptools",
+        "wheel",
+    ],
+)
+
+# Generic PEP 517 fallback backend. Does not need override_json since it has
+# no backend-specific build system attributes to inject.
+backends.register(
+    name = "pep517_build",
+    default = True,
+    pyproject_backends = [
+        "hatchling.build",
+        "flit_core.buildapi",
+        "pdm.backend",
+        "poetry.core.masonry.api",
+    ],
+    rule_bzl = "@rules_pycross//pycross/private/build/rules:pep517_build.bzl",
+    tool_packages = [],
+)
+use_repo(
+    backends,
+    "pycross_backends",
+)
+
+toolchains = use_extension("@rules_pycross//pycross/private:toolchains.bzl", "toolchains")
+toolchains.create_for_python_toolchains(name = "pycross_toolchains")
+use_repo(toolchains, "pycross_toolchains")
+
+register_toolchains("@pycross_toolchains//...")
+
+environments = use_extension("@rules_pycross//pycross/extensions:environments.bzl", "environments")
+environments.create_for_python_toolchains(name = "pycross_environments")
+use_repo(environments, "pycross_environments")
+
+lock_import = use_extension("@rules_pycross//pycross/extensions:lock_import.bzl", "lock_import")
+use_repo(lock_import, "lock_import_repos_hub")
+
+lock_repos = use_extension("@rules_pycross//pycross/extensions:lock_repos.bzl", "lock_repos")
+lock_repos.create()
+
+# Create the default (empty) override repos for first-party backends.
+# These are referenced by the backends.register tags above.
+# Users who want to add package-specific overrides (e.g., setuptools.override())
+# must also use_extension the relevant backend in their own MODULE.bazel.
+setuptools = use_extension("@rules_pycross//pycross/backends:setuptools.bzl", "setuptools")
+use_repo(setuptools, "setuptools_overrides")
+
+cmake = use_extension("@rules_pycross//pycross/backends:cmake.bzl", "cmake")
+use_repo(cmake, "cmake_overrides")
+
+meson = use_extension("@rules_pycross//pycross/backends:meson.bzl", "meson")
+use_repo(meson, "meson_overrides")
+
+# Currently development-only
+bazel_dep(name = "gazelle", version = "0.50.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.5.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.3.0", dev_dependency = True)

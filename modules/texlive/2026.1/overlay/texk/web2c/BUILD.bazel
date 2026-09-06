@@ -1,0 +1,969 @@
+"""web2c - TeX engines, METAFONT, MetaPost, and related programs."""
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load(
+    "//bazel:texlive.bzl",
+    "MATH_LINKOPTS",
+    "MSVC_ATTRIBUTE_SHIM_COPTS",
+    "TEXLIVE_COPTS",
+    "TEXLIVE_LOCAL_DEFINES",
+    "TEX_ENGINE_DEFINES",
+    "combine_changes",
+    "force_include_copts",
+    "makecpool_pool",
+    "sh_texlive_test",
+    "tangle_web",
+    "web2c_convert",
+    "web_utility",
+)
+
+# =============================================================================
+# Exported bootstrap source files (referenced by web2c/ subpackage)
+# =============================================================================
+
+exports_files([
+    # Bootstrap.
+    "tangleboot.pin",
+    "ctangleboot.cin",
+    "cwebboot.cin",
+    "tangle.web",
+    "tangle.ch",
+    "cwebdir/ctangle.w",
+    "cwebdir/ctang-w2c.ch",
+    "cwebdir/common.w",
+    "cwebdir/comm-w2c.ch",
+    "cwebdir/comm-w2c.h",
+    "cwebdir/iso_types.w",
+    "tiedir/tie.c",
+    "tiedir/tie.w",
+    "tiedir/tie-w2c.ch",
+
+    # Common change-files used by multiple TeX-like engines.
+    "tex.ch",
+    "tracingstacklevels.ch",
+    "partoken-102.ch",
+    "partoken.ch",
+    "locnull-optimize.ch",
+    "showstream.ch",
+    "zlib-fmt.ch",
+    "unbalanced-braces.ch",
+    "tex-binpool.ch",
+    "enctexdir/enctex1.ch",
+    "enctexdir/enctex2.ch",
+    "enctexdir/enctex-pdftex.ch",
+    "enctexdir/enctex-tex.ch",
+
+    # SyncTeX change files referenced by various engines. The .ch0/.ch1/.ch2
+    # suffix is the patch level: lower numbers apply first, higher numbers
+    # clean up "REMOVE ME" sentinels from the lower-numbered ones.
+    "synctexdir/synctex-def.ch0",
+    "synctexdir/synctex-mem.ch0",
+    "synctexdir/synctex-mem.ch2",
+    "synctexdir/synctex-e-mem.ch0",
+    "synctexdir/synctex-e-mem.ch1",
+    "synctexdir/synctex-rec.ch0",
+    "synctexdir/synctex-rec.ch1",
+    "synctexdir/synctex-rec.ch2",
+    "synctexdir/synctex-e-rec.ch0",
+    "synctexdir/synctex-p-mem.ch0",
+    "synctexdir/synctex-p-mem.ch1",
+    "synctexdir/synctex-p-rec.ch0",
+    "synctexdir/synctex-p-rec.ch1",
+    "synctexdir/synctex-ep-mem.ch0",
+    "synctexdir/synctex-ep-mem.ch1",
+    "synctexdir/synctex-ep-rec.ch0",
+    "synctexdir/synctex-xe-def.ch0",
+    "synctexdir/synctex-xe-rec.ch3",
+    "synctexdir/synctex-pdf-rec.ch2",
+
+    # Synctex-side defines.
+    "synctexdir/synctex.defines",
+])
+
+# Re-export bootstrap tools for use in macros.
+alias(
+    name = "tangle",
+    actual = "//texk/web2c/web2c:tangle",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "ctangle",
+    actual = "//texk/web2c/web2c:ctangle",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Web2c config headers (w2c/config.h + w2c/c-auto.h)
+# =============================================================================
+
+# Upstream `configure.ac` does
+#   AC_DEFINE_UNQUOTED([WEB2CVERSION], [" (TeX Live ...)"])
+# but the c-auto.in template ships with `#define WEB2CVERSION
+# "REPLACE-WITH-WEB2CVERSION"` (NOT `#undef`), so autoconf_hdr's
+# substitution can't touch it. Rewrite the literal here to `#undef
+# WEB2CVERSION` so the AC_BUILD_SETTING -> :web2c_version_banner wiring
+# in //:configure can fill the actual value.
+expand_template(
+    name = "c_auto_in_substituted",
+    out = "c-auto.in.substituted",
+    substitutions = {
+        "#define WEB2CVERSION \"REPLACE-WITH-WEB2CVERSION\"": "#undef WEB2CVERSION",
+    },
+    template = "c-auto.in",
+)
+
+autoconf_hdr(
+    name = "w2c_c_auto_h",
+    out = "w2c/c-auto.h",
+    template = ":c_auto_in_substituted",
+    deps = ["//:configure"],
+)
+
+cc_library(
+    name = "w2c_config",
+    hdrs = [
+        "cpascal.h",
+        "help.h",
+        "texmfmem.h",
+        "texmfmp.h",
+        "texmfmp-help.h",
+        "w2c/config.h",
+        ":w2c_c_auto_h",
+    ],
+    includes = ["."],
+    visibility = ["//:__subpackages__"],
+    deps = ["//texk/kpathsea"],
+)
+
+# =============================================================================
+# Web2c support library (shared by all engines)
+# =============================================================================
+
+cc_library(
+    name = "web2c_lib",
+    srcs = [
+        "lib/basechsuffix.c",
+        "lib/chartostring.c",
+        "lib/coredump.c",
+        "lib/eofeoln.c",
+        "lib/fprintreal.c",
+        "lib/input2int.c",
+        "lib/inputint.c",
+        "lib/main.c",
+        "lib/openclose.c",
+        "lib/printversion.c",
+        "lib/setupvar.c",
+        "lib/uexit.c",
+        "lib/usage.c",
+        "lib/version.c",
+        "lib/zround.c",
+    ],
+    hdrs = ["lib/lib.h"],
+    copts = TEXLIVE_COPTS,
+    # NO_MF_ASM on Windows routes texmfmp.c's `#include "lib/mfmpw32.c"`
+    # to the portable C fallback ("Hobby's floating-point code").
+    # mfmpw32.c uses MSVC `__asm` blocks that only compile on x86, not
+    # x64 — upstream's i386-MinGW build is the only one that ever
+    # exercised that branch.
+    local_defines = TEXLIVE_LOCAL_DEFINES + select({
+        "@platforms//os:windows": ["NO_MF_ASM"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "lib",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":w2c_config",
+        "//texk/kpathsea",
+        "@zlib",
+    ],
+)
+
+# =============================================================================
+# SyncTeX library
+# =============================================================================
+
+# synctex depends on the WEB-generated synctex headers (synctex_parser_utils.h
+# etc. mostly there, but synctex.c expects engine-defines from texmfmp.h).
+# Tagged manual until the engine pipeline lands.
+cc_library(
+    name = "synctex_lib",
+    srcs = glob(
+        ["synctexdir/*.c"],
+        exclude = ["synctexdir/synctex_main.c"],
+    ),
+    hdrs = glob(["synctexdir/*.h"]),
+    copts = TEXLIVE_COPTS,
+    local_defines = TEXLIVE_LOCAL_DEFINES,
+    strip_include_prefix = "synctexdir",
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//texk/kpathsea",
+        "@zlib",
+    ],
+)
+
+cc_binary(
+    name = "synctex",
+    srcs = ["synctexdir/synctex_main.c"],
+    copts = TEXLIVE_COPTS,
+    local_defines = TEXLIVE_LOCAL_DEFINES,
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [":synctex_lib"],
+)
+
+# =============================================================================
+# libmd5 (used by luatex)
+# =============================================================================
+
+cc_library(
+    name = "md5",
+    srcs = glob(["libmd5/*.c"]),
+    hdrs = glob(["libmd5/*.h"]),
+    copts = TEXLIVE_COPTS,
+    strip_include_prefix = "libmd5",
+)
+
+# =============================================================================
+# TeX engine (plain TeX)
+# =============================================================================
+
+# TODO(web2c): The TeX engines require a tangle→web2c→compile pipeline.
+# The tangle step produces a .p file from .web + .ch, then web2c converts
+# the Pascal to C, fixwrites cleans it up, and splitup splits large files.
+# This is complex and depends on the bootstrap tools in web2c/.
+#
+# For now, we declare the targets but the full genrule pipeline for each
+# engine needs the exact .web/.ch file mappings which vary per engine.
+# The pattern for each WEB-based engine is:
+#
+#   genrule(tangle .web+.ch -> .p)
+#   genrule(web2c+fixwrites+splitup .p -> .c files)
+#   cc_binary(compile .c files)
+#
+# C-native engines (luatex, xetex, hitex) are simpler: just cc_binary
+# with their source directories.
+
+# =============================================================================
+# pdftex - PDF-producing TeX engine
+# =============================================================================
+#
+# WEB pipeline scaffold. The macros (combine_changes, tangle_web,
+# web2c_convert, makecpool_pool) are wired end-to-end in
+# //bazel:texlive.bzl and have been verified against pdftex:
+#
+#   * `tie` builds via `ctangle_cweb` from tie.w + tie-w2c.ch (lifts
+#     max_file_index to 32 so 18+ change files fit).
+#   * `combine_changes` produces pdftex-final.ch successfully (40,000+
+#     lines written, no errors).
+#   * `tangle_web(program="pdftex", emit_pool=True)` runs to completion
+#     (13,000+ Pascal lines, 1,849 string-pool entries) but tangle exits
+#     non-zero with "Pardon me, but I think I spotted something wrong"
+#     — the change-file stack still has unresolved conflicts to debug.
+#
+# Concrete pdftex targets are NOT instantiated here yet: `tags=["manual"]`
+# does not prevent `bazel build //...` from building these through the
+# dep chain. Next debugging step: find which .ch in the stack
+# (probably one of the synctex .ch0 files vs. pdftexdir/pdftex.ch)
+# patches the same WEB section twice. The full recipe to plug in once
+# tangle is clean:
+#
+#   combine_changes(name = "pdftex_final_ch", web = "pdftexdir/pdftex.web",
+#       out = "pdftex-final.ch",
+#       changes = [
+#           "pdftexdir/tex.ch0", "tex.ch", "tracingstacklevels.ch",
+#           "partoken-102.ch", "partoken.ch", "locnull-optimize.ch",
+#           "showstream.ch", "zlib-fmt.ch",
+#           "enctexdir/enctex1.ch", "enctexdir/enctex-pdftex.ch",
+#           "enctexdir/enctex2.ch", "unbalanced-braces.ch",
+#           "synctexdir/synctex-def.ch0", "synctexdir/synctex-mem.ch0",
+#           "synctexdir/synctex-e-mem.ch0",
+#           "pdftexdir/pdftex.ch", "pdftexdir/char-warning-pdftex.ch",
+#           "tex-binpool.ch",
+#       ])
+#   tangle_web(name = "pdftex_p", web = "pdftexdir/pdftex.web",
+#       ch = ":pdftex_final_ch", program = "pdftex", emit_pool = True)
+#   web2c_convert(name = "pdftex_c_gen", src = ":pdftex_p",
+#       program = "pdftex", header = "texmfmp.h",
+#       is_tex_engine = True, use_splitup = True,
+#       defines = [
+#           "//texk/web2c/web2c:common.defines",
+#           "//texk/web2c/web2c:texmf.defines",
+#           "synctexdir/synctex.defines",
+#           "pdftexdir/pdftex.defines",
+#       ],
+#       coerce_tail = "//texk/web2c/web2c:coerce.h",
+#       outs = ["pdftex0.c", "pdftexini.c", "pdftexd.h", "pdftexcoerce.h"])
+#   makecpool_pool(name = "pdftex_pool_c", pool = ":pdftex_p", program = "pdftex")
+#   cc_library(name = "libpdftex",
+#       srcs = glob(["pdftexdir/*.c"], exclude = ["pdftexdir/ttf2afm.c"]) +
+#              [":pdftex_c_gen", ":pdftex_pool_c"],
+#       hdrs = glob(["pdftexdir/*.h"]),
+#       local_defines = TEXLIVE_LOCAL_DEFINES + ["pdfTeX"],
+#       deps = [":md5", ":web2c_lib", "//texk/kpathsea",
+#               "@libpng//:png", "@xpdf", "@zlib"])
+
+# Debug-only targets: tagged manual AND NOT depended-on by anything, so
+# `bazel build //...` ignores them. Run explicitly with:
+#   bazel build @texlive//texk/web2c:pdftex_p
+combine_changes(
+    name = "pdftex_final_ch",
+    out = "pdftex-final.ch",
+    changes = [
+        "pdftexdir/tex.ch0",
+        "tex.ch",
+        "tracingstacklevels.ch",
+        "partoken-102.ch",
+        "partoken.ch",
+        "locnull-optimize.ch",
+        "showstream.ch",
+        "zlib-fmt.ch",
+        "enctexdir/enctex1.ch",
+        "enctexdir/enctex-pdftex.ch",
+        "enctexdir/enctex2.ch",
+        "unbalanced-braces.ch",
+        # pdftex SyncTeX stack, mirrors synctexdir/am/synctex.am's
+        # PDFTEX_SYNCTEX block. Order matters: the .ch1/.ch2 files
+        # clear the "REMOVE ME" sentinels left by the .ch0 files.
+        "synctexdir/synctex-def.ch0",
+        "synctexdir/synctex-mem.ch0",
+        "synctexdir/synctex-e-mem.ch0",
+        "synctexdir/synctex-e-mem.ch1",
+        "synctexdir/synctex-rec.ch0",
+        "synctexdir/synctex-rec.ch1",
+        "synctexdir/synctex-e-rec.ch0",
+        "synctexdir/synctex-pdf-rec.ch2",
+        "pdftexdir/pdftex.ch",
+        "pdftexdir/char-warning-pdftex.ch",
+        "tex-binpool.ch",
+    ],
+    tags = ["manual"],
+    web = "pdftexdir/pdftex.web",
+)
+
+tangle_web(
+    name = "pdftex_p",
+    ch = ":pdftex_final_ch",
+    emit_pool = True,
+    program = "pdftex",
+    tags = ["manual"],
+    web = "pdftexdir/pdftex.web",
+)
+
+web2c_convert(
+    name = "pdftex_c_gen",
+    src = ":pdftex_p",
+    outs = [
+        "pdftex0.c",
+        "pdftexcoerce.h",
+        "pdftexd.h",
+        "pdftexini.c",
+    ],
+    coerce_tail = "//texk/web2c/web2c:coerce.h",
+    defines = [
+        "//texk/web2c/web2c:common.defines",
+        "//texk/web2c/web2c:texmf.defines",
+        "synctexdir/synctex.defines",
+        "pdftexdir/pdftex.defines",
+    ],
+    header = "texmfmp.h",
+    is_tex_engine = True,
+    program = "pdftex",
+    tags = ["manual"],
+    use_splitup = True,
+)
+
+makecpool_pool(
+    name = "pdftex_pool_c",
+    pool = ":pdftex_p",
+    program = "pdftex",
+    tags = ["manual"],
+)
+
+cc_library(
+    name = "libpdftex",
+    srcs = glob(
+        ["pdftexdir/*.c"],
+        exclude = [
+            # macnames.c is textually included by writettf.c.
+            "pdftexdir/macnames.c",
+            # ttf2afm.c is a separate binary upstream.
+            "pdftexdir/ttf2afm.c",
+            # pdftexextra.c is the canonical *definition* site for all
+            # EXTERN-declared engine globals (it #defines EXTERN as empty
+            # before including pdftexd.h). It must live in the cc_binary
+            # exactly once, not be compiled into the shared library too —
+            # otherwise the linker sees duplicate definitions.
+            "pdftexdir/pdftexextra.c",
+        ],
+    ) + [
+        # pdftoepdf.cc is the xpdf glue for embedded-PDF inclusion. It
+        # links against //libs/xpdf (texlive's bundled, TL-patched xpdf
+        # 4.06 with the no-arg `GlobalParams()` ctor), NOT against the
+        # BCR @xpdf which lacks those patches.
+        "pdftexdir/pdftoepdf.cc",
+        # synctex.c must be compiled with the engine's pdftexd.h on the
+        # include path AND with -DSYNCTEX_ENGINE_H="synctex-pdftex.h" so
+        # synctex.h pulls in the right per-engine type definitions. It
+        # cannot live in a shared synctex_lib for the same reason.
+        "synctexdir/synctex.c",
+        ":pdftex_c_gen",
+        ":pdftex_pool_c",
+    ],
+    hdrs = glob(["pdftexdir/*.h"]) + glob(["synctexdir/*.h"]),
+    # `macnames.c` references NULL without including any header. Upstream
+    # picks it up via the autoconf-generated config.h chain; we force
+    # stdlib.h to avoid patching the source. The MSVC shim neutralises
+    # __attribute__((format(printf, ...))) etc. in pdftex-common.h.
+    copts = TEXLIVE_COPTS + force_include_copts("stdlib.h") +
+            MSVC_ATTRIBUTE_SHIM_COPTS,
+    # pdftexdir/ptexlib.h does `#include "pdftexd.h"` and `pdftexd.h` is
+    # generated into texk/web2c/. Surface that dir on the include path so
+    # those quote-includes resolve. synctex headers live in synctexdir/.
+    includes = [
+        ".",
+        "synctexdir",
+    ],
+    local_defines = TEX_ENGINE_DEFINES + [
+        "pdfTeX",
+        "__SyncTeX__",
+        # SYNCTEX_ENGINE_H needs to be a quoted C string at the
+        # preprocessor — `\\"` escapes through to `\"` in the emitted
+        # -D / /D flag, which both gcc and cl.exe accept.
+        "SYNCTEX_ENGINE_H=\\\"synctex-pdftex.h\\\"",
+    ],
+    tags = ["manual"],
+    # pdftexdir/utils.c uses POSIX <regex.h> (REG_EXTENDED, regcomp,
+    # regexec — driving `\pdfmatch`). MSVC ships no POSIX regex and
+    # we don't vendor a shim. MinGW gets it via msys2's libc, so the
+    # gate is on cl.exe / clang-cl rather than os:windows.
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    # `lib/texmfmp.c` is textually included by pdftexextra.c, and
+    # `pdftexdir/macnames.c` by writettf.c — these must NOT be compiled
+    # standalone (textual_hdrs gives them to the preprocessor only).
+    textual_hdrs = [
+        "lib/texmfmp.c",
+        "pdftexdir/macnames.c",
+    ],
+    deps = [
+        ":md5",
+        ":web2c_lib",
+        "//:xpdf",
+        "//bazel:msvc_shim",
+        "//texk/kpathsea",
+        "@libpng//:png",
+        "@zlib",
+    ],
+)
+
+cc_binary(
+    name = "pdftex",
+    srcs = ["pdftexdir/pdftexextra.c"],
+    copts = TEXLIVE_COPTS,
+    linkopts = MATH_LINKOPTS,
+    # pdftexextra.c is the EXTERN definition site AND the textual host
+    # for `lib/texmfmp.c`. Both `pdfTeX` and `__SyncTeX__` must be set
+    # here (matching libpdftex) so that the engine-specific glue and
+    # SyncTeX functions actually get a definition in the binary.
+    local_defines = TEX_ENGINE_DEFINES + [
+        "pdfTeX",
+        "__SyncTeX__",
+    ],
+    tags = ["manual"],
+    # Inherits MSVC-incompatibility from libpdftex (POSIX <regex.h>).
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":libpdftex"],
+)
+
+# =============================================================================
+# tex - the plain / initex engine (Knuth's original)
+# =============================================================================
+
+combine_changes(
+    name = "tex_final_ch",
+    out = "tex-final.ch",
+    changes = [
+        "tex.ch",
+        "enctexdir/enctex1.ch",
+        "enctexdir/enctex-tex.ch",
+        "enctexdir/enctex2.ch",
+        # tex SyncTeX stack — mirrors TEX_SYNCTEX in synctex.am.
+        "synctexdir/synctex-def.ch0",
+        "synctexdir/synctex-mem.ch0",
+        "synctexdir/synctex-mem.ch2",
+        "synctexdir/synctex-rec.ch0",
+        "synctexdir/synctex-rec.ch1",
+        "synctexdir/synctex-rec.ch2",
+        "tex-binpool.ch",
+    ],
+    tags = ["manual"],
+    web = "tex.web",
+)
+
+tangle_web(
+    name = "tex_p",
+    ch = ":tex_final_ch",
+    emit_pool = True,
+    program = "tex",
+    tags = ["manual"],
+    web = "tex.web",
+)
+
+web2c_convert(
+    name = "tex_c_gen",
+    src = ":tex_p",
+    outs = [
+        "tex0.c",
+        "texcoerce.h",
+        "texd.h",
+        "texini.c",
+    ],
+    coerce_tail = "//texk/web2c/web2c:coerce.h",
+    defines = [
+        "//texk/web2c/web2c:common.defines",
+        "//texk/web2c/web2c:texmf.defines",
+        "synctexdir/synctex.defines",
+    ],
+    header = "texmfmp.h",
+    is_tex_engine = True,
+    program = "tex",
+    tags = ["manual"],
+    use_splitup = True,
+)
+
+makecpool_pool(
+    name = "tex_pool_c",
+    pool = ":tex_p",
+    program = "tex",
+    tags = ["manual"],
+)
+
+cc_library(
+    name = "libtex",
+    srcs = [
+        "synctexdir/synctex.c",
+        ":tex_c_gen",
+        ":tex_pool_c",
+    ],
+    hdrs = glob(["synctexdir/*.h"]),
+    copts = TEXLIVE_COPTS + MSVC_ATTRIBUTE_SHIM_COPTS,
+    includes = [
+        ".",
+        "synctexdir",
+    ],
+    local_defines = TEX_ENGINE_DEFINES + [
+        "TeX",
+        "__SyncTeX__",
+        "SYNCTEX_ENGINE_H=\\\"synctex-tex.h\\\"",
+    ],
+    tags = ["manual"],
+    # lib/texmfmp.c is textually included by texextra.c (in the binary).
+    # textual_hdrs exposes it via the dep graph so preprocessor finds it.
+    textual_hdrs = ["lib/texmfmp.c"],
+    deps = [
+        ":md5",
+        ":web2c_lib",
+        "//bazel:msvc_shim",
+        "//texk/kpathsea",
+        "@zlib",
+    ],
+)
+
+cc_binary(
+    name = "tex",
+    srcs = ["texextra.c"],
+    copts = TEXLIVE_COPTS,
+    linkopts = MATH_LINKOPTS,
+    local_defines = TEX_ENGINE_DEFINES + [
+        "TeX",
+        "__SyncTeX__",
+    ],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [":libtex"],
+)
+
+# =============================================================================
+# NOTE: classic 7-bit bibtex is not built here — it needs cvtbib.sed
+# post-processing (jmp_buf/setjmp translation of Pascal `goto`s) that
+# our web2c_convert rule doesn't yet support. Consumers should use
+# `//texk/bibtex-x:bibtex8` (the extended 8-bit bibtex) instead.
+# =============================================================================
+
+# =============================================================================
+# WEB helper utilities — plain tangle → web2c → cc_binary pipeline. See
+# the `web_utility` macro in //bazel:texlive.bzl. Every entry matches
+# `nodist_<name>_SOURCES = <name>.c <name>.h` in texk/web2c/am/web.am.
+# All tagged manual: consumers reach them via explicit label.
+# =============================================================================
+
+[
+    web_utility(name = name)
+    for name in [
+        "dvicopy",
+        "dvitype",
+        "gftopk",
+        "gftype",
+        "mft",
+        "patgen",
+        "pktogf",
+        "pktype",
+        "pltotf",
+        "pooltype",
+        "tftopl",
+        "vftovp",
+        "vptovf",
+        "weave",
+    ]
+]
+
+# gftodvi's dist_gftodvi_SOURCES pulls in an extra header (gftodmem.h)
+# that gftodvi.c #includes but the WEB tangle doesn't emit.
+web_utility(
+    name = "gftodvi",
+    extra_srcs = ["gftodmem.h"],
+)
+
+# =============================================================================
+# omegaware/ — Omega/Aleph WEB helpers. odvicopy/odvitype use the plain
+# `tangle` path (their .web + .ch sit under omegaware/). The other four
+# (ofm2opl, opl2ofm, ovf2ovp, ovp2ovf, otangle) need `otangle` + `tie -m`
+# merges upstream — deferred pending a Bazel port of that chain.
+# =============================================================================
+
+[
+    web_utility(
+        name = name,
+        ch = "omegaware/" + name + ".ch",
+        web = "omegaware/" + name + ".web",
+    )
+    for name in [
+        "odvicopy",
+        "odvitype",
+    ]
+]
+
+# =============================================================================
+# otps/ — Omega Translation Process programs (plain C, no WEB pipeline).
+# =============================================================================
+
+[
+    cc_binary(
+        name = name,
+        srcs = srcs,
+        copts = TEXLIVE_COPTS,
+        includes = ["otps"],
+        local_defines = TEXLIVE_LOCAL_DEFINES,
+        tags = ["manual"],
+        visibility = ["//visibility:public"],
+        deps = [
+            ":web2c_lib",
+            "//texk/kpathsea",
+        ],
+    )
+    for name, srcs in [
+        (
+            "otp2ocp",
+            [
+                "otps/otp.h",
+                "otps/otp-lexer.c",
+                "otps/otp-parser.c",
+                "otps/otp-parser.h",
+                "otps/otp2ocp.c",
+                "otps/routines.c",
+                "otps/routines.h",
+                "otps/yystype.h",
+            ],
+        ),
+        (
+            "outocp",
+            [
+                "otps/otp.h",
+                "otps/outocp.c",
+                "otps/routines.h",
+            ],
+        ),
+    ]
+]
+
+# =============================================================================
+# luatex - Lua-scriptable TeX engine
+# =============================================================================
+
+# libunilib (the bundled FontForge unilib) expects a config.h that upstream
+# generates via autoconf. We provide a minimal stub: <stdbool.h> for
+# true/false, <stdint.h> for uint*_t, and <kpathsea/lib.h> for the
+# xmalloc/xrealloc/xstrdup/xcalloc declarations the unilib sources use
+# (older GCC silently warned on the implicit decls; Debian 13's GCC
+# treats `-Wimplicit-function-declaration` as a hard error).
+write_file(
+    name = "libunilib_config_h_gen",
+    out = "luatexdir/unilib/config.h",
+    content = [
+        "#ifndef _LIBUNILIB_CONFIG_H",
+        "#define _LIBUNILIB_CONFIG_H",
+        "#include <stdbool.h>",
+        "#include <stdint.h>",
+        "#include <kpathsea/lib.h>",
+        "#endif",
+        "",
+    ],
+)
+
+# Private config.h wrapper kept out of libunilib's public surface so
+# downstream consumers (libluatex etc.) do not see <config.h> from here.
+cc_library(
+    name = "libunilib_config",
+    hdrs = [":libunilib_config_h_gen"],
+    strip_include_prefix = "luatexdir/unilib",
+    deps = ["//texk/kpathsea"],
+)
+
+cc_library(
+    name = "libunilib",
+    srcs = glob(["luatexdir/unilib/*.c"]),
+    hdrs = glob(["luatexdir/unilib/*.h"]),
+    copts = TEXLIVE_COPTS + force_include_copts("config.h"),
+    implementation_deps = [":libunilib_config"],
+    strip_include_prefix = "luatexdir/unilib",
+)
+
+cc_library(
+    name = "libluatex",
+    srcs = glob(
+        [
+            "luatexdir/**/*.c",
+            "luatexdir/**/*.h",
+        ],
+        exclude = [
+            "luatexdir/unilib/**",
+            "luatexdir/luatex.c",
+        ],
+    ),
+    copts = TEXLIVE_COPTS,
+    local_defines = TEX_ENGINE_DEFINES + ["LuaTeX"],
+    tags = ["manual"],
+    deps = [
+        ":libunilib",
+        ":md5",
+        ":web2c_lib",
+        "//texk/kpathsea",
+        "@libpng//:png",
+        "@lua//:liblua",
+        "@pplib",
+        "@zlib",
+        "@zziplib",
+    ],
+)
+
+cc_binary(
+    name = "luatex",
+    srcs = ["luatexdir/luatex.c"],
+    copts = TEXLIVE_COPTS,
+    linkopts = MATH_LINKOPTS,
+    local_defines = TEX_ENGINE_DEFINES + ["LuaTeX"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [":libluatex"],
+)
+
+# =============================================================================
+# luahbtex - LuaTeX with HarfBuzz
+# =============================================================================
+
+cc_binary(
+    name = "luahbtex",
+    srcs = ["luatexdir/luatex.c"],
+    copts = TEXLIVE_COPTS,
+    linkopts = MATH_LINKOPTS,
+    local_defines = TEX_ENGINE_DEFINES + [
+        "LuaTeX",
+        "LuaHBTeX",
+    ],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libluatex",
+        "@harfbuzz",
+    ],
+)
+
+# =============================================================================
+# xetex - Unicode TeX engine
+# =============================================================================
+
+cc_library(
+    name = "libxetex",
+    srcs = glob(
+        [
+            "xetexdir/*.c",
+            "xetexdir/*.cpp",
+        ],
+        exclude = [
+            "xetexdir/XeTeXFontInst_Mac.cpp",
+            "xetexdir/XeTeX_mac.c",
+        ],
+    ) + select({
+        "@platforms//os:macos": [
+            "xetexdir/XeTeXFontInst_Mac.cpp",
+            "xetexdir/XeTeX_mac.c",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(["xetexdir/*.h"]) + glob(["xetexdir/image/*.h"]),
+    copts = TEXLIVE_COPTS,
+    local_defines = TEX_ENGINE_DEFINES + ["XeTeX"],
+    tags = ["manual"],
+    deps = [
+        ":web2c_lib",
+        "//texk/kpathsea",
+        "@freetype",
+        "@harfbuzz",
+        "@libpng//:png",
+        "@pplib",
+        "@teckit//:TECkit",
+        "@zlib",
+    ],
+)
+
+# =============================================================================
+# hitex - HiTeX engine
+# =============================================================================
+
+cc_binary(
+    name = "hitex",
+    srcs = glob([
+        "hitexdir/*.c",
+        "hitexdir/*.h",
+    ]),
+    copts = TEXLIVE_COPTS,
+    linkopts = MATH_LINKOPTS,
+    local_defines = TEX_ENGINE_DEFINES + ["HiTeX"],
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":web2c_lib",
+        "//texk/kpathsea",
+        "@harfbuzz",
+        "@zlib",
+    ],
+)
+
+# =============================================================================
+# MetaPost library and programs
+# =============================================================================
+
+cc_library(
+    name = "libmplib",
+    srcs = glob(["mplibdir/*.c"]),
+    hdrs = glob(["mplibdir/*.h"]),
+    copts = TEXLIVE_COPTS,
+    local_defines = TEXLIVE_LOCAL_DEFINES,
+    tags = ["manual"],
+    deps = [
+        ":web2c_lib",
+        "//libs/mpfi",
+        "//texk/kpathsea",
+        "@cairo",
+        "@libpng//:png",
+        "@mpfr",
+        "@zlib",
+    ],
+)
+
+# =============================================================================
+# METAFONT
+# =============================================================================
+
+# mflua support libraries
+cc_library(
+    name = "mflualpeg",
+    srcs = glob([
+        "mfluadir/**/*.c",
+        "mfluadir/**/*.h",
+    ]),
+    copts = TEXLIVE_COPTS,
+    local_defines = TEXLIVE_LOCAL_DEFINES,
+    tags = ["manual"],
+    deps = [
+        "//texk/kpathsea",
+        "@lua//:liblua",
+    ],
+)
+
+# =============================================================================
+# Aleph
+# =============================================================================
+
+cc_library(
+    name = "libaleph",
+    srcs = glob(["alephdir/*.c"]),
+    hdrs = glob(["alephdir/*.h"]),
+    copts = TEXLIVE_COPTS,
+    local_defines = TEX_ENGINE_DEFINES + ["Aleph"],
+    tags = ["manual"],
+    deps = [
+        ":web2c_lib",
+        "//texk/kpathsea",
+    ],
+)
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+[
+    genrule(
+        name = engine + "_version",
+        outs = [engine + "_version.txt"],
+        cmd = "$(execpath :{engine}) --version > $@".format(engine = engine),
+        tags = ["manual"],
+        tools = [":" + engine],
+    )
+    for engine in [
+        "luatex",
+        "luahbtex",
+        "hitex",
+    ]
+]
+
+sh_texlive_test(
+    name = "tangle_test",
+    bin = ":tangle",
+    data = ["//texk/kpathsea"] + glob(["cftests/**"]),
+    main = "tangle.test",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# Upstream's own pdftex smoke: runs `pdftex --version` and `--help` to
+# verify the binary loads and the version banner prints. Cheap, no
+# texmf data needed — the more substantive end-to-end test is
+# `bazel build @texlive//:pdflatex_fmt`, which compiles the LaTeX
+# kernel and only succeeds if pdftex + texmf-dist work together.
+sh_texlive_test(
+    name = "pdftex_test",
+    bin = ":pdftex",
+    main = "pdftexdir/pdftex.test",
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)

@@ -1,0 +1,567 @@
+"""Build tcpdump 4.99.6 — ported from CMakeLists.txt / configure.ac."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+package_info(
+    name = "package",
+    module_bazel = "MODULE.bazel",
+    strip_bcr_version = True,
+)
+
+# All autoconf checks ported from configure.ac / CMakeLists.txt.
+# Checks that require linking against libpcap (pcap_* functions) use
+# AC_DEFINE instead of AC_CHECK_FUNC because libpcap is a Bazel target,
+# not a system library available during autoconf probing.  The defines
+# match what libpcap 1.10.5 exports.
+autoconf(
+    name = "autoconf",
+    checks = [
+        checks.AC_PROG_CC(),
+
+        # ── AC_CHECK_SIZEOF (configure.ac lines 43, 48) ──
+        checks.AC_CHECK_SIZEOF(
+            "void *",
+            define = "SIZEOF_VOID_P",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "time_t",
+            define = "SIZEOF_TIME_T",
+            includes = ["#include <time.h>"],
+        ),
+
+        # ── Standard headers ──
+        checks.AC_CHECK_HEADER(
+            "inttypes.h",
+            define = "HAVE_INTTYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdint.h",
+            define = "HAVE_STDINT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdio.h",
+            define = "HAVE_STDIO_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "stdlib.h",
+            define = "HAVE_STDLIB_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "string.h",
+            define = "HAVE_STRING_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "strings.h",
+            define = "HAVE_STRINGS_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "memory.h",
+            define = "HAVE_MEMORY_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/stat.h",
+            define = "HAVE_SYS_STAT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/types.h",
+            define = "HAVE_SYS_TYPES_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "unistd.h",
+            define = "HAVE_UNISTD_H",
+        ),
+
+        # ── tcpdump-specific headers (configure.ac line 34) ──
+        checks.AC_CHECK_HEADER(
+            "rpc/rpc.h",
+            define = "HAVE_RPC_RPC_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "rpc/rpcent.h",
+            define = "HAVE_RPC_RPCENT_H",
+        ),
+        checks.AC_CHECK_HEADER(
+            "net/if.h",
+            define = "HAVE_NET_IF_H",
+        ),
+
+        # ── AC_REPLACE_FUNCS / AC_CHECK_FUNCS (configure.ac lines 449-451) ──
+        checks.AC_CHECK_FUNC(
+            "strlcat",
+            define = "HAVE_STRLCAT",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strlcpy",
+            define = "HAVE_STRLCPY",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strdup",
+            define = "HAVE_STRDUP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "strsep",
+            define = "HAVE_STRSEP",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getservent",
+            define = "HAVE_GETSERVENT",
+        ),
+        checks.AC_CHECK_FUNC(
+            "getopt_long",
+            define = "HAVE_GETOPT_LONG",
+        ),
+        checks.AC_CHECK_FUNC(
+            "fork",
+            define = "HAVE_FORK",
+        ),
+        checks.AC_CHECK_FUNC(
+            "vfork",
+            define = "HAVE_VFORK",
+        ),
+        checks.AC_CHECK_FUNC(
+            "setlinebuf",
+            define = "HAVE_SETLINEBUF",
+        ),
+
+        # ── getrpcbynumber (configure.ac line 544) ──
+        checks.AC_CHECK_FUNC(
+            "getrpcbynumber",
+            define = "HAVE_GETRPCBYNUMBER",
+        ),
+
+        # ── ether_ntohost (configure.ac line 564) ──
+        checks.AC_CHECK_FUNC(
+            "ether_ntohost",
+            define = "HAVE_ETHER_NTOHOST",
+        ),
+
+        # USE_ETHER_NTOHOST — set when ether_ntohost() exists and is
+        # assumed non-buggy (configure.ac line 588, CMakeLists.txt line 664).
+        checks.AC_DEFINE(
+            "USE_ETHER_NTOHOST",
+            "1",
+            requires = ["HAVE_ETHER_NTOHOST=1"],
+        ),
+
+        # ── ether_ntohost declaration chain (configure.ac lines 600-740) ──
+        # Sequential fallback: stop checking once a header is found.
+        checks.AC_CHECK_DECL(
+            "ether_ntohost",
+            name = "ac_cv_have_decl_ether_ntohost_net_ethernet_h",
+            define = "NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST",
+            includes = ["#include <net/ethernet.h>"],
+            requires = ["HAVE_ETHER_NTOHOST=1"],
+        ),
+        checks.AC_DEFINE(
+            "NET_ETHERNET_H_DECLARES_ETHER_NTOHOST",
+            "",
+            requires = ["NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=1"],
+        ),
+        checks.AC_CHECK_DECL(
+            "ether_ntohost",
+            name = "ac_cv_have_decl_ether_ntohost_netinet_ether_h",
+            define = "NETINET_ETHER_H_DECLARES_ETHER_NTOHOST_TEST",
+            includes = ["#include <netinet/ether.h>"],
+            requires = [
+                "HAVE_ETHER_NTOHOST=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "NETINET_ETHER_H_DECLARES_ETHER_NTOHOST",
+            "",
+            requires = ["NETINET_ETHER_H_DECLARES_ETHER_NTOHOST_TEST=1"],
+        ),
+        checks.AC_CHECK_DECL(
+            "ether_ntohost",
+            name = "ac_cv_have_decl_ether_ntohost_sys_ethernet_h",
+            define = "SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST",
+            includes = ["#include <sys/ethernet.h>"],
+            requires = [
+                "HAVE_ETHER_NTOHOST=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+                "NETINET_ETHER_H_DECLARES_ETHER_NTOHOST_TEST=0",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST",
+            "",
+            requires = ["SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=1"],
+        ),
+        checks.AC_CHECK_DECL(
+            "ether_ntohost",
+            name = "ac_cv_have_decl_ether_ntohost_arpa_inet_h",
+            define = "ARPA_INET_H_DECLARES_ETHER_NTOHOST_TEST",
+            includes = ["#include <arpa/inet.h>"],
+            requires = [
+                "HAVE_ETHER_NTOHOST=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+                "NETINET_ETHER_H_DECLARES_ETHER_NTOHOST_TEST=0",
+                "SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "ARPA_INET_H_DECLARES_ETHER_NTOHOST",
+            "",
+            requires = ["ARPA_INET_H_DECLARES_ETHER_NTOHOST_TEST=1"],
+        ),
+        checks.AC_CHECK_DECL(
+            "ether_ntohost",
+            name = "ac_cv_have_decl_ether_ntohost_netinet_if_ether_h",
+            define = "NETINET_IF_ETHER_H_DECLARES_ETHER_NTOHOST_TEST",
+            includes = [
+                "#include <net/if.h>",
+                "#include <netinet/if_ether.h>",
+                "#include <netinet/in.h>",
+                "#include <sys/socket.h>",
+                "#include <sys/types.h>",
+            ],
+            requires = [
+                "HAVE_ETHER_NTOHOST=1",
+                "NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+                "NETINET_ETHER_H_DECLARES_ETHER_NTOHOST_TEST=0",
+                "SYS_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+                "ARPA_INET_H_DECLARES_ETHER_NTOHOST_TEST=0",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "NETINET_IF_ETHER_H_DECLARES_ETHER_NTOHOST",
+            "",
+            requires = ["NETINET_IF_ETHER_H_DECLARES_ETHER_NTOHOST_TEST=1"],
+        ),
+
+        # HAVE_DECL_ETHER_NTOHOST — set if net/ethernet.h declares it
+        # (macOS/BSD).  On Linux, netinet/ether.h declares it and the
+        # NETINET_ETHER_H_DECLARES_ETHER_NTOHOST define steers the
+        # correct header inclusion, so the code still compiles.
+        checks.AC_DEFINE(
+            "HAVE_DECL_ETHER_NTOHOST",
+            "1",
+            requires = ["NET_ETHERNET_H_DECLARES_ETHER_NTOHOST_TEST=1"],
+        ),
+
+        # ── struct ether_addr (configure.ac lines 731-738) ──
+        checks.AC_CHECK_TYPE(
+            "struct ether_addr",
+            define = "HAVE_STRUCT_ETHER_ADDR",
+            includes = [
+                "#include <net/if.h>",
+                "#include <netinet/if_ether.h>",
+                "#include <netinet/in.h>",
+                "#include <sys/socket.h>",
+                "#include <sys/types.h>",
+            ],
+        ),
+
+        # ── openat (used by Capsicum sandbox path) ──
+        checks.AC_CHECK_FUNC(
+            "openat",
+            define = "HAVE_OPENAT",
+        ),
+
+        # ── libpcap features ──
+        # All available in libpcap >= 1.10.5 (the BCR version).
+        # Cannot use AC_CHECK_FUNC because libpcap is a Bazel
+        # dependency, not a system library reachable during probing.
+        checks.AC_DEFINE("HAVE_PCAP_LIST_DATALINKS", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_FREE_DATALINKS", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_DATALINK_NAME_TO_VAL", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_DATALINK_VAL_TO_DESCRIPTION", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_SET_DATALINK", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_BREAKLOOP", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_DUMP_FTELL", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_DUMP_FTELL64", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_CREATE", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_SET_TSTAMP_TYPE", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_SET_TSTAMP_PRECISION", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_FINDALLDEVS", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_DUMP_FLUSH", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_LIB_VERSION", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_SETDIRECTION", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_SET_IMMEDIATE_MODE", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_IF_T", "1"),
+        checks.AC_DEFINE("HAVE_PCAP_PCAP_INTTYPES_H", "1"),
+        checks.AC_DEFINE("HAVE_BPF_DUMP", "1"),
+
+        # ── IPv6 — available on all modern platforms ──
+        checks.AC_DEFINE("HAVE_OS_IPV6_SUPPORT", "1"),
+
+        # ── Standard / unconditional defines ──
+        checks.AC_DEFINE("STDC_HEADERS", "1"),
+        checks.AC_DEFINE("HAVE_UINTPTR_T", "1"),
+    ],
+    deps = [":package"],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+# Header-only library so both cc_library and cc_binary targets can
+# pick up the generated config.h via deps.
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    defines = ["HAVE_CONFIG_H"],
+    includes = ["."],
+)
+
+# ── Source lists ──
+# Ported from CMakeLists.txt NETDISSECT_SOURCE_LIST_C (line 1267).
+
+NETDISSECT_SRCS = [
+    "addrtoname.c",
+    "addrtostr.c",
+    "af.c",
+    "ascii_strcasecmp.c",
+    "checksum.c",
+    "cpack.c",
+    "gmpls.c",
+    "in_cksum.c",
+    "ipproto.c",
+    "l2vpn.c",
+    "machdep.c",
+    "netdissect.c",
+    "netdissect-alloc.c",
+    "nlpid.c",
+    "ntp.c",
+    "oui.c",
+    "parsenfsfh.c",
+    "print.c",
+    "print-802_11.c",
+    "print-802_15_4.c",
+    "print-ah.c",
+    "print-ahcp.c",
+    "print-aodv.c",
+    "print-aoe.c",
+    "print-ap1394.c",
+    "print-arcnet.c",
+    "print-arista.c",
+    "print-arp.c",
+    "print-ascii.c",
+    "print-atalk.c",
+    "print-atm.c",
+    "print-babel.c",
+    "print-bcm-li.c",
+    "print-beep.c",
+    "print-bfd.c",
+    "print-bgp.c",
+    "print-bootp.c",
+    "print-brcmtag.c",
+    "print-bt.c",
+    "print-calm-fast.c",
+    "print-carp.c",
+    "print-cdp.c",
+    "print-cfm.c",
+    "print-chdlc.c",
+    "print-cip.c",
+    "print-cnfp.c",
+    "print-dccp.c",
+    "print-decnet.c",
+    "print-dhcp6.c",
+    "print-domain.c",
+    "print-dsa.c",
+    "print-dtp.c",
+    "print-dvmrp.c",
+    "print-eap.c",
+    "print-egp.c",
+    "print-eigrp.c",
+    "print-enc.c",
+    "print-esp.c",
+    "print-ether.c",
+    "print-fddi.c",
+    "print-forces.c",
+    "print-fr.c",
+    "print-frag6.c",
+    "print-ftp.c",
+    "print-geneve.c",
+    "print-geonet.c",
+    "print-gre.c",
+    "print-hncp.c",
+    "print-hsrp.c",
+    "print-http.c",
+    "print-icmp.c",
+    "print-icmp6.c",
+    "print-igmp.c",
+    "print-igrp.c",
+    "print-ip.c",
+    "print-ip-demux.c",
+    "print-ip6.c",
+    "print-ip6opts.c",
+    "print-ipcomp.c",
+    "print-ipfc.c",
+    "print-ipnet.c",
+    "print-ipoib.c",
+    "print-ipx.c",
+    "print-isakmp.c",
+    "print-isoclns.c",
+    "print-juniper.c",
+    "print-krb.c",
+    "print-l2tp.c",
+    "print-lane.c",
+    "print-ldp.c",
+    "print-lisp.c",
+    "print-llc.c",
+    "print-lldp.c",
+    "print-lmp.c",
+    "print-loopback.c",
+    "print-lspping.c",
+    "print-lwapp.c",
+    "print-lwres.c",
+    "print-m3ua.c",
+    "print-macsec.c",
+    "print-mobile.c",
+    "print-mobility.c",
+    "print-mpcp.c",
+    "print-mpls.c",
+    "print-mptcp.c",
+    "print-msdp.c",
+    "print-msnlb.c",
+    "print-nflog.c",
+    "print-nfs.c",
+    "print-nsh.c",
+    "print-ntp.c",
+    "print-null.c",
+    "print-olsr.c",
+    "print-openflow.c",
+    "print-openflow-1.0.c",
+    "print-openflow-1.3.c",
+    "print-ospf.c",
+    "print-ospf6.c",
+    "print-pflog.c",
+    "print-pgm.c",
+    "print-pim.c",
+    "print-pktap.c",
+    "print-ppi.c",
+    "print-ppp.c",
+    "print-pppoe.c",
+    "print-pptp.c",
+    "print-ptp.c",
+    "print-radius.c",
+    "print-raw.c",
+    "print-realtek.c",
+    "print-resp.c",
+    "print-rip.c",
+    "print-ripng.c",
+    "print-rpki-rtr.c",
+    "print-rsvp.c",
+    "print-rt6.c",
+    "print-rtsp.c",
+    "print-rx.c",
+    "print-sctp.c",
+    "print-sflow.c",
+    "print-sip.c",
+    "print-sl.c",
+    "print-sll.c",
+    "print-slow.c",
+    "print-smtp.c",
+    "print-snmp.c",
+    "print-someip.c",
+    "print-ssh.c",
+    "print-stp.c",
+    "print-sunatm.c",
+    "print-sunrpc.c",
+    "print-symantec.c",
+    "print-syslog.c",
+    "print-tcp.c",
+    "print-telnet.c",
+    "print-tftp.c",
+    "print-timed.c",
+    "print-tipc.c",
+    "print-token.c",
+    "print-udld.c",
+    "print-udp.c",
+    "print-unsupported.c",
+    "print-usb.c",
+    "print-vjc.c",
+    "print-vqp.c",
+    "print-vrrp.c",
+    "print-vsock.c",
+    "print-vtp.c",
+    "print-vxlan.c",
+    "print-vxlan-gpe.c",
+    "print-wb.c",
+    "print-whois.c",
+    "print-zep.c",
+    "print-zephyr.c",
+    "print-zeromq.c",
+    "signature.c",
+    "strtoaddr.c",
+    "util-print.c",
+]
+
+# Missing libc function replacements (CMakeLists.txt lines 1452-1458).
+# strlcat/strlcpy were added to glibc in 2.38 (2023-08) and are present
+# on macOS/BSD.  The remaining functions (strdup, strsep, getservent,
+# getopt_long) are available on all modern platforms the BCR targets.
+NETDISSECT_MISSING_SRCS = select({
+    "@platforms//os:linux": [
+        "missing/strlcat.c",
+        "missing/strlcpy.c",
+    ],
+    "//conditions:default": [],
+})
+
+NETDISSECT_HDRS = glob(
+    ["*.h"],
+    exclude = ["getservent.h"],
+) + ["missing/getopt_long.h"]
+
+# The netdissect static library (CMakeLists.txt line 1460).
+cc_library(
+    name = "netdissect",
+    srcs = NETDISSECT_SRCS + NETDISSECT_MISSING_SRCS + NETDISSECT_HDRS,
+    implementation_deps = [
+        ":config",
+    ],
+    includes = ["."],
+    deps = [
+        "@libpcap",
+    ],
+)
+
+# The tcpdump binary (CMakeLists.txt lines 1467, 1546).
+# bpf_dump.c and missing/pcap_dump_ftell.c are excluded because
+# libpcap >= 1.10.5 provides bpf_dump() and pcap_dump_ftell().
+# missing/datalinks.c and missing/dlnames.c are excluded because
+# libpcap >= 1.10.5 provides the corresponding functions.
+cc_binary(
+    name = "tcpdump",
+    srcs = [
+        "fptype.c",
+        "tcpdump.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":netdissect",
+        "@libpcap",
+    ],
+)
+
+##############################################################################
+## Tests
+##############################################################################
+
+# Smoke test: invoke tcpdump --help to verify the binary links and
+# runs correctly.  The output is captured to a file so the genrule
+# produces a build artifact that downstream targets can depend on.
+genrule(
+    name = "smoke_test",
+    outs = ["smoke_test.txt"],
+    cmd = "$(execpath :tcpdump) --help > $@ 2>&1",
+    cmd_bat = "$(execpath :tcpdump) --help > $@ 2>&1",
+    tools = [":tcpdump"],
+)

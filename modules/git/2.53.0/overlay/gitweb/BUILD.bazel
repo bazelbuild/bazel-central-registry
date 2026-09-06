@@ -1,0 +1,93 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+
+package(default_visibility = ["//visibility:public"])
+
+expand_template(
+    name = "gitweb_build_options",
+    out = "GITWEB-BUILD-OPTIONS",
+    substitutions = {
+        "@PERL_PATH@": "'/usr/bin/perl'",
+        "@JSMIN@": "''",
+        "@CSSMIN@": "''",
+        "@GIT_BINDIR@": "'/usr/bin'",
+        "@GITWEB_CONFIG@": "'gitweb_config.perl'",
+        "@GITWEB_CONFIG_SYSTEM@": "'/etc/gitweb.conf'",
+        "@GITWEB_CONFIG_COMMON@": "'/etc/gitweb-common.conf'",
+        "@GITWEB_HOME_LINK_STR@": "'projects'",
+        "@GITWEB_SITENAME@": "''",
+        "@GITWEB_PROJECTROOT@": "'/pub/git'",
+        "@GITWEB_PROJECT_MAXDEPTH@": "2007",
+        "@GITWEB_EXPORT_OK@": "''",
+        "@GITWEB_STRICT_EXPORT@": "''",
+        "@GITWEB_BASE_URL@": "''",
+        "@GITWEB_LIST@": "''",
+        "@GITWEB_HOMETEXT@": "'indextext.html'",
+        "@GITWEB_CSS@": "'static/gitweb.css'",
+        "@GITWEB_LOGO@": "'static/git-logo.png'",
+        "@GITWEB_FAVICON@": "'static/git-favicon.png'",
+        "@GITWEB_JS@": "'static/gitweb.js'",
+        "@GITWEB_SITE_HTML_HEAD_STRING@": "''",
+        "@GITWEB_SITE_HEADER@": "''",
+        "@GITWEB_SITE_FOOTER@": "''",
+        "@HIGHLIGHT_BIN@": "'highlight'",
+    },
+    template = "GITWEB-BUILD-OPTIONS.in",
+)
+
+genrule(
+    name = "gitweb_js",
+    srcs = [
+        "static/js/lib/common-lib.js",
+        "static/js/lib/datetime.js",
+        "static/js/lib/cookies.js",
+        "static/js/javascript-detection.js",
+        "static/js/adjust-timezone.js",
+        "static/js/blame_incremental.js",
+    ],
+    outs = ["static/gitweb.js"],
+    cmd = """
+      set -euo pipefail
+      out="$@"
+      out_dir="$${out%/*}"
+      mkdir -p "$$out_dir"
+      $(location generate-gitweb-js.sh) "$@" $(SRCS)
+    """,
+    tools = ["generate-gitweb-js.sh"],
+)
+
+genrule(
+    name = "gitweb_cgi",
+    srcs = [
+        "gitweb.perl",
+        ":gitweb_build_options",
+        "//:git_version_file",
+    ],
+    outs = ["gitweb.cgi"],
+    cmd = """
+      set -euo pipefail
+      out="$@"
+      out_dir="$${out%/*}"
+      mkdir -p "$$out_dir"
+      tmp="$@.tmp"
+      $(location generate-gitweb-cgi.sh) \
+        $(location :gitweb_build_options) \
+        $(location //:git_version_file) \
+        $(location gitweb.perl) \
+        "$$tmp"
+      mv "$$tmp" "$@"
+    """,
+    stamp = 1,
+    tools = ["generate-gitweb-cgi.sh"],
+)
+
+filegroup(
+    name = "gitweb",
+    srcs = glob(
+        ["static/**"],
+        exclude = ["static/gitweb.js"],
+    ) + [
+        ":gitweb_build_options",
+        ":gitweb_cgi",
+        ":gitweb_js",
+    ],
+)

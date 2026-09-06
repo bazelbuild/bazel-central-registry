@@ -1,0 +1,72 @@
+diff --git a/repositories.bzl b/repositories.bzl
+index c4c8aa00..20199c68 100644
+--- a/repositories.bzl
++++ b/repositories.bzl
+@@ -169,6 +169,10 @@ def _non_module_deps(_):
+         sha256 = bazel_sha256,
+         strip_prefix = "bazel-" + bazel_version,
+         url = "https://github.com/bazelbuild/bazel/archive/" + bazel_version + ".zip",
++        patch_args = ["-p1"],
++        patches = [
++            "//third_party/bazel:remove_proguard.patch",
++        ],
+     )
+ 
+ non_module_deps = module_extension(implementation = _non_module_deps)
+diff --git a/third_party/bazel/remove_proguard.patch b/third_party/bazel/remove_proguard.patch
+new file mode 100644
+index 00000000..56a8e886
+--- /dev/null
++++ b/third_party/bazel/remove_proguard.patch
+@@ -0,0 +1,51 @@
++diff --git a/third_party/BUILD b/third_party/BUILD
++index a27c52b59b..597cef5639 100644
++--- a/third_party/BUILD
+++++ b/third_party/BUILD
++@@ -304,43 +304,10 @@ alias(
++     actual = "@maven//:com_github_ben_manes_caffeine_caffeine",
++ )
++ 
++-# When using new classes from this dependency, make sure to update fastutil.proguard.
++-java_import(
+++# Remove ProGuard
+++alias(
++     name = "fastutil",
++-    jars = [":fastutil_stripped_jar"],
++-)
++-
++-genrule(
++-    name = "fastutil_stripped_jar",
++-    srcs = [
++-        "@maven//:it_unimi_dsi_fastutil_file",
++-        "@rules_java//toolchains:platformclasspath",
++-    ],
++-    outs = ["fastutil-stripped.jar"],
++-    # ProGuard output is silenced below because it prints
++-    # ...
++-    # Caused by: java.net.UnknownHostException: bk-docker-3gmr: Temporary failure in name resolution
++-    # ...
++-    # when running in the Bazel sandbox, which throws off bazel_determinism_test.
++-    cmd = """
++-    $(location :proguard) \
++-        -injars $(execpath @maven//:it_unimi_dsi_fastutil_file) \
++-        -outjars $@ \
++-        -libraryjars $(execpath @rules_java//toolchains:platformclasspath) \
++-        @$(location //tools:fastutil.proguard) > /dev/null
++-    # Null out the file times stored in the jar to make the output reproducible.
++-    TMPDIR=$$(mktemp -d)
++-    trap 'rm -rf $$TMPDIR' EXIT
++-    unzip -q $@ -d $$TMPDIR
++-    rm $@
++-    find $$TMPDIR -type f -print0 | xargs -0 touch -t 198001010000.00
++-    OUTPUT="$$(pwd)/$@"
++-    (cd $$TMPDIR && find . -type f | LC_ALL=C sort | zip -qDX0r@ "$$OUTPUT")
++-    """,
++-    tools = [
++-        ":proguard",
++-        "//tools:fastutil.proguard",
++-    ],
+++    actual = "@maven//:it_unimi_dsi_fastutil",
++ )
++ 
++ java_binary(

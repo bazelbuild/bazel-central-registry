@@ -1,0 +1,124 @@
+#define __LIBARCHIVE_CONFIG_H_INCLUDED 1
+
+#define HAVE_INT16_T
+#define HAVE_INT32_T
+#define HAVE_INT64_T
+#define HAVE_INTMAX_T
+
+#define HAVE_UINT8_T
+#define HAVE_UINT16_T
+#define HAVE_UINT32_T
+#define HAVE_UINT64_T
+#define HAVE_UINTMAX_T
+
+#define SIZEOF_SHORT 2
+#define SIZEOF_INT 4
+#define SIZEOF_LONG 4
+#define SIZEOF_LONG_LONG 8
+#define SIZEOF_UNSIGNED_SHORT 2
+#define SIZEOF_UNSIGNED 4
+#define SIZEOF_UNSIGNED_LONG 4
+#define SIZEOF_UNSIGNED_LONG_LONG 8
+
+#define ARCHIVE_CRYPTO_MD5_WIN 1
+#define ARCHIVE_CRYPTO_SHA1_WIN 1
+#define ARCHIVE_CRYPTO_SHA256_WIN 1
+#define ARCHIVE_CRYPTO_SHA384_WIN 1
+#define ARCHIVE_CRYPTO_SHA512_WIN 1
+
+#define BSDCPIO_VERSION_STRING "3.7.5"
+#define BSDTAR_VERSION_STRING "3.7.5"
+#define BSDCAT_VERSION_STRING "3.7.5"
+#define BSDUNZIP_VERSION_STRING "3.7.5"
+
+#define HAVE_BCRYPT_H 1
+#define HAVE_CTYPE_H 1
+#define HAVE_DECL_INT32_MAX 1
+#define HAVE_DECL_INT32_MIN 1
+#define HAVE_DECL_INT64_MAX 1
+#define HAVE_DECL_INT64_MIN 1
+#define HAVE_DECL_INTMAX_MAX 1
+#define HAVE_DECL_INTMAX_MIN 1
+#define HAVE_DECL_SIZE_MAX 1
+#define HAVE_DECL_UINT32_MAX 1
+#define HAVE_DECL_UINT64_MAX 1
+#define HAVE_DECL_UINTMAX_MAX 1
+#define HAVE_DIRECT_H 1
+#define HAVE_EILSEQ 1
+#define HAVE_ERRNO_H 1
+#define HAVE_FCNTL_H 1
+#define HAVE_FSTAT 1
+#define HAVE_GETPID 1
+#define HAVE_INTTYPES_H 1
+#define HAVE_IO_H 1
+#define HAVE_LIMITS_H 1
+#define HAVE_LOCALE_H 1
+#define HAVE_MBRTOWC 1
+#define HAVE_MEMMOVE 1
+#define HAVE_MEMORY_H 1
+#define HAVE_MKDIR 1
+#define HAVE_PROCESS_H 1
+#define HAVE_SETLOCALE 1
+#define HAVE_SIGNAL_H 1
+#define HAVE_STDARG_H 1
+#define HAVE_STDINT_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_STRCHR 1
+#define HAVE_STRNLEN 1
+#define HAVE_STRDUP 1
+#define HAVE_STRERROR 1
+#define HAVE_STRFTIME 1
+#define HAVE_STRING_H 1
+#define HAVE_STRRCHR 1
+#define HAVE_SYS_STAT_H 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_SYS_UTIME_H 1
+#define HAVE_TIME_H 1
+#define HAVE_TZSET 1
+#define HAVE_UTIME 1
+#define HAVE_WCHAR_H 1
+#define HAVE_WCHAR_T 1
+#define HAVE_WCRTOMB 1
+#define HAVE_WCSCMP 1
+#define HAVE_WCSCPY 1
+#define HAVE_WCSLEN 1
+#define HAVE_WCTOMB 1
+#define HAVE_WCTYPE_H 1
+#define HAVE_WINCRYPT_H 1
+#define HAVE_WINDOWS_H 1
+#define HAVE_WINIOCTL_H 1
+#define HAVE__CrtSetReportMode 1
+#define HAVE_CTIME_S 1
+#define HAVE__FSEEKI64 1
+#define HAVE__GET_TIMEZONE 1
+#define HAVE_GMTIME_S 1
+#define HAVE_LOCALTIME_S 1
+#define HAVE__MKGMTIME 1
+#define ICONV_CONST
+
+#define HAVE_ZLIB_H 1
+#define HAVE_ZSTD_H 1
+#define HAVE_ZSTD_compressStream 1
+#define HAVE_LIBZSTD 1
+#define HAVE_LIBZSTD_COMPRESSOR 1
+#define HAVE_LIBLZMA 1
+#define HAVE_LZMA_H 1
+#define HAVE_LZMA_STREAM_ENCODER_MT 1
+#define HAVE_LIBBZ2 1
+#define HAVE_BZLIB_H 1
+#define HAVE_LIBLZ4 1
+#define HAVE_LZ4_H 1
+#define HAVE_LZ4HC_H 1
+
+
+#define LIBARCHIVE_VERSION_NUMBER "3007003"
+#define LIBARCHIVE_VERSION_STRING "3.7.5"
+#define SIZEOF_WCHAR_T 2
+#define VERSION "3.7.5"
+
+#define gid_t short
+#define id_t short
+#define mode_t unsigned short
+#define pid_t int
+#define ssize_t int64_t
+#define uid_t short

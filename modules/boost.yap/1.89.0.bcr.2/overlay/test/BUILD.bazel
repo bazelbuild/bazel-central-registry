@@ -1,0 +1,39 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(":boost_test_suite.bzl", "DEPS", "boost_test_suite")
+
+# compile_tests_main.cpp calls into the other compile_*.cpp translation units,
+# so upstream compiles them together.
+_COMPILE_TESTS = glob(["compile_*.cpp"])
+
+# Upstream `compile-fail` targets: they check that misuse is rejected.
+_COMPILE_FAIL = glob(["fail_*.cpp"])
+
+# Uses std::uint32_t without including <cstdint>, which recent standard
+# libraries no longer provide transitively.
+_MISSING_CSTDINT = ["operators_unary.cpp"]
+
+boost_test_suite(
+    name = "upstream_tests",
+    srcs = glob(
+        ["*.cpp"],
+        exclude = _COMPILE_TESTS + _COMPILE_FAIL + _MISSING_CSTDINT,
+    ),
+)
+
+boost_test_suite(
+    name = "upstream_tests_needing_cstdint",
+    srcs = _MISSING_CSTDINT,
+    copts = select({
+        "@platforms//os:windows": ["/FIcstdint"],
+        "//conditions:default": [
+            "-include",
+            "cstdint",
+        ],
+    }),
+)
+
+cc_test(
+    name = "compile_tests",
+    srcs = _COMPILE_TESTS,
+    deps = DEPS,
+)

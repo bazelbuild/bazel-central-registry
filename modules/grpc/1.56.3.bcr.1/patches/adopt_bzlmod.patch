@@ -1,0 +1,625 @@
+diff --git a/BUILD b/BUILD
+index 74d1fadd1a..d447ff01b3 100644
+--- a/BUILD
++++ b/BUILD
+@@ -1102,6 +1102,7 @@ grpc_cc_library(
+         "//src/core:default_event_engine",
+         "//src/core:iomgr_fwd",
+         "//src/core:iomgr_port",
++        "//src/core:notification",
+         "//src/core:slice",
+         "//src/core:slice_refcount",
+         "//src/core:status_helper",
+@@ -1827,6 +1828,7 @@ grpc_cc_library(
+     deps = [
+         "gpr",
+         "grpc_trace",
++        "//src/core:slice_buffer",
+     ],
+ )
+ 
+@@ -2010,8 +2012,11 @@ grpc_cc_library(
+         "ref_counted_ptr",
+         "//src/core:arena",
+         "//src/core:channel_args",
++        "//src/core:channel_fwd",
+         "//src/core:channel_init",
++        "//src/core:channel_stack_type",
+         "//src/core:closure",
++        "//src/core:default_event_engine",
+         "//src/core:error",
+         "//src/core:gpr_atm",
+         "//src/core:gpr_manual_constructor",
+@@ -2022,7 +2027,9 @@ grpc_cc_library(
+         "//src/core:ref_counted",
+         "//src/core:resource_quota",
+         "//src/core:slice",
++        "//src/core:slice_buffer",
+         "//src/core:socket_mutator",
++        "//src/core:thread_quota",
+         "//src/core:time",
+         "//src/core:useful",
+     ],
+@@ -2698,6 +2705,7 @@ grpc_cc_library(
+     external_deps = [
+         "absl/strings",
+         "absl/strings:str_format",
++        "absl/types:optional",
+     ],
+     tags = ["nofixdeps"],
+     visibility = ["@grpc:iomgr_buffer_list"],
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+index 0000000000..caf4f829d4
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,36 @@
++module(
++    name = "grpc",
++    compatibility_level = 1,
++    repo_name = "com_github_grpc_grpc",
++    version = "1.56.3.bcr.1",
++)
++
++bazel_dep(name = "bazel_skylib", version = "1.2.0")
++bazel_dep(name = "platforms", version = "0.0.8")
++bazel_dep(name = "boringssl", version = "0.0.0-20230215-5c22014")
++bazel_dep(name = "c-ares", repo_name = "com_github_cares_cares", version = "1.15.0")
++bazel_dep(name = "abseil-cpp", repo_name = "com_google_absl", version = "20220623.1")
++bazel_dep(name = "protobuf", repo_name = "com_google_protobuf", version = "3.19.2")
++bazel_dep(name = "re2", repo_name = "com_googlesource_code_re2", version = "2021-09-01")
++bazel_dep(name = "rules_proto", version = "4.0.0")
++bazel_dep(name = "upb", version = "0.0.0-20230516-61a97ef")
++bazel_dep(name = "zlib", version = "1.2.13")
++bazel_dep(name = "rules_java", version = "5.1.0")
++bazel_dep(name = "rules_go", repo_name = "io_bazel_rules_go", version = "0.39.1")
++bazel_dep(name = "googletest", version = "1.14.0.bcr.1", repo_name = "com_google_googletest")
++bazel_dep(name = "rules_cc", version = "0.0.9")
++
++grpc_repo_deps_ext = use_extension("//bazel:grpc_deps.bzl", "grpc_repo_deps_ext")
++
++use_repo(
++    grpc_repo_deps_ext,
++    "com_envoyproxy_protoc_gen_validate",
++    "com_google_googleapis",
++    "com_github_cncf_udpa",
++    "envoy_api",
++    "io_opencensus_cpp",
++)
++
++grpc_extra_deps_ext = use_extension("//bazel:grpc_extra_deps.bzl", "grpc_extra_deps_ext")
++
++use_repo(grpc_extra_deps_ext, "com_google_googleapis_imports")
+diff --git a/bazel/generate_cc.bzl b/bazel/generate_cc.bzl
+index 2d90414b41..de0d3a0540 100644
+--- a/bazel/generate_cc.bzl
++++ b/bazel/generate_cc.bzl
+@@ -132,16 +132,13 @@ def generate_cc_impl(ctx):
+         for i in includes
+     ]
+ 
+-    # Include the output directory so that protoc puts the generated code in the
+-    # right directory.
+-    arguments.append("--proto_path={0}{1}".format(dir_out, proto_root))
+     arguments += [_get_srcs_file_path(proto) for proto in protos]
+ 
+     # create a list of well known proto files if the argument is non-None
+     well_known_proto_files = []
+     if ctx.attr.well_known_protos:
+         f = ctx.attr.well_known_protos.files.to_list()[0].dirname
+-        if f != "external/com_google_protobuf/src/google/protobuf":
++        if not f.endswith("/src/google/protobuf"):
+             print(
+                 "Error: Only @com_google_protobuf//:well_known_type_protos is supported",
+             )  # buildifier: disable=print
+@@ -187,7 +184,7 @@ _generate_cc = rule(
+             mandatory = False,
+         ),
+         "_protoc": attr.label(
+-            default = Label("//external:protocol_compiler"),
++            default = Label("//third_party:protocol_compiler"),
+             executable = True,
+             cfg = "host",
+         ),
+diff --git a/bazel/generate_objc.bzl b/bazel/generate_objc.bzl
+index 25314ae1bd..63b3dac273 100644
+--- a/bazel/generate_objc.bzl
++++ b/bazel/generate_objc.bzl
+@@ -180,7 +180,7 @@ generate_objc = rule(
+             default = "@com_google_protobuf//:well_known_type_protos",
+         ),
+         "_protoc": attr.label(
+-            default = Label("//external:protocol_compiler"),
++            default = Label("//third_party:protocol_compiler"),
+             executable = True,
+             cfg = "host",
+         ),
+diff --git a/bazel/grpc_build_system.bzl b/bazel/grpc_build_system.bzl
+index d85b08a6be..8e99d66f0a 100644
+--- a/bazel/grpc_build_system.bzl
++++ b/bazel/grpc_build_system.bzl
+@@ -31,8 +31,6 @@ load("//bazel:cc_grpc_library.bzl", "cc_grpc_library")
+ load("//bazel:copts.bzl", "GRPC_DEFAULT_COPTS")
+ load("//bazel:experiments.bzl", "EXPERIMENTS")
+ load("@upb//bazel:upb_proto_library.bzl", "upb_proto_library", "upb_proto_reflection_library")
+-load("@build_bazel_rules_apple//apple:ios.bzl", "ios_unit_test")
+-load("@build_bazel_rules_apple//apple/testing/default_runner:ios_test_runner.bzl", "ios_test_runner")
+ 
+ # The set of pollers to test against if a test exercises polling
+ POLLERS = ["epoll1", "poll"]
+@@ -64,7 +62,7 @@ def _get_external_deps(external_deps):
+         elif dep == "cares":
+             ret += select({
+                 "//:grpc_no_ares": [],
+-                "//conditions:default": ["//external:cares"],
++                "//conditions:default": ["//third_party:cares"],
+             })
+         elif dep == "cronet_c_for_grpc":
+             ret.append("//third_party/objective_c/Cronet:cronet_c_for_grpc")
+@@ -73,7 +71,7 @@ def _get_external_deps(external_deps):
+         elif dep.startswith("google/"):
+             ret.append("@com_google_googleapis//" + dep)
+         else:
+-            ret.append("//external:" + dep)
++            ret.append("//third_party:" + dep)
+     return ret
+ 
+ def _update_visibility(visibility):
+@@ -243,10 +241,6 @@ def ios_cc_test(
+     test_lib_ios = name + "_test_lib_ios"
+     ios_tags = tags + ["manual", "ios_cc_test"]
+     test_runner = "ios_x86_64_sim_runner_" + name
+-    ios_test_runner(
+-        name = test_runner,
+-        device_type = "iPhone X",
+-    )
+     if not any([t for t in tags if t.startswith("no_test_ios")]):
+         native.objc_library(
+             name = test_lib_ios,
+@@ -259,15 +253,6 @@ def ios_cc_test(
+             testonly = 1,
+         )
+         ios_test_deps = [":" + test_lib_ios]
+-        ios_unit_test(
+-            name = name + "_on_ios",
+-            size = kwargs.get("size"),
+-            data = kwargs.get("data"),
+-            tags = ios_tags,
+-            minimum_os_version = "9.0",
+-            runner = test_runner,
+-            deps = ios_test_deps,
+-        )
+ 
+ def expand_tests(name, srcs, deps, tags, args, exclude_pollers, uses_polling, uses_event_engine, flaky):
+     """Common logic used to parameterize tests for every poller and EventEngine and experiment.
+diff --git a/bazel/grpc_deps.bzl b/bazel/grpc_deps.bzl
+index 2fb3564d0c..37a19e455f 100644
+--- a/bazel/grpc_deps.bzl
++++ b/bazel/grpc_deps.bzl
+@@ -14,10 +14,10 @@
+ """Load dependencies needed to compile and test the grpc library as a 3rd-party consumer."""
+ 
+ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+-load("@com_github_grpc_grpc//bazel:grpc_python_deps.bzl", "grpc_python_deps")
++load("//bazel:grpc_python_deps.bzl", "grpc_python_deps")
+ 
+ # buildifier: disable=unnamed-macro
+-def grpc_deps():
++def grpc_bind_deps():
+     """Loads dependencies need to compile and test the grpc library."""
+ 
+     native.bind(
+@@ -225,6 +225,7 @@ def grpc_deps():
+         actual = "@com_google_googleapis//google/logging/v2:logging_cc_proto",
+     )
+ 
++def grpc_repo_deps():
+     if "boringssl" not in native.existing_rules():
+         http_archive(
+             name = "boringssl",
+@@ -250,22 +251,6 @@ def grpc_deps():
+             ],
+         )
+ 
+-    if "com_google_protobuf" not in native.existing_rules():
+-        http_archive(
+-            name = "com_google_protobuf",
+-            sha256 = "209385d3c08252e320196b628584c8007f849f9ec8a26c2796a886345ee58bb6",
+-            strip_prefix = "protobuf-2dca62f7296e5b49d729f7384f975cecb38382a0",
+-            urls = [
+-                # https://github.com/protocolbuffers/protobuf/commits/v23.1
+-                "https://storage.googleapis.com/grpc-bazel-mirror/github.com/protocolbuffers/protobuf/archive/2dca62f7296e5b49d729f7384f975cecb38382a0.tar.gz",
+-                "https://github.com/protocolbuffers/protobuf/archive/2dca62f7296e5b49d729f7384f975cecb38382a0.tar.gz",
+-            ],
+-            patches = [
+-                "@com_github_grpc_grpc//third_party:protobuf.patch",
+-            ],
+-            patch_args = ["-p1"],
+-        )
+-
+     if "com_google_googletest" not in native.existing_rules():
+         http_archive(
+             name = "com_google_googletest",
+@@ -413,16 +398,6 @@ def grpc_deps():
+             ],
+         )
+ 
+-    if "io_bazel_rules_go" not in native.existing_rules():
+-        http_archive(
+-            name = "io_bazel_rules_go",
+-            sha256 = "69de5c704a05ff37862f7e0f5534d4f479418afc21806c887db544a316f3cb6b",
+-            urls = [
+-                "https://mirror.bazel.build/github.com/bazelbuild/rules_go/releases/download/v0.27.0/rules_go-v0.27.0.tar.gz",
+-                "https://github.com/bazelbuild/rules_go/releases/download/v0.27.0/rules_go-v0.27.0.tar.gz",
+-            ],
+-        )
+-
+     if "build_bazel_rules_apple" not in native.existing_rules():
+         http_archive(
+             name = "build_bazel_rules_apple",
+@@ -485,6 +460,8 @@ def grpc_deps():
+                 "https://storage.googleapis.com/grpc-bazel-mirror/github.com/census-instrumentation/opencensus-proto/archive/v0.3.0.tar.gz",
+                 "https://github.com/census-instrumentation/opencensus-proto/archive/v0.3.0.tar.gz",
+             ],
++            patches = ["//third_party:opencensus-proto.patch"],
++            patch_args = ["-p2"],
+         )
+ 
+     if "com_envoyproxy_protoc_gen_validate" not in native.existing_rules():
+@@ -510,6 +487,11 @@ def grpc_deps():
+             ],
+         )
+ 
++grpc_repo_deps_ext = module_extension(implementation = lambda ctx: grpc_repo_deps())
++
++def grpc_deps():
++    grpc_bind_deps()
++    grpc_repo_deps()
+     grpc_python_deps()
+ 
+ # TODO: move some dependencies from "grpc_deps" here?
+diff --git a/bazel/grpc_extra_deps.bzl b/bazel/grpc_extra_deps.bzl
+index 4d8afa3131..b4ab0d5f5b 100644
+--- a/bazel/grpc_extra_deps.bzl
++++ b/bazel/grpc_extra_deps.bzl
+@@ -13,9 +13,9 @@
+ # limitations under the License.
+ """Loads the dependencies necessary for the external repositories defined in grpc_deps.bzl."""
+ 
+-load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
+-load("@build_bazel_apple_support//lib:repositories.bzl", "apple_support_dependencies")
+-load("@build_bazel_rules_apple//apple:repositories.bzl", "apple_rules_dependencies")
++# load("@bazel_gazelle//:deps.bzl", "gazelle_dependencies")
++# load("@build_bazel_apple_support//lib:repositories.bzl", "apple_support_dependencies")
++# load("@build_bazel_rules_apple//apple:repositories.bzl", "apple_rules_dependencies")
+ load("@com_envoyproxy_protoc_gen_validate//:dependencies.bzl", "go_third_party")
+ load("@com_google_googleapis//:repository_rules.bzl", "switched_rules_by_language")
+ load("@com_google_protobuf//:protobuf_deps.bzl", "protobuf_deps")
+@@ -54,16 +54,19 @@ def grpc_extra_deps(ignore_version_differences = False):
+ 
+     go_rules_dependencies()
+     go_register_toolchains(version = "1.18")
+-    gazelle_dependencies()
++    # gazelle_dependencies()
+ 
+     # Pull-in the go 3rd party dependencies for protoc_gen_validate, which is
+     # needed for building C++ xDS protos
+     go_third_party()
+ 
+-    apple_rules_dependencies(ignore_version_differences = ignore_version_differences)
++    # apple_rules_dependencies(ignore_version_differences = ignore_version_differences)
+ 
+-    apple_support_dependencies()
++    # apple_support_dependencies()
+ 
++    googleapis_deps()
++
++def googleapis_deps():
+     # Initialize Google APIs with only C++ and Python targets
+     switched_rules_by_language(
+         name = "com_google_googleapis_imports",
+@@ -71,3 +74,5 @@ def grpc_extra_deps(ignore_version_differences = False):
+         grpc = True,
+         python = True,
+     )
++
++grpc_extra_deps_ext = module_extension(implementation = lambda ctx: googleapis_deps())
+diff --git a/bazel/python_rules.bzl b/bazel/python_rules.bzl
+index 97d9736058..735e2bbc63 100644
+--- a/bazel/python_rules.bzl
++++ b/bazel/python_rules.bzl
+@@ -107,7 +107,7 @@ _gen_py_aspect = aspect(
+     fragments = ["py"],
+     attrs = {
+         "_protoc": attr.label(
+-            default = Label("//external:protocol_compiler"),
++            default = Label("//third_party:protocol_compiler"),
+             providers = ["files_to_run"],
+             executable = True,
+             cfg = "host",
+@@ -163,7 +163,7 @@ py_proto_library = rule(
+             aspects = [_gen_py_aspect],
+         ),
+         "_protoc": attr.label(
+-            default = Label("//external:protocol_compiler"),
++            default = Label("//third_party:protocol_compiler"),
+             providers = ["files_to_run"],
+             executable = True,
+             cfg = "host",
+@@ -251,7 +251,7 @@ _generate_pb2_grpc_src = rule(
+             executable = True,
+             providers = ["files_to_run"],
+             cfg = "host",
+-            default = Label("//external:protocol_compiler"),
++            default = Label("//third_party:protocol_compiler"),
+         ),
+         "_grpc_library": attr.label(
+             default = Label("//src/python/grpcio/grpc:grpcio"),
+diff --git a/third_party/BUILD b/third_party/BUILD
+index 72a4730d89..7677d49801 100644
+--- a/third_party/BUILD
++++ b/third_party/BUILD
+@@ -15,3 +15,211 @@ exports_files([
+     "rules_python.patch",
+     "protoc-gen-validate.patch",
+ ])
++
++package(default_visibility = ["//:__subpackages__"])
++
++alias(
++    name = "upb_lib",
++    actual = "@upb//:upb",
++)
++
++alias(
++    name = "upb_collections_lib",
++    actual = "@upb//:collections",
++)
++
++alias(
++    name = "upb_reflection",
++    actual = "@upb//:reflection",
++)
++
++alias(
++    name = "upb_lib_descriptor",
++    actual = "@upb//:descriptor_upb_proto",
++)
++
++alias(
++    name = "upb_lib_descriptor_reflection",
++    actual = "@upb//:descriptor_upb_proto_reflection",
++)
++
++alias(
++    name = "upb_textformat_lib",
++    actual = "@upb//:textformat",
++)
++
++alias(
++    name = "upb_json_lib",
++    actual = "@upb//:json",
++)
++
++alias(
++    name = "upb_generated_code_support__only_for_generated_code_do_not_use__i_give_permission_to_break_me",
++    actual = "@upb//:generated_code_support__only_for_generated_code_do_not_use__i_give_permission_to_break_me",
++)
++
++alias(
++    name = "libssl",
++    actual = "@boringssl//:ssl",
++)
++
++alias(
++    name = "libcrypto",
++    actual = "@boringssl//:crypto",
++)
++
++alias(
++    name = "madler_zlib",
++    actual = "@zlib//:zlib",
++)
++
++alias(
++    name = "protobuf",
++    actual = "@com_google_protobuf//:protobuf",
++)
++
++alias(
++    name = "protobuf_clib",
++    actual = "@com_google_protobuf//:protoc_lib",
++)
++
++alias(
++    name = "protobuf_headers",
++    actual = "@com_google_protobuf//:protobuf_headers",
++)
++
++alias(
++    name = "protocol_compiler",
++    actual = "@com_google_protobuf//:protoc",
++    visibility = ["//visibility:public"],
++)
++
++alias(
++    name = "cares",
++    actual = "@com_github_cares_cares//:ares",
++)
++
++alias(
++    name = "gtest",
++    actual = "@com_google_googletest//:gtest",
++)
++
++alias(
++    name = "fuzztest",
++    actual = "@com_google_fuzztest//fuzztest",
++)
++
++alias(
++    name = "fuzztest_main",
++    actual = "@com_google_fuzztest//fuzztest:fuzztest_gtest_main",
++)
++
++alias(
++    name = "benchmark",
++    actual = "@com_github_google_benchmark//:benchmark",
++)
++
++alias(
++    name = "re2",
++    actual = "@com_googlesource_code_re2//:re2",
++)
++
++alias(
++    name = "grpc_cpp_plugin",
++    actual = "@com_github_grpc_grpc//src/compiler:grpc_cpp_plugin",
++)
++
++alias(
++    name = "grpc++_codegen_proto",
++    actual = "@com_github_grpc_grpc//:grpc++_codegen_proto",
++)
++
++alias(
++    name = "opencensus-context",
++    actual = "@io_opencensus_cpp//opencensus/context:context",
++)
++
++alias(
++    name = "opencensus-trace",
++    actual = "@io_opencensus_cpp//opencensus/trace:trace",
++)
++
++alias(
++    name = "opencensus-trace-context_util",
++    actual = "@io_opencensus_cpp//opencensus/trace:context_util",
++)
++
++alias(
++    name = "opencensus-trace-propagation",
++    actual = "@io_opencensus_cpp//opencensus/trace:grpc_trace_bin",
++)
++
++alias(
++    name = "opencensus-trace-span_context",
++    actual = "@io_opencensus_cpp//opencensus/trace:span_context",
++)
++
++alias(
++    name = "opencensus-stats",
++    actual = "@io_opencensus_cpp//opencensus/stats:stats",
++)
++
++alias(
++    name = "opencensus-stats-test",
++    actual = "@io_opencensus_cpp//opencensus/stats:test_utils",
++)
++
++alias(
++    name = "opencensus-with-tag-map",
++    actual = "@io_opencensus_cpp//opencensus/tags:with_tag_map",
++)
++
++alias(
++    name = "opencensus-tags",
++    actual = "@io_opencensus_cpp//opencensus/tags:tags",
++)
++
++alias(
++    name = "opencensus-tags-context_util",
++    actual = "@io_opencensus_cpp//opencensus/tags:context_util",
++)
++
++alias(
++    name = "opencensus-trace-stackdriver_exporter",
++    actual = "@io_opencensus_cpp//opencensus/exporters/trace/stackdriver:stackdriver_exporter",
++)
++
++alias(
++    name = "opencensus-stats-stackdriver_exporter",
++    actual = "@io_opencensus_cpp//opencensus/exporters/stats/stackdriver:stackdriver_exporter",
++)
++
++alias(
++    name = "libuv",
++    actual = "@com_github_libuv_libuv//:libuv",
++)
++
++alias(
++    name = "libuv_test",
++    actual = "@com_github_libuv_libuv//:libuv_test",
++)
++
++alias(
++    name = "googleapis_trace_grpc_service",
++    actual = "@com_google_googleapis//google/devtools/cloudtrace/v2:cloudtrace_cc_grpc",
++)
++
++alias(
++    name = "googleapis_monitoring_grpc_service",
++    actual = "@com_google_googleapis//google/monitoring/v3:monitoring_cc_grpc",
++)
++
++alias(
++    name = "googleapis_logging_grpc_service",
++    actual = "@com_google_googleapis//google/logging/v2:logging_cc_grpc",
++)
++
++alias(
++    name = "googleapis_logging_cc_proto",
++    actual = "@com_google_googleapis//google/logging/v2:logging_cc_proto",
++)
+diff --git a/third_party/opencensus-proto.patch b/third_party/opencensus-proto.patch
+new file mode 100644
+index 0000000000..4ebf1c1ac2
+--- /dev/null
++++ b/third_party/opencensus-proto.patch
+@@ -0,0 +1,14 @@
++diff --git a/src/opencensus/proto/trace/v1/BUILD.bazel b/src/opencensus/proto/trace/v1/BUILD.bazel
++index 0beb6d8..f7f61e6 100644
++--- a/src/opencensus/proto/trace/v1/BUILD.bazel
+++++ b/src/opencensus/proto/trace/v1/BUILD.bazel
++@@ -77,7 +77,7 @@ py_proto_library(
++     srcs = ["trace.proto"],
++     deps = [
++         "//opencensus/proto/resource/v1:resource_proto_py",
++-        "@com_google_protobuf//:protobuf_python",
+++    #    "@com_google_protobuf//:protobuf_python",
++     ],
++ )
++
++
+diff --git a/third_party/protoc-gen-validate.patch b/third_party/protoc-gen-validate.patch
+index bea7b87cec..db863aa85a 100644
+--- a/third_party/protoc-gen-validate.patch
++++ b/third_party/protoc-gen-validate.patch
+@@ -1,14 +1,13 @@
+-index 5b2443d..c26a9dd 100644
+---- a/dependencies.bzl
+-+++ b/dependencies.bzl
+-@@ -104,8 +104,8 @@ def go_third_party():
+-     go_repository(
+-         name = "org_golang_google_protobuf",
+-         importpath = "google.golang.org/protobuf",
+--        sum = "h1:bxAC2xTBsZGibn2RTntX0oH50xLsqy1OxA9tTL3p/lk=",
+--        version = "v1.27.1",
+-+        sum = "h1:w43yiav+6bVFTBQFZX0r7ipe9JQ1QsbMgHwbBziscLw=",
+-+        version = "v1.28.0",
+-     )
+-     go_repository(
+-         name = "org_golang_x_crypto",
++diff --git a/validate/BUILD b/validate/BUILD
++index 5040d64..03e4e52 100644
++--- a/validate/BUILD
+++++ b/validate/BUILD
++@@ -28,7 +28,7 @@ cc_proto_library(
++ py_proto_library(
++     name = "validate_py",
++     srcs = ["validate.proto"],
++-    deps = ["@com_google_protobuf//:protobuf_python"],
+++    # deps = ["@com_google_protobuf//:protobuf_python"],
++ )
++
++ go_proto_library(

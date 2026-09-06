@@ -1,0 +1,155 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+UPSTREAM_VERSION_MAJOR = UPSTREAM_VERSION.split(".")[0]
+
+UPSTREAM_VERSION_MINOR = UPSTREAM_VERSION.split(".")[1]
+
+UPSTREAM_VERSION_PATCH = UPSTREAM_VERSION.split(".")[2]
+
+cc_library(
+    name = "config",
+    hdrs = ["config.h"],
+    deps = ["@rules_autoconf//:config"],
+)
+
+cc_binary(
+    name = "wayland_scanner",
+    srcs = [
+        "src/scanner.c",
+        "src/wayland-util.c",
+        ":wayland_version_h",
+    ] + glob(["src/*.h"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        "@libexpat",
+    ],
+)
+
+filegroup(
+    name = "wayland_core_protocol",
+    srcs = ["protocol/wayland.xml"],
+)
+
+expand_template(
+    name = "wayland_version_h",
+    out = "wayland-version.h",
+    substitutions = {
+        "@WAYLAND_VERSION_MAJOR@": UPSTREAM_VERSION_MAJOR,
+        "@WAYLAND_VERSION_MINOR@": UPSTREAM_VERSION_MINOR,
+        "@WAYLAND_VERSION_MICRO@": UPSTREAM_VERSION_PATCH,
+        "@WAYLAND_VERSION@": UPSTREAM_VERSION,
+    },
+    template = "src/wayland-version.h.in",
+)
+
+genrule(
+    name = "wayland_core_protocol_sources_static",
+    srcs = [":wayland_core_protocol"],
+    outs = ["wayland-protocol.c"],
+    cmd = "$(location :wayland_scanner) -s public-code < $(location :wayland_core_protocol) > $(location wayland-protocol.c)",
+    tools = [":wayland_scanner"],
+)
+
+genrule(
+    name = "wayland_core_server_protocol_headers",
+    srcs = [":wayland_core_protocol"],
+    outs = ["wayland-server-protocol.h"],
+    cmd = "$(location :wayland_scanner) -s server-header < $(location :wayland_core_protocol) > $(location wayland-server-protocol.h)",
+    tools = [":wayland_scanner"],
+)
+
+genrule(
+    name = "wayland_core_client_protocol_headers",
+    srcs = [":wayland_core_protocol"],
+    outs = ["wayland-client-protocol.h"],
+    cmd = "$(location :wayland_scanner) -s client-header < $(location :wayland_core_protocol) > $(location wayland-client-protocol.h)",
+    tools = [":wayland_scanner"],
+)
+
+cc_library(
+    name = "wayland_server",
+    srcs = [
+        "src/connection.c",
+        "src/event-loop.c",
+        "src/wayland-os.c",
+        "src/wayland-server.c",
+        "src/wayland-shm.c",
+        "src/wayland-util.c",
+        ":wayland_core_protocol_sources_static",
+    ],
+    hdrs = [
+        ":wayland_core_client_protocol_headers",
+        ":wayland_core_server_protocol_headers",
+        ":wayland_version_h",
+    ] + glob(["src/*.h"]),
+    copts = ["-Wno-unused-variable"],
+    includes = [
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        "@libffi",
+    ],
+)
+
+cc_library(
+    name = "wayland_client",
+    srcs = [
+        "src/connection.c",
+        "src/event-loop.c",
+        "src/wayland-client.c",
+        "src/wayland-os.c",
+        "src/wayland-util.c",
+        ":wayland_core_protocol_sources_static",
+    ],
+    hdrs = [
+        ":wayland_core_client_protocol_headers",
+        ":wayland_version_h",
+    ] + glob(["src/*.h"]),
+    includes = [
+        "src",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        "@libffi",
+    ],
+)
+
+cc_library(
+    name = "wayland_cursor",
+    srcs = [
+        "cursor/cursor-data.h",
+        "cursor/os-compatibility.c",
+        "cursor/os-compatibility.h",
+        "cursor/wayland-cursor.c",
+        "cursor/xcursor.c",
+        "cursor/xcursor.h",
+    ],
+    hdrs = ["cursor/wayland-cursor.h"],
+    includes = ["cursor"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":wayland_client",
+    ],
+)
+
+cc_library(
+    name = "wayland_egl",
+    srcs = ["egl/wayland-egl.c"],
+    hdrs = [
+        "egl/wayland-egl.h",
+        "egl/wayland-egl-backend.h",
+        "egl/wayland-egl-core.h",
+    ],
+    includes = ["egl"],
+    visibility = ["//visibility:public"],
+    deps = [":wayland_client"],
+)

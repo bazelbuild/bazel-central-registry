@@ -1,0 +1,37 @@
+From abf1f840b0cd5e94b9239f67c21324940bc6f033 Mon Sep 17 00:00:00 2001
+From: Ryan Prichard <rprichard@google.com>
+Date: Tue, 21 May 2024 14:28:43 -0700
+Subject: [PATCH] C++20 compat: use invoke_result_t for C++17 and up (#36016)
+
+C++20 removes std::result_of in favor of std::invoke_result[_t], which was added in C++17. Android builds gRPC with C++20, but gRPC still supports source languages before C++17, so use `#if __cplusplus` to select between std::result_of or std::invoke_result[_t].
+
+Closes #36016
+
+COPYBARA_INTEGRATE_REVIEW=https://github.com/grpc/grpc/pull/36016 from rprichard:cxx20-compat 00b89a2ff45228e35cdc0f286d253ccbcc21763e
+PiperOrigin-RevId: 635929424
+---
+ src/core/lib/promise/detail/promise_like.h | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/core/lib/promise/detail/promise_like.h b/src/core/lib/promise/detail/promise_like.h
+index 395c325873..4785ddfb84 100644
+--- a/src/core/lib/promise/detail/promise_like.h
++++ b/src/core/lib/promise/detail/promise_like.h
+@@ -71,7 +71,13 @@ class PromiseLike<void>;
+ 
+ template <typename F>
+ class PromiseLike<F, absl::enable_if_t<!std::is_void<
+-                         typename std::result_of<F()>::type>::value>> {
++#if (defined(__cpp_lib_is_invocable) && __cpp_lib_is_invocable >= 201703L) || \
++    (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
++                         std::invoke_result_t<F>
++#else
++                         typename std::result_of<F()>::type
++#endif
++                         >::value>> {
+  private:
+   GPR_NO_UNIQUE_ADDRESS F f_;
+ 
+-- 
+2.45.1.288.g0e0cd299f1-goog
+

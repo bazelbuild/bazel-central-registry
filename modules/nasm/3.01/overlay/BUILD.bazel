@@ -1,0 +1,332 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load(
+    ":nasm.bzl",
+    "common_attribute_checks",
+    "compiler_checks",
+    "function_checks",
+    "header_checks",
+)
+
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+selects.config_setting_group(
+    name = "msvc_like",
+    match_any = [
+        "@rules_cc//cc/compiler:clang-cl",
+        "@rules_cc//cc/compiler:msvc-cl",
+    ],
+)
+
+# -----------------------------------------------------------------------------
+# Build settings
+#
+# These mirror the `configure` options that still mean something once nasm is
+# built by Bazel. The rest are deliberately not exposed:
+#
+#   --enable-debug, --enable-profiling, --enable-gc, --enable-lto,
+#   --enable-sanitizer, --enable-werror, --enable-suggestions,
+#   --disable-pedantic
+#       Pure compiler/linker flag toggles. In Bazel those belong to the cc
+#       toolchain, `--compilation_mode` and `--features`.
+#
+#   --disable-pdf-compression, --with-nsis
+#       Only affect the documentation build and the Windows NSIS installer,
+#       neither of which this overlay builds.
+# -----------------------------------------------------------------------------
+
+# configure: --enable-panic-abort
+#
+# Call abort() on an internal error so a debugger traps at the point of
+# failure, instead of exiting cleanly.
+bool_flag(
+    name = "panic_abort",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "panic_abort_enabled",
+    flag_values = {":panic_abort": "true"},
+)
+
+# configure: --disable-largefile (AC_SYS_LARGEFILE)
+#
+# Ask for 64-bit file offsets. Already the default on 64-bit hosts; it matters
+# for 32-bit targets, where nasm otherwise cannot handle output over 2 GiB.
+bool_flag(
+    name = "largefile",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "largefile_enabled",
+    flag_values = {":largefile": "true"},
+)
+
+# -----------------------------------------------------------------------------
+# config/config.h
+# -----------------------------------------------------------------------------
+
+# AC_INIT([nasm],VERSION,[https://bugs.nasm.us/],[nasm],[https://www.nasm.us/])
+package_info(
+    name = "package",
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://bugs.nasm.us/",
+    package_tarname = "nasm",
+    package_url = "https://www.nasm.us/",
+    strip_bcr_version = True,
+)
+
+# PA_COMMON_ATTRIBUTES runs PA_ADD_CPPFLAGS([-Werror=attributes]) first, so
+# that a compiler which merely warns about an attribute it does not know is
+# recorded as not supporting it. cl.exe has no equivalent switch.
+autoconf(
+    name = "autoconf_attributes",
+    checks = select({
+        ":msvc_like": common_attribute_checks(),
+        "//conditions:default": common_attribute_checks(["-Werror=attributes"]),
+    }),
+)
+
+autoconf(
+    name = "autoconf",
+    checks = header_checks() + function_checks() + compiler_checks() + select({
+        # PA_ARG_ENABLED([panic-abort], ...)
+        ":panic_abort_enabled": [checks.AC_DEFINE("ABORT_ON_PANIC", 1)],
+        "//conditions:default": [],
+    }) + select({
+        # AC_SYS_LARGEFILE
+        ":largefile_enabled": [checks.AC_DEFINE("_FILE_OFFSET_BITS", 64)],
+        "//conditions:default": [],
+    }) + select({
+        # PA_ENDIAN -> AC_C_BIGENDIAN. Autoconf decides this by running a test
+        # program, which Bazel cannot do when cross-compiling, so key off the
+        # target CPU instead -- the same way
+        # @rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN does.
+        "@platforms//cpu:ppc": [checks.AC_DEFINE("WORDS_BIGENDIAN", 1)],
+        "@platforms//cpu:s390x": [checks.AC_DEFINE("WORDS_BIGENDIAN", 1)],
+        "//conditions:default": [checks.AC_DEFINE("WORDS_LITTLEENDIAN", 1)],
+    }),
+    deps = [
+        ":autoconf_attributes",
+        ":package",
+        # AC_CHECK_INCLUDES_DEFAULT
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        # AC_C_INLINE
+        "@rules_cc_autoconf//autoconf/macros/AC_C_INLINE",
+        # AC_TYPE_SIZE_T
+        "@rules_cc_autoconf//autoconf/macros/AC_TYPE_SIZE_T",
+        # AC_USE_SYSTEM_EXTENSIONS
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+# AC_CONFIG_HEADERS([config/config.h])
+autoconf_hdr(
+    name = "config",
+    out = "config/config.h",
+    template = "config/config.h.in",
+    deps = [":autoconf"],
+)
+
+# -----------------------------------------------------------------------------
+# nasm
+# -----------------------------------------------------------------------------
+
+# nasm is built as a tool inside somebody else's build, so its warnings are
+# noise there.
+COPTS = select({
+    ":msvc_like": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# `configure` is not an MSVC workflow: upstream maintains `config/msvc.h` by
+# hand and `Mkfiles/msvc.mak` builds against it, leaving HAVE_CONFIG_H unset so
+# that `include/compiler.h` reaches for it. Do the same rather than aiming
+# autoconf's compile checks at cl.exe.
+#
+# This has to propagate: `include/compiler.h` is the first thing every nasm
+# header pulls in, and without HAVE_CONFIG_H it falls back to
+# `config/unknown.h`, whose guesses collide with a real libc. Anything
+# consuming `:libnasm` needs the same answer this build used.
+DEFINES = select({
+    ":msvc_like": [],
+    "//conditions:default": ["HAVE_CONFIG_H"],
+})
+
+CONFIG_HDRS = select({
+    ":msvc_like": [],
+    "//conditions:default": [":config"],
+})
+
+# `include/` is nasm's shared interface. A handful of headers under `asm/` and
+# `x86/` are reachable from it -- `include/nasm.h` pulls in the token, directive
+# and register tables -- so those belong to the interface as well. Everything
+# else is internal to the assembler and reaches `:lib/nasm` through
+# `implementation_deps`, which keeps it off the include path of anything that
+# depends on `:libnasm`.
+
+ASM_API_HDRS = [
+    "asm/directiv.h",
+    "asm/pptok.h",
+    "asm/preproc.h",
+    "asm/srcfile.h",
+    "asm/tokens.h",
+]
+
+X86_API_HDRS = [
+    "x86/iflaggen.h",
+    "x86/insnsi.h",
+    "x86/regs.h",
+    "x86/x86const.h",
+]
+
+cc_library(
+    name = "nasm_hdrs_asm",
+    hdrs = ASM_API_HDRS,
+    strip_include_prefix = "asm",
+)
+
+cc_library(
+    name = "nasm_hdrs_asm_private",
+    hdrs = glob(
+        include = ["asm/*.h"],
+        exclude = ASM_API_HDRS,
+    ),
+    strip_include_prefix = "asm",
+)
+
+cc_library(
+    name = "nasm_hdrs_include",
+    hdrs = glob(["include/*.h"]),
+    strip_include_prefix = "include",
+)
+
+cc_library(
+    name = "nasm_hdrs_output",
+    hdrs = glob(["output/*.h"]),
+    strip_include_prefix = "output",
+)
+
+cc_library(
+    name = "nasm_hdrs_x86",
+    hdrs = X86_API_HDRS,
+    strip_include_prefix = "x86",
+)
+
+cc_library(
+    name = "nasm_hdrs_x86_private",
+    hdrs = glob(
+        include = ["x86/*.h"],
+        exclude = X86_API_HDRS,
+    ),
+    strip_include_prefix = "x86",
+)
+
+# The header set `:libnasm` exports.
+cc_library(
+    name = "nasm_hdrs",
+    hdrs = glob([
+        "autoconf/*.h",
+        "config/*.h",
+    ]) + CONFIG_HDRS,
+    defines = DEFINES,
+    deps = [
+        ":nasm_hdrs_asm",
+        ":nasm_hdrs_include",
+        ":nasm_hdrs_x86",
+    ],
+)
+
+# Everything `include/*.h` does not reach.
+cc_library(
+    name = "nasm_hdrs_private",
+    hdrs = glob([
+        "*.h",
+        "disasm/*.h",
+        "nasmlib/*.h",
+    ]),
+    deps = [
+        ":nasm_hdrs_asm_private",
+        ":nasm_hdrs_output",
+        ":nasm_hdrs_x86_private",
+    ],
+)
+
+# $(LIBOBJ_COM) + $(LIBOBJ_ASM), the two archives `nasm` links against.
+# $(LIBOBJ_DIS) -- `disasm/` plus `x86/insnsd.c` and `x86/regdis.c` -- only
+# goes into `ndisasm`, which this overlay does not build. It also cannot be
+# folded in here: `disasm/diserror.c` is a second definition of `nasm_verror`,
+# which the Makefile keeps apart by linking a separate archive.
+cc_library(
+    name = "lib/nasm",
+    srcs = glob(
+        include = [
+            "asm/*.c",
+            "common/*.c",
+            "macros/*.c",
+            "nasmlib/*.c",
+            "output/*.c",
+            "stdlib/*.c",
+            "x86/*.c",
+        ],
+        exclude = [
+            "asm/nasm.c",
+            "x86/insnsd.c",
+            "x86/regdis.c",
+        ],
+    ),
+    copts = COPTS,
+    implementation_deps = [
+        ":nasm_hdrs_private",
+        # AC_SEARCH_LIBS([inflate], [z zlib]). nasm ships a trimmed
+        # inflate-only copy of zlib under `zlib/` for hosts where configure
+        # finds no external one; here there always is one, so `$(ZLIBOBJ)` is
+        # left unbuilt exactly as `./configure` does when the search succeeds.
+        "@zlib",
+    ],
+    deps = [":nasm_hdrs"],
+)
+
+# $(NASMLIB) in Makefile.in, which is literally `libnasm.a`. The slash in the
+# target name is what puts the archive at `lib/libnasm.a` instead of
+# `libnasm_lib.a`; `:libnasm` below is the label consumers should use.
+#
+# Like upstream's, this archive is not self-contained: it refers to globals
+# (`inname`, `outname`, `_progname`, `nasm_limit`, ...) and to
+# `print_final_report()`/`close_output()`, all of which live in `asm/nasm.c`.
+# `Makefile.in` links it as `nasm: asm/nasm.$(O) $(NASMLIB)`, so anything else
+# linking it has to supply those too.
+alias(
+    name = "libnasm",
+    actual = ":lib/nasm",
+    visibility = ["//visibility:public"],
+)
+
+# The name this target had in earlier revisions of the overlay.
+alias(
+    name = "nasm_lib",
+    actual = ":lib/nasm",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "nasm",
+    srcs = ["asm/nasm.c"],
+    copts = COPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lib/nasm",
+        ":nasm_hdrs_private",
+    ],
+)

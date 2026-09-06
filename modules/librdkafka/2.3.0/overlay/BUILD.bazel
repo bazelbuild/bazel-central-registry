@@ -1,0 +1,293 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Targets are based on the CMakeLists.txt files.
+
+bool_flag(
+    name = "with_curl",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "with_curl_setting",
+    flag_values = {":with_curl": "true"},
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_ssl",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "with_ssl_setting",
+    flag_values = {":with_ssl": "true"},
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_zlib",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "with_zlib_setting",
+    flag_values = {":with_zlib": "true"},
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_zstd",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "with_zstd_setting",
+    flag_values = {":with_zstd": "true"},
+    visibility = ["//visibility:public"],
+)
+
+# This is only used for unix systems. Windows hardcodes defines in
+# src/win32_config.h.
+expand_template(
+    name = "config_h",
+    out = "config.h",
+    substitutions = {
+        "#cmakedefine01 WITHOUT_OPTIMIZATION": "#define WITHOUT_OPTIMIZATION 0",
+        "#cmakedefine01 ENABLE_DEVEL": "#define ENABLE_DEVEL 0",
+        "#cmakedefine01 ENABLE_REFCNT_DEBUG": "#define ENABLE_REFCNT_DEBUG 0",
+        "#cmakedefine01 HAVE_ATOMICS_32_SYNC": "#define HAVE_ATOMICS_32_SYNC 0",
+        "#cmakedefine01 HAVE_ATOMICS_32": "#define HAVE_ATOMICS_32 0",
+        "#cmakedefine01 HAVE_ATOMICS_64_SYNC": "#define HAVE_ATOMICS_64_SYNC 0",
+        "#cmakedefine01 HAVE_ATOMICS_64": "#define HAVE_ATOMICS_64 0",
+        "#cmakedefine01 WITH_PKGCONFIG": "#define WITH_PKGCONFIG 0",
+        "#cmakedefine01 WITH_HDRHISTOGRAM": "#define WITH_HDRHISTOGRAM 1",
+        "#cmakedefine01 WITH_ZLIB": "#define WITH_ZLIB 0",
+        "#cmakedefine01 WITH_CURL": "#define WITH_CURL 0",
+        "#cmakedefine01 WITH_ZSTD": "#define WITH_ZSTD 0",
+        "#cmakedefine01 WITH_LIBDL": "#define WITH_LIBDL 1",
+        "#cmakedefine01 WITH_PLUGINS": "#define WITH_PLUGINS 1",
+        "#cmakedefine01 WITH_SSL": "#define WITH_SSL 0",
+        "#cmakedefine01 WITH_LZ4_EXT": "#define WITH_LZ4_EXT 1",
+        "#cmakedefine01 HAVE_REGEX": "#define HAVE_REGEX 1",
+        "#cmakedefine01 HAVE_STRNDUP": "#define HAVE_STRNDUP 1",
+        "#cmakedefine01 HAVE_RAND_R": "#define HAVE_RAND_R 1",
+        "#cmakedefine01 HAVE_PTHREAD_SETNAME_GNU": "#define HAVE_PTHREAD_SETNAME_GNU 0",
+        "#cmakedefine01 HAVE_PTHREAD_SETNAME_DARWIN": "#define HAVE_PTHREAD_SETNAME_DARWIN 0",
+        "#cmakedefine01 WITH_C11THREADS": "#define WITH_C11THREADS 0",
+        "#cmakedefine01 WITH_CRC32C_HW": "#define WITH_CRC32C_HW 0",
+        "${CMAKE_SHARED_LIBRARY_SUFFIX}": ".so",
+        "${BUILT_WITH}": "bazel",
+        # We don't support FreeBSD for now.
+        "#cmakedefine01 HAVE_PTHREAD_SETNAME_FREEBSD": "#define HAVE_PTHREAD_SETNAME_FREEBSD 0",
+        # SASL is not in the BCR.
+        "#cmakedefine01 WITH_OAUTHBEARER_OIDC": "#define WITH_OAUTHBEARER_OIDC 0",
+        "#cmakedefine01 WITH_SASL_SCRAM": "#define WITH_SASL_SCRAM 0",
+        "#cmakedefine01 WITH_SASL_OAUTHBEARER": "#define WITH_SASL_OAUTHBEARER 0",
+        "#cmakedefine01 WITH_SASL_CYRUS": "#define WITH_SASL_CYRUS 0",
+        "#cmakedefine01 WITH_SASL": "#define WITH_SASL 0",
+    } | selects.with_or({
+        ("@platforms//cpu:arm64", "@platforms//cpu:x86_64"): {
+            "#cmakedefine01 HAVE_ATOMICS_64_SYNC": "#define HAVE_ATOMICS_64_SYNC 1",
+            "#cmakedefine01 HAVE_ATOMICS_64": "#define HAVE_ATOMICS_64 1",
+        },
+        "@platforms//cpu:arm": {
+            "#cmakedefine01 HAVE_ATOMICS_32_SYNC": "1",
+            "#cmakedefine01 HAVE_ATOMICS_32": "1",
+        },
+    }) | select({
+        "@platforms//os:linux": {
+            "#cmakedefine01 HAVE_PTHREAD_SETNAME_GNU": "#define HAVE_PTHREAD_SETNAME_GNU 1",
+            "#cmakedefine01 WITH_C11THREADS": "#define WITH_C11THREADS 1",
+        },
+        "@platforms//os:macos": {
+            "#cmakedefine01 HAVE_PTHREAD_SETNAME_DARWIN": "#define HAVE_PTHREAD_SETNAME_DARWIN 1",
+        },
+    }) | select({
+        ":with_curl_setting": {"#cmakedefine01 WITH_CURL": "#define WITH_CURL 1"},
+        "//conditions:default": {},
+    }) | select({
+        ":with_ssl_setting": {"#cmakedefine01 WITH_SSL": "#define WITH_SSL 1"},
+        "//conditions:default": {},
+    }) | select({
+        ":with_zlib_setting": {"#cmakedefine01 WITH_ZLIB": "#define WITH_ZLIB 1"},
+        "//conditions:default": {},
+    }) | select({
+        ":with_zstd_setting": {"#cmakedefine01 WITH_ZSTD": "#define WITH_ZSTD 1"},
+        "//conditions:default": {},
+    }),
+    template = "packaging/cmake/config.h.in",
+)
+
+cc_library(
+    name = "rdkafka",
+    srcs = glob(
+        ["src/**/*.c"],
+        exclude = [
+            # Exclude all the feature related srcs to be added only if the
+            # feature is enabled.
+            "src/rdhttp.c",
+            "src/rdkafka_ssl.c",
+            "src/rdgz.c",
+            "src/rdkafka_zstd.c",
+            # Exclude files for SASL feature, since cyrus-sasl is currently not
+            # in the BCR.
+            "src/rdkafka_sasl_win32.c",
+            "src/rdkafka_sasl_cyrus.c",
+            "src/rdkafka_sasl_scram.c",
+            "src/rdkafka_sasl_oauthbearer.c",
+            "src/rdkafka_sasl_oauthbearer_oidc.c",
+        ],
+    ) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [":config_h"],
+    }) + select({
+        ":with_curl_setting": ["src/rdhttp.c"],
+        "//conditions:default": [],
+    }) + select({
+        ":with_ssl_setting": ["src/rdkafka_ssl.c"],
+        "//conditions:default": [],
+    }) + select({
+        ":with_zlib_setting": ["src/rdgz.c"],
+        "//conditions:default": [],
+    }) + select({
+        ":with_zstd_setting": ["src/rdkafka_zstd.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(["src/**/*.h"]),
+    include_prefix = "librdkafka",
+    includes = ["src"],
+    linkopts = [
+        # Needed for Debian.
+        "-ldl",
+        "-lpthread",
+    ],
+    strip_include_prefix = "src",
+    deps = [
+        "@lz4//:lz4_hc",
+    ] + select({
+        ":with_curl_setting": ["@curl"],
+        "//conditions:default": [],
+    }) + select({
+        ":with_ssl_setting": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        ":with_zlib_setting": ["@zlib"],
+        "//conditions:default": [],
+    }) + select({
+        ":with_zstd_setting": ["@zstd"],
+        "//conditions:default": [],
+    }),
+)
+
+alias(
+    name = "librdkafka",
+    actual = ":rdkafka",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "rdkafka_cpp",
+    srcs = glob(["src-cpp/*.cpp"]),
+    hdrs = glob(["src-cpp/*.h"]),
+    include_prefix = "librdkafka",
+    includes = ["src-cpp"],
+    strip_include_prefix = "src-cpp",
+    deps = [":rdkafka"],
+)
+
+alias(
+    name = "librdkafka_cpp",
+    actual = ":rdkafka_cpp",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "rdkafka_test_lib",
+    testonly = True,
+    srcs = glob(
+        [
+            "tests/*-*.c",
+            "tests/*-*.cpp",
+        ],
+        exclude = [
+            "tests/xxxx-assign_partition.c",
+            "tests/xxxx-metadata.cpp",
+        ],
+    ) + [
+        "tests/interceptor_test/interceptor_test.c",
+        "tests/rusage.c",
+        "tests/testcpp.cpp",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "tests/sockem.c",
+            "tests/sockem_ctrl.c",
+        ],
+    }),
+    hdrs = [
+        "tests/interceptor_test/interceptor_test.h",
+        "tests/test.h",
+        "tests/testcpp.h",
+        "tests/testshared.h",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "tests/sockem.h",
+            "tests/sockem_ctrl.h",
+        ],
+    }),
+    deps = [
+        ":rdkafka",
+        ":rdkafka_cpp",
+    ],
+)
+
+# Most of rdkafka's tests require a local cluster to be running, see
+# https://github.com/confluentinc/librdkafka/tree/master/tests#automated-broker-cluster-setup-using-trivup.
+# We'll just run some that don't require this and should be good enough as a
+# sanity check.
+
+cc_test(
+    name = "0000_unittests_test",
+    srcs = ["tests/test.c"],
+    env = {"TESTS": "0000"},
+    deps = [":rdkafka_test_lib"],
+)
+
+cc_test(
+    name = "0004_conf_test",
+    srcs = ["tests/test.c"],
+    env = {"TESTS": "0004"},
+    deps = [":rdkafka_test_lib"],
+)
+
+cc_test(
+    name = "0006_symbols_test",
+    srcs = ["tests/test.c"],
+    env = {"TESTS": "0006"},
+    deps = [":rdkafka_test_lib"],
+)
+
+cc_test(
+    name = "0009_mock_cluster_test",
+    srcs = ["tests/test.c"],
+    env = {"TESTS": "0009"},
+    deps = [":rdkafka_test_lib"],
+)
+
+cc_test(
+    name = "0025_timers_test",
+    srcs = ["tests/test.c"],
+    env = {"TESTS": "0025"},
+    deps = [":rdkafka_test_lib"],
+)

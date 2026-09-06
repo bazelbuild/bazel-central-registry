@@ -1,0 +1,29 @@
+matrix:
+  # debian11 dropped — its glibc 2.31 keeps libdl as a separate object,
+  # and the cgo'd Rust staticlib link needs -ldl which rules_rs's
+  # stdlib_linkflags doesn't add for plain @platforms//os:linux. We add
+  # -ldl in //ts:BUILD.bazel as a clinkopt, which works on Ubuntu 22.04
+  # (glibc 2.35, libdl is a stub). Not validating debian11 in BCR until
+  # we ship a distribution that doesn't push the link surface to the
+  # consumer (prebuilt-staticlib follow-up).
+  platform:
+    - macos
+    - ubuntu2204
+  bazel:
+    - 9.x
+    - 8.x
+
+tasks:
+  verify_targets:
+    name: Build the Go gazelle plugin
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    # rules_rs's Linux rust toolchains gate their target_compatible_with on
+    # @llvm//constraints/libc:gnu.2.28. The default @platforms//host doesn't
+    # carry that constraint, so we pin host_platform to //platforms:local_gnu
+    # which adds it. Harmless on macOS (the constraint just sits unused).
+    # End consumers must mirror this in their own .bazelrc — see README.
+    build_flags:
+      - "--host_platform=@gazelle_ts//platforms:local_gnu"
+    build_targets:
+      - "@gazelle_ts//ts/..."

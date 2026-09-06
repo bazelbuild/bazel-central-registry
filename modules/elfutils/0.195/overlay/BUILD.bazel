@@ -1,0 +1,248 @@
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_m4//m4:m4.bzl", "m4")
+
+_COMMON_COPTS = [
+    "-std=gnu11",
+    "-fPIC",
+    "-pthread",
+]
+
+_COMMON_INCLUDES = [
+    "backends",
+    "debuginfod",
+    "lib",
+    "libasm",
+    "libcpu",
+    "libdw",
+    "libdwelf",
+    "libdwfl",
+    "libdwfl_stacktrace",
+    "libebl",
+    "libelf",
+]
+
+_COMMON_LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "_GNU_SOURCE",
+]
+
+cc_binary(
+    name = "gen_mnemonics_tool",
+    srcs = ["gen_mnemonics.c"],
+)
+
+m4(
+    name = "i386_defs",
+    srcs = ["libcpu/defs/i386"],
+    m4_options = [
+        "-Di386",
+        "-DDISASSEMBLER",
+    ],
+    output = "libcpu/i386.defs",
+)
+
+m4(
+    name = "x86_64_defs",
+    srcs = ["libcpu/defs/i386"],
+    m4_options = [
+        "-Dx86_64",
+        "-DDISASSEMBLER",
+    ],
+    output = "libcpu/x86_64.defs",
+)
+
+run_binary(
+    name = "i386_mnemonics",
+    srcs = [":i386_defs"],
+    outs = ["libcpu/i386.mnemonics"],
+    args = [
+        "$(location :i386_defs)",
+        "$(location libcpu/i386.mnemonics)",
+    ],
+    tool = ":gen_mnemonics_tool",
+)
+
+run_binary(
+    name = "x86_64_mnemonics",
+    srcs = [":x86_64_defs"],
+    outs = ["libcpu/x86_64.mnemonics"],
+    args = [
+        "$(location :x86_64_defs)",
+        "$(location libcpu/x86_64.mnemonics)",
+    ],
+    tool = ":gen_mnemonics_tool",
+)
+
+_COMMON_HDRS = glob([
+    "backends/*.def",
+    "backends/*.h",
+    "debuginfod/*.h",
+    "lib/*.h",
+    "libasm/*.h",
+    "libcpu/*.h",
+    "libdw/*.h",
+    "libdwelf/*.h",
+    "libdwfl/*.h",
+    "libdwfl_stacktrace/*.h",
+    "libebl/*.h",
+    "libelf/*.h",
+]) + [
+    ":i386_mnemonics",
+    ":x86_64_mnemonics",
+    "version.h",
+]
+
+# Upstream includes these C files as templates from other compilation units.
+_TEXTUAL_SRCS = [
+    "backends/common-reloc.c",
+    "backends/linux-core-note.c",
+    "backends/ppc_corenote.c",
+    "backends/riscv_corenote.c",
+    "backends/s390_corenote.c",
+    "backends/sparc_corenote.c",
+    "backends/x86_64_corenote.c",
+    "backends/x86_corenote.c",
+    "backends/x86_initreg_sample.c",
+    "lib/crc32.c",
+    "lib/crc32_file.c",
+    "lib/dynamicsizehash_concurrent.c",
+    "lib/next_prime.c",
+    "libcpu/i386_disasm.c",
+    "libdwfl/gzip.c",
+] + glob([
+    "libelf/elf32_*.c",
+])
+
+cc_library(
+    name = "libeu",
+    # libelf and libdwfl compile renamed private CRC32 helpers. The standalone
+    # libeu CRC32 objects collide with zlib when linked statically.
+    srcs = [
+        "lib/error.c",
+        "lib/eu-search.c",
+        "lib/next_prime.c",
+        "lib/xasprintf.c",
+        "lib/xmalloc.c",
+        "lib/xstrdup.c",
+        "lib/xstrndup.c",
+    ],
+    hdrs = _COMMON_HDRS,
+    copts = _COMMON_COPTS,
+    includes = _COMMON_INCLUDES,
+    local_defines = _COMMON_LOCAL_DEFINES,
+    textual_hdrs = _TEXTUAL_SRCS,
+)
+
+cc_library(
+    name = "elfutils_libdw_headers",
+    hdrs = [
+        "libdw/known-dwarf.h",
+        "libdw/libdw.h",
+    ],
+    include_prefix = "elfutils",
+    strip_include_prefix = "libdw",
+)
+
+cc_library(
+    name = "elfutils_libdwelf_headers",
+    hdrs = ["libdwelf/libdwelf.h"],
+    include_prefix = "elfutils",
+    strip_include_prefix = "libdwelf",
+)
+
+cc_library(
+    name = "elfutils_libdwfl_headers",
+    hdrs = ["libdwfl/libdwfl.h"],
+    include_prefix = "elfutils",
+    strip_include_prefix = "libdwfl",
+)
+
+cc_library(
+    name = "elfutils_libdwfl_stacktrace_headers",
+    hdrs = ["libdwfl_stacktrace/libdwfl_stacktrace.h"],
+    include_prefix = "elfutils",
+    strip_include_prefix = "libdwfl_stacktrace",
+)
+
+cc_library(
+    name = "elfutils_version_header",
+    hdrs = ["version.h"],
+    include_prefix = "elfutils",
+)
+
+cc_library(
+    name = "elf",
+    srcs = glob(["libelf/*.c"]),
+    hdrs = _COMMON_HDRS,
+    copts = _COMMON_COPTS,
+    includes = _COMMON_INCLUDES,
+    local_defines = _COMMON_LOCAL_DEFINES,
+    textual_hdrs = _TEXTUAL_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":libeu",
+        "@zlib",
+    ],
+)
+
+cc_library(
+    name = "dw",
+    srcs = glob(
+        [
+            "backends/*.c",
+            "libcpu/*.c",
+            "libdw/*.c",
+            "libdwelf/*.c",
+            "libdwfl/*.c",
+            "libdwfl_stacktrace/*.c",
+            "libebl/*.c",
+        ],
+        exclude = [
+            "backends/common-reloc.c",
+            "backends/linux-core-note.c",
+            "backends/x86_corenote.c",
+            "backends/x86_initreg_sample.c",
+            "libcpu/i386_gendis.c",
+            "libcpu/i386_lex.c",
+            "libcpu/i386_parse.c",
+            "libdwfl/bzip2.c",
+            "libdwfl/lzma.c",
+            "libdwfl/zstd.c",
+        ],
+    ),
+    hdrs = _COMMON_HDRS,
+    copts = _COMMON_COPTS + [
+        "-fdollars-in-identifiers",
+    ],
+    includes = _COMMON_INCLUDES,
+    linkopts = [
+        "-ldl",
+        "-pthread",
+    ],
+    local_defines = _COMMON_LOCAL_DEFINES,
+    textual_hdrs = _TEXTUAL_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":elf",
+        ":elfutils_libdw_headers",
+        ":elfutils_libdwelf_headers",
+        ":elfutils_libdwfl_headers",
+        ":elfutils_libdwfl_stacktrace_headers",
+        ":elfutils_version_header",
+        ":libeu",
+        "@zlib",
+    ],
+)
+
+alias(
+    name = "libelf",
+    actual = ":elf",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libdw",
+    actual = ":dw",
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,88 @@
+load(
+    "@cmake_configure_file//:cmake_configure_file.bzl",
+    "cmake_configure_file",
+)
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package_metadata(
+    name = "package_metadata",
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+)
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+UPSTREAM_VERSION_MAJOR = UPSTREAM_VERSION.split(".")[0]
+
+UPSTREAM_VERSION_MINOR = UPSTREAM_VERSION.split(".")[1]
+
+UPSTREAM_VERSION_PATCH = UPSTREAM_VERSION.split(".")[2]
+
+config_setting(
+    name = "osx_arm64",
+    constraint_values = [
+        "@platforms//os:osx",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+cmake_configure_file(
+    name = "config",
+    src = "include/fastcdr/config.h.in",
+    out = "include/fastcdr/config.h",
+    cmakelists = [
+        "CMakeLists.txt",
+    ],
+    defines = [
+        "FASTCDR_HAVE_FLOAT128=0",
+        "FASTCDR_IS_BIG_ENDIAN_TARGET=0",
+        "HAVE_CXX11",
+        "PROJECT_VERSION={}".format(UPSTREAM_VERSION),
+        "PROJECT_VERSION_MAJOR={}".format(UPSTREAM_VERSION_MAJOR),
+        "PROJECT_VERSION_MINOR={}".format(UPSTREAM_VERSION_MINOR),
+        "PROJECT_VERSION_PATCH={}".format(UPSTREAM_VERSION_PATCH),
+    ] + select({
+        ":osx_arm64": [
+            "FASTCDR_SIZEOF_LONG_DOUBLE=8",
+        ],
+        "//conditions:default": [
+            "FASTCDR_SIZEOF_LONG_DOUBLE=16",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "fastcdr",
+    srcs = [
+        "src/cpp/Cdr.cpp",
+        "src/cpp/CdrSizeCalculator.cpp",
+        "src/cpp/FastBuffer.cpp",
+        "src/cpp/FastCdr.cpp",
+        "src/cpp/exceptions/BadOptionalAccessException.cpp",
+        "src/cpp/exceptions/BadParamException.cpp",
+        "src/cpp/exceptions/Exception.cpp",
+        "src/cpp/exceptions/LockedExternalAccessException.cpp",
+        "src/cpp/exceptions/NotEnoughMemoryException.cpp",
+    ],
+    hdrs = glob([
+        "include/**/*.h",
+        "include/**/*.hpp",
+    ]) + [
+        ":config",
+    ],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)

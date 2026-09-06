@@ -1,0 +1,55 @@
+"Bazel dependencies"
+
+# NOTE: The version field is intentionally omitted. Leaving it unset (the
+# default "") prevents issues when the module is used via non-registry
+# overrides (e.g. https://github.com/bazel-contrib/rules_go/issues/4380).
+# The publish-to-bcr GitHub Action patches in the release version when
+# submitting to the Bazel Central Registry.
+#
+# NOTE: compatibility_level is omitted (defaults to 0). Bumping it is very
+# disruptive — as soon as a module is requested at two different compatibility
+# levels in the dependency tree, users see an error. Only bump it when the
+# breaking change affects most use cases and isn't easy to work around, and
+# in the same commit that introduces the incompatible change.
+module(
+    name = "rules_dart_proto",
+    version = "0.2.2",
+)
+
+bazel_dep(name = "rules_dart", version = "0.2.2")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "protobuf", version = "34.1")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
+bazel_dep(name = "package_metadata", version = "0.0.7")
+
+bazel_dep(name = "rules_multitool", version = "1.11.1", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
+
+# TODO: remove once protobuf upgrades to a rules_android version compatible
+# with Bazel 9.0.1 (rules_android 0.6.4 uses the removed CcInfo builtin).
+bazel_dep(name = "rules_android", version = "0.7.1")
+bazel_dep(name = "bazelrc-preset.bzl", version = "1.9.2")
+
+# Dart toolchain (needed to compile protoc-gen-dart plugin)
+dart = use_extension("@rules_dart//dart:extensions.bzl", "dart")
+dart.toolchain(dart_version = "3.11.5")
+use_repo(dart, "dart_toolchains")
+
+register_toolchains("@dart_toolchains//:all")
+
+# Fetch protoc_plugin and all transitive dependencies from pub.dev
+pub = use_extension("@rules_dart//dart/pub:extensions.bzl", "pub")
+pub.from_lock(
+    name = "dart_proto_deps",
+    lock = "//dart_proto:pubspec.lock",
+)
+use_repo(pub, "dart_proto_deps")
+
+multitool = use_extension(
+    "@rules_multitool//multitool:extension.bzl",
+    "multitool",
+    dev_dependency = True,
+)
+multitool.hub(lockfile = "//:multitool.lock.json")
+use_repo(multitool, "multitool")

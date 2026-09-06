@@ -1,0 +1,204 @@
+diff --git a/tests/json_patch_tests.c b/tests/json_patch_tests.c
+index 7c3d6ae..44c9972 100644
+--- a/tests/json_patch_tests.c
++++ b/tests/json_patch_tests.c
+@@ -27,14 +27,29 @@
+ #include "unity/examples/unity_config.h"
+ #include "unity/src/unity.h"
+ #include "common.h"
++#include "runfiles_shim.h"
+ #include "../cJSON_Utils.h"
+ 
++#ifndef TEST_JSON_RLOCATIONPATH
++#define TEST_JSON_RLOCATIONPATH "tests/json-patch-tests/tests.json"
++#endif
++#ifndef CJSON_UTILS_TESTS_JSON_RLOCATIONPATH
++#define CJSON_UTILS_TESTS_JSON_RLOCATIONPATH "json-patch-tests/cjson-utils-tests.json"
++#endif
++#ifndef SPEC_TESTS_JSON_RLOCATIONPATH
++#define SPEC_TESTS_JSON_RLOCATIONPATH "json-patch-tests/spec_tests.json"
++#endif
++
+ static cJSON *parse_test_file(const char * const filename)
+ {
+     char *file = NULL;
+     cJSON *json = NULL;
++    char *path = runfiles_resolve(filename, NULL);
++
++    TEST_ASSERT_NOT_NULL_MESSAGE(path, "Failed to resolve test file path.");
+ 
+-    file = read_file(filename);
++    file = read_file(path);
++    free(path);
+     TEST_ASSERT_NOT_NULL_MESSAGE(file, "Failed to read file.");
+ 
+     json = cJSON_Parse(file);
+@@ -182,7 +197,7 @@ static cJSON_bool test_generate_test(cJSON *test)
+ 
+ static void cjson_utils_should_pass_json_patch_test_tests(void)
+ {
+-    cJSON *tests = parse_test_file("json-patch-tests/tests.json");
++    cJSON *tests = parse_test_file(TEST_JSON_RLOCATIONPATH);
+     cJSON *test = NULL;
+ 
+     cJSON_bool failed = false;
+@@ -199,7 +214,7 @@ static void cjson_utils_should_pass_json_patch_test_tests(void)
+ 
+ static void cjson_utils_should_pass_json_patch_test_spec_tests(void)
+ {
+-    cJSON *tests = parse_test_file("json-patch-tests/spec_tests.json");
++    cJSON *tests = parse_test_file(SPEC_TESTS_JSON_RLOCATIONPATH);
+     cJSON *test = NULL;
+ 
+     cJSON_bool failed = false;
+@@ -216,7 +231,7 @@ static void cjson_utils_should_pass_json_patch_test_spec_tests(void)
+ 
+ static void cjson_utils_should_pass_json_patch_test_cjson_utils_tests(void)
+ {
+-    cJSON *tests = parse_test_file("json-patch-tests/cjson-utils-tests.json");
++    cJSON *tests = parse_test_file(CJSON_UTILS_TESTS_JSON_RLOCATIONPATH);
+     cJSON *test = NULL;
+ 
+     cJSON_bool failed = false;
+diff --git a/tests/parse_examples.c b/tests/parse_examples.c
+index d35d6cf..f986972 100644
+--- a/tests/parse_examples.c
++++ b/tests/parse_examples.c
+@@ -20,6 +20,7 @@
+   THE SOFTWARE.
+ */
+ 
++#include <stddef.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -27,11 +28,36 @@
+ #include "unity/examples/unity_config.h"
+ #include "unity/src/unity.h"
+ #include "common.h"
++#include "runfiles_shim.h"
+ 
+-static cJSON *parse_file(const char *filename)
++/* Reference runfile path; used to derive directory for other inputs. Set via -DINPUT1_RLOCATIONPATH */
++#ifndef INPUT1_RLOCATIONPATH
++#define INPUT1_RLOCATIONPATH "cjson/tests/inputs/test1"
++#endif
++
++static void runfile_path_from_reference(const char *reference_path, const char *basename,
++                                        char *out, size_t out_size)
++{
++    const char *last_slash = strrchr(reference_path, '/');
++    if (!last_slash || !out || out_size == 0)
++        return;
++    size_t dir_len = (size_t)(last_slash - reference_path);
++    size_t basename_len = strlen(basename);
++    if (dir_len + 1 + basename_len >= out_size)
++        return;
++    memcpy(out, reference_path, dir_len);
++    out[dir_len] = '/';
++    memcpy(out + dir_len + 1, basename, basename_len + 1);
++}
++
++static cJSON *parse_file(const char *runfile_path)
+ {
+     cJSON *parsed = NULL;
+-    char *content = read_file(filename);
++    char *path = runfiles_resolve(runfile_path, NULL);
++    TEST_ASSERT_NOT_NULL_MESSAGE(path, "Failed to resolve runfile path.");
++
++    char *content = read_file(path);
++    free(path);
+ 
+     parsed = cJSON_Parse(content);
+ 
+@@ -47,33 +73,33 @@ static void do_test(const char *test_name)
+ {
+     char *expected = NULL;
+     char *actual = NULL;
++    char *content = NULL;
+     cJSON *tree = NULL;
+ 
+-    size_t test_name_length = 0;
+-    /* path of the test input */
+-    char *test_path = NULL;
+-    /* path of the expected output */
+-    char *expected_path = NULL;
++    char runfile_path[256];
++    char expected_path[256];
+ 
+-    test_name_length = strlen(test_name);
++    runfile_path_from_reference(INPUT1_RLOCATIONPATH, test_name, runfile_path, sizeof(runfile_path));
+ 
+-    /* allocate file paths */
+-#define TEST_DIR_PATH "inputs/"
+-    test_path = (char*)malloc(sizeof(TEST_DIR_PATH) + test_name_length);
+-    TEST_ASSERT_NOT_NULL_MESSAGE(test_path, "Failed to allocate test_path buffer.");
+-    expected_path = (char*)malloc(sizeof(TEST_DIR_PATH) + test_name_length + sizeof(".expected"));
+-    TEST_ASSERT_NOT_NULL_MESSAGE(expected_path, "Failed to allocate expected_path buffer.");
++    /* Resolve test file first; derive expected path from resolved path (same dir) */
++    char *test_path = runfiles_resolve(runfile_path, NULL);
++    TEST_ASSERT_NOT_NULL_MESSAGE(test_path, "Failed to resolve test path.");
+ 
+-    /* create file paths */
+-    sprintf(test_path, TEST_DIR_PATH"%s", test_name);
+-    sprintf(expected_path, TEST_DIR_PATH"%s.expected", test_name);
++    const char *last_slash = strrchr(test_path, '/');
++    TEST_ASSERT_NOT_NULL_MESSAGE(last_slash, "Invalid test path.");
++    size_t dir_len = (size_t)(last_slash - test_path);
++    snprintf(expected_path, sizeof(expected_path), "%.*s/%s.expected", (int)dir_len, test_path,
++             test_name);
+ 
+     /* read expected output */
+     expected = read_file(expected_path);
+     TEST_ASSERT_NOT_NULL_MESSAGE(expected, "Failed to read expected output.");
+ 
+     /* read and parse test */
+-    tree = parse_file(test_path);
++    content = read_file(test_path);
++    free(test_path);
++    TEST_ASSERT_NOT_NULL_MESSAGE(content, "Failed to read test file.");
++    tree = cJSON_Parse(content);
+     TEST_ASSERT_NOT_NULL_MESSAGE(tree, "Failed to read of parse test.");
+ 
+     /* print the parsed tree */
+@@ -88,6 +114,10 @@ static void do_test(const char *test_name)
+     {
+         free(expected);
+     }
++    if (content != NULL)
++    {
++        free(content);
++    }
+     if (tree != NULL)
+     {
+         cJSON_Delete(tree);
+@@ -96,14 +126,6 @@ static void do_test(const char *test_name)
+     {
+         free(actual);
+     }
+-    if (test_path != NULL)
+-    {
+-        free(test_path);
+-    }
+-    if (expected_path != NULL)
+-    {
+-        free(expected_path);
+-    }
+ }
+ 
+ static void file_test1_should_be_parsed_and_printed(void)
+@@ -135,8 +157,13 @@ static void file_test6_should_not_be_parsed(void)
+ {
+     char *test6 = NULL;
+     cJSON *tree = NULL;
++    char runfile_path[256];
++    runfile_path_from_reference(INPUT1_RLOCATIONPATH, "test6", runfile_path, sizeof(runfile_path));
++    char *test_path = runfiles_resolve(runfile_path, NULL);
+ 
+-    test6 = read_file("inputs/test6");
++    TEST_ASSERT_NOT_NULL_MESSAGE(test_path, "Failed to resolve test path.");
++    test6 = read_file(test_path);
++    free(test_path);
+     TEST_ASSERT_NOT_NULL_MESSAGE(test6, "Failed to read test6 data.");
+ 
+     tree = cJSON_Parse(test6);

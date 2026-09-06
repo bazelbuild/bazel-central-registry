@@ -1,0 +1,202 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Build flags
+
+bool_flag(
+    name = "sse",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "zstd",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "opencl",
+    build_setting_default = False,
+)
+
+# Config settings
+
+config_setting(
+    name = "_sse_enabled",
+    flag_values = {":sse": "True"},
+)
+
+selects.config_setting_group(
+    name = "_is_x86",
+    match_any = [
+        "@platforms//cpu:x86_32",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+selects.config_setting_group(
+    name = "_sse_active",
+    match_all = [
+        ":_sse_enabled",
+        ":_is_x86",
+    ],
+)
+
+config_setting(
+    name = "_zstd_enabled",
+    flag_values = {":zstd": "True"},
+)
+
+config_setting(
+    name = "_opencl_enabled",
+    flag_values = {":opencl": "True"},
+)
+
+# Common build settings
+
+config_setting(
+    name = "_is_windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+selects.config_setting_group(
+    name = "_sse_active_windows",
+    match_all = [
+        ":_sse_active",
+        ":_is_windows",
+    ],
+)
+
+_COPTS = select({
+    "@platforms//os:windows": ["/std:c++17"],
+    "//conditions:default": [
+        "-std=c++17",
+        "-fvisibility=hidden",
+        "-fno-strict-aliasing",
+    ],
+}) + select({
+    ":_sse_active": ["-msse4.1"],
+    ":_sse_active_windows": [],
+    "//conditions:default": [],
+})
+
+_DEFINES = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [
+        "_LARGEFILE64_SOURCE=1",
+        "_FILE_OFFSET_BITS=64",
+    ],
+}) + select({
+    ":_sse_active": ["BASISU_SUPPORT_SSE=1"],
+    "//conditions:default": ["BASISU_SUPPORT_SSE=0"],
+}) + select({
+    ":_zstd_enabled": ["BASISD_SUPPORT_KTX2_ZSTD=1"],
+    "//conditions:default": ["BASISD_SUPPORT_KTX2_ZSTD=0"],
+}) + select({
+    ":_opencl_enabled": ["BASISU_SUPPORT_OPENCL=1"],
+    "//conditions:default": ["BASISU_SUPPORT_OPENCL=0"],
+})
+
+_LINKOPTS = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [
+        "-lm",
+        "-lpthread",
+    ],
+})
+
+# Targets
+
+cc_library(
+    name = "basisu_transcoder",
+    srcs = ["transcoder/basisu_transcoder.cpp"],
+    hdrs = glob([
+        "transcoder/*.h",
+        "transcoder/*.inc",
+        "transcoder/*.inl",
+    ]),
+    copts = _COPTS,
+    linkopts = _LINKOPTS,
+    linkstatic = True,
+    local_defines = _DEFINES,
+    visibility = ["//visibility:public"],
+    deps = select({
+        ":_zstd_enabled": ["@zstd"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "basisu_encoder",
+    srcs = [
+        "encoder/3rdparty/android_astc_decomp.cpp",
+        "encoder/3rdparty/tinyexr.cpp",
+        "encoder/basisu_astc_hdr_6x6_enc.cpp",
+        "encoder/basisu_astc_hdr_common.cpp",
+        "encoder/basisu_astc_ldr_common.cpp",
+        "encoder/basisu_astc_ldr_encode.cpp",
+        "encoder/basisu_backend.cpp",
+        "encoder/basisu_basis_file.cpp",
+        "encoder/basisu_bc7enc.cpp",
+        "encoder/basisu_comp.cpp",
+        "encoder/basisu_enc.cpp",
+        "encoder/basisu_etc.cpp",
+        "encoder/basisu_frontend.cpp",
+        "encoder/basisu_gpu_texture.cpp",
+        "encoder/basisu_kernels_sse.cpp",
+        "encoder/basisu_opencl.cpp",
+        "encoder/basisu_pvrtc1_4.cpp",
+        "encoder/basisu_resample_filters.cpp",
+        "encoder/basisu_resampler.cpp",
+        "encoder/basisu_ssim.cpp",
+        "encoder/basisu_uastc_enc.cpp",
+        "encoder/basisu_uastc_hdr_4x4_enc.cpp",
+        "encoder/jpgd.cpp",
+        "encoder/pvpngreader.cpp",
+    ],
+    hdrs = glob([
+        "encoder/*.h",
+        "encoder/3rdparty/*.h",
+    ]),
+    copts = _COPTS,
+    linkopts = _LINKOPTS,
+    linkstatic = True,
+    local_defines = _DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":basisu_transcoder"] + select({
+        ":_opencl_enabled": [
+            "@opencl-sdk//:opencl_headers",
+            "@opencl-sdk//:opencl_icd_loader",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "basisu",
+    srcs = [
+        "basisu_tool.cpp",
+        "basisu_tool_help.h",
+    ],
+    copts = _COPTS,
+    linkopts = _LINKOPTS,
+    local_defines = _DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":basisu_encoder"],
+)
+
+cc_test(
+    name = "example_test",
+    size = "large",
+    srcs = ["example/example.cpp"],
+    copts = _COPTS,
+    linkopts = _LINKOPTS,
+    local_defines = _DEFINES,
+    target_compatible_with = select({
+        ":_zstd_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":basisu_encoder"],
+)

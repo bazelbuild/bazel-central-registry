@@ -1,0 +1,105 @@
+load("@bazel_lib//lib:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_binary", "cc_shared_library")
+
+expand_template(
+    name = "gen_magic_h",
+    out = "src/magic.h",
+    template = "src/magic.h.in",
+    substitutions = {
+        "X.YY": "546",
+    },
+)
+
+cc_library(
+    name = "lib_bootstrap",
+    hdrs = ["src/magic.h"],
+    srcs = [
+        "src/apprentice.c",
+        "src/apptype.c",
+        "src/ascmagic.c",
+        "src/buffer.c",
+        "src/cdf.c",
+        "src/cdf.h",
+        "src/cdf_time.c",
+        "src/compress.c",
+        "src/der.c",
+        "src/der.h",
+        "src/elfclass.h",
+        "src/encoding.c",
+        "src/file.h",
+        "src/file_opts.h",
+        "src/fmtcheck.c",
+        "src/fsmagic.c",
+        "src/funcs.c",
+        "src/is_csv.c",
+        "src/is_json.c",
+        "src/is_simh.c",
+        "src/is_tar.c",
+        "src/mygetopt.h",
+        "src/print.c",
+        "src/readcdf.c",
+        "src/readelf.c",
+        "src/readelf.h",
+        "src/softmagic.c",
+        "src/tar.h",
+    ] + select({
+        "@platforms//os:osx": [],
+        "//conditions:default": ["src/strlcpy.c"],
+    }),
+    includes = ["src"],
+    copts = [
+        "-Wno-deprecated-declarations",
+        "-Wno-unused-variable",
+        "-Wno-unused-const-variable",
+    ],
+    defines = [
+        "HAVE_INTTYPES_H",
+        "HAVE_MKSTEMP",
+        "HAVE_STDINT_H",
+        "HAVE_UNISTD_H",
+        "VERSION=\\\"546\\\"",
+    ],
+)
+
+cc_binary(
+    name = "file_bootstrap",
+    srcs = ["src/magic.c", "src/file.c", "src/seccomp.c"],
+    deps = [":lib_bootstrap"],
+)
+
+genrule(
+    name = "gen_magic",
+    tools = [":file_bootstrap"],
+    srcs = glob(["magic/Magdir/*"]),
+    cmd = """cat $(SRCS) > combined_magic && $(execpath :file_bootstrap) -C -m combined_magic 2>/dev/null && mv combined_magic.mgc $@ && rm combined_magic""",
+    outs = ["magic.mgc"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "lib",
+    deps = [":lib_bootstrap"],
+    srcs = ["src/magic.c"],
+    data = [":magic.mgc"],
+    defines = ["MAGIC=\\\"$(rlocationpath :magic.mgc)\\\""],
+    visibility = ["//visibility:public"],
+)
+
+cc_shared_library(
+    name = "magic",
+    deps = [":lib"],
+)
+
+cc_binary(
+    name = "file",
+    srcs = ["src/file.c", "src/seccomp.c"],
+    deps = [":lib"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libmagic",
+    actual = "magic",
+    visibility = ["//visibility:public"],
+)
+

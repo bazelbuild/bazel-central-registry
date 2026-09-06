@@ -1,0 +1,542 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
+load(
+    ":libvpx_srcs.bzl",
+    "LIBVPX_ARM64_NEON_DOTPROD_SRCS_LOWBD",
+    "LIBVPX_ARM64_NEON_I8MM_SRCS_LOWBD",
+    "LIBVPX_ARM64_NEON_SRCS_LOWBD",
+    "LIBVPX_ARM64_SVE_SRCS_LOWBD",
+    "LIBVPX_ARM64_SRCS",
+    "LIBVPX_ARM64_LOWBD_PUBLIC_HDRS",
+    "LIBVPX_ARM_ASM_SRCS",
+    "LIBVPX_ARM_LOWBD_PUBLIC_HDRS",
+    "LIBVPX_ARM_NEON_SRCS",
+    "LIBVPX_ARM_SRCS",
+    "LIBVPX_X86_64_ASM_SRCS_LOWBD",
+    "LIBVPX_X86_64_AVX2_SRCS_LOWBD",
+    "LIBVPX_X86_64_AVX_SRCS",
+    "LIBVPX_X86_64_HDRS",
+    "LIBVPX_X86_64_SRCS",
+    "LIBVPX_X86_64_SSE2_SRCS_LOWBD",
+    "LIBVPX_X86_64_SSE4_1_SRCS_LOWBD",
+    "LIBVPX_X86_64_SSSE3_SRCS_LOWBD",
+    "LIBVPX_X86_64_MMX_SRCS",
+    "LIBVPX_X86_ASM_SRCS_LOWBD",
+    "LIBVPX_X86_AVX2_SRCS_LOWBD",
+    "LIBVPX_X86_AVX_SRCS",
+    "LIBVPX_X86_LOWBD_PUBLIC_HDRS",
+    "LIBVPX_X86_MMX_SRCS",
+    "LIBVPX_X86_SRCS",
+    "LIBVPX_X86_SSE2_SRCS_LOWBD",
+    "LIBVPX_X86_SSE4_1_SRCS_LOWBD",
+    "LIBVPX_X86_SSSE3_SRCS_LOWBD",
+)
+load(":nasm.bzl", "libvpx_arm_asm_library")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    package_name = "libvpx",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-3-Clause"],
+    license_text = "LICENSE",
+    package_url = "https://github.com/webmproject/libvpx",
+)
+
+exports_files([
+    "AUTHORS",
+    "ads2gas_do_wrapper.pl",
+    "build/make/ads2gas.pl",
+    "build/make/thumb.pm",
+    "build/make/rtcd.pl",
+    "rtcd_do_wrapper.pl",
+    "third_party/x86inc/x86inc.asm",
+    "vp8/common/rtcd_defs.pl",
+    "vp9/common/vp9_rtcd_defs.pl",
+    "vpx_dsp/vpx_dsp_rtcd_defs.pl",
+    "vpx_ports/x86_abi_support.asm",
+    "vpx_scale/vpx_scale_rtcd.pl",
+], visibility = ["//visibility:public"])
+
+alias(
+    name = "libvpx",
+    actual = ":vpx",
+    visibility = ["//visibility:public"],
+)
+
+_SUPPORTED_PLATFORM = select({
+    "@platforms//cpu:armv7": [],
+    "@platforms//cpu:aarch64": [],
+    "@platforms//cpu:x86_32": [],
+    "@platforms//cpu:x86_64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+_PLATFORM_CONFIG_DEPS = select({
+    "@platforms//cpu:armv7": ["//config:arm_config"],
+    "@platforms//cpu:aarch64": ["//config:arm64_config"],
+    "@platforms//cpu:x86_32": ["//config:x86_config"],
+    "@platforms//cpu:x86_64": ["//config:x86_64_config"],
+    "//conditions:default": [],
+})
+
+_PLATFORM_PUBLIC_HDRS = select({
+    "@platforms//cpu:armv7": LIBVPX_ARM_LOWBD_PUBLIC_HDRS,
+    "@platforms//cpu:aarch64": LIBVPX_ARM64_LOWBD_PUBLIC_HDRS,
+    "@platforms//cpu:x86_32": LIBVPX_X86_LOWBD_PUBLIC_HDRS,
+    "@platforms//cpu:x86_64": LIBVPX_X86_64_HDRS,
+    "//conditions:default": [],
+})
+
+_PLATFORM_BASE_SRCS = select({
+    "@platforms//cpu:armv7": LIBVPX_ARM_SRCS,
+    "@platforms//cpu:aarch64": LIBVPX_ARM64_SRCS,
+    "@platforms//cpu:x86_32": LIBVPX_X86_SRCS,
+    "@platforms//cpu:x86_64": LIBVPX_X86_64_SRCS,
+    "//conditions:default": [],
+})
+
+_COMMON_COPTS = select({
+    "@platforms//os:windows": ["/I."],
+    "//conditions:default": ["-iquote."],
+}) + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [
+        "-Wno-conversion",
+        "-Wno-parentheses-equality",
+        "-Wno-unused-function",
+    ],
+})
+
+_COMMON_DEFINES = [
+    "VPX_MAX_ALLOCABLE_MEMORY=((1ULL<<31)-(1<<21))",
+]
+
+_NASM_HDRS = glob([
+    "third_party/x86inc/*.asm",
+    "vp8/common/x86/*.asm",
+    "vp8/encoder/x86/*.asm",
+    "vp9/common/x86/*.asm",
+    "vp9/encoder/x86/*.asm",
+    "vpx_dsp/x86/*.asm",
+    "vpx_ports/*.asm",
+])
+
+cc_library(
+    name = "libvpx_headers",
+    hdrs = glob(["**/*.h"], allow_empty = True),
+    target_compatible_with = _SUPPORTED_PLATFORM,
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "x86_sse2",
+    srcs = LIBVPX_X86_SSE2_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:SSE2"],
+        "//conditions:default": ["-msse2"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_config"],
+)
+
+cc_library(
+    name = "x86_mmx",
+    srcs = LIBVPX_X86_MMX_SRCS,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-mmmx"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_config"],
+)
+
+cc_library(
+    name = "x86_ssse3",
+    srcs = LIBVPX_X86_SSSE3_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX"],
+        "//conditions:default": ["-mssse3"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_config"],
+)
+
+cc_library(
+    name = "x86_sse4_1",
+    srcs = LIBVPX_X86_SSE4_1_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX"],
+        "//conditions:default": ["-msse4.1"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_config"],
+)
+
+cc_library(
+    name = "x86_avx",
+    srcs = LIBVPX_X86_AVX_SRCS,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX"],
+        "//conditions:default": ["-mavx"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_config"],
+)
+
+cc_library(
+    name = "x86_avx2",
+    srcs = LIBVPX_X86_AVX2_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX2"],
+        "//conditions:default": ["-mavx2"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_config"],
+)
+
+nasm_library(
+    name = "x86_asm",
+    srcs = LIBVPX_X86_ASM_SRCS_LOWBD,
+    hdrs = _NASM_HDRS,
+    copts = select({
+        "@platforms//os:android": ["-D__ANDROID__"],
+        "@platforms//os:windows": ["-fwin32"],
+        "//conditions:default": [],
+    }),
+    includes = ["."] + select({
+        "@platforms//os:windows": ["config/generated/x86/windows"],
+        "//conditions:default": ["config/generated/x86/default"],
+    }),
+    preincs = ["//config:x86_vpx_config_asm"],
+    target_compatible_with = select({
+        "@platforms//cpu:x86_32": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "x86_64_mmx",
+    srcs = LIBVPX_X86_64_MMX_SRCS,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-mmmx"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_64_config"],
+)
+
+cc_library(
+    name = "x86_64_sse2",
+    srcs = LIBVPX_X86_64_SSE2_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-msse2"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_64_config"],
+)
+
+cc_library(
+    name = "x86_64_ssse3",
+    srcs = LIBVPX_X86_64_SSSE3_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-mssse3"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_64_config"],
+)
+
+cc_library(
+    name = "x86_64_sse4_1",
+    srcs = LIBVPX_X86_64_SSE4_1_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX"],
+        "//conditions:default": ["-msse4.1"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_64_config"],
+)
+
+cc_library(
+    name = "x86_64_avx",
+    srcs = LIBVPX_X86_64_AVX_SRCS,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX"],
+        "//conditions:default": ["-mavx"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_64_config"],
+)
+
+cc_library(
+    name = "x86_64_avx2",
+    srcs = LIBVPX_X86_64_AVX2_SRCS_LOWBD,
+    copts = _COMMON_COPTS + select({
+        "@platforms//os:windows": ["/arch:AVX2"],
+        "//conditions:default": ["-mavx2"],
+    }),
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:x86_64_config"],
+)
+
+nasm_library(
+    name = "x86_64_asm",
+    srcs = LIBVPX_X86_64_ASM_SRCS_LOWBD,
+    hdrs = _NASM_HDRS,
+    copts = select({
+        "@platforms//os:android": ["-D__ANDROID__"],
+        "//conditions:default": [],
+    }),
+    includes = ["."] + select({
+        "@platforms//os:windows": ["config/generated/x86_64/windows"],
+        "//conditions:default": ["config/generated/x86_64/default"],
+    }),
+    preincs = ["//config:x86_64_vpx_config_asm"],
+    target_compatible_with = select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "arm_neon",
+    srcs = LIBVPX_ARM_NEON_SRCS,
+    copts = _COMMON_COPTS + ["-mfpu=neon"],
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:armv7": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:arm_config"],
+)
+
+libvpx_arm_asm_library(
+    name = "arm_asm",
+    srcs = LIBVPX_ARM_ASM_SRCS,
+    config_target = "//config:arm_vpx_config_asm",
+    target_compatible_with = select({
+        "@platforms//cpu:armv7": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "arm64_neon",
+    srcs = LIBVPX_ARM64_NEON_SRCS_LOWBD,
+    copts = _COMMON_COPTS,
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:arm64_config"],
+)
+
+cc_library(
+    name = "arm64_dotprod",
+    srcs = LIBVPX_ARM64_NEON_DOTPROD_SRCS_LOWBD,
+    copts = _COMMON_COPTS + ["-march=armv8.2-a+dotprod"],
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:arm64_config"],
+)
+
+cc_library(
+    name = "arm64_i8mm",
+    srcs = LIBVPX_ARM64_NEON_I8MM_SRCS_LOWBD,
+    copts = _COMMON_COPTS + ["-march=armv8.2-a+dotprod+i8mm"],
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:arm64_config"],
+)
+
+cc_library(
+    name = "arm64_sve",
+    srcs = LIBVPX_ARM64_SVE_SRCS_LOWBD,
+    copts = _COMMON_COPTS + ["-march=armv8.2-a+dotprod+i8mm+sve"],
+    defines = _COMMON_DEFINES,
+    target_compatible_with = select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:sve_disabled": ["@platforms//:incompatible"],
+        "//config:linux_arm64_sve_auto": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":libvpx_headers", "//config:arm64_config"],
+)
+
+cc_library(
+    name = "arm64_vpx_bundle_windows",
+    target_compatible_with = select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":arm64_neon",
+        ":libvpx_headers",
+    ],
+)
+
+cc_library(
+    name = "arm64_vpx_bundle_non_windows",
+    target_compatible_with = select({
+        "@platforms//cpu:aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":arm64_dotprod",
+        ":arm64_i8mm",
+        ":arm64_neon",
+        ":libvpx_headers",
+    ] + select({
+        "//config:sve_disabled": [],
+        "//config:linux_arm64_sve_auto": [],
+        "//conditions:default": [":arm64_sve"],
+    }),
+)
+
+alias(
+    name = "arm64_vpx_bundle",
+    actual = select({
+        "@platforms//os:windows": ":arm64_vpx_bundle_windows",
+        "//conditions:default": ":arm64_vpx_bundle_non_windows",
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "vpx",
+    srcs = _PLATFORM_BASE_SRCS + select({
+        "@platforms//cpu:x86_32": [":x86_asm"],
+        "@platforms//cpu:x86_64": [":x86_64_asm"],
+        "//conditions:default": [],
+    }),
+    hdrs = _PLATFORM_PUBLIC_HDRS,
+    copts = _COMMON_COPTS,
+    defines = _COMMON_DEFINES,
+    target_compatible_with = _SUPPORTED_PLATFORM,
+    visibility = ["//visibility:public"],
+    deps = _PLATFORM_CONFIG_DEPS + select({
+        "@platforms//cpu:armv7": [
+            ":arm_asm",
+            ":arm_neon",
+            ":libvpx_headers",
+        ],
+        "@platforms//cpu:aarch64": [
+            ":arm64_vpx_bundle",
+        ],
+        "@platforms//cpu:x86_32": [
+            ":libvpx_headers",
+            ":x86_avx",
+            ":x86_avx2",
+            ":x86_mmx",
+            ":x86_sse2",
+            ":x86_sse4_1",
+            ":x86_ssse3",
+        ],
+        "@platforms//cpu:x86_64": [
+            ":libvpx_headers",
+            ":x86_64_avx",
+            ":x86_64_avx2",
+            ":x86_64_mmx",
+            ":x86_64_sse2",
+            ":x86_64_sse4_1",
+            ":x86_64_ssse3",
+        ],
+        "//conditions:default": [],
+    }),
+)

@@ -1,0 +1,924 @@
+"""GMP - GNU Multiple Precision Arithmetic Library."""
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load(
+    "//bazel:gmp.bzl",
+    "gmp_config_m4",
+    "gmp_copy",
+    "gmp_gen",
+    "gmp_mpn_m4",
+    "gmp_native_checks",
+)
+load(
+    "//bazel:mpn.bzl",
+    "GMP_MPN_FUNCTIONS",
+    "GMP_MPN_FUNCTIONS_OPTIONAL",
+)
+
+# =============================================================================
+# Feature flags
+# =============================================================================
+
+bool_flag(
+    name = "enable_fft",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "enable_assert",
+    build_setting_default = False,
+)
+
+# CPU micro-architecture variant for selecting optimized assembly.
+# Defaults to "auto" which picks the generic baseline for each architecture
+# (k8 for x86_64, arm64 for aarch64).
+# Override with --@gmp//:cpu=zen3 (or skylake, cora57, applem1, etc.)
+string_flag(
+    name = "cpu",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        # x86_64 variants (from configure.ac)
+        "alderlake",
+        "atom",
+        "bd1",
+        "bd2",
+        "bd3",
+        "bd4",
+        "bt1",
+        "bt2",
+        "core2",
+        "coreibwl",
+        "coreihwl",
+        "coreinhm",
+        "coreisbr",
+        "goldmont",
+        "k8",
+        "k10",
+        "nano",
+        "pentium4",
+        "silvermont",
+        "skylake",
+        "tremont",
+        "zen",
+        "zen2",
+        "zen3",
+        # aarch64 variants
+        "applem1",
+        "cora53",
+        "cora57",
+        "xgene1",
+    ],
+)
+
+# =============================================================================
+# Config settings
+# =============================================================================
+
+config_setting(
+    name = "fft_enabled",
+    flag_values = {":enable_fft": "True"},
+)
+
+config_setting(
+    name = "assert_enabled",
+    flag_values = {":enable_assert": "True"},
+)
+
+selects.config_setting_group(
+    name = "cpu_32bit",
+    match_any = [
+        "@platforms//cpu:aarch32",
+        "@platforms//cpu:arm",
+        "@platforms//cpu:arm64_32",
+        "@platforms//cpu:armv6-m",
+        "@platforms//cpu:armv7",
+        "@platforms//cpu:armv7-m",
+        "@platforms//cpu:armv7e-m",
+        "@platforms//cpu:armv7e-mf",
+        "@platforms//cpu:armv7k",
+        "@platforms//cpu:armv8-m",
+        "@platforms//cpu:cortex-r52",
+        "@platforms//cpu:i386",
+        "@platforms//cpu:ppc",
+        "@platforms//cpu:ppc32",
+        "@platforms//cpu:riscv32",
+        "@platforms//cpu:wasm32",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+# Windows uses the LLP64 data model where sizeof(unsigned long) == 4 even
+# on 64-bit. GMP needs _LONG_LONG_LIMB defined so mp_limb_t is
+# "unsigned long long" (8 bytes) instead of "unsigned long" (4 bytes).
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "windows_aarch64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+selects.config_setting_group(
+    name = "windows_64bit",
+    match_any = [
+        ":windows_x86_64",
+        ":windows_aarch64",
+    ],
+)
+
+# =============================================================================
+# MPN shared attributes
+# =============================================================================
+
+_ALL_MPN_FUNCTIONS = GMP_MPN_FUNCTIONS + GMP_MPN_FUNCTIONS_OPTIONAL
+
+_MPN_ARCH = select({
+    "@platforms//cpu:aarch64": "aarch64",
+    "@platforms//cpu:arm": "arm",
+    "@platforms//cpu:arm64": "aarch64",
+    "@platforms//cpu:arm64_32": "aarch64",
+    "@platforms//cpu:arm64e": "aarch64",
+    "@platforms//cpu:armv7": "arm",
+    "@platforms//cpu:armv7-m": "arm",
+    "@platforms//cpu:armv7e-m": "arm",
+    "@platforms//cpu:armv7e-mf": "arm",
+    "@platforms//cpu:armv7k": "arm",
+    "@platforms//cpu:i386": "x86",
+    "@platforms//cpu:mips64": "mips64",
+    "@platforms//cpu:ppc": "powerpc32",
+    "@platforms//cpu:ppc32": "powerpc32",
+    "@platforms//cpu:ppc64le": "powerpc64",
+    "@platforms//cpu:riscv32": "riscv",
+    "@platforms//cpu:riscv64": "riscv",
+    "@platforms//cpu:s390x": "s390_64",
+    "@platforms//cpu:x86_32": "x86",
+    "@platforms//cpu:x86_64": "x86_64",
+    "//conditions:default": "generic",
+})
+
+_MPN_OS = select({
+    "@platforms//os:linux": "linux",
+    "@platforms//os:macos": "macos",
+    "@platforms//os:windows": "windows",
+    "//conditions:default": "linux",
+})
+
+_MPN_ASM_SRCS = select({
+    "@platforms//cpu:aarch64": glob(["mpn/arm64/**/*.asm"]),
+    "@platforms//cpu:arm": glob(["mpn/arm/**/*.asm"]),
+    "@platforms//cpu:arm64": glob(["mpn/arm64/**/*.asm"]),
+    "@platforms//cpu:arm64e": glob(["mpn/arm64/**/*.asm"]),
+    "@platforms//cpu:armv7": glob(["mpn/arm/**/*.asm"]),
+    "@platforms//cpu:i386": glob(["mpn/x86/**/*.asm"]),
+    "@platforms//cpu:mips64": glob(["mpn/mips64/**/*.asm"]),
+    "@platforms//cpu:ppc": glob(["mpn/powerpc32/**/*.asm"]),
+    "@platforms//cpu:ppc32": glob(["mpn/powerpc32/**/*.asm"]),
+    "@platforms//cpu:ppc64le": glob(["mpn/powerpc64/**/*.asm"]),
+    "@platforms//cpu:riscv64": glob(["mpn/riscv/**/*.asm"]),
+    "@platforms//cpu:s390x": glob(["mpn/s390_64/**/*.asm"]),
+    "@platforms//cpu:x86_32": glob(["mpn/x86/**/*.asm"]),
+    "@platforms//cpu:x86_64": glob(["mpn/x86_64/**/*.asm"]),
+    "//conditions:default": [],
+})
+
+_MPN_GENERIC_SRCS = glob(["mpn/generic/*.c"])
+
+_MPN_M4_DEPS = glob(["mpn/**/*.m4"]) + [":config_m4"]
+
+# =============================================================================
+# Package info (AC_INIT equivalent)
+# =============================================================================
+
+package_info(
+    name = "package",
+    aliases = {
+        "PACKAGE": "PACKAGE_NAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    strip_bcr_version = True,
+)
+
+# =============================================================================
+# HAVE_NATIVE_mpn_* checks (derived from assembly PROLOGUE declarations)
+# =============================================================================
+
+gmp_native_checks(
+    name = "native_checks",
+    arch = _MPN_ARCH,
+    asm_srcs = _MPN_ASM_SRCS,
+    cpu = ":cpu",
+    os = _MPN_OS,
+)
+
+# =============================================================================
+# Autoconf checks -> config.h and gmp.h
+# =============================================================================
+
+autoconf(
+    name = "configure",
+    checks =
+        # -- Standard headers -> HAVE_*_H --
+        macros.AC_CHECK_HEADERS([
+            "alloca.h",
+            "dlfcn.h",
+            "fcntl.h",
+            "float.h",
+            "inttypes.h",
+            "langinfo.h",
+            "locale.h",
+            "memory.h",
+            "nl_types.h",
+            "stdint.h",
+            "stdlib.h",
+            "string.h",
+            "strings.h",
+            "sys/mman.h",
+            "sys/param.h",
+            "sys/resource.h",
+            "sys/stat.h",
+            "sys/sysctl.h",
+            "sys/sysinfo.h",
+            "sys/time.h",
+            "sys/times.h",
+            "sys/types.h",
+            "unistd.h",
+        ]) +
+        # -- Standard functions -> HAVE_* --
+        macros.AC_CHECK_FUNCS([
+            "alarm",
+            "clock",
+            "clock_gettime",
+            "getpagesize",
+            "getrusage",
+            "gettimeofday",
+            "localeconv",
+            "memset",
+            "mmap",
+            "mprotect",
+            "nl_langinfo",
+            "obstack_vprintf",
+            "popen",
+            "raise",
+            "sigaction",
+            "sigaltstack",
+            "sigstack",
+            "strchr",
+            "strerror",
+            "strnlen",
+            "strtol",
+            "strtoul",
+            "sysconf",
+            "sysctl",
+            "times",
+            "vsnprintf",
+        ]) +
+        # -- Types -> HAVE_* --
+        macros.AC_CHECK_TYPES([
+            "intmax_t",
+            "intptr_t",
+            "long double",
+            "long long",
+            "ptrdiff_t",
+            "quad_t",
+            "stack_t",
+            "uint_least32_t",
+        ]) + [
+            # -- Sizes -> SIZEOF_* --
+            checks.AC_CHECK_SIZEOF(
+                "unsigned",
+                define = "SIZEOF_UNSIGNED",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "unsigned long",
+                define = "SIZEOF_UNSIGNED_LONG",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "unsigned short",
+                define = "SIZEOF_UNSIGNED_SHORT",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "void *",
+                define = "SIZEOF_VOID_P",
+            ),
+        ] +
+        # -- Declarations -> HAVE_DECL_* --
+        macros.AC_CHECK_DECLS(
+            [
+                "fgetc",
+                "fscanf",
+                "ungetc",
+                "vfprintf",
+            ],
+            includes = ["#include <stdio.h>"],
+        ) + macros.AC_CHECK_DECLS(
+            ["optarg"],
+            includes = ["#include <unistd.h>"],
+        ) + macros.AC_CHECK_DECLS(
+            [
+                "sys_errlist",
+                "sys_nerr",
+            ],
+            includes = ["#include <errno.h>"],
+        ) + [
+            # -- Compiler features --
+            checks.AC_TRY_COMPILE(
+                code = "static int x __attribute__ ((const)); int main() { return 0; }",
+                define = "HAVE_ATTRIBUTE_CONST",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = "static void *x __attribute__ ((malloc)); int main() { return 0; }",
+                define = "HAVE_ATTRIBUTE_MALLOC",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = "typedef int SItype __attribute__ ((mode (SI))); int main() { return 0; }",
+                define = "HAVE_ATTRIBUTE_MODE",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = "void x(void) __attribute__ ((noreturn)); int main() { return 0; }",
+                define = "HAVE_ATTRIBUTE_NORETURN",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """
+extern int foo(void) __attribute__ ((visibility("hidden")));
+extern int bar(void) __attribute__ ((alias("foo")));
+int foo(void) { return 42; }
+int main() { return bar(); }
+""",
+                define = "HAVE_HIDDEN_ALIAS",
+            ),
+            checks.AC_CHECK_HEADER(
+                "sstream",
+                define = "HAVE_SSTREAM",
+                language = "cpp",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <locale>
+int main() { std::locale loc(""); return 0; }
+""",
+                define = "HAVE_STD__LOCALE",
+                language = "cpp",
+            ),
+            checks.AC_C_RESTRICT(),
+            # -- GMP-specific fixed defines --
+            checks.AC_DEFINE(
+                "__GMP_WITHIN_CONFIGURE",
+                value = "0",
+            ),
+            checks.AC_TRY_COMPILE(
+                code = """\
+#include <alloca.h>
+int main() { void *p = alloca(1); return p != 0; }
+""",
+                define = "HAVE_ALLOCA",
+            ),
+            checks.AC_DEFINE(
+                "WANT_TMP_ALLOCA",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "RETSIGTYPE",
+                value = "void",
+            ),
+            checks.AC_DEFINE(
+                "STDC_HEADERS",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "TIME_WITH_SYS_TIME",
+                requires = ["HAVE_SYS_TIME_H"],
+                value = "1",
+            ),
+        ] + select({
+            "@platforms//os:macos": [checks.AC_DEFINE(
+                "LSYM_PREFIX",
+                value = '"L"',
+            )],
+            "//conditions:default": [checks.AC_DEFINE(
+                "LSYM_PREFIX",
+                value = '".L"',
+            )],
+        }) + [
+            checks.AC_DEFINE(
+                "LT_OBJDIR",
+                value = '".libs/"',
+            ),
+            # -- gmp.h template substitutions --
+            checks.AC_SUBST("CC", "cc"),
+            checks.AC_SUBST("CFLAGS", ""),
+            checks.AC_SUBST("GMP_NAIL_BITS", "0"),
+            checks.AC_SUBST("LIBGMP_DLL", "0"),
+        ] + select({
+            "@platforms//cpu:x86_64": [
+                checks.AC_DEFINE(
+                    "HAVE_HOST_CPU_FAMILY_x86_64",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "HAVE_CALLING_CONVENTIONS",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "HAVE_SPEED_CYCLECOUNTER",
+                    value = "2",
+                ),
+            ],
+            "//conditions:default": [],
+        }) + select({
+            ":cpu_32bit": [
+                checks.AC_DEFINE(
+                    "HAVE_LIMB_LITTLE_ENDIAN",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "HAVE_DOUBLE_IEEE_LITTLE_ENDIAN",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "SIZEOF_MP_LIMB_T",
+                    value = "4",
+                ),
+                checks.AC_SUBST("HAVE_HOST_CPU_FAMILY_power", "0"),
+                checks.AC_SUBST("HAVE_HOST_CPU_FAMILY_powerpc", "0"),
+                checks.AC_SUBST("GMP_LIMB_BITS", "32"),
+            ],
+            "//conditions:default": [
+                checks.AC_DEFINE(
+                    "HAVE_LIMB_LITTLE_ENDIAN",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "HAVE_DOUBLE_IEEE_LITTLE_ENDIAN",
+                    value = "1",
+                ),
+                checks.AC_DEFINE(
+                    "SIZEOF_MP_LIMB_T",
+                    value = "8",
+                ),
+                checks.AC_SUBST("HAVE_HOST_CPU_FAMILY_power", "0"),
+                checks.AC_SUBST("HAVE_HOST_CPU_FAMILY_powerpc", "0"),
+                checks.AC_SUBST("GMP_LIMB_BITS", "64"),
+            ],
+        }) + select({
+            # Windows uses LLP64: sizeof(unsigned long) == 4 even on 64-bit.
+            # _LONG_LONG_LIMB makes mp_limb_t = unsigned long long (8 bytes).
+            ":windows_64bit": [
+                checks.AC_SUBST("DEFN_LONG_LONG_LIMB", "#define _LONG_LONG_LIMB 1"),
+            ],
+            "//conditions:default": [
+                checks.AC_SUBST("DEFN_LONG_LONG_LIMB", "/* #undef _LONG_LONG_LIMB */"),
+            ],
+        }) + select({
+            ":fft_enabled": [checks.AC_DEFINE(
+                "WANT_FFT",
+                value = "1",
+            )],
+            "//conditions:default": [],
+        }) + select({
+            ":assert_enabled": [checks.AC_DEFINE(
+                "WANT_ASSERT",
+                value = "1",
+            )],
+            "//conditions:default": [],
+        }),
+    deps = [
+        ":native_checks",
+        ":package",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config.h",
+    template = "config.in",
+    deps = [":configure"],
+)
+
+autoconf_hdr(
+    name = "gmp_h",
+    out = "gmp.h",
+    mode = "subst",
+    template = "gmp-h.in",
+    deps = [":configure"],
+)
+
+# =============================================================================
+# gmp-mparam.h (per-platform tuning thresholds)
+# =============================================================================
+
+gmp_copy(
+    name = "gmp_mparam_h",
+    src = select({
+        "@platforms//cpu:aarch64": "mpn/arm64/gmp-mparam.h",
+        "@platforms//cpu:arm": "mpn/arm/gmp-mparam.h",
+        "@platforms//cpu:arm64": "mpn/arm64/gmp-mparam.h",
+        "@platforms//cpu:arm64e": "mpn/arm64/gmp-mparam.h",
+        "@platforms//cpu:armv7": "mpn/arm/gmp-mparam.h",
+        "@platforms//cpu:i386": "mpn/x86/gmp-mparam.h",
+        "@platforms//cpu:mips64": "mpn/mips64/gmp-mparam.h",
+        "@platforms//cpu:ppc": "mpn/powerpc32/gmp-mparam.h",
+        "@platforms//cpu:ppc32": "mpn/powerpc32/gmp-mparam.h",
+        "@platforms//cpu:s390x": "mpn/s390_64/gmp-mparam.h",
+        "@platforms//cpu:x86_32": "mpn/x86/gmp-mparam.h",
+        "@platforms//cpu:x86_64": "mpn/x86_64/gmp-mparam.h",
+        "//conditions:default": "mpn/generic/gmp-mparam.h",
+    }),
+    out = "gmp-mparam.h",
+)
+
+# =============================================================================
+# Build-time code generators
+# =============================================================================
+
+cc_library(
+    name = "_gen_bootstrap",
+    textual_hdrs = [
+        "bootstrap.c",
+        "mini-gmp/mini-gmp.c",
+        "mini-gmp/mini-gmp.h",
+    ],
+)
+
+cc_binary(
+    name = "gen-jacobitab",
+    srcs = ["gen-jacobitab.c"],
+)
+
+cc_binary(
+    name = "gen-fac",
+    srcs = ["gen-fac.c"],
+    deps = [":_gen_bootstrap"],
+)
+
+cc_binary(
+    name = "gen-fib",
+    srcs = ["gen-fib.c"],
+    deps = [":_gen_bootstrap"],
+)
+
+cc_binary(
+    name = "gen-sieve",
+    srcs = ["gen-sieve.c"],
+    deps = [":_gen_bootstrap"],
+)
+
+cc_binary(
+    name = "gen-bases",
+    srcs = ["gen-bases.c"],
+    linkopts = ["-lm"],
+    deps = [":_gen_bootstrap"],
+)
+
+cc_binary(
+    name = "gen-psqr",
+    srcs = ["gen-psqr.c"],
+    linkopts = ["-lm"],
+    deps = [":_gen_bootstrap"],
+)
+
+cc_binary(
+    name = "gen-trialdivtab",
+    srcs = ["gen-trialdivtab.c"],
+    linkopts = ["-lm"],
+    deps = [":_gen_bootstrap"],
+)
+
+# =============================================================================
+# Generated headers and sources
+# =============================================================================
+
+gmp_gen(
+    name = "gen_fac_table_h",
+    out = "fac_table.h",
+    args = select({
+        ":cpu_32bit": [
+            "32",
+            "0",
+        ],
+        "//conditions:default": [
+            "64",
+            "0",
+        ],
+    }),
+    tool = ":gen-fac",
+)
+
+gmp_gen(
+    name = "gen_fib_table_h",
+    out = "fib_table.h",
+    args = select({
+        ":cpu_32bit": [
+            "header",
+            "32",
+            "0",
+        ],
+        "//conditions:default": [
+            "header",
+            "64",
+            "0",
+        ],
+    }),
+    tool = ":gen-fib",
+)
+
+gmp_gen(
+    name = "gen_fib_table_c",
+    out = "fib_table.c",
+    args = select({
+        ":cpu_32bit": [
+            "table",
+            "32",
+            "0",
+        ],
+        "//conditions:default": [
+            "table",
+            "64",
+            "0",
+        ],
+    }),
+    tool = ":gen-fib",
+)
+
+gmp_gen(
+    name = "gen_mp_bases_h",
+    out = "mp_bases.h",
+    args = select({
+        ":cpu_32bit": [
+            "header",
+            "32",
+            "0",
+        ],
+        "//conditions:default": [
+            "header",
+            "64",
+            "0",
+        ],
+    }),
+    tool = ":gen-bases",
+)
+
+gmp_gen(
+    name = "gen_mp_bases_c",
+    out = "mp_bases.c",
+    args = select({
+        ":cpu_32bit": [
+            "table",
+            "32",
+            "0",
+        ],
+        "//conditions:default": [
+            "table",
+            "64",
+            "0",
+        ],
+    }),
+    tool = ":gen-bases",
+)
+
+gmp_gen(
+    name = "gen_sieve_table_h",
+    out = "sieve_table.h",
+    args = select({
+        ":cpu_32bit": ["32"],
+        "//conditions:default": ["64"],
+    }),
+    tool = ":gen-sieve",
+)
+
+gmp_gen(
+    name = "gen_perfsqr_h",
+    out = "perfsqr.h",
+    args = select({
+        ":cpu_32bit": [
+            "32",
+            "0",
+        ],
+        "//conditions:default": [
+            "64",
+            "0",
+        ],
+    }),
+    tool = ":gen-psqr",
+)
+
+gmp_gen(
+    name = "gen_jacobitab_h",
+    out = "jacobitab.h",
+    tool = ":gen-jacobitab",
+)
+
+gmp_gen(
+    name = "gen_trialdivtab_h",
+    out = "trialdivtab.h",
+    args = select({
+        ":cpu_32bit": [
+            "32",
+            "8000",
+        ],
+        "//conditions:default": [
+            "64",
+            "8000",
+        ],
+    }),
+    tool = ":gen-trialdivtab",
+)
+
+# =============================================================================
+# config.m4 (architecture-specific M4 definitions for .asm processing)
+# =============================================================================
+
+gmp_config_m4(
+    name = "config_m4",
+    arch = select({
+        "@platforms//cpu:aarch64": "aarch64",
+        "@platforms//cpu:arm": "arm",
+        "@platforms//cpu:ppc64le": "powerpc64",
+        "@platforms//cpu:s390x": "s390_64",
+        "@platforms//cpu:x86_64": "x86_64",
+        "//conditions:default": "generic",
+    }),
+    mparam_h = ":gmp_mparam_h",
+    os = select({
+        "@platforms//os:linux": "linux",
+        "@platforms//os:macos": "macos",
+        "@platforms//os:windows": "windows",
+        "//conditions:default": "linux",
+    }),
+)
+
+# =============================================================================
+# MPN function targets (per-function, architecture-aware)
+# =============================================================================
+
+[
+    gmp_mpn_m4(
+        name = fn,
+        arch = _MPN_ARCH,
+        asm_srcs = _MPN_ASM_SRCS,
+        cpu = ":cpu",
+        generic_srcs = _MPN_GENERIC_SRCS,
+        m4_deps = _MPN_M4_DEPS,
+        operation = fn,
+        os = _MPN_OS,
+    )
+    for fn in _ALL_MPN_FUNCTIONS
+]
+
+# =============================================================================
+# Internal headers (private, used by all GMP sources)
+# =============================================================================
+
+cc_library(
+    name = "_gmp_hdrs",
+    hdrs = [
+        "asl.h",
+        "gmp-impl.h",
+        "longlong.h",
+        ":config_h",
+        ":gen_fac_table_h",
+        ":gen_fib_table_h",
+        ":gen_mp_bases_h",
+        ":gen_sieve_table_h",
+        ":gmp_h",
+        ":gmp_mparam_h",
+    ],
+    includes = ["."],
+    textual_hdrs = [
+        ":gen_perfsqr_h",
+        ":gen_jacobitab_h",
+        ":gen_trialdivtab_h",
+    ],
+    visibility = ["//tests:__subpackages__"],
+)
+
+# =============================================================================
+# Compiler options
+# =============================================================================
+
+_GMP_COPTS = [
+    "-D__GMP_WITHIN_GMP",
+    "-w",
+]
+
+# =============================================================================
+# libgmp
+# =============================================================================
+
+alias(
+    name = "libgmp",
+    actual = ":gmp",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "gmp",
+    srcs = [
+        # Root-level core sources
+        "assert.c",
+        "compat.c",
+        "errno.c",
+        "extract-dbl.c",
+        "invalid.c",
+        "memory.c",
+        "mp_bpl.c",
+        "mp_clz_tab.c",
+        "mp_dv_tab.c",
+        "mp_get_fns.c",
+        "mp_minv_tab.c",
+        "mp_set_fns.c",
+        "nextprime.c",
+        "primesieve.c",
+        "tal-reent.c",
+        "version.c",
+        # Generated sources
+        ":gen_fib_table_c",
+        ":gen_mp_bases_c",
+    ] + glob(
+        [
+            "mpz/*.c",
+            "mpq/*.c",
+            "mpf/*.c",
+            "printf/*.c",
+            "scanf/*.c",
+            "rand/*.c",
+        ],
+    ),
+    hdrs = [":gmp_h"],
+    copts = _GMP_COPTS,
+    includes = ["."],
+    textual_hdrs = glob(["mpn/generic/*.c"]) + [
+        "mpn/generic/gmp-mparam.h",
+        "mpn/generic/hgcd2-div.h",
+        "mpz/aors.h",
+        "mpz/aors_ui.h",
+        "mpz/fits_s.h",
+        "mpz/mul_i.h",
+        "mpf/fits_s.h",
+        "mpf/fits_u.h",
+        "rand/randmt.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":_gmp_hdrs",
+        ":_mpn",
+    ],
+)
+
+# MPN function implementations (assembly + generic C).
+cc_library(
+    name = "_mpn",
+    srcs = [":" + fn for fn in _ALL_MPN_FUNCTIONS],
+    copts = _GMP_COPTS,
+    textual_hdrs = glob(["mpn/generic/*.c"]) + [
+        "mpn/generic/gmp-mparam.h",
+        "mpn/generic/hgcd2-div.h",
+    ],
+    deps = [":_gmp_hdrs"],
+)
+
+# =============================================================================
+# libgmpxx (C++ wrapper)
+# =============================================================================
+
+alias(
+    name = "libgmpxx",
+    actual = ":gmpxx",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "gmpxx",
+    srcs = glob(
+        ["cxx/*.cc"],
+        exclude = ["cxx/dummy.cc"],
+    ),
+    hdrs = ["gmpxx.h"],
+    copts = [
+        "-D__GMP_WITHIN_GMP",
+        "-D__GMP_WITHIN_GMPXX",
+        "-w",
+    ],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":_gmp_hdrs",
+        ":gmp",
+    ],
+)

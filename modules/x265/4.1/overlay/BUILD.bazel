@@ -1,0 +1,335 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
+
+BIT_DEPTH = 10
+
+X265_BUILD = 215
+
+# Matches CMake: configure_file("x265_config.h.in" "${PROJECT_BINARY_DIR}/x265_config.h")
+# Template with #undef for autoconf substitution; single output file x265_config.h
+write_file(
+    name = "x265_config_h_in",
+    out = "source/x265_config.h.in",
+    content = [
+        "#ifndef X265_CONFIG_H",
+        "#define X265_CONFIG_H",
+        "",
+        "/* Defines generated at build time */",
+        "",
+        "/* Incremented each time public API is changed, X265_BUILD is used as",
+        " * the shared library SONAME on platforms which support it. It also",
+        " * prevents linking against a different version of the static lib */",
+        "#undef X265_BUILD",
+        "#undef HAVE_STRTOK_R",
+        "#undef HAVE_INT_TYPES_H",
+        "",
+        "#endif",
+        "",
+    ],
+    newline = "unix",
+)
+
+autoconf(
+    name = "x265_config_checks",
+    checks = [
+        checks.AC_DEFINE(
+            "X265_BUILD",
+            str(X265_BUILD),
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_strtok_r",
+            code = "strtok_r(0, 0, 0);",
+            includes = ["#include <string.h>"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_STRTOK_R",
+            condition = "ac_cv_func_strtok_r",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_CHECK_HEADER("inttypes.h"),
+        checks.AC_DEFINE(
+            "HAVE_INT_TYPES_H",
+            condition = "ac_cv_header_inttypes_h",
+            if_false = "0",
+            if_true = "1",
+        ),
+    ],
+)
+
+autoconf_hdr(
+    name = "x265_config_h",
+    out = "source/x265_config.h",
+    template = ":x265_config_h_in",
+    deps = [":x265_config_checks"],
+)
+
+# HAVE_STRTOK_R and HAVE_INT_TYPES_H now in x265_config.h via autoconf; no -D needed
+DEFINES = [
+    "-DBIT_DEPTH={}".format(BIT_DEPTH),
+    "-DEXPORT_C_API=1",
+    "-DHAVE_ALIGNED_STACK=1",
+    "-DHIGH_BIT_DEPTH=1",
+    "-DX265_DEPTH=10",
+    "-DX265_NS=x265",
+    "-DX265_VERSION=136",
+] + select({
+    "@platforms//os:macos": [
+        "-DMACOS=1",
+        "-DPREFIX",
+    ],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//cpu:aarch64": [
+        "-DX265_ARCH_ARM64=1",
+        "-DHAVE_NEON=1",
+    ],
+    "@platforms//cpu:arm": [
+        "-DX265_ARCH_ARM=1",
+        "-DHAVE_ARMV6=1",
+    ],
+    "@platforms//cpu:x86_64": [
+        "-DX86_64=1",
+        "-DARCH_X86_64=1",
+        "-DX265_ARCH_X86=1",
+    ],
+    "//conditions:default": [],
+})
+
+CC_COPTS = DEFINES + [
+    "-w",
+    "-std=c++14",
+    "-D__STDC_LIMIT_MACROS=1",
+    "-DENABLE_ASSEMBLY=1",
+    "-ffast-math",
+    "-fno-exceptions",
+] + select({
+    "@platforms//cpu:x86_64": ["-mstackrealign"],
+    "//conditions:default": [],
+})
+
+_VEC_TEXTUAL_HDRS = [
+    ":x265_config_h",
+] + glob([
+    "source/common/*.h",
+    "source/encoder/*.h",
+    "source/common/x86/*.h",
+    "source/*.h",
+])
+
+_VEC_INCLUDES = [
+    "source",
+    "source/common",
+    "source/encoder",
+]
+
+cc_library(
+    name = "vec_sse3",
+    srcs = ["source/common/vec/dct-sse3.cpp"],
+    copts = CC_COPTS + ["-msse3"],
+    includes = _VEC_INCLUDES,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    textual_hdrs = _VEC_TEXTUAL_HDRS,
+)
+
+cc_library(
+    name = "vec_ssse3",
+    srcs = ["source/common/vec/dct-ssse3.cpp"],
+    copts = CC_COPTS + ["-mssse3"],
+    includes = _VEC_INCLUDES,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    textual_hdrs = _VEC_TEXTUAL_HDRS,
+)
+
+cc_library(
+    name = "vec_sse41",
+    srcs = ["source/common/vec/dct-sse41.cpp"],
+    copts = CC_COPTS + ["-msse4.1"],
+    includes = _VEC_INCLUDES,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    textual_hdrs = _VEC_TEXTUAL_HDRS,
+)
+
+cc_library(
+    name = "x265",
+    srcs = glob([
+        "source/common/*.cpp",
+        "source/encoder/*.cpp",
+    ]) + select({
+        "@platforms//cpu:aarch64": glob(
+            include = [
+                "source/common/aarch64/*.cpp",
+                "source/common/aarch64/*.S",
+            ],
+            exclude = [
+                "source/common/aarch64/sao-prim-sve.cpp",
+                "source/common/aarch64/dct-prim-sve.cpp",
+                "source/common/aarch64/sao-prim-sve2.cpp",
+                "source/common/aarch64/filter-neon-dotprod.cpp",
+                "source/common/aarch64/filter-neon-i8mm.cpp",
+                "source/common/aarch64/asm.S",
+                "source/common/aarch64/asm-sve.S",
+                "source/common/aarch64/ssd-a-common.S",
+                "source/common/aarch64/pixel-util-common.S",
+                "source/common/aarch64/mc-a-common.S",
+                "source/common/aarch64/blockcopy8-common.S",
+                "source/common/aarch64/p2s-common.S",
+                "source/common/aarch64/blockcopy8-sve.S",
+                "source/common/aarch64/p2s-sve.S",
+                "source/common/aarch64/pixel-util-sve.S",
+                "source/common/aarch64/mc-a-sve2.S",
+                "source/common/aarch64/pixel-util-sve2.S",
+                "source/common/aarch64/ssd-a-sve2.S",
+                "source/common/aarch64/sad-neon-dotprod.S",
+                "source/common/aarch64/ssd-neon-dotprod.S",
+            ],
+        ),
+        "@platforms//cpu:x86_64": [":asm"] + glob(
+            include = [
+                "source/common/vec/*.cpp",
+                "source/common/x86/*.cpp",
+            ],
+            exclude = [
+                "source/common/vec/dct-sse3.cpp",
+                "source/common/vec/dct-ssse3.cpp",
+                "source/common/vec/dct-sse41.cpp",
+            ],
+        ),
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "source/x265.h",
+    ],
+    copts = CC_COPTS,
+    includes = [
+        "source",
+        "source/common",
+        "source/common/aarch64",
+        "source/encoder",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = 1,
+    textual_hdrs = [
+        ":x265_config_h",
+    ] + glob([
+        "source/input/*.h",
+        "source/output/*.h",
+        "source/encoder/*.h",
+        "source/common/*.h",
+        "source/*.h",
+    ]) + select({
+        "@platforms//cpu:aarch64": glob([
+            "source/common/aarch64/*.h",
+        ]) + [
+            "source/common/aarch64/asm.S",
+            "source/common/aarch64/ssd-a-common.S",
+            "source/common/aarch64/pixel-util-common.S",
+            "source/common/aarch64/mc-a-common.S",
+            "source/common/aarch64/blockcopy8-common.S",
+            "source/common/aarch64/p2s-common.S",
+        ],
+        "@platforms//cpu:x86_64": glob([
+            "source/common/x86/*.h",
+        ]),
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = select({
+        "@platforms//cpu:x86_64": [
+            ":vec_sse3",
+            ":vec_sse41",
+            ":vec_ssse3",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "x265_isystem",
+    includes = ["source"],
+    visibility = ["//visibility:public"],
+    deps = [":x265"],
+)
+
+nasm_library(
+    name = "asm",
+    srcs = glob(
+        include = [
+            "source/common/x86/*.asm",
+        ],
+        exclude = [
+            "source/common/x86/intrapred8.asm",
+            "source/common/x86/intrapred8_allangs.asm",
+            "source/common/x86/ipfilter8.asm",
+            "source/common/x86/h-ipfilter8.asm",
+            "source/common/x86/v4-ipfilter8.asm",
+            "source/common/x86/pixel-32.asm",
+            "source/common/x86/sad-a.asm",
+            "source/common/x86/x86inc.asm",
+            "source/common/x86/x86util.asm",
+        ],
+    ),
+    hdrs = [
+        "source/common/x86/x86inc.asm",
+        "source/common/x86/x86util.asm",
+    ],
+    copts = DEFINES + ["-DPIC"],
+    tags = ["manual"],
+)
+
+# checkasm assembly for TestBench (source/test/checkasm-a.asm needs -I source/common/x86)
+nasm_library(
+    name = "test_checkasm_asm",
+    srcs = ["source/test/checkasm-a.asm"],
+    hdrs = [
+        "source/common/x86/x86inc.asm",
+        "source/common/x86/x86util.asm",
+    ],
+    copts = DEFINES + [
+        "-DPIC",
+    ],
+    includes = ["source/common/x86"],
+    tags = ["manual"],
+)
+
+# Unit test for encoder primitives (TestBench in native build)
+# Verifies intrinsics and assembly match C reference
+# x86_64 needs checkasm; aarch64 uses direct calls (no checkasm asm)
+cc_test(
+    name = "TestBench",
+    srcs = [
+        "source/test/intrapredharness.cpp",
+        "source/test/intrapredharness.h",
+        "source/test/ipfilterharness.cpp",
+        "source/test/ipfilterharness.h",
+        "source/test/mbdstharness.cpp",
+        "source/test/mbdstharness.h",
+        "source/test/pixelharness.cpp",
+        "source/test/pixelharness.h",
+        "source/test/testbench.cpp",
+        "source/test/testharness.h",
+    ] + select({
+        "@platforms//cpu:x86_64": [":test_checkasm_asm"],
+        "//conditions:default": [],
+    }),
+    copts = CC_COPTS,
+    includes = [
+        "source",
+        "source/common",
+        "source/encoder",
+        "source/test",
+    ],
+    deps = [":x265"],
+)

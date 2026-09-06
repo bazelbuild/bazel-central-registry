@@ -1,0 +1,131 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BCR Maintainers <bcr-maintainers@bazel.build>
+Date: Sun, 29 Jun 2026 00:00:00 +0000
+Subject: [PATCH] Bazel 9 compatibility for capnp-cpp
+
+* Maps the boringssl dependency to the @ssl repo using repo_name so the
+  upstream BUILD references match what they expect.
+* Loads cc_library, cc_binary and cc_test from @rules_cc//cc:defs.bzl in
+  every BUILD/bzl file so Bazel 9 (which no longer autoloads the native
+  cc rules) can analyze the package.
+* Adds an empty BUILD.bazel under c++/build so configure.bzl can be loaded
+  with the conventional `//build:configure.bzl` label.
+
+---
+ c++/MODULE.bazel                  | 2 +-
+ c++/build/BUILD.bazel             | 1 +
+ c++/build/configure.bzl           | 3 ++-
+ c++/src/capnp/BUILD.bazel         | 1 +
+ c++/src/capnp/cc_capnp_library.bzl | 4 +++-
+ c++/src/capnp/compat/BUILD.bazel  | 1 +
+ c++/src/kj/BUILD.bazel            | 3 ++-
+ c++/src/kj/compat/BUILD.bazel     | 2 ++
+ 8 files changed, 13 insertions(+), 4 deletions(-)
+ create mode 100644 c++/build/BUILD.bazel
+
+diff --git a/c++/MODULE.bazel b/c++/MODULE.bazel
+index 3f47e58..082cbdb 100644
+--- a/c++/MODULE.bazel
++++ b/c++/MODULE.bazel
+@@ -1,11 +1,11 @@
+ module(
+     name = "capnp-cpp",
+-    version = "1.1.0",
++    version = "1.2.0",
+ )
+
+ bazel_dep(name = "platforms", version = "0.0.11")
+ bazel_dep(name = "bazel_skylib", version = "1.7.1")
+ bazel_dep(name = "rules_cc", version = "0.1.1")
+ bazel_dep(name = "zlib", version = "1.3.1.bcr.5")
+-bazel_dep(name = "boringssl", version = "0.20241024.0")
+-bazel_dep(name = "brotli", version = "1.1.0")
++bazel_dep(name = "boringssl", version = "0.20241024.0", repo_name = "ssl")
++bazel_dep(name = "brotli", version = "1.2.0.bcr.1")
+diff --git a/c++/build/BUILD.bazel b/c++/build/BUILD.bazel
+new file mode 100644
+index 0000000..bc63beb
+--- /dev/null
++++ b/c++/build/BUILD.bazel
+@@ -0,0 +1 @@
++# empty
+\ No newline at end of file
+diff --git a/c++/build/configure.bzl b/c++/build/configure.bzl
+index bafee63..a05529b 100644
+--- a/c++/build/configure.bzl
++++ b/c++/build/configure.bzl
+@@ -1,4 +1,5 @@
+ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "int_flag")
++load("@rules_cc//cc:defs.bzl", "cc_library")
+
+ def kj_configure():
+     """Generates set of flag, settings for kj configuration.
+@@ -79,7 +80,7 @@ def kj_configure():
+         flag_values = {"track_lock_blocking": "True"},
+     )
+
+-    native.cc_library(
++    cc_library(
+         name = "kj-defines",
+         defines = select({
+             "//src/kj:use_openssl": ["KJ_HAS_OPENSSL"],
+diff --git a/c++/src/capnp/BUILD.bazel b/c++/src/capnp/BUILD.bazel
+index 8e2d42d..b9d8129 100644
+--- a/c++/src/capnp/BUILD.bazel
++++ b/c++/src/capnp/BUILD.bazel
+@@ -1,3 +1,4 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+ load("@capnp-cpp//src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
+
+ cc_library(
+diff --git a/c++/src/capnp/cc_capnp_library.bzl b/c++/src/capnp/cc_capnp_library.bzl
+index 9e4acd3..4c04eb3 100644
+--- a/c++/src/capnp/cc_capnp_library.bzl
++++ b/c++/src/capnp/cc_capnp_library.bzl
+@@ -1,5 +1,7 @@
+ """Bazel rule to compile .capnp files into c++."""
+
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
+ capnp_provider = provider("Capnproto Provider", fields = {
+     "includes": "includes for this target (transitive)",
+     "inputs": "src + data for the target",
+@@ -117,7 +119,7 @@ def cc_capnp_library(
+         visibility = visibility,
+         target_compatible_with = target_compatible_with,
+     )
+-    native.cc_library(
++    cc_library(
+         name = name,
+         srcs = srcs_cpp,
+         hdrs = hdrs,
+diff --git a/c++/src/capnp/compat/BUILD.bazel b/c++/src/capnp/compat/BUILD.bazel
+index 8637c1d..523c0fa 100644
+--- a/c++/src/capnp/compat/BUILD.bazel
++++ b/c++/src/capnp/compat/BUILD.bazel
+@@ -1,3 +1,4 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+ load("@capnp-cpp//src/capnp:cc_capnp_library.bzl", "cc_capnp_library")
+
+ exports_files([
+diff --git a/c++/src/kj/BUILD.bazel b/c++/src/kj/BUILD.bazel
+index f5527be..16ac3c8 100644
+--- a/c++/src/kj/BUILD.bazel
++++ b/c++/src/kj/BUILD.bazel
+@@ -1,4 +1,5 @@
+-load("//:build/configure.bzl", "kj_configure")
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++load("//build:configure.bzl", "kj_configure")
+
+ kj_configure()
+
+diff --git a/c++/src/kj/compat/BUILD.bazel b/c++/src/kj/compat/BUILD.bazel
+index f9e31ce..2775064 100644
+--- a/c++/src/kj/compat/BUILD.bazel
++++ b/c++/src/kj/compat/BUILD.bazel
+@@ -1,3 +1,5 @@
++load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
++
+ exports_files(["gtest.h"])
+
+ cc_library(

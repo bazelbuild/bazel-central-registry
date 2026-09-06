@@ -1,0 +1,183 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:Zlib"],
+    license_text = "LICENSE.txt",
+)
+
+license(
+    name = "license.dr_libs",
+    license_kinds = ["@rules_license//licenses/spdx:MIT-0"],
+    license_text = "src/codecs/dr_libs/LICENSE",
+)
+
+license(
+    name = "license.minimp3",
+    license_kinds = ["@rules_license//licenses/spdx:CC0-1.0"],
+    license_text = "src/codecs/minimp3/LICENSE",
+)
+
+license(
+    name = "license.stb_vorbis",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "src/codecs/stb_vorbis/stb_vorbis.h",
+)
+
+license(
+    name = "license.timidity",
+    license_kinds = ["@rules_license//licenses/spdx:Artistic-1.0"],
+    license_text = "src/codecs/timidity/COPYING",
+)
+
+exports_files([
+    "LICENSE.txt",
+    "src/codecs/dr_libs/LICENSE",
+    "src/codecs/minimp3/LICENSE",
+    "src/codecs/timidity/COPYING",
+])
+
+EXCLUDED_EXTERNAL_CODEC_SRCS = [
+    # These backends require additional third-party libraries that are not
+    # wired in this initial BCR packaging pass.
+    "src/codecs/music_cmd.c",
+    "src/codecs/music_flac.c",
+    "src/codecs/music_fluidsynth.c",
+    "src/codecs/music_gme.c",
+    "src/codecs/music_modplug.c",
+    "src/codecs/music_mpg123.c",
+    "src/codecs/music_nativemidi.c",
+    "src/codecs/music_ogg.c",
+    "src/codecs/music_opus.c",
+    "src/codecs/music_wavpack.c",
+    "src/codecs/music_xmp.c",
+]
+
+DEFAULT_CODEC_DEFINES = [
+    "MUSIC_FLAC_DRFLAC",
+    "MUSIC_MP3_MINIMP3",
+    "MUSIC_MID_TIMIDITY",
+    "MUSIC_OGG",
+    "OGG_USE_STB",
+    "MUSIC_WAV",
+]
+
+PLATFORM_FEATURE_DEFINES = select({
+    "@platforms//os:linux": [
+        "HAVE_FORK",
+        "HAVE_SETBUF",
+        "HAVE_SIGNAL_H",
+        "MUSIC_CMD",
+    ],
+    "@platforms//os:macos": [
+        "MUSIC_MID_NATIVE",
+    ],
+    "@platforms//os:windows": [
+        "MUSIC_MID_NATIVE",
+    ],
+    "//conditions:default": [],
+})
+
+PLATFORM_SRCS = select({
+    "@platforms//os:linux": [
+        "src/codecs/music_cmd.c",
+    ],
+    "@platforms//os:macos": [
+        "src/codecs/music_nativemidi.c",
+        "src/codecs/native_midi/native_midi_common.c",
+        "src/codecs/native_midi/native_midi_macosx.c",
+    ],
+    "@platforms//os:windows": [
+        "src/codecs/music_nativemidi.c",
+        "src/codecs/native_midi/native_midi_common.c",
+        "src/codecs/native_midi/native_midi_win32.c",
+    ],
+    "//conditions:default": [],
+})
+
+PLATFORM_LINKOPTS = select({
+    "@platforms//os:macos": [
+        "-Wl,-framework,AudioToolbox",
+        "-Wl,-framework,AudioUnit",
+        "-Wl,-framework,CoreServices",
+    ],
+    "@platforms//os:windows": [
+        "winmm.lib",
+    ],
+    "//conditions:default": [],
+})
+
+cc_library(
+    name = "sdl2_mixer_headers",
+    hdrs = ["include/SDL_mixer.h"],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+    deps = ["@sdl2//:sdl2_headers"],
+)
+
+cc_library(
+    name = "sdl2_mixer_private_headers",
+    hdrs = glob(["src/**/*.h"]),
+    applicable_licenses = [
+        ":license",
+        ":license.dr_libs",
+        ":license.minimp3",
+        ":license.stb_vorbis",
+        ":license.timidity",
+    ],
+    includes = [
+        "src",
+        "src/codecs",
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [":sdl2_mixer_headers"],
+)
+
+cc_library(
+    name = "sdl2_mixer",
+    srcs = [
+        "src/effect_position.c",
+        "src/effect_stereoreverse.c",
+        "src/effects_internal.c",
+        "src/mixer.c",
+        "src/music.c",
+        "src/utils.c",
+    ] + PLATFORM_SRCS + glob(
+        ["src/codecs/timidity/*.c"],
+    ) + glob(
+        ["src/codecs/*.c"],
+        exclude = EXCLUDED_EXTERNAL_CODEC_SRCS,
+    ),
+    applicable_licenses = [
+        ":license",
+        ":license.dr_libs",
+        ":license.minimp3",
+        ":license.stb_vorbis",
+        ":license.timidity",
+    ],
+    implementation_deps = [":sdl2_mixer_private_headers"],
+    linkopts = PLATFORM_LINKOPTS,
+    local_defines = DEFAULT_CODEC_DEFINES + PLATFORM_FEATURE_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":sdl2_mixer_headers",
+        "@sdl2",
+    ],
+)
+
+cc_test(
+    name = "sdl2_mixer_headers_consumer_compile_test",
+    srcs = ["sdl2_mixer_headers_consumer_compile_test.cc"],
+    deps = [":sdl2_mixer_headers"],
+)
+
+cc_test(
+    name = "sdl2_mixer_consumer_link_test",
+    srcs = ["sdl2_mixer_consumer_link_test.cc"],
+    deps = [":sdl2_mixer"],
+)

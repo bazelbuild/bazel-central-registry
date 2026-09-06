@@ -1,0 +1,79 @@
+module(
+    name = "rules_testing",
+    version = "0.3.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "platforms", version = "0.0.6")
+bazel_dep(name = "bazel_skylib", version = "1.3.0")
+bazel_dep(name = "rules_license", version = "0.0.4")
+
+# ===== The rest of these are development dependencies =====
+
+# TODO(https://github.com/bazelbuild/stardoc/issues/117): stardoc doesn't yet
+# work with bzlmod enabled. This defines the repo so load() works.
+bazel_dep(
+    name = "stardoc",
+    version = "0.5.6",
+    dev_dependency = True,
+    repo_name = "io_bazel_stardoc",
+)
+bazel_dep(name = "rules_python", version = "0.22.0", dev_dependency = True)
+
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.toolchain(
+    name = "python_3_11",
+    python_version = "3.11",
+)
+
+# NOTE: use_repo() must be called for each platform that runs the docgen tools
+use_repo(
+    python,
+    "python_3_11_toolchains",
+    "python_3_11_x86_64-unknown-linux-gnu",
+)
+
+# NOTE: This is actualy a dev dependency, but due to
+# https://github.com/bazelbuild/bazel/issues/18248 it has to be non-dev to
+# generate the repo name used in the subsequent register_toolchains() call.
+# Once 6.2 is the minimum supported version, the register_toolchains
+# call can use dev_dependency=True and this can go away entirely.
+dev = use_extension(
+    "//:dev_extension.bzl",
+    "dev",
+)
+use_repo(dev, "rules_testing_dev_toolchains")
+
+# NOTE: This call will be run by downstream users, so the
+# repos it mentions must exist.
+register_toolchains(
+    "@rules_testing_dev_toolchains//:all",
+    dev_dependency = True,
+)
+
+interpreter = use_extension(
+    "@rules_python//python/extensions:interpreter.bzl",
+    "interpreter",
+    dev_dependency = True,
+)
+interpreter.install(
+    name = "python_3_11_interpreter",
+    python_name = "python_3_11",
+)
+use_repo(interpreter, "python_3_11_interpreter")
+
+pip = use_extension(
+    "@rules_python//python/extensions:pip.bzl",
+    "pip",
+    dev_dependency = True,
+)
+pip.parse(
+    name = "docs-pypi",
+    python_interpreter_target = "@python_3_11_interpreter//:python",
+    requirements_lock = "//docs:requirements.txt",
+)
+use_repo(pip, "docs-pypi")
