@@ -1,0 +1,828 @@
+"""Graphviz, built with Bazel.
+
+This file is the Bazel Central Registry overlay for graphviz: it sits at the
+root of the upstream source archive, next to lib/, plugin/ and cmd/, and
+describes how to build them. Upstream ships no Bazel files, so every target
+here is ours. https://gitlab.com/graphviz/graphviz
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# ---------------------------------------------------------------------------
+# Upstream's headers and source lists.
+# ---------------------------------------------------------------------------
+# Headers from every lib/ subdir, on the include path as `lib/`. Source
+# files use the `<subdir/header.h>` form to reach into peer libraries.
+cc_library(
+    name = "lib_headers",
+    hdrs = glob([
+        "lib/**/*.h",
+    ]),
+    includes = ["lib"],
+)
+
+# Extra include paths for libraries whose own translation units use
+# unprefixed bracketed includes (e.g. cgraph/grammar.c does
+# `#include <cghdr.h>` for a same-directory header). Headers
+# themselves are already exposed via `lib_headers`; these wrappers
+# add the additional `-I` path so the compiler can locate them.
+cc_library(
+    name = "cdt_inc",
+    includes = ["lib/cdt"],
+)
+
+cc_library(
+    name = "cgraph_inc",
+    includes = ["lib/cgraph"],
+)
+
+cc_library(
+    name = "pathplan_inc",
+    includes = ["lib/pathplan"],
+)
+
+cc_library(
+    name = "common_inc",
+    includes = ["lib/common"],
+)
+
+cc_library(
+    name = "gvc_inc",
+    includes = ["lib/gvc"],
+)
+
+cc_library(
+    name = "pack_inc",
+    includes = ["lib/pack"],
+)
+
+cc_library(
+    name = "gvpr_inc",
+    includes = ["lib/gvpr"],
+)
+
+# Pre-baked version headers at the tarball root.
+cc_library(
+    name = "version_hdrs",
+    hdrs = [
+        "builddate.h",
+        "graphviz_version.h",
+    ],
+    includes = ["."],
+)
+
+exports_files([
+    "lib/cgraph/grammar.c",
+    "lib/cgraph/grammar.h",
+    "lib/cgraph/scan.c",
+    "lib/common/htmlparse.c",
+    "lib/common/htmlparse.h",
+    "lib/common/colortbl.h",
+    "lib/common/entities.h",
+    "builddate.h",
+    "graphviz_version.h",
+])
+
+# Per-library source filegroups.
+filegroup(
+    name = "cdt_srcs",
+    srcs = glob(["lib/cdt/*.c"]),
+)
+
+filegroup(
+    name = "util_srcs",
+    srcs = glob(["lib/util/*.c"]),
+)
+
+filegroup(
+    name = "cgraph_srcs",
+    srcs = glob(
+        ["lib/cgraph/*.c"],
+        exclude = [
+            "lib/cgraph/grammar.c",
+            "lib/cgraph/scan.c",
+        ],
+    ),
+)
+
+filegroup(
+    name = "pathplan_srcs",
+    srcs = glob(["lib/pathplan/*.c"]),
+)
+
+filegroup(
+    name = "xdot_srcs",
+    srcs = glob(["lib/xdot/*.c"]),
+)
+
+filegroup(
+    name = "label_srcs",
+    srcs = glob(["lib/label/*.c"]),
+)
+
+filegroup(
+    name = "pack_srcs",
+    srcs = glob(["lib/pack/*.c"]),
+)
+
+filegroup(
+    name = "common_srcs",
+    srcs = glob(
+        ["lib/common/*.c"],
+        exclude = ["lib/common/htmlparse.c"],
+    ),
+)
+
+filegroup(
+    name = "gvc_srcs",
+    srcs = glob(["lib/gvc/*.c"]),
+)
+
+filegroup(
+    name = "dotgen_srcs",
+    srcs = glob(["lib/dotgen/*.c"]),
+)
+
+filegroup(
+    name = "plugin_core_srcs",
+    srcs = glob(["plugin/core/*.c"]) + glob(["plugin/core/*.h"]),
+)
+
+# Layout engines beyond `dot`. The neato_layout plugin provides neato, fdp,
+# sfdp, circo, twopi, osage and patchwork, so these libraries come as a set.
+
+# neatogen and sfdpgen include each other (lib/neatogen -> <sfdpgen/...> and
+# lib/sfdpgen -> <neatogen/...>), which Bazel cannot express as two targets, so
+# they are compiled as one.
+filegroup(
+    name = "neatogen_srcs",
+    srcs = glob([
+        "lib/neatogen/*.c",
+        "lib/sfdpgen/*.c",
+    ]),
+)
+
+filegroup(
+    name = "sparse_srcs",
+    srcs = glob(["lib/sparse/*.c"]),
+)
+
+# test_red_black_tree.c is upstream's standalone driver and defines main().
+filegroup(
+    name = "rbtree_srcs",
+    srcs = glob(
+        ["lib/rbtree/*.c"],
+        exclude = ["lib/rbtree/test_red_black_tree.c"],
+    ),
+)
+
+filegroup(
+    name = "ortho_srcs",
+    srcs = glob(["lib/ortho/*.c"]),
+)
+
+# The only C++ library in this set.
+filegroup(
+    name = "vpsc_srcs",
+    srcs = glob(["lib/vpsc/*.cpp"]),
+)
+
+filegroup(
+    name = "fdpgen_srcs",
+    srcs = glob(["lib/fdpgen/*.c"]),
+)
+
+filegroup(
+    name = "circogen_srcs",
+    srcs = glob(["lib/circogen/*.c"]),
+)
+
+filegroup(
+    name = "twopigen_srcs",
+    srcs = glob(["lib/twopigen/*.c"]),
+)
+
+filegroup(
+    name = "osage_srcs",
+    srcs = glob(["lib/osage/*.c"]),
+)
+
+filegroup(
+    name = "patchwork_srcs",
+    srcs = glob(["lib/patchwork/*.c"]),
+)
+
+filegroup(
+    name = "plugin_neato_layout_srcs",
+    srcs = glob(["plugin/neato_layout/*.c"]) + glob(
+        ["plugin/neato_layout/*.h"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "plugin_dot_layout_srcs",
+    srcs = glob(["plugin/dot_layout/*.c"]) + glob(
+        ["plugin/dot_layout/*.h"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "cmd_dot_srcs",
+    srcs = ["cmd/dot/dot.c"],
+)
+
+# ---------------------------------------------------------------------------
+# The libraries, plugins and the dot binary.
+# ---------------------------------------------------------------------------
+# Macros that the autotools `config.h` would set, supplied as -D
+# flags. Propagated to dependents via `defines`.
+_CONFIG_DEFINES = [
+    "DEFAULT_DPI=96",
+    "GVPLUGIN_CONFIG_FILE=\\\"config8\\\"",
+    "GVPLUGIN_VERSION=8",
+    "HAVE_ARGZ_ADD=1",
+    "HAVE_ARGZ_APPEND=1",
+    "HAVE_ARGZ_COUNT=1",
+    "HAVE_ARGZ_CREATE_SEP=1",
+    "HAVE_ARGZ_H=1",
+    "HAVE_ARGZ_INSERT=1",
+    "HAVE_ARGZ_NEXT=1",
+    "HAVE_ARGZ_STRINGIFY=1",
+    "HAVE_CLOSEDIR=1",
+    "HAVE_CXX17=1",
+    "HAVE_DIRENT_H=1",
+    "HAVE_DLFCN_H=1",
+    "HAVE_DRAND48=1",
+    "HAVE_ERROR_T=1",
+    "HAVE_INTTYPES_H=1",
+    "HAVE_LIBZ=1",
+    "HAVE_MEMRCHR=1",
+    "HAVE_OPENDIR=1",
+    "HAVE_READDIR=1",
+    "HAVE_SELECT=1",
+    "HAVE_SETENV=1",
+    "HAVE_SRAND48=1",
+    "HAVE_STDINT_H=1",
+    "HAVE_STDIO_H=1",
+    "HAVE_STDLIB_H=1",
+    "HAVE_STRCASESTR=1",
+    "HAVE_STRINGS_H=1",
+    "HAVE_STRING_H=1",
+    "HAVE_SYS_IOCTL_H=1",
+    "HAVE_SYS_MMAN_H=1",
+    "HAVE_SYS_SELECT_H=1",
+    "HAVE_SYS_STAT_H=1",
+    "HAVE_SYS_TIME_H=1",
+    "HAVE_SYS_TYPES_H=1",
+    "HAVE_UNISTD_H=1",
+    "HAVE_WORKING_ARGZ=1",
+    "STDC_HEADERS=1",
+    "WITH_CGRAPH=1",
+    # Upstream marks util's helper functions with hidden visibility so
+    # they don't get exported when statically linked. Bazel builds each
+    # cc_library as an intermediate `.so`, which breaks the hidden-vs-
+    # cross-shared-object contract. Override to default visibility.
+    "UTIL_API=",
+    "PACKAGE_NAME=\\\"graphviz\\\"",
+    "PACKAGE_TARNAME=\\\"graphviz\\\"",
+    "PACKAGE_VERSION=\\\"14.0.0\\\"",
+    "PACKAGE_BUGREPORT=\\\"https://gitlab.com/graphviz/graphviz/-/issues\\\"",
+    "PACKAGE_URL=\\\"\\\"",
+]
+
+# Stub config.h. All real macros come from `_CONFIG_DEFINES`. Many
+# source files include "config.h" unconditionally.
+cc_library(
+    name = "config_h",
+    hdrs = ["include/config.h"],
+    defines = _CONFIG_DEFINES,
+    includes = ["include"],
+)
+
+cc_library(
+    name = "cdt",
+    srcs = [":cdt_srcs"],
+    deps = [
+        ":cdt_inc",
+        ":config_h",
+        ":lib_headers",
+    ],
+)
+
+cc_library(
+    name = "util",
+    srcs = [":util_srcs"],
+    deps = [
+        ":config_h",
+        ":lib_headers",
+    ],
+)
+
+cc_library(
+    name = "cgraph",
+    srcs = [":cgraph_srcs"] + [
+        ":lib/cgraph/grammar.c",
+        ":lib/cgraph/scan.c",
+    ],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph_inc",
+        ":config_h",
+        ":lib_headers",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "pathplan",
+    srcs = [":pathplan_srcs"],
+    deps = [
+        ":config_h",
+        ":lib_headers",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "xdot",
+    srcs = [":xdot_srcs"],
+    deps = [
+        ":config_h",
+        ":lib_headers",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "label",
+    srcs = [":label_srcs"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common_inc",
+        ":config_h",
+        ":lib_headers",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "pack",
+    srcs = [":pack_srcs"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "common",
+    srcs = [":common_srcs"] + [":lib/common/htmlparse.c"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":pack_inc",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+        ":xdot",
+    ],
+)
+
+cc_library(
+    name = "dotgen",
+    srcs = [":dotgen_srcs"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":pack",
+        ":pack_inc",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "gvc",
+    srcs = [":gvc_srcs"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":label",
+        ":lib_headers",
+        ":pack",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+        ":version_hdrs",
+        ":xdot",
+        "@zlib",
+    ],
+)
+
+cc_library(
+    name = "plugin_core",
+    srcs = [":plugin_core_srcs"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc",
+        ":gvc_inc",
+        ":gvpr_inc",
+        ":lib_headers",
+        ":pathplan_inc",
+        ":util",
+        ":xdot",
+    ],
+)
+
+cc_library(
+    name = "plugin_dot_layout",
+    srcs = [":plugin_dot_layout_srcs"],
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":dotgen",
+        ":gvc",
+        ":gvc_inc",
+        ":lib_headers",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+# --- Layout engines beyond `dot` -------------------------------------------
+#
+# The neato_layout plugin supplies every remaining layout engine: neato, fdp,
+# sfdp, circo, twopi, osage and patchwork. Dependency edges below were taken
+# from the `#include <subdir/...>` graph of the upstream sources.
+
+cc_library(
+    name = "rbtree",
+    srcs = [":rbtree_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":config_h",
+        ":lib_headers",
+    ],
+)
+
+# Self-contained C++ solver used by neatogen.
+cc_library(
+    name = "vpsc",
+    srcs = [":vpsc_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":config_h",
+        ":lib_headers",
+    ],
+)
+
+cc_library(
+    name = "sparse",
+    srcs = [":sparse_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt_inc",
+        ":cgraph_inc",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "ortho",
+    srcs = [":ortho_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "neatogen",
+    srcs = [":neatogen_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":label",
+        ":lib_headers",
+        ":ortho",
+        ":pack",
+        ":pathplan",
+        ":pathplan_inc",
+        ":rbtree",
+        ":sparse",
+        ":util",
+        ":vpsc",
+    ],
+)
+
+cc_library(
+    name = "fdpgen",
+    srcs = [":fdpgen_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":neatogen",
+        ":pack",
+        ":pathplan",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "circogen",
+    srcs = [":circogen_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt",
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":neatogen",
+        ":pack",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "twopigen",
+    srcs = [":twopigen_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":neatogen",
+        ":pack",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+# Named *_lib because the layout binary below owns the plain name.
+cc_library(
+    name = "osage_lib",
+    srcs = [":osage_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":gvc_inc",
+        ":lib_headers",
+        ":neatogen",
+        ":pack",
+        ":pathplan_inc",
+        ":util",
+    ],
+)
+
+# Named *_lib because the layout binary below owns the plain name.
+cc_library(
+    name = "patchwork_lib",
+    srcs = [":patchwork_srcs"],
+    # graphviz hides its symbols, so these cannot be linked as separate
+    # shared libraries; they are static components of :graphviz.
+    linkstatic = True,
+    deps = [
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":fdpgen",
+        ":gvc_inc",
+        ":lib_headers",
+        ":neatogen",
+        ":pack",
+        ":pathplan_inc",
+        ":sparse",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "plugin_neato_layout",
+    srcs = [":plugin_neato_layout_srcs"],
+    # gvlayout_neato_layout.c guards the sfdp engine behind #ifdef SFDP. The
+    # sfdpgen sources are compiled as part of :neatogen, so enable it.
+    local_defines = ["SFDP"],
+    deps = [
+        ":cdt_inc",
+        ":cgraph",
+        ":cgraph_inc",
+        ":circogen",
+        ":common",
+        ":common_inc",
+        ":config_h",
+        ":fdpgen",
+        ":gvc",
+        ":gvc_inc",
+        ":lib_headers",
+        ":neatogen",
+        ":osage_lib",
+        ":patchwork_lib",
+        ":pathplan_inc",
+        ":twopigen",
+        ":util",
+    ],
+)
+
+# Top-level graphviz library: gvc + statically registered plugins.
+cc_library(
+    name = "graphviz",
+    srcs = ["dot_builtins.cpp"],
+    linkstatic = True,
+    deps = [
+        ":cdt",
+        ":cgraph",
+        ":common",
+        ":config_h",
+        ":dotgen",
+        ":gvc",
+        ":label",
+        ":lib_headers",
+        ":pack",
+        ":pathplan",
+        ":plugin_core",
+        ":plugin_dot_layout",
+        ":plugin_neato_layout",
+        ":util",
+        ":xdot",
+        "@zlib",
+    ],
+    alwayslink = True,
+)
+
+alias(
+    name = "lib",
+    actual = ":graphviz",
+)
+
+# `dot`: layout + render driver. The graphviz library already pulls
+# in the static plugin registration table (dot_builtins.cpp).
+cc_binary(
+    name = "dot",
+    srcs = [":cmd_dot_srcs"],
+    local_defines = ["DEMAND_LOADING=0"],
+    deps = [":graphviz"],
+)
+
+filegroup(
+    name = "dot_bin",
+    srcs = [":dot"],
+)
+
+# The layout engines as separately named binaries.
+#
+# In graphviz these are all the same executable: `dot` selects its layout from
+# argv[0], falling back to `-K<engine>`. Rather than rely on argv[0] surviving
+# Bazel's runfiles handling, each name is a thin wrapper that passes -K
+# explicitly, which is the documented and more predictable route.
+LAYOUT_ENGINES = [
+    "circo",
+    "fdp",
+    "neato",
+    "osage",
+    "patchwork",
+    "sfdp",
+    "twopi",
+]
+
+[
+    genrule(
+        name = "{}_sh".format(engine),
+        outs = ["{}.sh".format(engine)],
+        cmd = ("echo '#!/bin/sh' > $@ && " +
+               "echo 'exec \"$$(dirname \"$$0\")/dot\" -K{} \"$$@\"' >> $@").format(engine),
+    )
+    for engine in LAYOUT_ENGINES
+]
+
+[
+    sh_binary(
+        name = engine,
+        srcs = ["{}.sh".format(engine)],
+        data = [":dot"],
+    )
+    for engine in LAYOUT_ENGINES
+]
+
+# Every graphviz layout binary this module provides, `dot` included.
+filegroup(
+    name = "all_layout_bins",
+    srcs = [":dot"] + [":{}".format(e) for e in LAYOUT_ENGINES],
+)
