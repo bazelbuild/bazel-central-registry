@@ -1,0 +1,54 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_python//python:py_test.bzl", "py_test")
+
+cc_test(
+    name = "cc_smoke",
+    size = "small",
+    srcs = ["smoke.cc"],
+    linkstatic = True,
+    deps = [
+        "@pango",
+        "@pango//:pangocairo",
+        "@pango//:pangoft2",
+    ],
+)
+
+# Each DSO must be independently loadable first in a fresh process, with
+# RTLD_LOCAL and no LD_LIBRARY_PATH or host Pango installation.
+[py_test(
+    name = "dlopen_" + name,
+    size = "small",
+    srcs = ["dlopen_test.py"],
+    args = [
+        str(first),
+        "$(rlocationpath @pango//:pango_shared)",
+        "$(rlocationpath @pango//:pangoft2_shared)",
+        "$(rlocationpath @pango//:pangocairo_shared)",
+        "$(rlocationpath @pango//:tests/fonts/DejaVuSans.ttf)",
+        "$(rlocationpath @pango//:tests/fonts/emoji-subset.ttf)",
+    ] + (["--relocate"] if relocate else []) + ([
+        "--dictionary",
+        "$(rlocationpath @libthai//:dictionary)",
+    ] if dictionary else []),
+    data = [
+        "@pango//:pango_shared",
+        "@pango//:pangocairo_shared",
+        "@pango//:pangoft2_shared",
+        "@pango//:tests/fonts/DejaVuSans.ttf",
+        "@pango//:tests/fonts/emoji-subset.ttf",
+    ] + (["@libthai//:dictionary"] if dictionary else []),
+    env = {
+        "FONTCONFIG_FILE": "/nonexistent/fonts.conf",
+        "FONTCONFIG_PATH": "/nonexistent",
+        "G_DEBUG": "fatal-warnings",
+        "LD_LIBRARY_PATH": "",
+    },
+    main = "dlopen_test.py",
+    deps = ["@rules_python//python/runfiles"],
+) for name, first, relocate, dictionary in [
+    ("pango", 0, False, False),
+    ("pangoft2", 1, False, False),
+    ("pangocairo", 2, False, False),
+    ("relocated_pangocairo", 2, True, False),
+    ("dictionary_override", 2, False, True),
+]]
