@@ -1,0 +1,224 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+exports_files(["COPYING"])
+
+# ---- Autoconf-driven config.h ----------------------------------------------
+
+package_info(
+    name = "_package",
+    aliases = {
+        # `configure.ac` sets both `VERSION` and `GPIOD_VERSION_STR` to the
+        # package version — mirror instead of hand-defining.
+        "GPIOD_VERSION_STR": "PACKAGE_VERSION",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "//:MODULE.bazel",
+    package_bugreport = "linux-gpio@vger.kernel.org",
+    package_url = "https://libgpiod.readthedocs.io/",
+    strip_bcr_version = True,
+)
+
+autoconf(
+    name = "_autoconf",
+    checks = macros.AC_CHECK_HEADERS([
+        "dirent.h",
+        "fcntl.h",
+        "getopt.h",
+        "linux/const.h",
+        "linux/ioctl.h",
+        "linux/types.h",
+        "linux/version.h",
+        "poll.h",
+        "sys/ioctl.h",
+        "sys/param.h",
+        "sys/sysmacros.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        "close",
+        "ioctl",
+        "open",
+        "ppoll",
+        "read",
+        "readlink",
+        "realpath",
+    ]) + [
+        checks.AC_DEFINE("_GNU_SOURCE"),
+        checks.AC_DEFINE(
+            "PACKAGE",
+            value = "\"libgpiod\"",
+        ),
+        checks.AC_DEFINE(
+            "LT_OBJDIR",
+            value = "\".libs/\"",
+        ),
+    ],
+    deps = [
+        ":_package",
+        # AC_HEADER_STDC + standard HAVE_*_H headers + STDC_HEADERS.
+        "@rules_cc_autoconf//gnulib/m4/extensions",
+    ],
+)
+
+autoconf_hdr(
+    name = "_config_h",
+    out = "config.h",
+    template = "config.h.in",
+    deps = [":_autoconf"],
+)
+
+cc_library(
+    name = "_config",
+    hdrs = [":_config_h"],
+)
+
+# ---- Libraries --------------------------------------------------------------
+
+# Match upstream `lib/Makefile.am`. `-w` silences all warnings — this is a
+# third-party port and upstream owns warning cleanups.
+_C_COPTS = [
+    "-std=gnu89",
+    "-fvisibility=hidden",
+    "-include",
+    "config.h",
+    "-w",
+]
+
+# `:gpiod` — Bazel-native name for upstream `lib/libgpiod.la`.
+cc_library(
+    name = "gpiod",
+    srcs = [
+        "lib/chip.c",
+        "lib/chip-info.c",
+        "lib/edge-event.c",
+        "lib/info-event.c",
+        "lib/internal.c",
+        "lib/internal.h",
+        "lib/line-config.c",
+        "lib/line-info.c",
+        "lib/line-request.c",
+        "lib/line-settings.c",
+        "lib/misc.c",
+        "lib/request-config.c",
+    ] + glob(["lib/uapi/*.h"]),
+    hdrs = ["include/gpiod.h"],
+    copts = _C_COPTS,
+    implementation_deps = [":_config"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+# Match upstream `bindings/cxx/Makefile.am` (C++17, gnu++17). Doesn't
+# force-include config.h — matches upstream's Makefile which only wires it
+# into the C library.
+_CXX_COPTS = [
+    "-std=gnu++17",
+    "-fvisibility=hidden",
+    "-w",
+]
+
+# `:gpiodcxx` — Bazel-native name for `bindings/cxx/libgpiodcxx.la`.
+cc_library(
+    name = "gpiodcxx",
+    srcs = [
+        "bindings/cxx/chip.cpp",
+        "bindings/cxx/chip-info.cpp",
+        "bindings/cxx/edge-event.cpp",
+        "bindings/cxx/edge-event-buffer.cpp",
+        "bindings/cxx/exception.cpp",
+        "bindings/cxx/info-event.cpp",
+        "bindings/cxx/internal.cpp",
+        "bindings/cxx/internal.hpp",
+        "bindings/cxx/line.cpp",
+        "bindings/cxx/line-config.cpp",
+        "bindings/cxx/line-info.cpp",
+        "bindings/cxx/line-request.cpp",
+        "bindings/cxx/line-settings.cpp",
+        "bindings/cxx/misc.cpp",
+        "bindings/cxx/request-builder.cpp",
+        "bindings/cxx/request-config.cpp",
+    ] + glob(["bindings/cxx/gpiodcxx/*.hpp"]),
+    hdrs = ["bindings/cxx/gpiod.hpp"],
+    copts = _CXX_COPTS,
+    includes = ["bindings/cxx"],
+    visibility = ["//visibility:public"],
+    deps = [":gpiod"],
+)
+
+# ---- CLI tools --------------------------------------------------------------
+#
+# Upstream `tools/Makefile.am` gates these behind `--enable-tools`. The
+# optional `--enable-gpioset-interactive` (libedit dep) is NOT wired here —
+# `gpioset.c`'s libedit paths are `#ifdef GPIOSET_INTERACTIVE`, and we don't
+# define it, so `gpioset` builds without a libedit dependency.
+
+cc_library(
+    name = "_tools_common",
+    srcs = [
+        "tools/tools-common.c",
+        "tools/tools-common.h",
+    ],
+    copts = _C_COPTS,
+    # `:_config` is a plain `deps` (not `implementation_deps`) so config.h
+    # propagates to the tool binaries — `cc_binary` doesn't support
+    # `implementation_deps`, and they force-include `config.h` via _C_COPTS.
+    deps = [
+        ":_config",
+        ":gpiod",
+    ],
+)
+
+[
+    cc_binary(
+        name = "gpio" + _name,
+        srcs = ["tools/gpio{}.c".format(_name)],
+        copts = _C_COPTS,
+        visibility = ["//visibility:public"],
+        deps = [
+            ":_tools_common",
+            ":gpiod",
+        ],
+    )
+    for _name in [
+        "detect",
+        "get",
+        "info",
+        "mon",
+        "notify",
+        "set",
+    ]
+]
+
+# ---- Compat aliases ---------------------------------------------------------
+#
+# Upstream ships `libgpiod.la` (C) and `libgpiodcxx.la` (C++); the aliases
+# below let downstream write `@libgpiod//:libgpiod` (or `libgpiodcxx`) and get
+# exactly what upstream calls those artefacts. `libgpiod_c` / `libgpiod_cxx`
+# match the 1.6.3 BCR module's target names for smoother upgrades.
+
+alias(
+    name = "libgpiod",
+    actual = ":gpiod",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libgpiodcxx",
+    actual = ":gpiodcxx",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libgpiod_c",
+    actual = ":gpiod",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libgpiod_cxx",
+    actual = ":gpiodcxx",
+    visibility = ["//visibility:public"],
+)

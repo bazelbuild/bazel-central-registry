@@ -6,7 +6,7 @@ Read more about this feature: https://blog.aspect.build/stardocs-on-bcr
 
 ## Generating API docs
 
-The built-in rule [starlark_doc_extract](https://bazel.build/versions/8.3.0/reference/be/general#starlark_doc_extract) outputs `.binaryproto` files containing `stardoc_output.ModuleInfo` messages.
+The built-in rule [starlark_doc_extract](https://bazel.build/reference/be/general#starlark_doc_extract) outputs `.binaryproto` files containing `stardoc_output.ModuleInfo` messages.
 
 - Source: https://github.com/bazelbuild/bazel/blob/master/src/main/protobuf/stardoc_output.proto
 - Docs: https://buf.build/bazel/bazel/docs/main:stardoc_output#stardoc_output.ModuleInfo

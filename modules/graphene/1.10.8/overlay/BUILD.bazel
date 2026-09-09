@@ -1,0 +1,72 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+expand_template(
+    name = "graphene_config",
+    out = "include/graphene-config.h",
+    substitutions = {
+        "#mesondefine GRAPHENE_HAS_SSE": "#define GRAPHENE_HAS_SSE 1",
+        "#mesondefine GRAPHENE_HAS_ARM_NEON": "#define GRAPHENE_HAS_ARM_NEON 1",
+        "#mesondefine GRAPHENE_HAS_GCC": "#define GRAPHENE_HAS_GCC 1",
+    },
+    template = "include/graphene-config.h.meson",
+)
+
+expand_template(
+    name = "graphene_version",
+    out = "include/graphene-version.h",
+    substitutions = {
+        "@GRAPHENE_VERSION@": "1.10.8",
+        "@GRAPHENE_MAJOR_VERSION@": "1",
+        "@GRAPHENE_MINOR_VERSION@": "10",
+        "@GRAPHENE_MICRO_VERSION@": "8",
+    },
+    template = "include/graphene-version.h.meson",
+)
+
+write_file(
+    name = "config",
+    out = "src/config.h",
+    content = [
+        "#define HAVE_PTHREAD_H 1",
+        "#define HAVE_POSIX_MEMALIGN 1",
+        "#define HAVE_ISINF 1",
+        "#define HAVE_ISNAN 1",
+        "#define HAVE_SINCOSF 1",
+        "#define HAVE_IEEE_754_FLOAT_DIVISION 1",
+        "#define _GRAPHENE_PUBLIC __attribute__((visibility(\"default\"))) extern",
+    ],
+)
+
+cc_library(
+    name = "graphene",
+    srcs = glob(["src/*.c"]),
+    hdrs = glob([
+        "include/*.h",
+        "src/*.h",
+    ]) + [
+        ":config",
+        ":graphene_config",
+        ":graphene_version",
+    ],
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-pthread",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "GRAPHENE_COMPILATION",
+        "_GNU_SOURCE",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = ["@glib//gobject"],
+)

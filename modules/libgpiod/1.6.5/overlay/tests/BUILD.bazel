@@ -1,0 +1,98 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# ---- Smoke test: prove `:gpiodetect` runs and produces sane --version/--help.
+
+genrule(
+    name = "gpiodetect_version_out",
+    outs = ["gpiodetect_version.txt"],
+    cmd = "$(location //:gpiodetect) --version > $@",
+    cmd_bat = "$(location //:gpiodetect) --version > $@",
+    tools = ["//:gpiodetect"],
+)
+
+genrule(
+    name = "gpiodetect_help_out",
+    outs = ["gpiodetect_help.txt"],
+    cmd = "$(location //:gpiodetect) --help > $@",
+    cmd_bat = "$(location //:gpiodetect) --help > $@",
+    tools = ["//:gpiodetect"],
+)
+
+cc_test(
+    name = "gpiodetect_smoke_test",
+    srcs = ["gpiodetect_smoke_test.cc"],
+    data = [
+        ":gpiodetect_help_out",
+        ":gpiodetect_version_out",
+    ],
+    env = {
+        "GPIODETECT_HELP_TXT": "$(rlocationpath :gpiodetect_help_out)",
+        "GPIODETECT_VERSION_TXT": "$(rlocationpath :gpiodetect_version_out)",
+    },
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+# ---- Placeholders for system libraries not yet in BCR ----------------------
+#
+# Each of these is a `cc_library` that adds a plain `-l<name>` linkopt so
+# the manual tests below can name them in `deps`. They'll link successfully
+# on any system with the library installed on the linker search path; on
+# hosts without it, the link fails — same as an ordinary autotools build.
+# When the corresponding BCR module lands, replace the reference in the
+# manual test's `deps` list with the real `@<module>` label and delete the
+# placeholder here.
+
+cc_library(
+    name = "_glib",
+    linkopts = ["-lglib-2.0"],
+)
+
+cc_library(
+    name = "_libkmod",
+    linkopts = ["-lkmod"],
+)
+
+cc_library(
+    name = "_libudev",
+    linkopts = ["-ludev"],
+)
+
+# ---- Upstream test suite — tagged `manual` -------------------------------
+#
+# Excluded from `bazel build @libgpiod//...` wildcards; needs root at runtime
+# to modprobe `gpio-mockup`.
+
+cc_library(
+    name = "gpiomockup",
+    srcs = [
+        "mockup/gpio-mockup.c",
+        "mockup/gpio-mockup.h",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":_libkmod",  # TODO: @libkmod once in BCR
+        ":_libudev",  # TODO: @libudev once in BCR
+    ],
+)
+
+cc_test(
+    name = "gpiod-test",
+    srcs = [
+        "gpiod-test.c",
+        "gpiod-test.h",
+        "tests-chip.c",
+        "tests-ctxless.c",
+        "tests-event.c",
+        "tests-iter.c",
+        "tests-line.c",
+        "tests-misc.c",
+    ],
+    tags = ["manual"],
+    deps = [
+        ":_glib",  # TODO: @glib once in BCR
+        ":gpiomockup",
+        "//:gpiod",
+    ],
+)

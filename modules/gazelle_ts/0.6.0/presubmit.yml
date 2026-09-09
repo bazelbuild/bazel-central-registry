@@ -1,0 +1,71 @@
+# Run inside bcr_test/ rather than against the published module's own root.
+# Two reasons the consumer workspace has to be ours, not BCR's auto-generated
+# one:
+#
+# 1. `--@llvm//config:experimental_stub_libgcc_s=True` (a flag rules_rust's
+#    `-lgcc_s` link spec needs on Linux) names the @llvm repo. BCR's auto-
+#    generated workspace declares only @gazelle_ts as a direct bazel_dep, so
+#    @llvm isn't visible in its main repo mapping and Bazel errors out at
+#    "Computing main repo mapping". bcr_test/MODULE.bazel adds @llvm as a
+#    direct bazel_dep, making the flag resolvable.
+#
+# 2. `--host_platform=@gazelle_ts//platforms:local_gnu` names @gazelle_ts.
+#    Same visibility rule — bcr_test/ has gazelle_ts as a direct dep via
+#    local_path_override, so the flag resolves.
+#
+# Crucially, bcr_test/ ships NO `.bazelrc` of its own — BCR's `bazel info`
+# pre-flight reads any rc in scope before bzlmod resolves deps, and parsing
+# repo-qualified flags at that point fails. Every flag below lives in
+# `build_flags:`, which only applies during `bazel build`, by which time
+# bzlmod has resolved.
+bcr_test_module:
+  module_path: "bcr_test"
+  matrix:
+    # bazelisk wildcard syntax accepts `<major>.x` / `<major>.*`, not
+    # `<major>.<minor>.x` — `8.5.x` errors out with "invalid version".
+    # The supported floor (rules_rs's) is 8.5.0; bazelisk's `8.x` resolves
+    # to the latest 8.y, which currently is comfortably above.
+    bazel:
+      - 9.x
+      - 8.x
+  tasks:
+    # Two tasks (not a `platform:` matrix entry) because the host_platform
+    # pin only applies on Linux. `local_gnu` parents `@platforms//host` and
+    # adds `@llvm//constraints/libc:gnu.2.28`; on a darwin host that double-
+    # tags the platform with both `os:macos` and `libc:gnu`, which collides
+    # in rules_rust's compiler-rt select() (`Illegal ambiguous match …`).
+    # macOS doesn't need any platform pin — Bazel's default host config
+    # already satisfies rules_rs's macOS toolchains.
+    verify_linux:
+      name: Build the Go gazelle plugin (Linux)
+      platform: ubuntu2204
+      bazel: ${{ bazel }}
+      # Mirrors //.bazelrc's hermetic @llvm toolchain flags. See that file
+      # for per-flag rationale. Lives here (not in bcr_test/.bazelrc)
+      # because BCR's `bazel info` pre-flight runs before bzlmod resolves,
+      # and any rc-level flag referencing @llvm or @gazelle_ts would fail
+      # to parse at that point.
+      build_flags:
+        - "--host_platform=@gazelle_ts//platforms:local_gnu"
+        - "--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
+        - "--repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1"
+        - "--@llvm//config:experimental_stub_libgcc_s=True"
+        - "--linkopt=-no-pie"
+      build_targets:
+        - "@gazelle_ts//ts/..."
+    verify_macos:
+      name: Build the Go gazelle plugin (macOS)
+      # `macos_arm64` (not bare `macos`, which still points at Intel
+      # runners) since rules_rs's macOS Rust toolchains target arm64.
+      platform: macos_arm64
+      bazel: ${{ bazel }}
+      build_flags:
+        # No `--host_platform` on macOS (see comment above). The libgcc_s
+        # stub flag stays — it's a no-op on darwin but @llvm needs to be
+        # visible in the repo mapping regardless of platform; it lives in
+        # bcr_test/MODULE.bazel as a direct bazel_dep, so the flag parses.
+        - "--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1"
+        - "--repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1"
+        - "--@llvm//config:experimental_stub_libgcc_s=True"
+      build_targets:
+        - "@gazelle_ts//ts/..."
