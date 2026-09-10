@@ -1,0 +1,96 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+    "cargo-bazel-lock.json",
+])
+
+# ==============================================================================
+# Clarabel Conic Interior Point Solver (C and C++ APIs)
+#
+# Cones supported:
+#   - Nonnegative / Zero cones (LP)
+#   - Second-order cones (SOCP)
+#   - Exponential & Power / Generalized Power cones
+#   - Positive Semidefinite cones (SDP)
+#
+# Linear Algebra / BLAS Provider:
+#   - macOS: Apple Accelerate framework (-framework Accelerate)
+#   - Non-macOS: Hermetic OpenBLAS from BCR (@openblas)
+#
+# Primary Targets:
+#   - @clarabel: Canonical target exposing both C and C++ interfaces.
+#   - @clarabel//:clarabel_c: Pure C interface (#include <clarabel.h>).
+#   - @clarabel//:clarabel_cpp: C++ interface with Eigen support (#include <clarabel.hpp>).
+# ==============================================================================
+
+rust_static_library(
+    name = "clarabel_c_rust",
+    srcs = glob(["rust_wrapper/src/**/*.rs"]),
+    crate_name = "clarabel_c",
+    crate_root = "rust_wrapper/src/lib.rs",
+    crate_features = ["sdp"],
+    edition = "2021",
+    proc_macro_deps = ["@crates//:paste"],
+    deps = [
+        "@crates//:cfg-if",
+        "@crates//:clarabel",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# C interface library
+cc_library(
+    name = "clarabel_c",
+    hdrs = glob([
+        "include/clarabel.h",
+        "include/c/**/*.h",
+    ]),
+    includes = ["include"],
+    defines = ["FEATURE_SDP"],
+    deps = [
+        ":clarabel_c_rust",
+    ] + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": [
+            "@openblas",
+        ],
+    }),
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-lpthread",
+            "-ldl",
+            "-lm",
+            "-framework Accelerate",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# C++ interface library (Eigen-based)
+cc_library(
+    name = "clarabel_cpp",
+    hdrs = glob([
+        "include/clarabel.hpp",
+        "include/cpp/**/*.hpp",
+    ]),
+    includes = ["include"],
+    defines = ["FEATURE_SDP"],
+    deps = [
+        ":clarabel_c",
+        "@eigen",
+    ],
+)
+
+# Canonical module target (C and C++ interfaces)
+cc_library(
+    name = "clarabel",
+    deps = [
+        ":clarabel_c",
+        ":clarabel_cpp",
+    ],
+)
