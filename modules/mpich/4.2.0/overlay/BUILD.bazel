@@ -1,0 +1,43 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
+
+filegroup(
+    name = "all_srcs",
+    srcs = glob(
+        ["**"],
+        exclude = ["*.bazel"],
+    ),
+)
+
+# MPICH's release tarball includes generated configure and make inputs.
+# rules_foreign_cc supplies its declared GNU make toolchain, so this does not
+# depend on an ambient host make.
+configure_make(
+    name = "mpich",
+    args = ["-j4"],
+    configure_in_place = True,
+    configure_options = [
+        "--disable-cxx",
+        "--disable-fortran",
+        "--with-device=ch3:sock",
+        "--with-pm=no",
+        "--with-wrapper-dl-type=none",
+    ],
+    env = {
+        # Debian-compatible spelling required by prebuilt mpi4py wheels.
+        "MPILIBNAME": "mpich",
+    },
+    lib_source = ":all_srcs",
+    out_shared_libs = ["libmpich.so.12"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)
+
+# A single tree-artifact label lets dynamic consumers set a narrow loader path
+# to $(rootpath @mpich//:runtime)/lib without depending on output internals.
+filegroup(
+    name = "runtime",
+    srcs = [":mpich"],
+    output_group = "gen_dir",
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+)
