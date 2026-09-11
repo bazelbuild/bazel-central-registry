@@ -1,0 +1,74 @@
+"""Tests for the programs this module builds (from tests/Makefile.am)."""
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# `//:genfile` is built up in the root package, where the private `:gnulib` and
+# the `lib/` headers it needs already are.
+exports_files([
+    "argcv.c",
+    "argcv.h",
+    "genfile.c",
+])
+
+# `smoke_test.cc` uses <filesystem>, so it needs C++17 rather than whatever the
+# toolchain defaults to.  clang-cl takes the MSVC spellings, not the GNU ones.
+TEST_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/std:c++17"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+# `//:cpio` is in `data`, not `tools`, so it is built once in the target
+# configuration.  A genrule would put it in the exec configuration instead and
+# rebuild the module -- gnulib, the autoconf probes and all -- a second time.
+# `$(rlocationpath)` rather than `$(rootpath)` because Windows runfiles are a
+# manifest, not a symlink tree, so the relative path is not on disk there.
+cc_test(
+    name = "smoke_test",
+    size = "small",
+    srcs = ["smoke_test.cc"],
+    args = ["$(rlocationpath //:cpio)"],
+    copts = TEST_COPTS,
+    data = ["//:cpio"],
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+# An overlay file arrives over `ctx.download`, which does not set the execute
+# bit, and `sh_test` refuses a source that is not executable.
+copy_file(
+    name = "upstream_testsuite_script",
+    src = "upstream_testsuite.sh",
+    out = "upstream_testsuite_exe.sh",
+    is_executable = True,
+)
+
+# Upstream's Autotest suite, all 17 tests of it.  The driver is autom4te output
+# but the tarball ships it (tests/Makefile.am:22), so this needs no autotools --
+# see upstream_testsuite.sh for the two fixture files it stands in for.
+#
+# Not marked incompatible with Windows: the suite is bash and would not run
+# there, but presubmit builds `@cpio//...` on Windows without testing it, and
+# building an sh_test costs nothing.
+sh_test(
+    name = "upstream_testsuite",
+    size = "small",
+    srcs = [":upstream_testsuite_script"],
+    args = [
+        "$(rlocationpath testsuite)",
+        "$(rlocationpath //:cpio)",
+        "$(rlocationpath //:genfile)",
+    ],
+    data = [
+        "testsuite",
+        "//:cpio",
+        "//:genfile",
+    ],
+    # The suite shells out to sed, cmp, mkdir and friends, and Bazel's default
+    # test PATH does not name every directory a host keeps those in.  `atlocal`
+    # prepends the binaries under test, so inheriting PATH cannot let the
+    # host's cpio shadow the one built here.
+    env_inherit = ["PATH"],
+    deps = ["@rules_shell//shell/runfiles"],
+)
