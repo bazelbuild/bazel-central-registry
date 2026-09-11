@@ -9,7 +9,11 @@ here is ours. https://gitlab.com/graphviz/graphviz
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
-package(default_visibility = ["//visibility:public"])
+# No package-wide default visibility. Only the targets a consumer is meant to
+# depend on are public: the library, the dot binary, the per-engine wrappers
+# and the filegroups over them. Everything else, the source filegroups, the
+# include-path shims and the component libraries, is an implementation detail
+# and stays private so it can change without breaking anyone.
 
 # ---------------------------------------------------------------------------
 # Upstream's headers and source lists.
@@ -74,17 +78,20 @@ cc_library(
     includes = ["."],
 )
 
-exports_files([
-    "lib/cgraph/grammar.c",
-    "lib/cgraph/grammar.h",
-    "lib/cgraph/scan.c",
-    "lib/common/htmlparse.c",
-    "lib/common/htmlparse.h",
-    "lib/common/colortbl.h",
-    "lib/common/entities.h",
-    "builddate.h",
-    "graphviz_version.h",
-])
+exports_files(
+    [
+        "lib/cgraph/grammar.c",
+        "lib/cgraph/grammar.h",
+        "lib/cgraph/scan.c",
+        "lib/common/htmlparse.c",
+        "lib/common/htmlparse.h",
+        "lib/common/colortbl.h",
+        "lib/common/entities.h",
+        "builddate.h",
+        "graphviz_version.h",
+    ],
+    visibility = ["//visibility:private"],
+)
 
 # Per-library source filegroups.
 filegroup(
@@ -779,6 +786,7 @@ cc_library(
     name = "graphviz",
     srcs = ["dot_builtins.cpp"],
     linkstatic = True,
+    visibility = ["//visibility:public"],
     deps = [
         ":cdt",
         ":cgraph",
@@ -803,6 +811,7 @@ cc_library(
 alias(
     name = "lib",
     actual = ":graphviz",
+    visibility = ["//visibility:public"],
 )
 
 # `dot`: layout + render driver. The graphviz library already pulls
@@ -811,12 +820,14 @@ cc_binary(
     name = "dot",
     srcs = [":cmd_dot_srcs"],
     local_defines = ["DEMAND_LOADING=0"],
+    visibility = ["//visibility:public"],
     deps = [":graphviz"],
 )
 
 filegroup(
     name = "dot_bin",
     srcs = [":dot"],
+    visibility = ["//visibility:public"],
 )
 
 # The layout engines as separately named binaries.
@@ -850,6 +861,7 @@ LAYOUT_ENGINES = [
         name = engine,
         srcs = ["{}.sh".format(engine)],
         data = [":dot"],
+        visibility = ["//visibility:public"],
     )
     for engine in LAYOUT_ENGINES
 ]
@@ -858,4 +870,5 @@ LAYOUT_ENGINES = [
 filegroup(
     name = "all_layout_bins",
     srcs = [":dot"] + [":{}".format(e) for e in LAYOUT_ENGINES],
+    visibility = ["//visibility:public"],
 )
