@@ -1,0 +1,38 @@
+matrix: &matrix
+  bazel: ["8.*", "9.*"]
+  platform: ["debian11", "ubuntu2204", "windows", "macos", "macos_arm64"]
+
+# Builds an anonymous module whose MODULE.bazel does nothing but `bazel_dep`
+# on rules_signing. That is a weaker check than the test module below, but it
+# is the only one that runs with no dev dependency present at all, so it
+# catches a public .bzl file that accidentally loads a dev-only repository.
+tasks:
+  verify_targets:
+    name: "Verify build targets"
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@rules_signing//signing:defs_bzl"
+      - "@rules_signing//signing/toolchains:osslsigncode_toolchain_type"
+
+# `usagetest` consumes the ruleset the way a downstream module does: it
+# registers its own toolchains, picks a different default Python than the
+# signer's runtime, and signs real targets. Only one test module is supported,
+# and //signing/tests cannot be it -- those tests need dev-only dependencies
+# (the zig toolchain, the signing_tools dev extension) that exist only while
+# rules_signing is itself the root module, which is not the case here. That
+# suite runs in this repository's own CI instead. `test_targets` builds on
+# top of `build_targets` to also run usagetest's own test(s), which verify
+# the signed output tree rather than merely building it.
+bcr_test_module:
+  module_path: "usagetest"
+  matrix: *matrix
+  tasks:
+    run_test_module:
+      name: "Run test module"
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - "//..."
+      test_targets:
+        - "//..."
