@@ -1,0 +1,160 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_shared_library")
+
+# Only :makemsix is public. The library, the shared library and the bundled parser are internal: the
+# overlay picks one PAL per platform and compiles bundle support out, so they are not a general-purpose
+# libmsix that consumers should link against.
+package(default_visibility = ["//visibility:private"])
+
+# Bundled xerces-c. POSIX only: Windows uses the system msxml6 parser.
+cc_library(
+    name = "xerces_c",
+    srcs = glob(
+        ["lib/xerces/src/xercesc/**/*.cpp"],
+        exclude = [
+            "lib/xerces/src/xercesc/util/Transcoders/ICU/**",
+            "lib/xerces/src/xercesc/util/Transcoders/Iconv/**",
+            "lib/xerces/src/xercesc/util/Transcoders/MacOSUnicodeConverter/**",
+            "lib/xerces/src/xercesc/util/Transcoders/Win32/**",
+            "lib/xerces/src/xercesc/util/MsgLoaders/ICU/**",
+            "lib/xerces/src/xercesc/util/MsgLoaders/MsgCatalog/**",
+            "lib/xerces/src/xercesc/util/FileManagers/WindowsFileMgr.cpp",
+            "lib/xerces/src/xercesc/util/MutexManagers/WindowsMutexMgr.cpp",
+            "lib/xerces/src/xercesc/util/MutexManagers/NoThreadMutexMgr.cpp",
+            "lib/xerces/src/xercesc/util/NetAccessors/**",
+        ],
+    ) + [
+        # POSIX lacks the stricmp/strnicmp that xerces uses.
+        "lib/xerces/src/stricmp.c",
+        "lib/xerces/src/strnicmp.c",
+    ],
+    hdrs = glob([
+        "lib/xerces/src/**/*.hpp",
+        "lib/xerces/src/**/*.h",
+    ]),
+    # No -std: copts apply to the .c helpers too, and the toolchain default compiles xerces fine.
+    copts = ["-DHAVE_CONFIG_H"],
+    includes = ["lib/xerces/src"],
+    linkopts = select({
+        # iconv is separate on macOS, in glibc on Linux -- which needs pthread for the POSIX mutex manager.
+        "@platforms//os:macos": ["-liconv"],
+        "//conditions:default": ["-lpthread"],
+    }),
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = glob(["lib/xerces/src/xercesc/**/*.c"]),
+)
+
+# Excluded: the build is pack-only. Enabling bundles would add a per-OS PAL/Applicability, pulling in
+# CoreFoundation on macOS, ICU on Linux, and the WinRT header graph on Windows.
+_BUNDLE_SRCS = [
+    "src/msix/unpack/AppxBundleManifest.cpp",
+    "src/msix/unpack/ApplicabilityCommon.cpp",
+    "src/msix/pack/AppxBundleWriter.cpp",
+    "src/msix/pack/BundleManifestWriter.cpp",
+    "src/msix/pack/BundleWriterHelper.cpp",
+    "src/msix/pack/BundleValidationHelper.cpp",
+]
+
+_BASE_SRCS = glob(
+    [
+        "src/inc/**/*.hpp",
+        "src/inc/**/*.h",
+        "src/msix/**/*.hpp",
+        "src/msix/**/*.h",
+        "src/msix/*.cpp",
+        "src/msix/common/*.cpp",
+        "src/msix/unpack/*.cpp",
+        "src/msix/pack/*.cpp",
+        "src/msix/PAL/DataCompression/Zlib/*.cpp",
+    ],
+    exclude = _BUNDLE_SRCS,
+    allow_empty = True,
+)
+
+# One PAL implementation per axis, as CMake picks them. POSIX: xerces-c parser, OpenSSL crypto.
+_PAL_POSIX = [
+    "src/msix/PAL/XML/xerces-c/XmlObject.cpp",
+    "src/msix/PAL/Crypto/OpenSSL/Crypto.cpp",
+    "src/msix/PAL/Signature/OpenSSL/SignatureValidator.cpp",
+    "src/msix/PAL/FileSystem/POSIX/DirectoryObject.cpp",
+]
+
+# Windows: system msxml6 parser, system crypt32 crypto.
+_PAL_WINDOWS = [
+    "src/msix/PAL/XML/msxml6/XmlObject.cpp",
+    "src/msix/PAL/Crypto/Win32/Crypto.cpp",
+    "src/msix/PAL/Signature/Win32/SignatureValidator.cpp",
+    "src/msix/PAL/FileSystem/Win32/DirectoryObject.cpp",
+]
+
+# Linux is glibc-only: the SDK's POSIX DirectoryObject uses `fts`, which musl lacks.
+cc_library(
+    name = "msix_cc",
+    srcs = _BASE_SRCS + select({
+        "@platforms//os:windows": _PAL_WINDOWS,
+        "@platforms//os:macos": _PAL_POSIX,
+        "@platforms//os:linux": _PAL_POSIX,
+    }),
+    copts = [
+        "-DMSIX_PACK=1",
+        # NDEBUG in every compilation mode: off Windows the SDK asserts on every error path instead of returning
+        # its HRESULT, because the `IsDebuggerPresent()` guard sits inside an `#ifdef WIN32`.
+        "-DNDEBUG",
+    ] + select({
+        "@platforms//os:macos": ["-std=c++14", "-DMACOS", "-DUSING_XERCES=1"],
+        "@platforms//os:windows": [
+            "/std:c++14",
+            # The SDK gates <windows.h> on WIN32, which the compiler does not predefine (only _WIN32).
+            "-DWIN32",
+            "-DUSING_MSXML=1",
+        ],
+        "@platforms//os:linux": ["-std=c++14", "-DLINUX", "-DUSING_XERCES=1"],
+    }),
+    includes = [
+        "src/inc/public",
+        "src/inc/shared",
+        "src/inc/internal",
+    ],
+    # COM/OLE for msxml6, bcrypt/crypt32 for crypto, wintrust for signature validation. POSIX needs none.
+    linkopts = select({
+        "@platforms//os:windows": [
+            "ole32.lib",
+            "oleaut32.lib",
+            "bcrypt.lib",
+            "crypt32.lib",
+            "wintrust.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = select({
+        "@platforms//os:windows": ["@zlib//:zlib"],
+        "//conditions:default": ["@openssl//:crypto", "@zlib//:zlib", ":xerces_c"],
+    }),
+)
+
+cc_shared_library(
+    name = "msix",
+    deps = [":msix_cc"],
+)
+
+# The SDK's own CLI. Its `bundle`/`unbundle` commands link but fail at runtime, bundles being compiled out.
+cc_binary(
+    name = "makemsix",
+    srcs = ["src/makemsix/main.cpp"],
+    copts = [
+        "-DMSIX_PACK=1",
+        # The module version, not upstream's: CMake would derive 1.7.243 from `git describe` here, but the
+        # last real tag is v1.7 from 2019. Only the makemsix banner reads it. Backslashes survive cc_wrapper.sh.
+        "-DSDK_VERSION=\\\"0.0.1\\\"",
+    ] + select({
+        "@platforms//os:windows": [
+            "/std:c++14",
+            "-DWIN32",
+        ],
+        "//conditions:default": ["-std=c++14"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":msix_cc"],
+)
