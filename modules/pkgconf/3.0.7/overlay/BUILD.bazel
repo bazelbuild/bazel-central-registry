@@ -1,0 +1,95 @@
+# Overlay for the pkgconf source archive. pkgconf has no external
+# dependencies, so it compiles as a plain cc_binary and needs neither meson
+# nor autotools; config.h is written below instead of by feature detection.
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Normally produced by configure/meson feature detection. Every HAVE_DECL_* is
+# read with #if rather than #ifdef, so each has to be defined to 0 or 1.
+#
+# All are 0, which is portable rather than lazy: bsdstubs.c supplies each
+# fallback as a static inline under its own name (pkgconf_strndup_impl, never
+# strndup), so declaring none available cannot collide with libc. The only cost
+# is using pkgconf's implementation where the system has its own.
+#
+# write_file rather than genrule: genrule needs a shell, which on Windows means
+# an MSYS bash this build should not require.
+write_file(
+    name = "config_h",
+    out = "libpkgconf/config.h",
+    content = [
+        "#ifndef PKGCONF_CONFIG_H",
+        "#define PKGCONF_CONFIG_H",
+        "",
+        "#define PACKAGE_NAME \"pkgconf\"",
+        "#define PACKAGE_TARNAME \"pkgconf\"",
+        "#define PACKAGE_VERSION \"%s\"" % module_version(),
+        "#define PACKAGE_BUGREPORT \"https://todo.sr.ht/~kaniini/pkgconf\"",
+        "",
+        "#define HAVE_DECL_STRNDUP 0",
+        "#define HAVE_DECL_REALLOCARRAY 0",
+        "#define HAVE_DECL_PLEDGE 0",
+        "#define HAVE_DECL_UNVEIL 0",
+        "#define HAVE_DECL_READLINKAT 0",
+        "#define HAVE_DECL_MKDTEMP 0",
+        "#define HAVE_DECL_GETC_UNLOCKED 0",
+        "#define HAVE_DECL_NL_LANGINFO_L 0",
+        "",
+        "/* Fallbacks only; callers are expected to set PKG_CONFIG_PATH. */",
+        "#ifdef _WIN32",
+        "# define PKG_DEFAULT_PATH \"../lib/pkgconfig;../share/pkgconfig\"",
+        "# define SYSTEM_LIBDIR \"\"",
+        "# define SYSTEM_INCLUDEDIR \"\"",
+        "# define PERSONALITY_PATH \"../share/pkgconfig/personality.d\"",
+        "#else",
+        "# define PKG_DEFAULT_PATH \"/usr/lib/pkgconfig:/usr/share/pkgconfig\"",
+        "# define SYSTEM_LIBDIR \"/usr/lib\"",
+        "# define SYSTEM_INCLUDEDIR \"/usr/include\"",
+        "# define PERSONALITY_PATH \"/usr/share/pkgconfig/personality.d\"",
+        "#endif",
+        "",
+        "#endif /* PKGCONF_CONFIG_H */",
+    ],
+    newline = "unix",
+)
+
+cc_library(
+    name = "libpkgconf",
+    srcs = glob(["libpkgconf/*.c"]) + [":config_h"],
+    hdrs = glob(["libpkgconf/*.h"]),
+    copts = select({
+        "@platforms//os:windows": ["/wd4996"],
+        "//conditions:default": [
+            "-D_POSIX_C_SOURCE=200809L",
+            "-D_XOPEN_SOURCE=700",
+            "-D_DEFAULT_SOURCE",
+            "-D_DARWIN_C_SOURCE",
+        ],
+    }),
+    # libpkgconf-api.h marks the API dllimport on Windows unless this says the
+    # build is static. It has to reach the CLI too, hence defines rather than
+    # copts. Elsewhere it drops the default-visibility attribute, which a static
+    # library does not need either.
+    defines = ["PKGCONFIG_IS_STATIC"],
+    # Sources include <libpkgconf/...>, so the archive root is the include root.
+    includes = ["."],
+    # path.c reads search paths from the registry on Windows, and Bazel's MSVC
+    # toolchain does not link advapi32 by default.
+    linkopts = select({
+        "@platforms//os:windows": ["advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+)
+
+cc_binary(
+    name = "pkgconf",
+    srcs = glob([
+        "cli/*.c",
+        "cli/*.h",
+    ]),
+    deps = [":libpkgconf"],
+)
