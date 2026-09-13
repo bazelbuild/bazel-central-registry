@@ -1,63 +1,103 @@
 # Overlay for the pkgconf source archive. pkgconf has no external
 # dependencies, so it compiles as a plain cc_binary and needs neither meson
-# nor autotools; config.h is written below instead of by feature detection.
+# nor autotools; config.h is generated below from upstream's own template and
+# declaration checks.
 
-load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
 
-package(default_visibility = ["//visibility:public"])
+exports_files([
+    "COPYING",
+    # Fixtures for the test module (see presubmit.yml, bcr_test_module).
+    "tests/lib1/bar.pc",
+    "tests/lib1/foo.pc",
+])
 
-# Normally produced by configure/meson feature detection. Every HAVE_DECL_* is
-# read with #if rather than #ifdef, so each has to be defined to 0 or 1.
-#
-# All are 0, which is portable rather than lazy: bsdstubs.c supplies each
-# fallback as a static inline under its own name (pkgconf_strndup_impl, never
-# strndup), so declaring none available cannot collide with libc. The only cost
-# is using pkgconf's implementation where the system has its own.
-#
-# write_file rather than genrule: genrule needs a shell, which on Windows means
-# an MSYS bash this build should not require.
-write_file(
+# PACKAGE_NAME, PACKAGE_TARNAME and PACKAGE_VERSION come from MODULE.bazel.
+package_info(
+    name = "package_info",
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://github.com/pkgconf/pkgconf/issues/new",
+)
+
+# The probes must see the same feature-test macros as the sources, so each
+# declaration is reported exactly as the compiler will see it (configure.ac
+# does the same through CPPFLAGS).
+_FEATURE_TEST_MACROS = [
+    "#define _POSIX_C_SOURCE 200809L",
+    "#define _XOPEN_SOURCE 700",
+    "#define _DEFAULT_SOURCE",
+    "#define _DARWIN_C_SOURCE",
+]
+
+# The AC_CHECK_DECLS calls of configure.ac. Every HAVE_DECL_* is read with #if,
+# so an absent declaration is defined to 0, which bsdstubs.c then covers.
+_DECL_CHECKS = {
+    "strndup": ["#include <string.h>"],
+    "pledge": ["#include <unistd.h>"],
+    "unveil": ["#include <unistd.h>"],
+    "readlinkat": ["#include <unistd.h>"],
+    "reallocarray": ["#include <stdlib.h>"],
+    "mkdtemp": ["#include <stdlib.h>"],
+    "getc_unlocked": ["#include <stdio.h>"],
+    "nl_langinfo_l": [
+        "#ifdef __APPLE__",
+        "#include <xlocale.h>",
+        "#endif",
+        "#include <locale.h>",
+        "#include <langinfo.h>",
+    ],
+}
+
+autoconf(
+    name = "config_checks",
+    # sys/stat.h switches on inode-based de-duplication of search paths in
+    # path.c (configure.ac: AC_CHECK_HEADERS([sys/stat.h])).
+    checks = macros.AC_CHECK_HEADERS(["sys/stat.h"]) + [
+        check
+        for symbol, headers in _DECL_CHECKS.items()
+        for check in macros.AC_CHECK_DECLS(
+            [symbol],
+            includes = _FEATURE_TEST_MACROS + headers,
+        )
+    ],
+    deps = [":package_info"],
+)
+
+autoconf_hdr(
     name = "config_h",
     out = "libpkgconf/config.h",
-    content = [
-        "#ifndef PKGCONF_CONFIG_H",
-        "#define PKGCONF_CONFIG_H",
-        "",
-        "#define PACKAGE_NAME \"pkgconf\"",
-        "#define PACKAGE_TARNAME \"pkgconf\"",
-        "#define PACKAGE_VERSION \"%s\"" % module_version(),
-        "#define PACKAGE_BUGREPORT \"https://todo.sr.ht/~kaniini/pkgconf\"",
-        "",
-        "#define HAVE_DECL_STRNDUP 0",
-        "#define HAVE_DECL_REALLOCARRAY 0",
-        "#define HAVE_DECL_PLEDGE 0",
-        "#define HAVE_DECL_UNVEIL 0",
-        "#define HAVE_DECL_READLINKAT 0",
-        "#define HAVE_DECL_MKDTEMP 0",
-        "#define HAVE_DECL_GETC_UNLOCKED 0",
-        "#define HAVE_DECL_NL_LANGINFO_L 0",
-        "",
-        "/* Fallbacks only; callers are expected to set PKG_CONFIG_PATH. */",
-        "#ifdef _WIN32",
-        "# define PKG_DEFAULT_PATH \"../lib/pkgconfig;../share/pkgconfig\"",
-        "# define SYSTEM_LIBDIR \"\"",
-        "# define SYSTEM_INCLUDEDIR \"\"",
-        "# define PERSONALITY_PATH \"../share/pkgconfig/personality.d\"",
-        "#else",
-        "# define PKG_DEFAULT_PATH \"/usr/lib/pkgconfig:/usr/share/pkgconfig\"",
-        "# define SYSTEM_LIBDIR \"/usr/lib\"",
-        "# define SYSTEM_INCLUDEDIR \"/usr/include\"",
-        "# define PERSONALITY_PATH \"/usr/share/pkgconfig/personality.d\"",
-        "#endif",
-        "",
-        "#endif /* PKGCONF_CONFIG_H */",
+    template = "libpkgconf/config.h.in",
+    deps = [":config_checks"],
+)
+
+# Default search paths, passed on the command line as upstream's Makefile.am
+# does. Fallbacks only; callers are expected to set PKG_CONFIG_PATH.
+_PATH_DEFINES = select({
+    "@platforms//os:windows": [
+        'PKG_DEFAULT_PATH=\\"../lib/pkgconfig;../share/pkgconfig\\"',
+        'SYSTEM_LIBDIR=\\"\\"',
+        'SYSTEM_INCLUDEDIR=\\"\\"',
+        'PERSONALITY_PATH=\\"../share/pkgconfig/personality.d\\"',
     ],
-    newline = "unix",
+    "//conditions:default": [
+        'PKG_DEFAULT_PATH=\\"/usr/lib/pkgconfig:/usr/share/pkgconfig\\"',
+        'SYSTEM_LIBDIR=\\"/usr/lib\\"',
+        'SYSTEM_INCLUDEDIR=\\"/usr/include\\"',
+        'PERSONALITY_PATH=\\"/usr/share/pkgconfig/personality.d\\"',
+    ],
+})
+
+alias(
+    name = "libpkgconf",
+    actual = ":lib/pkgconf",
 )
 
 cc_library(
-    name = "libpkgconf",
+    name = "lib/pkgconf",
     srcs = glob(["libpkgconf/*.c"]) + [":config_h"],
     hdrs = glob(["libpkgconf/*.h"]),
     copts = select({
@@ -73,7 +113,7 @@ cc_library(
     # build is static. It has to reach the CLI too, hence defines rather than
     # copts. Elsewhere it drops the default-visibility attribute, which a static
     # library does not need either.
-    defines = ["PKGCONFIG_IS_STATIC"],
+    defines = ["PKGCONFIG_IS_STATIC"] + _PATH_DEFINES,
     # Sources include <libpkgconf/...>, so the archive root is the include root.
     includes = ["."],
     # path.c reads search paths from the registry on Windows, and Bazel's MSVC
@@ -91,5 +131,28 @@ cc_binary(
         "cli/*.c",
         "cli/*.h",
     ]),
+    visibility = ["//visibility:public"],
     deps = [":libpkgconf"],
 )
+
+# Upstream API unit tests: one binary per tests/api/test-<name>.c, linked
+# against libpkgconf. test-serialize needs the spdxtool sources and
+# test-oom-spdxtool needs --wrap; both are left out.
+[
+    cc_test(
+        name = "api-" + src[len("tests/api/test-"):-len(".c")],
+        srcs = [
+            src,
+            "tests/api/test-api.h",
+            "tests/win-shim.h",
+        ],
+        deps = [":libpkgconf"],
+    )
+    for src in glob(
+        ["tests/api/test-*.c"],
+        exclude = [
+            "tests/api/test-serialize.c",
+            "tests/api/test-oom-spdxtool.c",
+        ],
+    )
+]

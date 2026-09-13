@@ -1,20 +1,27 @@
-# Runs the pkgconf binary against a sample .pc file: version, modversion,
-# flags, and a package that must not exist. Building this target is the test.
+# Runs the pkgconf binary the way a consumer does, against upstream's own
+# foo.pc and bar.pc fixtures (bar requires foo). Expected output is what
+# upstream's t/basic tests assert for the same queries. Building this target
+# is the test.
 genrule(
     name = "smoke",
-    srcs = ["sample.pc"],
+    srcs = [
+        "@pkgconf//:tests/lib1/bar.pc",
+        "@pkgconf//:tests/lib1/foo.pc",
+    ],
     outs = ["smoke.txt"],
     cmd = """
 set -e
 pkgconf=$(execpath @pkgconf//:pkgconf)
-export PKG_CONFIG_PATH=$$(dirname $(execpath sample.pc))
+export PKG_CONFIG_PATH=$$(dirname $(execpath @pkgconf//:tests/lib1/foo.pc))
 $$pkgconf --version > $@
-$$pkgconf --modversion sample >> $@
-$$pkgconf --cflags --libs sample >> $@
+$$pkgconf --modversion bar >> $@
+$$pkgconf --cflags bar >> $@
+$$pkgconf --libs bar >> $@
 if $$pkgconf --exists no-such-package; then echo "--exists succeeded for a missing package" >&2; exit 1; fi
-grep -q '^1\\.2\\.3$$' $@
-grep -q -- '-I/opt/sample/include' $@
-grep -q -- '-lsample' $@
+head -n 1 $@ | grep -q -E '^[0-9]+(\\.[0-9]+)+$$'
+grep -q -- '^1\\.3$$' $@
+grep -q -- '^-fPIC -I/test/include/foo *$$' $@
+grep -q -- '^-L/test/lib -lbar -lfoo *$$' $@
 """,
     tools = ["@pkgconf"],
 )
