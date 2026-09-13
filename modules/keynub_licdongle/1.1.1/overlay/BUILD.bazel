@@ -1,0 +1,102 @@
+# The KeyNub SDK ships its library prebuilt, one folder per platform under
+# natives/. These targets pick that folder for the target platform; nothing is
+# compiled except the consumer.
+
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "LICENSE",
+    "BINARY-LICENSE.txt",
+    "NOTICE",
+    "THIRD-PARTY-NOTICES.txt",
+])
+
+[
+    config_setting(
+        name = "%s_%s" % (os, cpu),
+        constraint_values = [
+            "@platforms//os:" + os,
+            "@platforms//cpu:" + cpu,
+        ],
+    )
+    for os, cpu in [
+        ("windows", "x86_64"),
+        ("windows", "x86_32"),
+        ("windows", "arm64"),
+        ("linux", "x86_64"),
+        ("linux", "arm64"),
+        ("macos", "x86_64"),
+        ("macos", "arm64"),
+    ]
+]
+
+[
+    cc_import(
+        name = "prebuilt_%s_win_%s" % (lib, arch),
+        interface_library = "natives/win-%s/%s.lib" % (arch, lib),
+        shared_library = "natives/win-%s/%s.dll" % (arch, lib),
+    )
+    for lib in ["keynub_licdongle", "keynub_licdongle_flat"]
+    for arch in ["x64", "x86", "arm64"]
+]
+
+[
+    cc_import(
+        name = "prebuilt_%s_linux_%s" % (lib, arch),
+        shared_library = "natives/linux-%s/lib%s.so" % (arch, lib),
+    )
+    for lib in ["keynub_licdongle", "keynub_licdongle_flat"]
+    for arch in ["x64", "arm64"]
+]
+
+[
+    cc_import(
+        name = "prebuilt_%s_osx_%s" % (lib, arch),
+        shared_library = "natives/osx-%s/lib%s.dylib" % (arch, lib),
+    )
+    for lib in ["keynub_licdongle", "keynub_licdongle_flat"]
+    for arch in ["x64", "arm64"]
+]
+
+# One prebuilt library per platform, chosen by the target platform.
+[
+    alias(
+        name = "prebuilt_" + lib,
+        actual = select({
+            ":windows_x86_64": ":prebuilt_%s_win_x64" % lib,
+            ":windows_x86_32": ":prebuilt_%s_win_x86" % lib,
+            ":windows_arm64": ":prebuilt_%s_win_arm64" % lib,
+            ":linux_x86_64": ":prebuilt_%s_linux_x64" % lib,
+            ":linux_arm64": ":prebuilt_%s_linux_arm64" % lib,
+            ":macos_x86_64": ":prebuilt_%s_osx_x64" % lib,
+            ":macos_arm64": ":prebuilt_%s_osx_arm64" % lib,
+        }),
+    )
+    for lib in ["keynub_licdongle", "keynub_licdongle_flat"]
+]
+
+# The C API: include <licdongle.h>.
+cc_library(
+    name = "keynub_licdongle",
+    hdrs = ["include/licdongle.h"],
+    includes = ["include"],
+    deps = [":prebuilt_keynub_licdongle"],
+)
+
+# The header-only C++11 wrapper: include <licdongle.hpp>.
+cc_library(
+    name = "licdongle_cpp",
+    hdrs = ["bindings/cpp/licdongle.hpp"],
+    strip_include_prefix = "bindings/cpp",
+    deps = [":keynub_licdongle"],
+)
+
+# The flat companion API: include <licd_flat.h>.
+cc_library(
+    name = "licdongle_flat",
+    hdrs = ["bindings/flat/licd_flat.h"],
+    strip_include_prefix = "bindings/flat",
+    deps = [":prebuilt_keynub_licdongle_flat"],
+)
