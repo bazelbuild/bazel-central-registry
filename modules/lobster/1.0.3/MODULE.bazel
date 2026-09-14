@@ -1,0 +1,69 @@
+module(
+    name = "lobster",
+    compatibility_level = 1,
+    version = "1.0.3",
+)
+
+bazel_dep(
+    name = "rules_python",
+    version = "1.5.1",
+)
+
+bazel_dep(name = "rules_python_gazelle_plugin", version = "1.5.1")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+
+
+python.toolchain(
+    is_default = True,
+    configure_coverage_tool = True,
+    python_version = "3.9",
+)
+python.toolchain(python_version = "3.10")
+python.toolchain(python_version = "3.11")
+python.toolchain(python_version = "3.12")
+
+use_repo(python, "python_versions")
+
+uv = use_extension("@rules_python//python/uv:uv.bzl", "uv")
+uv.configure(version = "0.8.24")
+
+bazel_dep(name = "googletest", version = "1.13.0")
+bazel_dep(name = "trlc", version = "2.0.5")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+[
+    pip.parse(
+        hub_name = "lobster_pip_hub_dependencies",
+         envsubst = ["PIP_INDEX_URL"],
+        # For all .whl artifacts use the Bazel downloader, allowing caching of artifacts.
+        # Also, the Bazel download approach is supposed to be faster and on top offers parallel downloading.
+        # For sdist packages this will fall back automatically to 'python -m pip --isolated wheel ..', unless we set 'download_only = True'.
+        experimental_index_url = "${PIP_INDEX_URL:-https://pypi.org/simple}",
+        python_version = "3.{}".format(version),
+        requirements_lock = "//:requirements_lock.txt".format(version),
+    )
+    for version in ["9", "10", "11", "12"]
+]
+
+use_repo(pip, "lobster_pip_hub_dependencies")
+
+bazel_dep(name = "gazelle", version = "0.44.0", repo_name = "bazel_gazelle")
+
+pip.parse(
+    experimental_requirement_cycles = {
+        "sphinx": [
+            "sphinx",
+            "sphinxcontrib-serializinghtml",
+            "sphinxcontrib-qthelp",
+            "sphinxcontrib-htmlhelp",
+            "sphinxcontrib-devhelp",
+            "sphinxcontrib-applehelp",
+        ],
+    },
+    hub_name = "lobster_sphinx_dependencies",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_dev.txt",
+)
+use_repo(pip, "lobster_sphinx_dependencies")

@@ -1,0 +1,107 @@
+""" Builds libzmq.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+exports_files(["LICENSE"])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:MPL-2.0"],
+    license_text = "LICENSE",
+)
+
+# Flags are selected on the compiler rather than the target OS. Windows targets
+# may be built with MSVC, clang-cl or MinGW GCC, each of which needs a different
+# flag syntax.
+_MSVC_COPTS = [
+    "/EHsc",
+]
+
+_GNU_COPTS = [
+    "-Wno-error=missing-braces",
+    "-Wno-unused-variable",
+]
+
+_MSVC_LINKOPTS = [
+    "ws2_32.lib",
+    "rpcrt4.lib",
+    "iphlpapi.lib",
+]
+
+_MINGW_LINKOPTS = [
+    "-lws2_32",
+    "-lrpcrt4",
+    "-liphlpapi",
+]
+
+cc_library(
+    name = "zmq",
+    srcs = glob(
+        [
+            "src/*.cpp",
+            "src/*.hpp",
+            "src/*.h",
+        ],
+        exclude = [
+            "src/gssapi_*.cpp",
+            "src/tipc_*.cpp",
+            "src/vmci*.cpp",
+            "src/ws_*.cpp",
+            "src/wss_*.cpp",
+        ],
+    ),
+    hdrs = glob(["include/*.h"]),
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": _MSVC_COPTS,
+        "@rules_cc//cc/compiler:msvc-cl": _MSVC_COPTS,
+        "//conditions:default": _GNU_COPTS,
+    }),
+    defines = select({
+        "@platforms//os:windows": [
+            "ZMQ_STATIC",
+            "FD_SETSIZE=1024",
+            "_CRT_SECURE_NO_WARNINGS",
+            "_WINSOCK_DEPRECATED_NO_WARNINGS",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "@platforms//os:macos": [
+            "-lpthread",
+        ],
+        "//conditions:default": [
+            "-lpthread",
+            "-lrt",
+        ],
+    }) + select({
+        "@rules_cc//cc/compiler:clang-cl": _MSVC_LINKOPTS,
+        "@rules_cc//cc/compiler:mingw-gcc": _MINGW_LINKOPTS,
+        "@rules_cc//cc/compiler:msvc-cl": _MSVC_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libzmq",
+    actual = ":zmq",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "libzmq_headers_only",
+    hdrs = glob(["include/*.h"]),
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)

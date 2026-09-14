@@ -215,7 +215,7 @@ This is intended for cases where the PR is opened by a bot account, and helps BC
 
 ## Module versions
 
-Bazel has a diverse ecosystem, and projects use a variety of versioning schemes. Bazel modules have a fairly relaxed [version format](https://bazel.build/external/module#version_format), which covers most version strings used by open-source projects. Thus, modules submitted to the BCR are generally versioned according to their upstream project's versions.
+Bazel has a diverse ecosystem, and projects use a variety of versioning schemes. Bazel modules have a fairly relaxed [version format](https://bazel.build/external/module#version-format), which covers most version strings used by open-source projects. Thus, modules submitted to the BCR are generally versioned according to their upstream project's versions.
 
 ### Add-only
 
@@ -238,7 +238,7 @@ For example, in `zlib`'s [metadata.json](https://github.com/bazelbuild/bazel-cen
 }
 ```
 
-A Bzlmod user's build will start to fail if the yanked version is in the resolved dependency graph, and the yanked reason will be presented in the error message. The user can choose to upgrade the dependency or they can bypass the check by specifying the `--allow_yanked_versions` flag or the `BZLMOD_ALLOW_YANKED_VERSIONS` environment variable. Check [the documentation](https://bazel.build/reference/command-line-reference#flag--allow_yanked_versions) to learn how to use them.
+A Bzlmod user's build will start to fail if the yanked version is in the resolved dependency graph, and the yanked reason will be presented in the error message. The user can choose to upgrade the dependency or they can bypass the check by specifying the `--allow_yanked_versions` flag or the `BZLMOD_ALLOW_YANKED_VERSIONS` environment variable. Check [the documentation](https://bazel.build/reference/command-line-reference#param-allow-yanked-versions) to learn how to use them.
 
 The latest version of a module should not be yanked. If you do need to yank the latest version because the module is deprecated, you should add `"deprecated": "<reason>"` in its `metadata.json` file.
 

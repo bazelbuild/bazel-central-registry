@@ -1,0 +1,43 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# The GPU backends need the CUDA and HIP toolkits, which are not in the
+# registry.
+_GPU_BACKENDS = glob([
+    "include/boost/fiber/cuda/**",
+    "include/boost/fiber/hip/**",
+])
+
+# The private headers rely on declarations their includer provides first, so
+# they are not self-contained.
+_TEXTUAL_HDRS = glob(["include/boost/fiber/detail/**/*.hpp"])
+
+cc_library(
+    name = "boost.fiber",
+    # The numa sources are an opt-in, platform specific extension that upstream
+    # leaves out of the default build.
+    srcs = glob([
+        "src/*.cpp",
+        "src/algo/*.cpp",
+    ]),
+    hdrs = glob(
+        ["include/**/*.hpp"],
+        exclude = _GPU_BACKENDS + _TEXTUAL_HDRS,
+    ),
+    features = ["parse_headers"],
+    includes = ["include"],
+    textual_hdrs = _TEXTUAL_HDRS,
+    local_defines = select({
+        "@platforms//os:windows": ["_WIN32_WINNT=0x0601"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.assert",
+        "@boost.config",
+        "@boost.context",
+        "@boost.core",
+        "@boost.intrusive",
+        "@boost.predef",
+        "@boost.smart_ptr",
+    ],
+)

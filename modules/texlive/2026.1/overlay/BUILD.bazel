@@ -1,0 +1,478 @@
+"""TeX Live - a comprehensive TeX system."""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//bazel:texlive.bzl", "texlive_format")
+
+# =============================================================================
+# Aliases to texlive-texmf filegroups
+#
+# texlive depends on texlive-texmf at the matching version so users get
+# both engines and runtime data with a single bazel_dep on texlive.
+# =============================================================================
+
+alias(
+    name = "texmf",
+    actual = "@texlive-texmf//:texmf_dist",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/web2c_data",
+    actual = "@texlive-texmf//:web2c",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/latex_base",
+    actual = "@texlive-texmf//:latex_base",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/fonts",
+    actual = "@texlive-texmf//:fonts",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/hyphen",
+    actual = "@texlive-texmf//:hyphen",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/bibtex",
+    actual = "@texlive-texmf//:bibtex",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/latex_packages",
+    actual = "@texlive-texmf//:latex_packages",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/tex_inputs",
+    actual = "@texlive-texmf//:tex_inputs",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/metapost",
+    actual = "@texlive-texmf//:metapost",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/dvips",
+    actual = "@texlive-texmf//:dvips",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/dvipdfmx",
+    actual = "@texlive-texmf//:dvipdfmx",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "texmf/scripts",
+    actual = "@texlive-texmf//:scripts",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Build configuration flags (wired into compilation)
+# =============================================================================
+
+# Which xpdf target pdftex (and any other engine that wants xpdf) should
+# link against. Default = our bundled, TL-patched copy at //libs/xpdf
+# (necessary for pdftoepdf.cc's no-arg `GlobalParams()` ctor). Consumers
+# who already vendor an equivalent patched xpdf can point this at their
+# own target to dedupe compilation:
+#     bazel build --//:xpdf=@my_xpdf//:xpdf @texlive//...
+label_flag(
+    name = "xpdf",
+    build_setting_default = "//libs/xpdf",
+    visibility = ["//visibility:public"],
+)
+
+# NOTE: label_flags mirroring upstream's `--with-system-<lib>` (icu,
+# freetype, harfbuzz, libpng, zlib) were considered but removed pending
+# a consuming target — dead label_flags silently no-op when overridden,
+# which is worse than not exposing them. Re-add alongside the first
+# engine that reaches them via `//:<lib>` instead of the raw `@<lib>`.
+
+# Controls whether TeX's --ipc option is compiled in.
+# Used in texk/web2c engine builds to define IPC.
+bool_flag(
+    name = "enable_ipc",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+# When disabled, fmt/base dump files are architecture-dependent.
+# Defines NO_DUMP_SHARE when False.
+bool_flag(
+    name = "enable_dump_share",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+# Editor command invoked from TeX's 'e' option. Wired through to the
+# `EDITOR` autoconf define via `checks.AC_BUILD_SETTING` below.
+string_flag(
+    name = "with_editor",
+    build_setting_default = "vi +%d '%s'",
+    visibility = ["//visibility:public"],
+)
+
+# String that goes into every engine's `--version` banner via the
+# w2c/c-auto.h `WEB2CVERSION` define. Leading space is intentional —
+# the engine prints `pdfTeX <version>` + this string verbatim.
+# Downstreams that want to append an additional distributor suffix
+# (upstream's `--with-banner-add=STR`) should override this whole
+# string, e.g. `--//:web2c_version_banner=' (TeX Live 2026, MyDistro)'`.
+string_flag(
+    name = "web2c_version_banner",
+    build_setting_default = " (TeX Live 2026)",
+    visibility = ["//visibility:public"],
+)
+
+# kpathsea compile-time defaults for auto-generating missing files.
+# Defaults mirror upstream texk/kpathsea/ac/mktex.ac (fmt/mf/pk/tfm=yes,
+# tex=no).
+[
+    bool_flag(
+        name = "mktex" + short + "_default",
+        build_setting_default = default,
+        visibility = ["//visibility:public"],
+    )
+    for short, default in [
+        ("fmt", True),
+        ("mf", True),
+        ("pk", True),
+        ("tex", False),
+        ("tfm", True),
+    ]
+]
+
+# Enables `#include <iconv.h>` in ptexenc's kanji conversion path.
+# Without it, unicode-jp.c falls back to a table-only path that only
+# handles a small subset of CJK encodings.
+bool_flag(
+    name = "enable_kanji_iconv",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Config settings for select()
+# =============================================================================
+
+[
+    config_setting(
+        name = short + "_enabled",
+        flag_values = {":" + flag: "True"},
+        visibility = ["//:__subpackages__"],
+    )
+    for short, flag in [
+        ("ipc", "enable_ipc"),
+        ("dump_share", "enable_dump_share"),
+        ("mktexfmt", "mktexfmt_default"),
+        ("mktexmf", "mktexmf_default"),
+        ("mktexpk", "mktexpk_default"),
+        ("mktextex", "mktextex_default"),
+        ("mktextfm", "mktextfm_default"),
+        ("kanji_iconv", "enable_kanji_iconv"),
+    ]
+]
+
+# =============================================================================
+# Package info
+# =============================================================================
+
+package_info(
+    name = "package",
+    package_name = "TeX Live",
+    aliases = {
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://tug.org/texlive/",
+    strip_bcr_version = True,
+    visibility = ["//:__subpackages__"],
+)
+
+# =============================================================================
+# Autoconf configuration (shared by kpathsea, ptexenc, web2c)
+# =============================================================================
+
+autoconf(
+    name = "configure",
+    # AC_BUILD_SETTING wires Bazel string_flag values into autoconf defines
+    # at analysis time (rules_cc_autoconf >= 0.13.0). The values are
+    # user-tunable from the command line:
+    #     --//:with_editor='gvim --servername GVIM --remote-silent +%d %s'
+    #     --//:web2c_version_banner=' (My distro 1.2)'
+    build_settings = [
+        # Upstream texk/web2c/configure.ac AC_DEFINE_UNQUOTED([WEB2CVERSION]).
+        # Replaces the hardcoded `expand_template` substitution we used
+        # before. Requires the corresponding `#define WEB2CVERSION` literal
+        # in w2c/c-auto.in to first be rewritten to `#undef WEB2CVERSION`
+        # by the expand_template step in texk/web2c/BUILD.bazel.
+        checks.AC_BUILD_SETTING(
+            name = "tl_web2c_version",
+            define = "WEB2CVERSION",
+            target = ":web2c_version_banner",
+        ),
+        # Upstream texk/web2c/configure.ac AC_DEFINE_UNQUOTED([EDITOR]).
+        checks.AC_BUILD_SETTING(
+            name = "tl_editor",
+            define = "EDITOR",
+            target = ":with_editor",
+        ),
+    ],
+    checks =
+        macros.AC_CHECK_HEADERS([
+            "assert.h",
+            "ctype.h",
+            "dirent.h",
+            "dlfcn.h",
+            "errno.h",
+            "fcntl.h",
+            "float.h",
+            "inttypes.h",
+            "langinfo.h",
+            "limits.h",
+            "locale.h",
+            "memory.h",
+            "pwd.h",
+            "stdarg.h",
+            "stdbool.h",
+            "stddef.h",
+            "stdint.h",
+            "stdio.h",
+            "stdlib.h",
+            "string.h",
+            "strings.h",
+            "sys/dir.h",
+            "sys/ndir.h",
+            "sys/param.h",
+            "sys/select.h",
+            "sys/stat.h",
+            "sys/time.h",
+            "sys/timeb.h",
+            "sys/types.h",
+            "sys/wait.h",
+            "time.h",
+            "types.h",
+            "unistd.h",
+            "wchar.h",
+        ]) + macros.AC_CHECK_FUNCS([
+            "access",
+            "atoi",
+            "fabs",
+            "fmax",
+            "fseeko",
+            "ftime",
+            "getcwd",
+            "gettimeofday",
+            "labs",
+            "memcmp",
+            "memcpy",
+            "mkdtemp",
+            "mkstemp",
+            "mkstemps",
+            "mktemp",
+            "popen",
+            "putenv",
+            "setlocale",
+            "rindex",
+            "stpcpy",
+            "strcasecmp",
+            "strchr",
+            "strerror",
+            "strstr",
+            "strtoul",
+            "vfprintf",
+            "strlcat",
+            "strlcpy",
+            "strndup",
+            "strrchr",
+            "vprintf",
+        ]) + macros.AC_CHECK_DECLS([
+            "isascii",
+            "putenv",
+            "stpcpy",
+            "strndup",
+        ]) + [
+            checks.AC_CHECK_SIZEOF("int"),
+            checks.AC_CHECK_SIZEOF("long"),
+            checks.AC_CHECK_SIZEOF("void *"),
+            checks.AC_CHECK_SIZEOF("off_t"),
+            checks.AC_DEFINE(
+                "HAVE_UINTPTR_T",
+                value = "1",
+            ),
+            # HAVE_FSEEKO is no longer hardcoded — the AC_CHECK_FUNCS
+            # probe above sets it only where fseeko actually exists.
+            # MSVC does not ship fseeko; its replacement is _fseeki64,
+            # which consumers (e.g. xpdf gfile.cc) reach via
+            # HAVE_FSEEKI64 set in their own BUILD.bazel.
+            checks.AC_DEFINE(
+                "_GNU_SOURCE",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "STDC_HEADERS",
+                value = "1",
+            ),
+            checks.AC_DEFINE(
+                "RETSIGTYPE",
+                value = "void",
+            ),
+        ],
+    visibility = ["//:__subpackages__"],
+    deps = [":package"],
+)
+
+# =============================================================================
+# Shared c-auto.h for programs without their own config.h.in template.
+#
+# Programs that have their own template (kpathsea, ptexenc, web2c, mpfi)
+# use their own autoconf_hdr. Programs that don't (chktex, etc.) can
+# force-include this shared header via -include c-auto.h.
+# =============================================================================
+
+write_file(
+    name = "common_c_auto_in",
+    out = "common-c-auto.in",
+    content = [
+        "/* Auto-generated template for the shared c-auto.h. */",
+        "#undef HAVE_ASSERT_H",
+        "#undef HAVE_DIRENT_H",
+        "#undef HAVE_DLFCN_H",
+        "#undef HAVE_ERRNO_H",
+        "#undef HAVE_FCNTL_H",
+        "#undef HAVE_FLOAT_H",
+        "#undef HAVE_INTTYPES_H",
+        "#undef HAVE_LANGINFO_H",
+        "#undef HAVE_LIMITS_H",
+        "#undef HAVE_LOCALE_H",
+        "#undef HAVE_MEMORY_H",
+        "#undef HAVE_PWD_H",
+        "#undef HAVE_STDARG_H",
+        "#undef HAVE_STDBOOL_H",
+        "#undef HAVE_STDDEF_H",
+        "#undef HAVE_STDINT_H",
+        "#undef HAVE_STDIO_H",
+        "#undef HAVE_STDLIB_H",
+        "#undef HAVE_STRING_H",
+        "#undef HAVE_STRINGS_H",
+        "#undef HAVE_SYS_DIR_H",
+        "#undef HAVE_SYS_NDIR_H",
+        "#undef HAVE_SYS_PARAM_H",
+        "#undef HAVE_SYS_STAT_H",
+        "#undef HAVE_SYS_TIME_H",
+        "#undef HAVE_SYS_TIMEB_H",
+        "#undef HAVE_SYS_TYPES_H",
+        "#undef HAVE_SYS_WAIT_H",
+        "#undef HAVE_TIME_H",
+        "#undef HAVE_UNISTD_H",
+        "#undef HAVE_WCHAR_H",
+        "#undef HAVE_ACCESS",
+        "#undef HAVE_ATOI",
+        "#undef HAVE_FABS",
+        "#undef HAVE_FMAX",
+        "#undef HAVE_FTIME",
+        "#undef HAVE_GETCWD",
+        "#undef HAVE_GETTIMEOFDAY",
+        "#undef HAVE_LABS",
+        "#undef HAVE_MEMCMP",
+        "#undef HAVE_MEMCPY",
+        "#undef HAVE_MKDTEMP",
+        "#undef HAVE_MKSTEMP",
+        "#undef HAVE_MKTEMP",
+        "#undef HAVE_PUTENV",
+        "#undef HAVE_SETLOCALE",
+        "#undef HAVE_STPCPY",
+        "#undef HAVE_STRCASECMP",
+        "#undef HAVE_STRCHR",
+        "#undef HAVE_STRERROR",
+        "#undef HAVE_STRLCAT",
+        "#undef HAVE_STRLCPY",
+        "#undef HAVE_STRNDUP",
+        "#undef HAVE_STRRCHR",
+        "#undef HAVE_VFPRINTF",
+        "#undef HAVE_VPRINTF",
+        "#define RETSIGTYPE void",
+        "#undef HAVE_DECL_ISASCII",
+        "#undef HAVE_DECL_PUTENV",
+        "#undef HAVE_DECL_STPCPY",
+        "#undef HAVE_DECL_STRNDUP",
+        "#undef HAVE_UINTPTR_T",
+        "#undef HAVE_FSEEKO",
+        "#undef SIZEOF_INT",
+        "#undef SIZEOF_LONG",
+        "#undef SIZEOF_OFF_T",
+        "#undef SIZEOF_VOID_P",
+        "#undef STDC_HEADERS",
+        "#undef _GNU_SOURCE",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+autoconf_hdr(
+    name = "common_c_auto_h",
+    out = "texlive-c-auto.h",
+    template = ":common_c_auto_in",
+    deps = [":configure"],
+)
+
+# cc_library wrapping the shared c-auto.h so programs can depend on it
+# and include "c-auto.h" via -include flag. Internal-only: external
+# consumers of texlive should not be force-fed our autoconf macros.
+cc_library(
+    name = "common_config",
+    hdrs = [":common_c_auto_h"],
+    includes = ["."],
+    visibility = ["//:__subpackages__"],
+)
+
+# =============================================================================
+# Format files (compiled LaTeX macros + engine state for fast startup)
+# =============================================================================
+
+texlive_format(
+    name = "pdflatex_fmt",
+    data = [
+        "@texlive-texmf//:fonts",
+        "@texlive-texmf//:hyphen",
+        "@texlive-texmf//:latex_base",
+        "@texlive-texmf//:latex_packages",
+        "@texlive-texmf//:tex_inputs",
+        "@texlive-texmf//:web2c",
+    ],
+    engine = "//texk/web2c:pdftex",
+    format_name = "pdflatex",
+    # The "*"-prefix tells the engine to read a file from kpathsea search
+    # rather than treating the arg as inline TeX.
+    ini_command = "*pdflatex.ini",
+    texmf_cnf = "@texlive-texmf//:web2c/texmf.cnf",
+    visibility = ["//visibility:public"],
+)
+
+# Note: `bazel build :pdflatex_fmt` is itself the strongest evidence the
+# full pdftex + texmf stack works end-to-end — compiling the LaTeX
+# kernel into a 4 MB `.fmt` exercises every input/font/hyphenation
+# lookup. The lighter-weight binary-only smoke test lives at
+# //texk/web2c:pdftex_test, which runs the upstream `pdftex.test`
+# (`pdftex --version` + `--help`) through `sh_texlive_test`.

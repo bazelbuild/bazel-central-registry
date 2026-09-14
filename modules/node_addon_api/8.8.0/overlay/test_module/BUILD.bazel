@@ -1,0 +1,34 @@
+load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# Build the N-API addon as a loadable shared library. napi_* symbols are
+# provided by the Node process at load time, so the shared object must tolerate
+# undefined symbols (only an issue on macOS; ELF shared libs allow this).
+cc_binary(
+    name = "hello.so",
+    srcs = ["hello.cc"],
+    copts = ["-std=c++17"],
+    linkshared = True,
+    linkopts = select({
+        # macOS ld errors on undefined symbols by default; tell it to resolve
+        # the napi_* symbols at load time (dlopen), like node-gyp does.
+        "@platforms//os:macos": ["-undefined", "dynamic_lookup"],
+        "//conditions:default": [],
+    }),
+    deps = ["@node_addon_api//:node_addon_api"],
+)
+
+# Node expects the addon to have a .node extension.
+genrule(
+    name = "hello_node",
+    srcs = [":hello.so"],
+    outs = ["hello.node"],
+    cmd = "cp $< $@",
+)
+
+# Loads hello.node from Node, calls into it, and asserts the returned value.
+js_test(
+    name = "addon_test",
+    data = [":hello.node"],
+    entry_point = "test.js",
+)

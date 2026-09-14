@@ -1,0 +1,104 @@
+BCR adjustments to icu4c/source/common/BUILD.bazel.
+
+Inherited from 78.2.bcr.1:
+
+* :platform — replace upstream's explicit srcs list with
+  `glob(*.h, *.cpp)`; wire in `@icu_dat` via `data` + `@rules_cc//cc/runfiles`
+  + `ICU_DATA_DIR_BAZEL=$(rlocationpath @icu_dat)` so the static
+  library can locate its `icudt78l.dat` at runtime; gate the historical
+  `-ldl` linkopt to Linux only.
+
+New in 78.2.bcr.2 (MSVC build fixes):
+
+* :headers — propagate `U_STATIC_IMPLEMENTATION` to consumers via
+  `defines` on MSVC. Without it, icu's public headers emit
+  `__declspec(dllimport)` references that the static-link build
+  cannot satisfy (LNK4217 / LNK1120 "imported but not defined").
+  GCC/clang/MinGW unaffected.
+
+* :platform — `/utf-8` copts on MSVC: globbed sources include UTF-8
+  char literals (e.g. static_unicode_sets currency symbols) that
+  MSVC misreads as multi-byte char constants (C2015) without the flag.
+
+* :uchar — `/utf-8` copts on MSVC. uchar.cpp's fullwidth-letter
+  literals (u'ａ' etc.) hit the same C2015.
+
+--- icu4c/source/common/BUILD.bazel
++++ icu4c/source/common/BUILD.bazel
+@@ -39,41 +39,40 @@
+     local_defines = [
+         "U_COMMON_IMPLEMENTATION",
+     ],
++    defines = select({
++        "@rules_cc//cc/compiler:clang-cl": ["U_STATIC_IMPLEMENTATION"],
++        "@rules_cc//cc/compiler:msvc-cl": ["U_STATIC_IMPLEMENTATION"],
++        "//conditions:default": [],
++    }),
+ )
+ 
+ cc_library(
+     name = "platform",
+-    srcs = [
+-        "cmemory.cpp", 
+-        "uobject.cpp",
+-        "cstring.cpp",
+-        "cwchar.cpp",
+-        "uinvchar.cpp",
+-        "charstr.cpp",
+-        "unistr.cpp",
+-        "appendable.cpp",
+-        "stringpiece.cpp",
+-        "ustrtrns.cpp",
+-        "ustring.cpp",  
+-        "ustrfmt.cpp",  
+-        "utf_impl.cpp",
+-        "putil.cpp",
+-        "ucln_cmn.cpp",  
+-        "udataswp.cpp",  
+-        "umath.cpp",
+-        "umutex.cpp",
+-        "sharedobject.cpp",
+-        "utrace.cpp",
+-        "fixedstring.cpp",
+-    ],
++    srcs = glob([
++        "*.h",
++        "*.cpp",
++    ]),
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     deps = [
+         ":headers",
+         # omit other deps b/c they are sys symbols
++        "@rules_cc//cc/runfiles",
++    ],
++    data = [
++        "@icu_dat",
+     ],
+     local_defines = [
+         "U_COMMON_IMPLEMENTATION",
++        "ICU_DATA_DIR_BAZEL=\\\"$(rlocationpath @icu_dat)\\\"",
+     ],
+-    linkopts = ["-ldl"],
++    linkopts = select({
++        "@platforms//os:linux": ["-ldl"],
++        "//conditions:default": [],
++    }),
+ )
+ 
+ cc_library(
+@@ -732,6 +731,11 @@
+         "uchar.cpp",
+         "uchar_props_data.h",
+     ],
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     includes = ["."],
+     deps = [
+         ":headers",

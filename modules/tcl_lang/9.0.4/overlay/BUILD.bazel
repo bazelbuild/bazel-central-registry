@@ -1,0 +1,946 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(
+    "@rules_cc_autoconf//autoconf:defs.bzl",
+    "autoconf",
+    "autoconf_hdr",
+    "checks",
+    "macros",
+    "package_info",
+)
+
+licenses(["notice"])
+
+exports_files(["license.terms"])
+
+bool_flag(
+    name = "enable_zipfs",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_dtrace",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_dll_unloading",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_langinfo",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "zipfs_enabled",
+    flag_values = {":enable_zipfs": "True"},
+)
+
+config_setting(
+    name = "dtrace_enabled",
+    flag_values = {":enable_dtrace": "True"},
+)
+
+config_setting(
+    name = "dll_unloading_enabled",
+    flag_values = {":enable_dll_unloading": "True"},
+)
+
+config_setting(
+    name = "langinfo_enabled",
+    flag_values = {":enable_langinfo": "True"},
+)
+
+selects.config_setting_group(
+    name = "dtrace_on_unix",
+    match_all = [
+        ":dtrace_enabled",
+        ":unix_target",
+    ],
+)
+
+selects.config_setting_group(
+    name = "unix_target",
+    match_any = [
+        "@platforms//os:linux",
+        "@platforms//os:macos",
+    ],
+)
+
+# Requires `dtrace` on PATH; the genrule fails loudly if it is missing.
+genrule(
+    name = "gen_tclDTrace_h",
+    srcs = ["generic/tclDTrace.d"],
+    outs = ["generic/tclDTrace.h"],
+    cmd_bash = "dtrace -h -s $(execpath generic/tclDTrace.d) -o $@",
+    cmd_bat = "dtrace.exe -h -s $(execpath generic/tclDTrace.d) -o $@",
+    tags = [
+        "manual",
+        "requires-dtrace",
+    ],
+)
+
+autoconf(
+    name = "tclConfig_checks",
+    checks = macros.AC_CHECK_HEADERS([
+        "copyfile.h",
+        "inttypes.h",
+        "langinfo.h",
+        "libkern/OSAtomic.h",
+        "net/errno.h",
+        "stdint.h",
+        "stdio.h",
+        "stdlib.h",
+        "strings.h",
+        "string.h",
+        "sys/epoll.h",
+        "sys/eventfd.h",
+        "sys/event.h",
+        "sys/filio.h",
+        "sys/ioctl.h",
+        "sys/modem.h",
+        "sys/param.h",
+        "sys/select.h",
+        "sys/stat.h",
+        "sys/time.h",
+        "sys/types.h",
+        "sys/wait.h",
+        "termios.h",
+        "unistd.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        "cfmakeraw",
+        "chflags",
+        "copyfile",
+        "freeaddrinfo",
+        "gai_strerror",
+        "getaddrinfo",
+        "getattrlist",
+        "getcwd",
+        "gethostbyaddr_r",
+        "gethostbyname_r",
+        "getnameinfo",
+        "gmtime_r",
+        "localtime_r",
+        "lseek64",
+        "mkstemp",
+        "mkstemps",
+        "open64",
+        "OSSpinLockLock",
+        "posix_spawn_file_actions_adddup2",
+        "posix_spawnattr_setflags",
+        "posix_spawnp",
+        "pthread_atfork",
+        "pthread_attr_setstacksize",
+        "vfork",
+        "waitpid",
+    ]) + macros.AC_CHECK_TYPES(
+        [
+            "blkcnt_t",
+            "intptr_t",
+            "uintptr_t",
+            "struct addrinfo",
+            "struct in6_addr",
+            "struct sockaddr_in6",
+            "struct sockaddr_storage",
+        ],
+        includes = [
+            "#include <netdb.h>",
+            "#include <netinet/in.h>",
+            "#include <stdint.h>",
+            "#include <sys/socket.h>",
+            "#include <sys/stat.h>",
+            "#include <sys/types.h>",
+        ],
+    ) + macros.AC_CHECK_MEMBERS(
+        [
+            "struct stat.st_blksize",
+            "struct stat.st_blocks",
+            "struct stat.st_rdev",
+            "struct tm.tm_gmtoff",
+        ],
+        includes = [
+            "#include <sys/stat.h>",
+            "#include <time.h>",
+        ],
+    ) + [
+        checks.AC_DEFINE(
+            "NO_FORK",
+            condition = "!ac_cv_func_fork",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("fork"),
+        checks.AC_DEFINE(
+            "NO_FSTATFS",
+            condition = "!ac_cv_func_fstatfs",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("fstatfs"),
+        checks.AC_DEFINE(
+            "NO_GETTOD",
+            condition = "!ac_cv_func_gettimeofday",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("gettimeofday"),
+        checks.AC_DEFINE(
+            "NO_GETWD",
+            condition = "!ac_cv_func_getwd",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("getwd"),
+        checks.AC_DEFINE(
+            "NO_MKNOD",
+            condition = "!ac_cv_func_mknod",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("mknod"),
+        checks.AC_DEFINE(
+            "NO_REALPATH",
+            condition = "!ac_cv_func_realpath",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("realpath"),
+        checks.AC_DEFINE(
+            "NO_STRERROR",
+            condition = "!ac_cv_func_strerror",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("strerror"),
+        checks.AC_DEFINE(
+            "NO_TCDRAIN",
+            condition = "!ac_cv_func_tcdrain",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("tcdrain"),
+        checks.AC_DEFINE(
+            "NO_UNAME",
+            condition = "!ac_cv_func_uname",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("uname"),
+        checks.AC_DEFINE(
+            "NO_WAIT3",
+            condition = "!ac_cv_func_wait3",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_FUNC("wait3"),
+        checks.AC_DEFINE(
+            "USEGETWD",
+            condition = "!ac_cv_func_getcwd",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            code = "#include <sys/eventfd.h>\nint main(void){return eventfd(0,0);}",
+            define = "HAVE_EVENTFD",
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <fts.h>
+int main(void) {
+    char *const p[2] = {(char*)"/", 0};
+    FTS *f = fts_open(p, FTS_PHYSICAL|FTS_NOCHDIR|FTS_NOSTAT, 0);
+    FTSENT *e = fts_read(f); fts_close(f);
+    return e ? 0 : 0;
+}
+""",
+            define = "HAVE_FTS",
+        ),
+        checks.AC_TRY_LINK(
+            code = "#include <sys/select.h>\nint main(void){void *p = (void*)pselect; return p != 0;}",
+            define = "HAVE_PSELECT",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = "int main(void){signed char *p; p = 0; return p != 0;}",
+            define = "HAVE_SIGNED_CHAR",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+extern int foo(void) __attribute__((visibility("hidden")));
+int foo(void){return 0;}
+int main(void){return foo();}
+""",
+            define = "HAVE_HIDDEN",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+union u { int i; long l; };
+int main(void){int x = 42; union u v = (union u)x; return v.i;}
+""",
+            define = "HAVE_CAST_TO_UNION",
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <langinfo.h>
+int main(void){char *cs = nl_langinfo(CODESET); return cs ? 0 : 0;}
+""",
+            define = "HAVE_LANGINFO",
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <time.h>
+extern long timezone;
+int main(void){return (int)timezone;}
+""",
+            define = "HAVE_TIMEZONE_VAR",
+        ),
+        checks.AC_DEFINE(
+            "NOTIFIER_EPOLL",
+            condition = "ac_cv_header_sys_epoll_h",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_CHECK_DECL(
+            "gethostbyaddr_r",
+            define = "HAVE_DECL_GETHOSTBYADDR_R",
+            includes = ["#include <netdb.h>"],
+        ),
+        checks.AC_CHECK_DECL(
+            "gethostbyname_r",
+            define = "HAVE_DECL_GETHOSTBYNAME_R",
+            includes = ["#include <netdb.h>"],
+        ),
+        # gethostbyname_r has 6-arg (glibc) and 5-arg (Solaris) shapes.
+        checks.AC_TRY_LINK(
+            code = """\
+#include <netdb.h>
+int main(void){
+    struct hostent he, *result;
+    char buf[1024];
+    int h_err;
+    return gethostbyname_r("x", &he, buf, sizeof buf, &result, &h_err);
+}
+""",
+            define = "HAVE_GETHOSTBYNAME_R_6",
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <netdb.h>
+int main(void){
+    struct hostent he, *result;
+    char buf[1024];
+    return gethostbyname_r("x", &he, buf, sizeof buf, &result) != 0;
+}
+""",
+            define = "HAVE_GETHOSTBYNAME_R_5",
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <netdb.h>
+#include <netinet/in.h>
+int main(void){
+    struct hostent he, *result;
+    char buf[1024];
+    int h_err;
+    struct in_addr addr;
+    return gethostbyaddr_r((char*)&addr, sizeof addr, AF_INET, &he, buf,
+                           sizeof buf, &result, &h_err);
+}
+""",
+            define = "HAVE_GETHOSTBYADDR_R_8",
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <pwd.h>
+int main(void){
+    struct passwd pw, *result;
+    char buf[1024];
+    return getpwuid_r(0, &pw, buf, sizeof buf, &result);
+}
+""",
+            define = "HAVE_GETPWUID_R_5",
+        ),
+        checks.AC_DEFINE(
+            "HAVE_GETPWUID_R",
+            condition = "ac_cv_try_link_HAVE_GETPWUID_R_5",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <pwd.h>
+int main(void){
+    struct passwd pw, *result;
+    char buf[1024];
+    return getpwnam_r("x", &pw, buf, sizeof buf, &result);
+}
+""",
+            define = "HAVE_GETPWNAM_R_5",
+        ),
+        checks.AC_DEFINE(
+            "HAVE_GETPWNAM_R",
+            condition = "ac_cv_try_link_HAVE_GETPWNAM_R_5",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <grp.h>
+int main(void){
+    struct group gr, *result;
+    char buf[1024];
+    return getgrgid_r(0, &gr, buf, sizeof buf, &result);
+}
+""",
+            define = "HAVE_GETGRGID_R_5",
+        ),
+        checks.AC_DEFINE(
+            "HAVE_GETGRGID_R",
+            condition = "ac_cv_try_link_HAVE_GETGRGID_R_5",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            code = """\
+#include <grp.h>
+int main(void){
+    struct group gr, *result;
+    char buf[1024];
+    return getgrnam_r("x", &gr, buf, sizeof buf, &result);
+}
+""",
+            define = "HAVE_GETGRNAM_R_5",
+        ),
+        checks.AC_DEFINE(
+            "HAVE_GETGRNAM_R",
+            condition = "ac_cv_try_link_HAVE_GETGRNAM_R_5",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_DEFINE("MP_PREC", 4),
+        checks.AC_DEFINE("NDEBUG", 1),
+        checks.AC_DEFINE("STDC_HEADERS", 1),
+        checks.AC_DEFINE("TCL_CFGVAL_ENCODING", "\"utf-8\""),
+        checks.AC_DEFINE("TCL_SHLIB_EXT", "\".so\""),
+        checks.AC_DEFINE("TCL_WIDE_INT_IS_LONG", 1),
+        checks.AC_DEFINE("_LARGEFILE64_SOURCE", 1),
+        checks.AC_DEFINE("_REENTRANT", 1),
+        checks.AC_DEFINE("_THREAD_SAFE", 1),
+        checks.AC_DEFINE("__CHAR_UNSIGNED__", 1),
+        # MODULE_SCOPE expands to a bare C token; AC_DEFINE_UNQUOTED emits verbatim.
+        checks.AC_DEFINE_UNQUOTED(
+            "MODULE_SCOPE",
+            "extern __attribute__((__visibility__(\"hidden\")))",
+        ),
+    ],
+    visibility = ["//visibility:private"],
+    deps = [":package_info"],
+)
+
+# AC_INIT([tcl],[9.0]) -- keep the short 9.0 identity, not the patch version.
+package_info(
+    name = "package_info",
+    package_name = "tcl",
+    module_bazel = "MODULE.bazel",
+    package_tarname = "tcl",
+    package_version = "9.0",
+)
+
+autoconf(
+    name = "tclConfig_checks_macos",
+    checks = [
+        checks.AC_DEFINE("MAC_OSX_TCL", 1),
+        checks.AC_DEFINE("TCL_LOAD_FROM_MEMORY", 1),
+        checks.AC_DEFINE("TCL_WIDE_CLICKS", 1),
+        checks.AC_DEFINE("HAVE_COREFOUNDATION", 1),
+        checks.AC_DEFINE("_DARWIN_C_SOURCE", 1),
+    ],
+    visibility = ["//visibility:private"],
+)
+
+autoconf_hdr(
+    name = "gen_tclConfig_unix_h",
+    out = "unix/tclConfig.h",
+    template = "unix/tclConfig.h.in",
+    deps = [":tclConfig_checks"],
+)
+
+autoconf_hdr(
+    name = "gen_tclConfig_macos_h",
+    out = "macosx/tclConfig.h",
+    template = "unix/tclConfig.h.in",
+    deps = [
+        ":tclConfig_checks",
+        ":tclConfig_checks_macos",
+    ],
+)
+
+# Windows drives its config through tclWinPort.h; tclConfig.h just needs to exist.
+write_file(
+    name = "gen_tclConfig_windows_h",
+    out = "windows/tclConfig.h",
+    content = [
+        "#ifndef _TCLCONFIG",
+        "#define _TCLCONFIG",
+        "#endif",
+    ],
+    newline = "unix",
+)
+
+COMMON_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+}) + select({
+    # Cancel the autoconf-probed HAVE_LANGINFO when the flag is off.
+    ":langinfo_enabled": [],
+    "//conditions:default": ["-UHAVE_LANGINFO"],
+})
+
+FLAG_DEFINES = select({
+    ":zipfs_enabled": ["ZIPFS_BUILD=1"],
+    "//conditions:default": [],
+}) + select({
+    ":dtrace_enabled": ["USE_DTRACE=1"],
+    "//conditions:default": [],
+}) + select({
+    ":dll_unloading_enabled": ["TCL_UNLOAD_DLLS=1"],
+    "//conditions:default": [],
+})
+
+COMMON_DEFINES = [
+    "CFG_RUNTIME_DLLFILE=\\\"\"Tcl\\\"\"",
+    "HAVE_TCL_CONFIG_H=1",
+    "MP_FIXED_CUTOFFS",
+    "TCL_LIBRARY=\\\"\"\\\"\"",
+    "TCL_PACKAGE_PATH=\\\"\"\\\"\"",
+] + select({
+    # tclUnixFile.c uses dladdr() and tclZipfs.c uses pipe2() (GNU extensions).
+    "@platforms//os:windows": [],
+    "//conditions:default": ["_GNU_SOURCE=1"],
+}) + select({
+    # macOS ships glibc-shape 5-arg reentrant lookups + MT-safe gethostby*
+    # unconditionally; hardcode them so tclUnixCompat.c does not fall into
+    # its non-reentrant fallback that references CopyPwd / CopyGrp which
+    # aren't declared in that configuration.  Real tcl configure sets the
+    # MTSAFE_* ones explicitly on Darwin.
+    "@platforms//os:macos": [
+        "HAVE_GETPWUID_R=1",
+        "HAVE_GETPWUID_R_5=1",
+        "HAVE_GETPWNAM_R=1",
+        "HAVE_GETPWNAM_R_5=1",
+        "HAVE_GETGRGID_R=1",
+        "HAVE_GETGRGID_R_5=1",
+        "HAVE_GETGRNAM_R=1",
+        "HAVE_GETGRNAM_R_5=1",
+        "HAVE_MTSAFE_GETHOSTBYNAME=1",
+        "HAVE_MTSAFE_GETHOSTBYADDR=1",
+    ],
+    "//conditions:default": [],
+}) + FLAG_DEFINES
+
+TCL_DEFINES = COMMON_DEFINES + [
+    "CFG_RUNTIME_BINDIR=\\\"\"/usr/local/bin\\\"\"",
+    "CFG_RUNTIME_DOCDIR=\\\"\"/usr/local/man\\\"\"",
+    "CFG_RUNTIME_INCDIR=\\\"\"\\\"\"",
+    "CFG_RUNTIME_LIBDIR=\\\"\"\\\"\"",
+    "CFG_RUNTIME_SCRDIR=\\\"\"\\\"\"",
+    "CFG_INSTALL_BINDIR=\\\"\"\\\"\"",
+    "CFG_INSTALL_DOCDIR=\\\"\"\\\"\"",
+    "CFG_INSTALL_INCDIR=\\\"\"\\\"\"",
+    "CFG_INSTALL_LIBDIR=\\\"\"\\\"\"",
+    "CFG_INSTALL_SCRDIR=\\\"\"\\\"\"",
+]
+
+ITCL_DEFINES = COMMON_DEFINES + [
+    "PACKAGE_NAME=\\\"\"itcl\\\"\"",
+    "PACKAGE_STRING=\\\"\"itcl 4.3.8\\\"\"",
+    "PACKAGE_TARNAME=\\\"\"itcl\\\"\"",
+    "PACKAGE_VERSION=\\\"\"4.3.8\\\"\"",
+]
+
+TDBC_DEFINES = COMMON_DEFINES + [
+    "PACKAGE_NAME=\\\"\"tdbc\\\"\"",
+    "PACKAGE_STRING=\\\"\"tdbc 1.1.13\\\"\"",
+    "PACKAGE_TARNAME=\\\"\"tdbc\\\"\"",
+    "PACKAGE_VERSION=\\\"\"1.1.13\\\"\"",
+]
+
+filegroup(
+    name = "tclConfig",
+    srcs = select({
+        "@platforms//os:macos": [":gen_tclConfig_macos_h"],
+        "@platforms//os:windows": [":gen_tclConfig_windows_h"],
+        "//conditions:default": [":gen_tclConfig_unix_h"],
+    }),
+)
+
+filegroup(
+    name = "tclAppInit",
+    srcs = select({
+        "@platforms//os:windows": ["windows/tclAppInit.c"],
+        "//conditions:default": ["unix/tclAppInit.c"],
+    }),
+)
+
+write_file(
+    name = "tclUuid",
+    out = "generic/tclUuid.h",
+    content = [
+        "#define TCL_VERSION_UUID \\",
+        "bazel-central-registry",
+    ],
+    newline = "unix",
+)
+
+filegroup(
+    name = "all_headers",
+    srcs = glob(
+        include = ["**/*.h"],
+        exclude = [
+            "bazel-*/**",
+            ".git/**",
+        ],
+    ) + [
+        "generic/regc_color.c",
+        "generic/regc_cvec.c",
+        "generic/regc_lex.c",
+        "generic/regc_locale.c",
+        "generic/regc_nfa.c",
+        "generic/rege_dfa.c",
+        "generic/tcl.decls",
+        "generic/tclInt.decls",
+        "generic/tclOO.decls",
+        "generic/tclTomMath.decls",
+        "generic/tclUniData.c",
+        ":tclConfig",
+        ":tclUuid",
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["unix/tclUnixNotfy.c"],
+    }) + select({
+        # tclInt.h includes tclDTrace.h under `#ifdef USE_DTRACE`.
+        ":dtrace_on_unix": [":gen_tclDTrace_h"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "cc_all_headers",
+    hdrs = [":all_headers"],
+    includes = select({
+        "@platforms//os:macos": ["macosx"],
+        "@platforms//os:windows": ["windows"],
+        "//conditions:default": ["unix"],
+    }),
+)
+
+filegroup(
+    name = "tcl_core",
+    srcs = glob(["library/**"]),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "tclstub",
+    srcs = [
+        "generic/tclOOStubLib.c",
+        "generic/tclStubCall.c",
+        "generic/tclStubLib.c",
+        "generic/tclStubLibTbl.c",
+        "generic/tclTomMathStubLib.c",
+    ],
+    copts = COMMON_COPTS,
+    includes = [
+        "generic",
+        "libtommath",
+    ] + select({
+        "@platforms//os:macos": [
+            "macosx",
+            "unix",
+        ],
+        "@platforms//os:windows": ["windows"],
+        "//conditions:default": ["unix"],
+    }),
+    local_defines = TCL_DEFINES,
+    textual_hdrs = [":all_headers"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "tcl",
+    actual = ":Tcl",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "Tcl",
+    srcs = [
+        "generic/regcomp.c",
+        "generic/regerror.c",
+        "generic/regexec.c",
+        "generic/regfree.c",
+        "generic/tclAlloc.c",
+        "generic/tclArithSeries.c",
+        "generic/tclAssembly.c",
+        "generic/tclAsync.c",
+        "generic/tclBasic.c",
+        "generic/tclBinary.c",
+        "generic/tclCkalloc.c",
+        "generic/tclClock.c",
+        "generic/tclClockFmt.c",
+        "generic/tclCmdAH.c",
+        "generic/tclCmdIL.c",
+        "generic/tclCmdMZ.c",
+        "generic/tclCompCmds.c",
+        "generic/tclCompCmdsGR.c",
+        "generic/tclCompCmdsSZ.c",
+        "generic/tclCompExpr.c",
+        "generic/tclCompile.c",
+        "generic/tclConfig.c",
+        "generic/tclDate.c",
+        "generic/tclDictObj.c",
+        "generic/tclDisassemble.c",
+        "generic/tclEncoding.c",
+        "generic/tclEnsemble.c",
+        "generic/tclEnv.c",
+        "generic/tclEvent.c",
+        "generic/tclExecute.c",
+        "generic/tclFCmd.c",
+        "generic/tclFileName.c",
+        "generic/tclGet.c",
+        "generic/tclHash.c",
+        "generic/tclHistory.c",
+        "generic/tclIO.c",
+        "generic/tclIOCmd.c",
+        "generic/tclIOGT.c",
+        "generic/tclIORChan.c",
+        "generic/tclIORTrans.c",
+        "generic/tclIOSock.c",
+        "generic/tclIOUtil.c",
+        "generic/tclIcu.c",
+        "generic/tclIndexObj.c",
+        "generic/tclInterp.c",
+        "generic/tclLink.c",
+        "generic/tclListObj.c",
+        "generic/tclLiteral.c",
+        "generic/tclLoad.c",
+        "generic/tclMain.c",
+        "generic/tclNamesp.c",
+        "generic/tclNotify.c",
+        "generic/tclOO.c",
+        "generic/tclOOBasic.c",
+        "generic/tclOOCall.c",
+        "generic/tclOODefineCmds.c",
+        "generic/tclOOInfo.c",
+        "generic/tclOOMethod.c",
+        "generic/tclOOProp.c",
+        "generic/tclOOStubInit.c",
+        "generic/tclObj.c",
+        "generic/tclOptimize.c",
+        "generic/tclPanic.c",
+        "generic/tclParse.c",
+        "generic/tclPathObj.c",
+        "generic/tclPipe.c",
+        "generic/tclPkg.c",
+        "generic/tclPkgConfig.c",
+        "generic/tclPosixStr.c",
+        "generic/tclPreserve.c",
+        "generic/tclProc.c",
+        "generic/tclProcess.c",
+        "generic/tclRegexp.c",
+        "generic/tclResolve.c",
+        "generic/tclResult.c",
+        "generic/tclScan.c",
+        "generic/tclStrIdxTree.c",
+        "generic/tclStrToD.c",
+        "generic/tclStringObj.c",
+        "generic/tclStubInit.c",
+        "generic/tclThread.c",
+        "generic/tclThreadAlloc.c",
+        "generic/tclThreadJoin.c",
+        "generic/tclThreadStorage.c",
+        "generic/tclTimer.c",
+        "generic/tclTomMathInterface.c",
+        "generic/tclTrace.c",
+        "generic/tclUtf.c",
+        "generic/tclUtil.c",
+        "generic/tclVar.c",
+        "generic/tclZipfs.c",
+        "generic/tclZlib.c",
+        "libtommath/bn_mp_add.c",
+        "libtommath/bn_mp_add_d.c",
+        "libtommath/bn_mp_and.c",
+        "libtommath/bn_mp_clamp.c",
+        "libtommath/bn_mp_clear.c",
+        "libtommath/bn_mp_clear_multi.c",
+        "libtommath/bn_mp_cmp.c",
+        "libtommath/bn_mp_cmp_d.c",
+        "libtommath/bn_mp_cmp_mag.c",
+        "libtommath/bn_mp_cnt_lsb.c",
+        "libtommath/bn_mp_copy.c",
+        "libtommath/bn_mp_count_bits.c",
+        "libtommath/bn_mp_div.c",
+        "libtommath/bn_mp_div_2.c",
+        "libtommath/bn_mp_div_2d.c",
+        "libtommath/bn_mp_div_d.c",
+        "libtommath/bn_mp_exch.c",
+        "libtommath/bn_mp_expt_n.c",
+        "libtommath/bn_mp_get_mag_u64.c",
+        "libtommath/bn_mp_grow.c",
+        "libtommath/bn_mp_init.c",
+        "libtommath/bn_mp_init_copy.c",
+        "libtommath/bn_mp_init_i64.c",
+        "libtommath/bn_mp_init_multi.c",
+        "libtommath/bn_mp_init_set.c",
+        "libtommath/bn_mp_init_size.c",
+        "libtommath/bn_mp_init_u64.c",
+        "libtommath/bn_mp_lshd.c",
+        "libtommath/bn_mp_mod.c",
+        "libtommath/bn_mp_mod_2d.c",
+        "libtommath/bn_mp_mul.c",
+        "libtommath/bn_mp_mul_2.c",
+        "libtommath/bn_mp_mul_2d.c",
+        "libtommath/bn_mp_mul_d.c",
+        "libtommath/bn_mp_neg.c",
+        "libtommath/bn_mp_or.c",
+        "libtommath/bn_mp_pack.c",
+        "libtommath/bn_mp_pack_count.c",
+        "libtommath/bn_mp_radix_size.c",
+        "libtommath/bn_mp_radix_smap.c",
+        "libtommath/bn_mp_read_radix.c",
+        "libtommath/bn_mp_rshd.c",
+        "libtommath/bn_mp_set_i64.c",
+        "libtommath/bn_mp_set_u64.c",
+        "libtommath/bn_mp_shrink.c",
+        "libtommath/bn_mp_signed_rsh.c",
+        "libtommath/bn_mp_sqr.c",
+        "libtommath/bn_mp_sqrt.c",
+        "libtommath/bn_mp_sub.c",
+        "libtommath/bn_mp_sub_d.c",
+        "libtommath/bn_mp_to_radix.c",
+        "libtommath/bn_mp_to_ubin.c",
+        "libtommath/bn_mp_ubin_size.c",
+        "libtommath/bn_mp_unpack.c",
+        "libtommath/bn_mp_xor.c",
+        "libtommath/bn_mp_zero.c",
+        "libtommath/bn_s_mp_add.c",
+        "libtommath/bn_s_mp_balance_mul.c",
+        "libtommath/bn_s_mp_div_3.c",
+        "libtommath/bn_s_mp_karatsuba_mul.c",
+        "libtommath/bn_s_mp_karatsuba_sqr.c",
+        "libtommath/bn_s_mp_mul_digs.c",
+        "libtommath/bn_s_mp_mul_digs_fast.c",
+        "libtommath/bn_s_mp_reverse.c",
+        "libtommath/bn_s_mp_sqr.c",
+        "libtommath/bn_s_mp_sqr_fast.c",
+        "libtommath/bn_s_mp_sub.c",
+        "libtommath/bn_s_mp_toom_mul.c",
+        "libtommath/bn_s_mp_toom_sqr.c",
+    ] + select({
+        "@platforms//os:macos": [
+            "macosx/tclMacOSXBundle.c",
+            "macosx/tclMacOSXFCmd.c",
+            "macosx/tclMacOSXNotify.c",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "unix/tclEpollNotfy.c",
+            "unix/tclKqueueNotfy.c",
+            "unix/tclLoadDyld.c",
+            "unix/tclSelectNotfy.c",
+            "unix/tclUnixChan.c",
+            "unix/tclUnixCompat.c",
+            "unix/tclUnixEvent.c",
+            "unix/tclUnixFCmd.c",
+            "unix/tclUnixFile.c",
+            "unix/tclUnixInit.c",
+            "unix/tclUnixPipe.c",
+            "unix/tclUnixSock.c",
+            "unix/tclUnixThrd.c",
+            "unix/tclUnixTime.c",
+        ],
+    }),
+    copts = COMMON_COPTS,
+    includes = [
+        "compat/zlib",
+        "compat/zlib/contrib/minizip",
+        "generic",
+        "libtommath",
+    ] + select({
+        "@platforms//os:macos": [
+            "macosx",
+            "unix",
+        ],
+        "@platforms//os:windows": ["windows"],
+        "//conditions:default": ["unix"],
+    }),
+    local_defines = TCL_DEFINES,
+    textual_hdrs = [":all_headers"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@zlib",
+    ],
+)
+
+cc_binary(
+    name = "tclsh",
+    srcs = [":tclAppInit"],
+    copts = COMMON_COPTS,
+    includes = [
+        "generic",
+        "libtommath",
+        "unix",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lpthread",
+            "-ldl",
+        ],
+    }),
+    local_defines = TCL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cc_all_headers",
+        ":tcl",
+        "@zlib",
+    ],
+)
+
+cc_library(
+    name = "itclstub",
+    srcs = ["pkgs/itcl4.3.8/generic/itclStubLib.c"],
+    copts = COMMON_COPTS,
+    includes = [
+        "generic",
+        "pkgs/itcl4.3.8",
+        "pkgs/itcl4.3.8/generic",
+        "unix",
+    ],
+    local_defines = ITCL_DEFINES,
+    textual_hdrs = [":all_headers"],
+    deps = [],
+)
+
+cc_library(
+    name = "tdbcstub",
+    srcs = ["pkgs/tdbc1.1.13/generic/tdbcStubLib.c"],
+    copts = COMMON_COPTS,
+    includes = ["generic"],
+    local_defines = TDBC_DEFINES,
+    textual_hdrs = [":all_headers"],
+    deps = [],
+)

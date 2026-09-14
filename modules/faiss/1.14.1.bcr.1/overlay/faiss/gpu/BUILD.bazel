@@ -1,0 +1,183 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
+load(":ivf_interleaved.bzl", "generate_ivf_interleaved_sources")
+
+package(
+    default_package_metadata = ["//:package_metadata"],
+)
+
+# The 128 IVF-interleaved scan kernel specializations, generated from the
+# template (see ivf_interleaved.bzl / the CMake `generate_ivf_interleaved_code`).
+_IVF_INTERLEAVED_SRCS = generate_ivf_interleaved_sources(
+    name = "ivf_interleaved",
+    template = "impl/scan/IVFInterleavedScanKernelTemplate.cu",
+)
+
+# The classic (non-cuVS) GPU backend sources, matching `FAISS_GPU_SRC` in
+# faiss/gpu/CMakeLists.txt with FAISS_ENABLE_CUVS=OFF. The CAGRA / cuVS sources
+# are intentionally excluded because they need the external cuVS library.
+FAISS_GPU_SRCS = [
+    "GpuAutoTune.cpp",
+    "GpuCloner.cpp",
+    "GpuDistance.cu",
+    "GpuIcmEncoder.cu",
+    "GpuIndex.cu",
+    "GpuIndexBinaryFlat.cu",
+    "GpuIndexFlat.cu",
+    "GpuIndexIVF.cu",
+    "GpuIndexIVFFlat.cu",
+    "GpuIndexIVFPQ.cu",
+    "GpuIndexIVFScalarQuantizer.cu",
+    "GpuResources.cpp",
+    "StandardGpuResources.cpp",
+    "impl/BinaryDistance.cu",
+    "impl/BinaryFlatIndex.cu",
+    "impl/BroadcastSum.cu",
+    "impl/Distance.cu",
+    "impl/FlatIndex.cu",
+    "impl/IndexUtils.cu",
+    "impl/IVFAppend.cu",
+    "impl/IVFBase.cu",
+    "impl/IVFFlat.cu",
+    "impl/IVFFlatScan.cu",
+    "impl/IVFInterleaved.cu",
+    "impl/IVFPQ.cu",
+    "impl/IVFUtils.cu",
+    "impl/IVFUtilsSelect1.cu",
+    "impl/IVFUtilsSelect2.cu",
+    "impl/InterleavedCodes.cpp",
+    "impl/L2Norm.cu",
+    "impl/L2Select.cu",
+    "impl/PQScanMultiPassPrecomputed.cu",
+    "impl/RemapIndices.cpp",
+    "impl/VectorResidual.cu",
+    "impl/IcmEncoder.cu",
+    "utils/BlockSelectFloat.cu",
+    "utils/DeviceUtils.cu",
+    "utils/StackDeviceMemory.cpp",
+    "utils/Timer.cpp",
+    "utils/WarpSelectFloat.cu",
+    "utils/blockselect/BlockSelectFloat1.cu",
+    "utils/blockselect/BlockSelectFloat32.cu",
+    "utils/blockselect/BlockSelectFloat64.cu",
+    "utils/blockselect/BlockSelectFloat128.cu",
+    "utils/blockselect/BlockSelectFloat256.cu",
+    "utils/blockselect/BlockSelectFloatF512.cu",
+    "utils/blockselect/BlockSelectFloatF1024.cu",
+    "utils/blockselect/BlockSelectFloatF2048.cu",
+    "utils/blockselect/BlockSelectFloatT512.cu",
+    "utils/blockselect/BlockSelectFloatT1024.cu",
+    "utils/blockselect/BlockSelectFloatT2048.cu",
+    "utils/warpselect/WarpSelectFloat1.cu",
+    "utils/warpselect/WarpSelectFloat32.cu",
+    "utils/warpselect/WarpSelectFloat64.cu",
+    "utils/warpselect/WarpSelectFloat128.cu",
+    "utils/warpselect/WarpSelectFloat256.cu",
+    "utils/warpselect/WarpSelectFloatF512.cu",
+    "utils/warpselect/WarpSelectFloatF1024.cu",
+    "utils/warpselect/WarpSelectFloatF2048.cu",
+    "utils/warpselect/WarpSelectFloatT512.cu",
+    "utils/warpselect/WarpSelectFloatT1024.cu",
+    "utils/warpselect/WarpSelectFloatT2048.cu",
+]
+
+FAISS_GPU_HDRS = glob(
+    [
+        "*.h",
+        "impl/*.h",
+        "impl/*.cuh",
+        "impl/scan/*.cuh",
+        "utils/*.h",
+        "utils/*.cuh",
+        "utils/blockselect/*.cuh",
+        "utils/warpselect/*.cuh",
+    ],
+    exclude = [
+        # cuVS / CAGRA headers require the external cuVS library (FAISS_ENABLE_CUVS=OFF).
+        "GpuIndexCagra.h",
+        "GpuIndexBinaryCagra.h",
+        "**/Cuvs*.cuh",
+        "**/Cuvs*.h",
+        "impl/BinaryCuvsCagra.cuh",
+    ],
+)
+
+# Public GPU headers used by downstream code.
+FAISS_GPU_PUBLIC_HDRS = [
+    "GpuAutoTune.h",
+    "GpuCloner.h",
+    "GpuClonerOptions.h",
+    "GpuDistance.h",
+    "GpuFaissAssert.h",
+    "GpuIcmEncoder.h",
+    "GpuIndex.h",
+    "GpuIndexBinaryFlat.h",
+    "GpuIndexFlat.h",
+    "GpuIndexIVF.h",
+    "GpuIndexIVFFlat.h",
+    "GpuIndexIVFPQ.h",
+    "GpuIndexIVFScalarQuantizer.h",
+    "GpuIndicesOptions.h",
+    "GpuResources.h",
+    "StandardGpuResources.h",
+    "utils/DeviceUtils.h",
+    "utils/StackDeviceMemory.h",
+]
+
+# Private header target for CUDA compilation.
+cc_library(
+    name = "faiss_gpu_hdrs",
+    hdrs = FAISS_GPU_HDRS,
+    include_prefix = "faiss/gpu",
+    strip_include_prefix = ".",
+    target_compatible_with = requires_cuda(),
+    visibility = ["//visibility:private"],
+    deps = [
+        "//bazel/cuda_compat",
+        "//faiss",
+        "@cuda//:cub",
+        "@cuda//:cublas",
+        "@cuda//:curand",
+        "@cuda//:thrust",
+    ],
+)
+
+# CUDA kernels with nvcc flags matching the upstream non-cuVS build.
+# Bazel 9 builds need --features=external_include_paths so rules_cuda passes
+# hermetic CUDA headers as system includes.
+cuda_library(
+    name = "faiss_gpu_kernels",
+    srcs = FAISS_GPU_SRCS + _IVF_INTERLEAVED_SRCS,
+    copts = [
+        "--expt-extended-lambda",
+        "--expt-relaxed-constexpr",
+        "-Xfatbin=-compress-all",
+    ],
+    target_compatible_with = requires_cuda(),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":faiss_gpu_hdrs",
+        "//bazel/cuda_compat",
+        "//faiss",
+        "@cuda//:cub",
+        "@cuda//:cublas",
+        "@cuda//:curand",
+        "@cuda//:thrust",
+    ],
+)
+
+# Public API; implementation_deps keeps internal CUDA headers private.
+cc_library(
+    name = "faiss_gpu",
+    hdrs = FAISS_GPU_PUBLIC_HDRS,
+    implementation_deps = [":faiss_gpu_kernels"],
+    include_prefix = "faiss/gpu",
+    strip_include_prefix = ".",
+    target_compatible_with = requires_cuda(),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//faiss",
+        "@cuda//:cublas",
+        "@cuda//:cuda_runtime",
+    ],
+)

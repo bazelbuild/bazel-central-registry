@@ -1,0 +1,42 @@
+load("@librsvg_crates//:defs.bzl", "all_crate_deps")
+load("@rules_rs//rs:rust_binary.bzl", "rust_binary")
+load("@rules_rs//rs:rust_library.bzl", "rust_library")
+
+rust_binary(
+    name = "srgb_generator",
+    srcs = ["build.rs"],
+    edition = "2021",
+    # Upstream's docsrs configuration disables system-library probing.
+    rustc_flags = ["--cfg=docsrs"],
+)
+
+genrule(
+    name = "srgb_tables",
+    outs = ["srgb-codegen.rs"],
+    cmd = 'OUT_DIR="$(@D)" "$(execpath :srgb_generator)"',
+    tools = [":srgb_generator"],
+)
+
+rust_library(
+    name = "rsvg",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = [
+        ":srgb_tables",
+        "src/ua.css",
+    ],
+    crate_features = ["capi"],
+    crate_name = "rsvg",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_env = {"RSVG_SRGB_TABLES": "$(execpath :srgb_tables)"},
+    target_compatible_with = ["@platforms//os:linux"],
+    version = "2.61.4",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@fontconfig",
+        "@freetype",
+        "@harfbuzz",
+        "@libxml2",
+        "@pango//:pangoft2",
+    ] + all_crate_deps(normal = True),
+)

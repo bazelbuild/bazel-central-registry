@@ -1,0 +1,64 @@
+diff --git a/cachelib/allocator/nvmcache/NavySetup.cpp b/cachelib/allocator/nvmcache/NavySetup.cpp
+index b2c34c2..b7873d1 100644
+--- a/cachelib/allocator/nvmcache/NavySetup.cpp
++++ b/cachelib/allocator/nvmcache/NavySetup.cpp
+@@ -17,13 +17,11 @@
+ #include "cachelib/allocator/nvmcache/NavySetup.h"
+ 
+ #include <folly/logging/xlog.h>
+-#include <gmock/gmock.h>
+ 
+ #include "cachelib/allocator/nvmcache/NavyConfig.h"
+ #include "cachelib/navy/Factory.h"
+ #include "cachelib/navy/common/Types.h"
+ #include "cachelib/navy/scheduler/JobScheduler.h"
+-#include "cachelib/navy/testing/MockDevice.h"
+ 
+ namespace facebook {
+ namespace cachelib {
+@@ -391,45 +389,6 @@ std::unique_ptr<navy::AbstractCache> createNavyCache(
+     const navy::NavyPersistParams& persistParams) {
+   auto device = createDevice(config, std::move(encryptor));
+ 
+-  std::unique_ptr<navy::MockDevice> mockDevice;
+-  switch (config.hasBadDeviceForTesting()) {
+-  case navy::BadDeviceStatus::DataCorruption:
+-    // Use mock device. This is for testing
+-    mockDevice = std::make_unique<navy::MockDevice>(
+-        device->getSize(), device->getIOAlignmentSize());
+-    mockDevice->setRealDevice(std::move(device));
+-    ON_CALL(*mockDevice, readImpl(testing::_, testing::_, testing::_))
+-        .WillByDefault(
+-            testing::Invoke([d = &mockDevice->getRealDeviceRef()](
+-                                uint64_t offset, uint32_t size, void* buffer) {
+-              XDCHECK_EQ(size % d->getIOAlignmentSize(), 0u);
+-              XDCHECK_EQ(offset % d->getIOAlignmentSize(), 0u);
+-              auto res = d->read(offset, size, buffer);
+-              if (!res) {
+-                return res;
+-              }
+-
+-              // Corrupt the first byte which will break checksum
+-              reinterpret_cast<char*>(buffer)[0] += 1;
+-              return res;
+-            }));
+-
+-    device = std::move(mockDevice);
+-    break;
+-  case navy::BadDeviceStatus::IoReqFailure:
+-    // Use mock device. This is for testing
+-    mockDevice = std::make_unique<navy::MockDevice>(
+-        device->getSize(), device->getIOAlignmentSize());
+-    mockDevice->setRealDevice(std::move(device));
+-    ON_CALL(*mockDevice, readImpl(testing::_, testing::_, testing::_))
+-        .WillByDefault(testing::Return(false));
+-
+-    device = std::move(mockDevice);
+-    break;
+-  default:
+-    break;
+-  }
+-
+   auto proto = navy::createCacheProto();
+   auto* devicePtr = device.get();
+   proto->setDevice(std::move(device));

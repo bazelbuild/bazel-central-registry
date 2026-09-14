@@ -45,7 +45,50 @@ def log(msg):
     print(f"{GREEN}INFO: {RESET}{msg}")
 
 
+# Schemes the registry tooling will fetch over the network. Anything else
+# (notably `file://`, `ftp://`, `gopher://`, `dict://`, `data:`, `jar:`) MUST
+# be rejected: this code processes URLs from PR-submitted `source.json` files
+# (`url`, `mirror_urls`, `patches`) and invoking `urllib.request.urlopen` on
+# such input with the default opener would let a PR author read local files
+# from the validation runner (e.g. `file:///proc/self/environ`,
+# `file:///etc/passwd`, `file:///run/secrets/*`) or pivot to other URL
+# protocols. HTTPS-only would be even safer; HTTP is kept here because
+# `mirror_urls` are sometimes legacy plain-HTTP mirrors. If you need a new
+# scheme for a legitimate fetch, add it here intentionally.
+ALLOWED_DOWNLOAD_SCHEMES = frozenset({"http", "https"})
+
+# `file:///dev/null` is a portable POSIX device that always reads as zero
+# bytes. It has no exfiltration value: a PR submitting
+# `{"url": "file:///dev/null"}` in `source.json` would just record
+# `sha256("")` (which is public knowledge), not leak any runner state. The
+# `tools/update_integrity_test.sh` test uses this URL as a sentinel for
+# "empty source"; allow-listing it specifically preserves that test without
+# weakening the `file://` rejection that protects against real
+# exfiltration targets such as `/etc/passwd` or `/proc/self/environ`.
+_BENIGN_FILE_URLS = frozenset({"file:///dev/null"})
+
+
+def _validate_download_url(url):
+    """Reject URLs that don't use one of `ALLOWED_DOWNLOAD_SCHEMES`.
+
+    Returns the parsed `urllib.parse.SplitResult` on success so callers don't
+    have to reparse. Raises `RegistryException` on a disallowed scheme so
+    presubmit reports a clear failure instead of silently fetching a local
+    file or a non-HTTP protocol.
+    """
+    parts = urllib.parse.urlsplit(url)
+    if url in _BENIGN_FILE_URLS:
+        return parts
+    if parts.scheme not in ALLOWED_DOWNLOAD_SCHEMES:
+        raise RegistryException(
+            f"URL `{url}` uses scheme `{parts.scheme or '(empty)'}` which is not allowed. "
+            f"BCR validation only fetches over {sorted(ALLOWED_DOWNLOAD_SCHEMES)}."
+        )
+    return parts
+
+
 def download(url):
+    _validate_download_url(url)
     authorization_header_name = "Authorization"
 
     class Github404ErrorProcessor(urllib.request.BaseHandler):

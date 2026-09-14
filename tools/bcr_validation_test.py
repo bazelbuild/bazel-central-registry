@@ -16,7 +16,7 @@
 
 import unittest
 from registry import RegistryClient
-from tools.bcr_validation import BcrValidator, BcrValidationException
+from tools.bcr_validation import BcrValidator, BcrValidationException, is_ref_in_original_repo
 
 from unittest.mock import MagicMock
 
@@ -50,6 +50,20 @@ class TestBcrValidation(unittest.TestCase):
             "CRITICAL FAILURE: strip_prefix '/fake2' resolves outside the extraction directory. Resolved to: /"
             in str(e.exception)
         )
+
+    def test_is_ref_in_original_repo_rejects_pull_request_refs(self):
+        # Pull-request refs (refs/pull/N/head and refs/pull/N/merge) are created by
+        # GitHub for any opened PR, including from forks, and point at commits that
+        # were never merged into the repository. They must never be accepted as
+        # authentic upstream references. The guard rejects them before any network
+        # call, so this check runs offline.
+        for ref in (
+            "refs/pull/1234/head",
+            "pull/1234/head",
+            "refs/pull/1234/merge",
+            "pull/1234/merge",
+        ):
+            self.assertFalse(is_ref_in_original_repo("fake/repo", ref), ref)
 
 
 if __name__ == "__main__":

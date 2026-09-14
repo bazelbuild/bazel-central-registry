@@ -1,0 +1,73 @@
+module(
+    name = "rav1e",
+    version = "0.8.1",
+    bazel_compatibility = [">=8.5.0"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.4.1")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+bazel_dep(name = "rules_rs", version = "0.0.107")
+
+toolchains = use_extension("@rules_rs//rs/toolchains:module_extension.bzl", "toolchains")
+use_repo(toolchains, "default_rust_toolchains")
+
+register_toolchains("@default_rust_toolchains//...")
+
+crate = use_extension("@rules_rs//rs:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "rav1e_crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+crate.annotation(
+    additive_build_file_content = """
+exports_files(["src/lib.rs"])
+filegroup(
+    name = "cbindgen_sources",
+    srcs = glob(["src/**/*.rs"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    crate = "v_frame",
+    extra_aliased_targets = {
+        "v_frame_lib_rs": "src/lib.rs",
+        "v_frame_sources": "cbindgen_sources",
+    },
+    repositories = ["rav1e_crates"],
+)
+use_repo(crate, "rav1e_crates")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "rav1e_cbindgen",
+    build_file = "//tools/cbindgen:BUILD.cbindgen.bazel",
+    sha256 = "975982cdb7ad6a142be15bdf84aea7ec6a9e5d4d797c004d43185b24cfe4e684",
+    strip_prefix = "cbindgen-0.29.0",
+    type = "tar.gz",
+    urls = ["https://static.crates.io/crates/cbindgen/cbindgen-0.29.0.crate"],
+)
+
+crate.from_cargo(
+    name = "rav1e_cbindgen_crates",
+    cargo_lock = "@rav1e_cbindgen//:Cargo.lock",
+    cargo_toml = "@rav1e_cbindgen//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-pc-windows-msvc",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+use_repo(crate, "rav1e_cbindgen_crates")

@@ -1,0 +1,222 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+exports_files(["COPYING"])
+
+# ---- Autoconf-driven config.h ----------------------------------------------
+#
+# Mirrors upstream's `configure.ac`: run header / function checks against the
+# resolved cc toolchain, plus fixed defines for values `configure.ac` sets
+# unconditionally (package metadata, `_GNU_SOURCE`, `GPIOD_VERSION_STR`).
+
+package_info(
+    name = "_package",
+    aliases = {
+        # `configure.ac` sets both `VERSION` and `GPIOD_VERSION_STR` to the
+        # package version — mirror instead of hand-defining.
+        "GPIOD_VERSION_STR": "PACKAGE_VERSION",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "//:MODULE.bazel",
+    package_bugreport = "linux-gpio@vger.kernel.org",
+    package_url = "https://libgpiod.readthedocs.io/",
+    strip_bcr_version = True,
+)
+
+autoconf(
+    name = "_autoconf",
+    checks = macros.AC_CHECK_HEADERS([
+        "dirent.h",
+        "getopt.h",
+        "linux/gpio.h",
+        "linux/version.h",
+        "sys/poll.h",
+        # Required by the CLI tools (upstream gates via WITH_TOOLS); we always
+        # build them here.
+        "sys/signalfd.h",
+        "sys/sysmacros.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        "alphasort",
+        "asprintf",
+        "ioctl",
+        "ppoll",
+        "realpath",
+        "scandir",
+    ]) + macros.AC_CHECK_DECLS(
+        # `GPIOLINE_FLAG_BIAS_DISABLE` landed in Linux 5.5 alongside the
+        # other GPIO bias constants and `struct gpiohandle_config`. When the
+        # target's kernel headers are pre-5.5 the check fails, and the
+        # conditional `AC_DEFINE` below flips `KERNEL_PRE_5_5` on so
+        # `lib/core.c` supplies its own fallback definitions.
+        ["GPIOLINE_FLAG_BIAS_DISABLE"],
+        includes = ["#include <linux/gpio.h>"],
+    ) + [
+        checks.AC_DEFINE(
+            "KERNEL_PRE_5_5",
+            condition = "ac_cv_have_decl_gpioline_flag_bias_disable==0",
+            if_false = None,
+            if_true = "1",
+        ),
+        checks.AC_DEFINE("_GNU_SOURCE"),
+        checks.AC_DEFINE(
+            "PACKAGE",
+            value = "\"libgpiod\"",
+        ),
+        checks.AC_DEFINE(
+            "LT_OBJDIR",
+            value = "\".libs/\"",
+        ),
+    ],
+    deps = [
+        ":_package",
+        # AC_HEADER_STDC + standard HAVE_*_H headers + STDC_HEADERS.
+        "@rules_cc_autoconf//gnulib/m4/extensions",
+    ],
+)
+
+autoconf_hdr(
+    name = "_config_h",
+    out = "config.h",
+    template = "//:config.h.in",
+    deps = [":_autoconf"],
+)
+
+# Both the C library and the CLI tools need `config.h` at compile time.
+# Upstream's `Makefile.am` force-includes it via
+# `-include $(top_builddir)/config.h`; consuming this library from
+# `implementation_deps` (private) mirrors that.
+cc_library(
+    name = "_config",
+    hdrs = [":_config_h"],
+)
+
+# ---- Libraries --------------------------------------------------------------
+
+# Match upstream `lib/Makefile.am`: force-include `config.h`, use gnu89 with
+# hidden visibility. `-w` silences warnings — this is a third-party port and
+# upstream owns warning cleanups.
+_C_COPTS = [
+    "-std=gnu89",
+    "-fvisibility=hidden",
+    "-include",
+    "config.h",
+    "-w",
+]
+
+# `:gpiod` — Bazel-native name for what upstream builds as `lib/libgpiod.la`.
+cc_library(
+    name = "gpiod",
+    srcs = [
+        "lib/core.c",
+        "lib/ctxless.c",
+        "lib/helpers.c",
+        "lib/iter.c",
+        "lib/misc.c",
+    ],
+    hdrs = ["include/gpiod.h"],
+    copts = _C_COPTS,
+    implementation_deps = [":_config"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+# `:gpiodcxx` — Bazel-native name for `bindings/cxx/libgpiodcxx.la`. Opt-in:
+# downstream targets that want the C++ bindings depend on this directly.
+_CXX_COPTS = [
+    "-std=c++11",
+    "-fvisibility=hidden",
+    "-include",
+    "config.h",
+    "-w",
+]
+
+cc_library(
+    name = "gpiodcxx",
+    srcs = [
+        "bindings/cxx/chip.cpp",
+        "bindings/cxx/iter.cpp",
+        "bindings/cxx/line.cpp",
+        "bindings/cxx/line_bulk.cpp",
+    ],
+    hdrs = ["bindings/cxx/gpiod.hpp"],
+    copts = _CXX_COPTS,
+    implementation_deps = [":_config"],
+    includes = ["bindings/cxx"],
+    visibility = ["//visibility:public"],
+    deps = [":gpiod"],
+)
+
+# ---- CLI tools --------------------------------------------------------------
+#
+# Upstream `tools/Makefile.am` gates these behind `--enable-tools`; in Bazel
+# they're always available as targets — downstream just doesn't depend on
+# what it doesn't want.
+
+cc_library(
+    name = "_tools_common",
+    srcs = [
+        "tools/tools-common.c",
+        "tools/tools-common.h",
+    ],
+    copts = _C_COPTS,
+    deps = [
+        ":_config",
+        ":gpiod",
+    ],
+)
+
+[
+    cc_binary(
+        name = "gpio" + _name,
+        srcs = ["tools/gpio{}.c".format(_name)],
+        copts = _C_COPTS,
+        visibility = ["//visibility:public"],
+        deps = [
+            ":_tools_common",
+            ":gpiod",
+        ],
+    )
+    for _name in [
+        "detect",
+        "find",
+        "get",
+        "info",
+        "mon",
+        "set",
+    ]
+]
+
+# ---- Compat aliases ---------------------------------------------------------
+#
+# Upstream ships `libgpiod.la` (C) and `libgpiodcxx.la` (C++); the aliases
+# below let downstream write `@libgpiod//:libgpiod` (or `libgpiodcxx`) and get
+# exactly what upstream calls those artefacts. `libgpiod_c` / `libgpiod_cxx`
+# match the previous 1.6.3 BCR module's target names for smoother upgrades.
+
+alias(
+    name = "libgpiod",
+    actual = ":gpiod",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libgpiodcxx",
+    actual = ":gpiodcxx",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libgpiod_c",
+    actual = ":gpiod",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libgpiod_cxx",
+    actual = ":gpiodcxx",
+    visibility = ["//visibility:public"],
+)
