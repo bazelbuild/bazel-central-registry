@@ -1,0 +1,121 @@
+module(
+    name = "rules_signing",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "rules_python", version = "2.3.3")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "codesign.bzl", version = "0.0.13")
+bazel_dep(name = "package_metadata", version = "0.0.13")
+
+# Used only by this module's own tests: `rules_cc` cross-compiles the Mach-O/PE
+# fixtures and `rules_oci` builds the `oci_image` under test. Neither is
+# reachable from anything a consumer loads, so both are dev-only and stay out
+# of downstream build graphs (`rules_oci` in particular would otherwise pull
+# aspect_bazel_lib, tar.bzl, jq.bzl, yq.bzl and gawk along with it). The
+# `usagetest/` consumer module declares its own `rules_oci` for the same reason.
+bazel_dep(name = "rules_cc", version = "0.2.22", dev_dependency = True)
+bazel_dep(name = "rules_oci", version = "2.3.0", dev_dependency = True)
+
+# `build_test` / `copy_file` in `//signing/tests`. Nothing a consumer loads
+# refers to bazel_skylib, so it is dev-only.
+bazel_dep(name = "bazel_skylib", version = "1.9.2", dev_dependency = True)
+
+# Provides the standard `stamp` attribute / `--stamp` handling (STAMP_ATTRS,
+# maybe_stamp) used by rules that embed workspace status into their outputs,
+# so rules_signing follows the same convention as the rest of the ecosystem
+# instead of reinventing it.
+bazel_dep(name = "bazel_lib", version = "3.7.2")
+
+# openssl is adopted from the host (see signing_tools.openssl() below)
+# rather than built from source: GitHub's ubuntu-latest, macos-latest and
+# windows-latest runners all ship a usable openssl, and building it
+# hermetically from the BCR module has proven fragile across platforms
+# (macOS needs CommonCrypto headers only the full Xcode SDK provides, and
+# Windows lacks a couple of network syscalls the zig cross-toolchain's libc
+# doesn't define).
+
+# Needed to cross-compile the real Mach-O/PE test binaries used to verify
+# content-based tool detection. Test-only, so it never reaches consumers of
+# this ruleset.
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0", dev_dependency = True)
+
+zig_toolchains = use_extension(
+    "@hermetic_cc_toolchain//toolchain:ext.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+use_repo(zig_toolchains, "zig_sdk")
+
+register_toolchains(
+    # Linux hosts included so the fixtures compile hermetically everywhere,
+    # rather than depending on whatever system C toolchain is installed.
+    "@zig_sdk//toolchain:all",
+    dev_dependency = True,
+)
+
+signing_tools = use_extension("//signing:extensions.bzl", "signing_tools", dev_dependency = True)
+signing_tools.openssl(path = "openssl")
+use_repo(
+    signing_tools,
+    "signing_cosign",
+    "signing_openssl",
+    "signing_osslsigncode",
+)
+
+# Registered only for this module's own tests. Consumers pick their own tool
+# versions and register their own toolchains; nothing here leaks downstream.
+register_toolchains(
+    "@signing_cosign//:cosign_toolchain",
+    "@signing_openssl//:openssl_toolchain",
+    "@signing_osslsigncode//:osslsigncode_toolchain",
+    dev_dependency = True,
+)
+
+# LIEF parses Mach-O/PE headers so extensionless binaries are classified by
+# content instead of by filename. This is a genuine runtime dependency of
+# sign_tool, so the hub is non-dev; consumers get it transitively without
+# having to declare anything.
+PYTHON_VERSION = "3.11"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = PYTHON_VERSION)
+
+# Require every Python package in this module to declare its own initializer.
+# This keeps the package layout valid once rules_python disables implicit
+# __init__.py creation by default.
+rules_python_config = use_extension(
+    "@rules_python//python/extensions:config.bzl",
+    "config",
+)
+rules_python_config.explicit_init_py(default = True)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "signing_pypi",
+    python_version = PYTHON_VERSION,
+    requirements_lock = "//signing/private/tools:requirements_lock.txt",
+)
+use_repo(pip, "signing_pypi")
+
+# cryptography is used only by the maintainer tool that regenerates the
+# checked-in development certificates, never by the tests themselves. It gets
+# its own dev-only pip hub so it cannot leak to consumers via signing_pypi.
+pip_tests = use_extension(
+    "@rules_python//python/extensions:pip.bzl",
+    "pip",
+    dev_dependency = True,
+)
+pip_tests.parse(
+    hub_name = "signing_tests_pypi",
+    python_version = PYTHON_VERSION,
+    requirements_lock = "//signing/tests/testdata_certs:requirements_lock.txt",
+)
+use_repo(pip_tests, "signing_tests_pypi")
+
+# The codesign toolchain type comes from codesign.bzl, but registering an
+# implementation is the consumer's choice, so this stays dev-only too.
+register_toolchains(
+    "@codesign.bzl//toolchain:all",
+    dev_dependency = True,
+)
