@@ -78,6 +78,83 @@ index 409c6b2..599be4b 100644
  CEL_ATTRIBUTE_NODISCARD
  static bool _cel_MessageEqualityState_FieldHomoEquals(
      _cel_MessageEqualityState* cel_nonnull state, upb_MessageValue lhs_val,
+diff --git a/cel-c/internal/regexp.cc b/cel-c/internal/regexp.cc
+index c36a429..bb54647 100644
+--- a/cel-c/internal/regexp.cc
++++ b/cel-c/internal/regexp.cc
+@@ -29,6 +29,7 @@
+ #include "cel-c/string_view.h"
+ #include "cel-c/string_view_absl.h"
+ #include "re2/re2.h"
++#include "re2/stringpiece.h"
+ 
+ CEL_BEGIN_DECLS
+ 
+@@ -50,19 +51,33 @@ struct RE2CArg final {
+   RE2CArg& operator=(const RE2CArg&) = delete;
+   RE2CArg& operator=(RE2CArg&&) = delete;
+ 
+-  absl::string_view string;
++  re2::StringPiece string;
+   RE2::Arg arg;
+ };
+ 
+ static_assert(std::is_trivially_destructible_v<RE2CArg>);
+ static_assert(alignof(RE2CArg) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+ 
+-using MatchFunction = bool (*)(absl::string_view, const RE2&,
++using MatchFunction = bool (*)(re2::StringPiece, const RE2&,
+                                const RE2::Arg* const*, int);
+ 
++// RE2::FullMatchN() and RE2::PartialMatchN() take their subject by const
++// reference in older releases of RE2 and by value in newer ones, so their
++// addresses cannot be taken through a single function pointer type. Wrapping
++// them keeps this file buildable against both.
++bool Re2FullMatchN(re2::StringPiece subject, const RE2& re2,
++                   const RE2::Arg* const* args, int argc) {
++  return RE2::FullMatchN(subject, re2, args, argc);
++}
++
++bool Re2PartialMatchN(re2::StringPiece subject, const RE2& re2,
++                      const RE2::Arg* const* args, int argc) {
++  return RE2::PartialMatchN(subject, re2, args, argc);
++}
++
+ CEL_ATTRIBUTE_NODISCARD
+ CEL_ATTRIBUTE_NOINLINE
+-bool _cel_RegExp_Match(const RE2& re2, absl::string_view subject,
++bool _cel_RegExp_Match(const RE2& re2, re2::StringPiece subject,
+                        MatchFunction cel_nonnull match,
+                        cel_Status* cel_nonnull status, size_t argc,
+                        va_list argv) {
+@@ -98,7 +113,8 @@ bool _cel_RegExp_Match(const RE2& re2, absl::string_view subject,
+   for (size_t i = 0; i < argc; ++i) {
+     cel_StringView* arg = va_arg(argv, cel_StringView*);
+     CEL_ASSERT_NOT_NULL(arg);
+-    *arg = cel_StringView_FromAbsl(re2_cargs[i].string);
++    *arg = cel_StringView_FromAbsl(absl::string_view(
++        re2_cargs[i].string.data(), re2_cargs[i].string.size()));
+   }
+   return true;
+ }
+@@ -195,7 +211,7 @@ extern "C" CEL_ATTRIBUTE_NOTHROW bool _cel_RegExp_FullMatch(
+   va_start(argv, argc);
+   const bool match = _cel_RegExp_Match(
+       *std::launder(reinterpret_cast<const RE2*>(&regexp->re2[0])),
+-      cel_StringView_ToAbsl(subject), &RE2::FullMatchN, status, argc, argv);
++      cel_StringView_ToAbsl(subject), &Re2FullMatchN, status, argc, argv);
+   va_end(argv);
+   return match;
+ }
+@@ -211,7 +227,7 @@ extern "C" CEL_ATTRIBUTE_NOTHROW bool _cel_RegExp_PartialMatch(
+   va_start(argv, argc);
+   const bool match = _cel_RegExp_Match(
+       *std::launder(reinterpret_cast<const RE2*>(&regexp->re2[0])),
+-      cel_StringView_ToAbsl(subject), &RE2::PartialMatchN, status, argc, argv);
++      cel_StringView_ToAbsl(subject), &Re2PartialMatchN, status, argc, argv);
+   va_end(argv);
+   return match;
+ }
 diff --git a/cel-c/status.cc b/cel-c/status.cc
 index e90fbd9..54a9bc7 100644
 --- a/cel-c/status.cc
