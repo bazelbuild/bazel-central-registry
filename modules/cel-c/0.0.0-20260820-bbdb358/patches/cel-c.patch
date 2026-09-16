@@ -1,0 +1,109 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 0b34e51..5ebba62 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -14,6 +14,7 @@
+ 
+ module(
+     name = "cel-c",
++    version = "0.0.0-20260820-bbdb358",
+ )
+ 
+ bazel_dep(
+@@ -68,23 +69,3 @@ bazel_dep(
+     name = "googleapis-upb",
+     version = "1.1.5",
+ )
+-
+-git_override(
+-    module_name = "protobuf",
+-    commit = "6d03e4f090d809c87a8274b56d609ccc067632f1",
+-    remote = "https://github.com/protocolbuffers/protobuf",
+-)
+-
+-git_override(
+-    module_name = "cel-cpp",
+-    commit = "6e1cb5311aa17ddc2ed9e4fd30e042d4c592b359",
+-    remote = "https://github.com/google/cel-cpp",
+-)
+-
+-multiple_version_override(
+-    module_name = "rules_swift",
+-    versions = [
+-        "2.4.0",
+-        "3.0.2",
+-    ],
+-)
+diff --git a/cel-c/BUILD b/cel-c/BUILD
+index 9ab4544..b4082da 100644
+--- a/cel-c/BUILD
++++ b/cel-c/BUILD
+@@ -34,6 +34,9 @@ package_group(
+     includes = [
+         ":internal",
+     ],
++    packages = [
++        "public",
++    ],
+ )
+ 
+ package_group(
+diff --git a/cel-c/internal/message_equality.cc b/cel-c/internal/message_equality.cc
+index 409c6b2..599be4b 100644
+--- a/cel-c/internal/message_equality.cc
++++ b/cel-c/internal/message_equality.cc
+@@ -69,12 +69,15 @@ _cel_MessageEqualityState_Arena(_cel_MessageEqualityState* cel_nonnull state) {
+   return arena;
+ }
+ 
++// Must be last.
++#include "upb/port/def.inc"
++
+ CEL_ATTRIBUTE_NODISCARD
+ static bool _cel_MessageEqualityState_UnknownEquals(
+     _cel_MessageEqualityState* cel_nonnull state,
+     const upb_Message* cel_nonnull lhs, const upb_Message* cel_nonnull rhs) {
+   upb_UnknownCompareResult result =
+-      _upb_Message_UnknownFieldsAreEqual(lhs, rhs, state->depth);
++      UPB_PRIVATE(_upb_Message_UnknownFieldsAreEqual)(lhs, rhs, state->depth);
+   switch (result) {
+     case kUpb_UnknownCompareResult_Equal:
+       return true;
+@@ -90,6 +93,8 @@ static bool _cel_MessageEqualityState_UnknownEquals(
+   }
+ }
+ 
++#include "upb/port/undef.inc"
++
+ CEL_ATTRIBUTE_NODISCARD
+ static bool _cel_MessageEqualityState_FieldHomoEquals(
+     _cel_MessageEqualityState* cel_nonnull state, upb_MessageValue lhs_val,
+diff --git a/cel-c/status.cc b/cel-c/status.cc
+index e90fbd9..54a9bc7 100644
+--- a/cel-c/status.cc
++++ b/cel-c/status.cc
+@@ -73,10 +73,24 @@ static CEL_NONNULL(_cel_StatusRep*)
+   return (_cel_StatusRep*)status;
+ }
+ 
++#ifndef __cplusplus
+ #define _cel_Status_Rep(status)                 \
+   (_Generic((status),                           \
+        const cel_Status*: _cel_Status_ConstRep, \
+        cel_Status*: _cel_Status_MutableRep)((status)))
++#else
++CEL_ATTRIBUTE_NODISCARD
++static CEL_INLINE CEL_NONNULL(const _cel_StatusRep*)
++    _cel_Status_Rep(CEL_NONNULL(const cel_Status*) status) {
++  return _cel_Status_ConstRep(status);
++}
++
++CEL_ATTRIBUTE_NODISCARD
++static CEL_INLINE CEL_NONNULL(_cel_StatusRep*)
++    _cel_Status_Rep(CEL_NONNULL(cel_Status*) status) {
++  return _cel_Status_MutableRep(status);
++}
++#endif
+ 
+ static void _cel_StatusRepPayload_Construct(CEL_NONNULL(_cel_StatusRepPayload*)
+                                                 payload) {
