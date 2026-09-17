@@ -1,0 +1,84 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["APPLE_LICENSE"])
+
+cc_library(
+    name = "migcom_headers",
+    hdrs = [
+        "migcom.tproj/alloc.h",
+        "migcom.tproj/error.h",
+        "migcom.tproj/global.h",
+        "migcom.tproj/lexxer.h",
+        "migcom.tproj/mig_errors.h",
+        "migcom.tproj/mig_machine.h",
+        "migcom.tproj/routine.h",
+        "migcom.tproj/statement.h",
+        "migcom.tproj/strdefs.h",
+        "migcom.tproj/type.h",
+        "migcom.tproj/utils.h",
+        "migcom.tproj/write.h",
+    ],
+    strip_include_prefix = "migcom.tproj",
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["@sentry_native//bazel/apple_mig:__pkg__"],
+)
+
+cc_library(
+    name = "migcom_non_apple_headers",
+    hdrs = glob(["compat/non_apple/**/*.h"]),
+    strip_include_prefix = "compat/non_apple",
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["@sentry_native//bazel/apple_mig:__pkg__"],
+)
+
+cc_binary(
+    name = "migcom",
+    srcs = [
+        "migcom.tproj/error.c",
+        "migcom.tproj/global.c",
+        "migcom.tproj/header.c",
+        "migcom.tproj/mig.c",
+        "migcom.tproj/routine.c",
+        "migcom.tproj/server.c",
+        "migcom.tproj/statement.c",
+        "migcom.tproj/string.c",
+        "migcom.tproj/type.c",
+        "migcom.tproj/user.c",
+        "migcom.tproj/utils.c",
+    ],
+    defines = ["MIG_VERSION=\\\"bootstrap_cmds-138\\\""],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":migcom_headers",
+        "@sentry_native//bazel/apple_mig:migcom_parser",
+    ] + select({
+        "@platforms//os:linux": [":migcom_non_apple_headers"],
+        "//conditions:default": [],
+    }),
+)
+
+sh_binary(
+    name = "mig",
+    srcs = ["migcom.tproj/mig.sh"],
+    data = [":migcom"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)

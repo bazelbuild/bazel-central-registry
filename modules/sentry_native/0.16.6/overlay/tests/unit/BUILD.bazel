@@ -1,0 +1,132 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//bazel:adjacent_executable.bzl", "adjacent_executable")
+
+adjacent_executable(
+    name = "crashpad_handler",
+    src = "//:crashpad_handler",
+    target_compatible_with = select({
+        "//config:backend_crashpad_or_auto_stacktrace_disabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+adjacent_executable(
+    name = "sentry-crash",
+    src = "//:sentry_crash",
+    target_compatible_with = select({
+        "//config:backend_native": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_test(
+    name = "sentry_test_unit",
+    srcs = [
+        "main.c",
+        "sentry_testsupport.h",
+        "test_app_hang.c",
+        "test_attachments.c",
+        "test_basic.c",
+        "test_batcher.c",
+        "test_cache.c",
+        "test_client_report.c",
+        "test_concurrency.c",
+        "test_consent.c",
+        "test_embedded_info.c",
+        "test_envelopes.c",
+        "test_failures.c",
+        "test_feedback.c",
+        "test_fuzzfailures.c",
+        "test_http_transport.c",
+        "test_info.c",
+        "test_logger.c",
+        "test_logs.c",
+        "test_metrics.c",
+        "test_modulefinder.c",
+        "test_mpack.c",
+        "test_native_backend.c",
+        "test_options.c",
+        "test_os.c",
+        "test_path.c",
+        "test_process.c",
+        "test_ratelimiter.c",
+        "test_retry.c",
+        "test_ringbuffer.c",
+        "test_sampling.c",
+        "test_scope.c",
+        "test_session.c",
+        "test_slice.c",
+        "test_string.c",
+        "test_symbolizer.c",
+        "test_sync.c",
+        "test_tracing.c",
+        "test_tus.c",
+        "test_uninit.c",
+        "test_unwinder.c",
+        "test_utils.c",
+        "test_uuid.c",
+        "test_value.c",
+        "test_writer.c",
+        "tests.inc",
+    ],
+    args = select({
+        "//config:transport_none": [
+            "--skip",
+            "basic_transport_thread_name",
+            "cache_keep",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:transport_compression_enabled": [
+            "--skip",
+            "tus_placeholder_uses_raw_location",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        # Upstream's assertion still expects the global default. The pinned
+        # implementation deliberately disables crash-time logging only for
+        # Breakpad on macOS to avoid stdio deadlocks in suspended threads.
+        "//config:backend_breakpad_macos": [
+            "--skip",
+            "options_logger_enabled_when_crashed_default",
+        ],
+        "//conditions:default": [],
+    }),
+    # External-module compile paths use "external/<canonical-name>/..." while
+    # their runfiles are a sibling of the test's _main working directory.
+    # Upstream derives fixture paths from __FILE__, so map that execroot prefix
+    # to the matching sibling-runfiles path.
+    copts = [
+        "-ffile-prefix-map=external/=../",
+        "-fmacro-prefix-map=external/=../",
+    ],
+    data = [
+        "tests.inc",
+        "//tests/fixtures:unit_data",
+        "//tests/fuzzing-failures:corpus",
+    ] + select({
+        "//config:backend_crashpad_or_auto_stacktrace_disabled": [":crashpad_handler"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:backend_native": [":sentry-crash"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-E,--build-id=sha1"],
+        "//conditions:default": [],
+    }),
+    deps = ["//:_sentry_unittest_impl"],
+)
+
+cc_test(
+    name = "compression_test",
+    srcs = ["compression_test.c"],
+    target_compatible_with = select({
+        "//config:transport_compression_enabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//:_sentry_unittest_impl",
+        "@zlib",
+    ],
+)

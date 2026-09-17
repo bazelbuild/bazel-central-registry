@@ -1,0 +1,6 @@
+#ifndef SENTRY_TESTS_BREAKPAD_CRASH_ARTIFACT_FIXTURE_H_INCLUDED
+#define SENTRY_TESTS_BREAKPAD_CRASH_ARTIFACT_FIXTURE_H_INCLUDED
+
+int sentry_breakpad_crash_artifact_test(void);
+
+#endif

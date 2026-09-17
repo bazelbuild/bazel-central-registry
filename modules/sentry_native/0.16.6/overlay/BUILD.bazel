@@ -1,0 +1,1527 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load(
+    "//bazel:breakpad_sources.bzl",
+    "BREAKPAD_HEADERS_COMMON",
+    "BREAKPAD_HEADERS_LINUX",
+    "BREAKPAD_HEADERS_MACOS",
+    "BREAKPAD_SOURCES_CLIENT_APPLE",
+    "BREAKPAD_SOURCES_CLIENT_LINUX",
+    "BREAKPAD_SOURCES_CLIENT_MAC",
+    "BREAKPAD_SOURCES_COMMON",
+    "BREAKPAD_SOURCES_COMMON_APPLE",
+    "BREAKPAD_SOURCES_COMMON_LINUX",
+    "BREAKPAD_SOURCES_COMMON_LINUX_GETCONTEXT",
+    "BREAKPAD_SOURCES_COMMON_MAC",
+)
+load(
+    "//bazel:crashpad_handler_sources.bzl",
+    "CRASHPAD_HANDLER_COMMON_HDRS",
+    "CRASHPAD_HANDLER_COMMON_SRCS",
+    "CRASHPAD_HANDLER_LINUX_HDRS",
+    "CRASHPAD_HANDLER_LINUX_SRCS",
+    "CRASHPAD_HANDLER_MACOS_HDRS",
+    "CRASHPAD_HANDLER_MACOS_SRCS",
+    "CRASHPAD_MINIDUMP_HDRS",
+    "CRASHPAD_MINIDUMP_SRCS",
+    "CRASHPAD_SNAPSHOT_COMMON_HDRS",
+    "CRASHPAD_SNAPSHOT_COMMON_SRCS",
+    "CRASHPAD_SNAPSHOT_LINUX_HDRS",
+    "CRASHPAD_SNAPSHOT_LINUX_SRCS",
+    "CRASHPAD_SNAPSHOT_MACOS_HDRS",
+    "CRASHPAD_SNAPSHOT_MACOS_SRCS",
+    "CRASHPAD_SNAPSHOT_MACOS_TEXTUAL_HDRS",
+    "CRASHPAD_SNAPSHOT_X86_HDRS",
+    "CRASHPAD_SNAPSHOT_X86_SRCS",
+)
+load("//bazel:crashpad_mig.bzl", "crashpad_mig")
+load(
+    "//bazel:crashpad_sources.bzl",
+    "CRASHPAD_CLIENT_COMMON_HDRS",
+    "CRASHPAD_CLIENT_COMMON_SRCS",
+    "CRASHPAD_CLIENT_LINUX_HDRS",
+    "CRASHPAD_CLIENT_LINUX_SRCS",
+    "CRASHPAD_CLIENT_MACOS_HDRS",
+    "CRASHPAD_CLIENT_MACOS_OBJC_SRCS",
+    "CRASHPAD_CLIENT_MACOS_SRCS",
+    "CRASHPAD_COMPAT_COMMON_HDRS",
+    "CRASHPAD_COMPAT_LINUX_SHADOW_HDRS",
+    "CRASHPAD_COMPAT_MACOS_HDRS",
+    "CRASHPAD_UTIL_COMMON_HDRS",
+    "CRASHPAD_UTIL_COMMON_SRCS",
+    "CRASHPAD_UTIL_LINUX_HDRS",
+    "CRASHPAD_UTIL_LINUX_SRCS",
+    "CRASHPAD_UTIL_MACOS_HDRS",
+    "CRASHPAD_UTIL_MACOS_OBJC_SRCS",
+    "CRASHPAD_UTIL_MACOS_SRCS",
+    "CRASHPAD_UTIL_POSIX_HDRS",
+    "CRASHPAD_UTIL_POSIX_SRCS",
+    "MINI_CHROMIUM_COMMON_HDRS",
+    "MINI_CHROMIUM_COMMON_SRCS",
+    "MINI_CHROMIUM_MACOS_HDRS",
+    "MINI_CHROMIUM_MACOS_OBJC_SRCS",
+    "MINI_CHROMIUM_MACOS_SRCS",
+    "MINI_CHROMIUM_POSIX_HDRS",
+    "MINI_CHROMIUM_POSIX_SRCS",
+    "crashpad_compat_strip_prefix",
+    "crashpad_copts",
+    "crashpad_supported_platforms",
+)
+load(
+    "//bazel:sentry_sources.bzl",
+    "BACKEND_SRCS",
+    "COMMON_PRIVATE_HDRS",
+    "COMMON_SRCS",
+    "DEFAULT_FEATURE_SRCS",
+    "INTEGRATION_SRCS",
+    "LINUX_SRCS",
+    "MACOS_SRCS",
+    "NATIVE_BACKEND_PRIVATE_HDRS",
+    "NATIVE_DAEMON_COMMON_SRCS",
+    "NATIVE_DAEMON_LINUX_SRCS",
+    "NATIVE_DAEMON_MACOS_SRCS",
+    "NATIVE_DAEMON_PRIVATE_HDRS",
+    "SCREENSHOT_SRCS",
+    "TRANSPORT_SRCS",
+    "UNIX_SRCS",
+)
+
+package(default_visibility = ["//visibility:private"])
+
+_SENTRY_SUPPORTED_PLATFORMS = select({
+    "//config:linux_aarch64": [],
+    "//config:linux_x86_64": [],
+    "//config:macos_aarch64": [],
+    "//config:macos_x86_64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "@rules_cc//cc/libc:glibc": [],
+    "@rules_cc//cc/libc:macosx": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# The settings accept values for deferred platforms so the public configuration
+# contract does not need to change when those platforms are ported. Reject the
+# currently unsupported combinations at each public SDK entry point.
+_SENTRY_SUPPORTED_CONFIGURATION = _SENTRY_SUPPORTED_PLATFORMS + select({
+    "//config:backend_breakpad": [],
+    "//config:backend_crashpad_or_auto_stacktrace_disabled": [],
+    "//config:backend_custom": [],
+    "//config:backend_inproc": [],
+    "//config:backend_native": [],
+    "//config:backend_none": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//config:transport_auto": [],
+    "//config:transport_curl": [],
+    "//config:transport_custom": [],
+    "//config:transport_none": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    "//config:screenshot_auto": [],
+    "//config:screenshot_custom": [],
+    "//config:screenshot_none": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+cc_library(
+    name = "crashpad_interface",
+    defines = [
+        "CRASHPAD_FLOCK_ALWAYS_SUPPORTED=1",
+        "CRASHPAD_LSS_SOURCE_EMBEDDED",
+    ] + select({
+        "@platforms//os:linux": [
+            "_FILE_OFFSET_BITS=64",
+            "_LARGEFILE64_SOURCE",
+            "_LARGEFILE_SOURCE",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "external/crashpad",
+        "external/crashpad/third_party/mini_chromium/mini_chromium",
+    ],
+)
+
+objc_library(
+    name = "_mini_chromium_macos_objc_archive",
+    srcs = MINI_CHROMIUM_MACOS_OBJC_SRCS,
+    hdrs = MINI_CHROMIUM_COMMON_HDRS + MINI_CHROMIUM_POSIX_HDRS + MINI_CHROMIUM_MACOS_HDRS,
+    copts = [
+        "-std=c++17",
+        "-fobjc-arc",
+        "-fno-objc-arc-exceptions",
+        "-Wno-deprecated-declarations",
+    ],
+    includes = [
+        "external/crashpad/third_party/mini_chromium",
+        "external/crashpad/third_party/mini_chromium/mini_chromium",
+    ],
+    sdk_frameworks = [
+        "ApplicationServices",
+        "CoreFoundation",
+        "Foundation",
+        "IOKit",
+        "Security",
+    ],
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":crashpad_interface"],
+)
+
+cc_import(
+    name = "_mini_chromium_macos_objc",
+    static_library = ":_mini_chromium_macos_objc_archive",
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "mini_chromium",
+    srcs = MINI_CHROMIUM_COMMON_SRCS + MINI_CHROMIUM_POSIX_SRCS + select({
+        "@platforms//os:macos": MINI_CHROMIUM_MACOS_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = MINI_CHROMIUM_COMMON_HDRS + MINI_CHROMIUM_POSIX_HDRS + select({
+        "@platforms//os:macos": MINI_CHROMIUM_MACOS_HDRS,
+        "//conditions:default": [],
+    }),
+    copts = crashpad_copts(),
+    includes = [
+        "external/crashpad/third_party/mini_chromium",
+        "external/crashpad/third_party/mini_chromium/mini_chromium",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": [
+            "-framework ApplicationServices",
+            "-framework CoreFoundation",
+            "-framework Foundation",
+            "-framework IOKit",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [":crashpad_interface"] + select({
+        "@platforms//os:macos": [":_mini_chromium_macos_objc"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "_breakpad_lss",
+    hdrs = ["external/third_party/lss/linux_syscall_support.h"],
+    include_prefix = "third_party",
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "breakpad_client",
+    srcs = BREAKPAD_SOURCES_COMMON + select({
+        "@platforms//os:linux": BREAKPAD_SOURCES_COMMON_LINUX + BREAKPAD_SOURCES_COMMON_LINUX_GETCONTEXT + BREAKPAD_SOURCES_CLIENT_LINUX,
+        "@platforms//os:macos": BREAKPAD_SOURCES_COMMON_APPLE + BREAKPAD_SOURCES_COMMON_MAC + BREAKPAD_SOURCES_CLIENT_APPLE + BREAKPAD_SOURCES_CLIENT_MAC,
+        "//conditions:default": [],
+    }),
+    hdrs = BREAKPAD_HEADERS_COMMON + select({
+        "@platforms//os:linux": BREAKPAD_HEADERS_LINUX,
+        "@platforms//os:macos": BREAKPAD_HEADERS_MACOS,
+        "//conditions:default": [],
+    }),
+    copts = ["-std=c++17"] + select({
+        "@platforms//os:linux": ["-fPIC"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        ".",
+        "external/breakpad/src",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": [
+            "-framework",
+            "CoreFoundation",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = ["SENTRY_BACKEND_BREAKPAD"],
+    target_compatible_with = select({
+        "//config:linux_aarch64": [],
+        "//config:linux_x86_64": [],
+        "//config:macos_aarch64": [],
+        "//config:macos_x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//:__pkg__"],
+    deps = select({
+        "@platforms//os:linux": ["_breakpad_lss"],
+        "@platforms//os:macos": [
+            "_breakpad_mach_ipc",
+            "//bazel:breakpad_core_services_compat",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# rules_cc's cc_library intentionally rejects Objective-C++ sources. Keep the
+# one upstream .mm compilation in a native rules_cc objc_library and propagate
+# its CcInfo through breakpad_client.
+objc_library(
+    name = "_breakpad_mach_ipc",
+    srcs = ["external/breakpad/src/common/mac/MachIPC.mm"],
+    hdrs = [
+        "external/breakpad/src/common/mac/MachIPC.h",
+        "external/breakpad/src/common/mac/bootstrap_compat.h",
+        "external/breakpad/src/common/memory_allocator.h",
+    ],
+    copts = ["-std=c++17"],
+    includes = [
+        ".",
+        "external/breakpad/src",
+    ],
+    target_compatible_with = select({
+        "//config:macos_aarch64": [],
+        "//config:macos_x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["//bazel:breakpad_core_services_compat"],
+)
+
+# Crashpad's libc and SDK wrappers depend on #include_next, so their roots must
+# precede the toolchain's system headers. Virtual include trees from ordinary
+# header-only cc_library targets provide that ordering on Bazel 8 and 9.
+# Bazel normalizes the reserved physical external/crashpad prefix away when the
+# repository is consumed as a module, so the helper selects the corresponding
+# root- or external-repository prefix.
+cc_library(
+    name = "_crashpad_compat_linux_shadow_headers",
+    hdrs = CRASHPAD_COMPAT_LINUX_SHADOW_HDRS,
+    strip_include_prefix = crashpad_compat_strip_prefix("linux"),
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "_crashpad_compat_macos_shadow_headers",
+    hdrs = CRASHPAD_COMPAT_MACOS_HDRS,
+    strip_include_prefix = crashpad_compat_strip_prefix("mac"),
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "_crashpad_compat_non_mac_headers",
+    hdrs = ["external/crashpad/compat/non_mac/mach/mach.h"],
+    strip_include_prefix = crashpad_compat_strip_prefix("non_mac"),
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+cc_library(
+    name = "crashpad_compat",
+    srcs = select({
+        "@platforms//os:linux": ["external/crashpad/compat/linux/sys/mman_memfd_create.cc"],
+        "//conditions:default": [],
+    }),
+    hdrs = CRASHPAD_COMPAT_COMMON_HDRS,
+    copts = crashpad_copts(),
+    includes = ["external/crashpad/compat/non_win"],
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = select({
+        "@platforms//os:linux": ["external/crashpad/util/misc/no_cfi_icall.h"],
+        "//conditions:default": [],
+    }),
+    deps = select({
+        "@platforms//os:linux": [
+            ":_crashpad_compat_linux_shadow_headers",
+            ":_crashpad_compat_non_mac_headers",
+            ":crashpad_interface",
+            ":mini_chromium",
+        ],
+        "@platforms//os:macos": [":_crashpad_compat_macos_shadow_headers"],
+        "//conditions:default": [],
+    }),
+)
+
+# CMake exposes an INTERFACE target on all non-MSVC platforms.
+cc_library(
+    name = "crashpad_getopt",
+)
+
+cc_library(
+    name = "crashpad_mpack",
+    srcs = ["external/crashpad/third_party/mpack/mpack.cc"],
+    hdrs = ["external/crashpad/third_party/mpack/mpack.h"],
+    copts = crashpad_copts(),
+    includes = ["external/crashpad/third_party/mpack"],
+    deps = [":crashpad_interface"],
+)
+
+# The sentry-native CMake default on Linux and macOS uses the system zlib.
+# In Bzlmod, @zlib is the declared, hermetic equivalent of that dependency.
+cc_library(
+    name = "crashpad_zlib",
+    hdrs = ["external/crashpad/third_party/zlib/zlib_crashpad.h"],
+    defines = [
+        "CRASHPAD_ZLIB_SOURCE_SYSTEM",
+        "ZLIB_CONST",
+    ],
+    includes = ["external/crashpad"],
+    deps = ["@zlib"],
+)
+
+cc_library(
+    name = "crashpad_tools",
+    srcs = ["external/crashpad/tools/tool_support.cc"],
+    hdrs = ["external/crashpad/tools/tool_support.h"],
+    copts = crashpad_copts(),
+    textual_hdrs = ["external/crashpad/package.h"],
+    deps = [
+        ":crashpad_interface",
+        ":mini_chromium",
+    ],
+)
+
+cc_library(
+    name = "crashpad_lss",
+    hdrs = [
+        "external/crashpad/third_party/lss/lss.h",
+        "external/crashpad/third_party/lss/lss/linux_syscall_support.h",
+    ],
+    includes = ["external/crashpad"],
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":crashpad_interface"],
+)
+
+crashpad_mig(
+    name = "_crashpad_mig_codegen",
+    arch = select({
+        "//config:macos_aarch64": "arm64",
+        "//config:macos_x86_64": "x86_64",
+        "//conditions:default": "unsupported",
+    }),
+    child_port_defs = "external/crashpad/util/mach/child_port.defs",
+    child_port_types = "external/crashpad/util/mach/child_port_types.h",
+    compat_headers = CRASHPAD_COMPAT_MACOS_HDRS,
+    mig = "@apple_mig//:mig",
+    mig_driver = "external/crashpad/util/mach/mig.py",
+    mig_driver_support = [
+        "external/crashpad/util/mach/mig_fix.py",
+        "external/crashpad/util/mach/mig_gen.py",
+    ],
+    migcom = "@apple_mig//:migcom",
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+)
+
+filegroup(
+    name = "_crashpad_mig_headers",
+    srcs = [":_crashpad_mig_codegen"],
+    output_group = "mig_headers",
+)
+
+filegroup(
+    name = "_crashpad_mig_sources",
+    srcs = [":_crashpad_mig_codegen"],
+    output_group = "mig_sources",
+)
+
+cc_library(
+    name = "_crashpad_mig",
+    srcs = [":_crashpad_mig_sources"],
+    hdrs = [
+        "external/crashpad/util/mach/child_port_types.h",
+        ":_crashpad_mig_headers",
+    ],
+    copts = ["-Wno-unreachable-code"],
+    includes = ["mig"],
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":mini_chromium",
+    ],
+)
+
+objc_library(
+    name = "_crashpad_util_macos_objc_archive",
+    srcs = CRASHPAD_UTIL_MACOS_OBJC_SRCS,
+    hdrs = CRASHPAD_UTIL_COMMON_HDRS + CRASHPAD_UTIL_POSIX_HDRS + CRASHPAD_UTIL_MACOS_HDRS + ["external/crashpad/package.h"],
+    copts = crashpad_copts(),
+    includes = ["external/crashpad"],
+    sdk_frameworks = [
+        "CoreFoundation",
+        "Foundation",
+        "IOKit",
+    ],
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_zlib",
+        ":mini_chromium",
+    ],
+)
+
+cc_import(
+    name = "_crashpad_util_macos_objc",
+    static_library = ":_crashpad_util_macos_objc_archive",
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "crashpad_util",
+    srcs = CRASHPAD_UTIL_COMMON_SRCS + CRASHPAD_UTIL_POSIX_SRCS + select({
+        "@platforms//os:linux": CRASHPAD_UTIL_LINUX_SRCS,
+        "@platforms//os:macos": CRASHPAD_UTIL_MACOS_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = CRASHPAD_UTIL_COMMON_HDRS + CRASHPAD_UTIL_POSIX_HDRS + select({
+        "@platforms//os:linux": CRASHPAD_UTIL_LINUX_HDRS,
+        "@platforms//os:macos": CRASHPAD_UTIL_MACOS_HDRS,
+        "//conditions:default": [],
+    }),
+    copts = crashpad_copts() + select({
+        "@platforms//os:linux": ["-Wno-nontrivial-memcall"],
+        "//conditions:default": [],
+    }),
+    includes = ["external/crashpad"],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "@platforms//os:macos": [
+            "-lbsm",
+            "-framework CoreFoundation",
+            "-framework Foundation",
+            "-framework IOKit",
+        ],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = [
+        "external/crashpad/package.h",
+        "external/crashpad/util/misc/arm64_pac_bti.S",
+    ],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_mpack",
+        ":crashpad_zlib",
+        ":mini_chromium",
+    ] + select({
+        "@platforms//os:linux": [
+            ":crashpad_lss",
+            "@curl//:curl_shared_lib_headers",
+        ],
+        "@platforms//os:macos": [
+            ":_crashpad_mig",
+            ":_crashpad_util_macos_objc",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+objc_library(
+    name = "_crashpad_client_macos_objc_archive",
+    srcs = CRASHPAD_CLIENT_MACOS_OBJC_SRCS,
+    hdrs = CRASHPAD_CLIENT_COMMON_HDRS + CRASHPAD_CLIENT_MACOS_HDRS,
+    copts = crashpad_copts(),
+    includes = ["external/crashpad"],
+    sdk_frameworks = ["Foundation"],
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_util",
+        ":mini_chromium",
+    ],
+)
+
+cc_import(
+    name = "_crashpad_client_macos_objc",
+    static_library = ":_crashpad_client_macos_objc_archive",
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "crashpad_client",
+    srcs = CRASHPAD_CLIENT_COMMON_SRCS + select({
+        "@platforms//os:linux": CRASHPAD_CLIENT_LINUX_SRCS,
+        "@platforms//os:macos": CRASHPAD_CLIENT_MACOS_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = CRASHPAD_CLIENT_COMMON_HDRS + select({
+        "@platforms//os:linux": CRASHPAD_CLIENT_LINUX_HDRS,
+        "@platforms//os:macos": CRASHPAD_CLIENT_MACOS_HDRS,
+        "//conditions:default": [],
+    }),
+    copts = crashpad_copts(),
+    includes = ["external/crashpad"],
+    target_compatible_with = crashpad_supported_platforms(),
+    visibility = ["//:__pkg__"],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_util",
+        ":mini_chromium",
+    ] + select({
+        "@platforms//os:linux": [":crashpad_lss"],
+        "@platforms//os:macos": [":_crashpad_client_macos_objc"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_test(
+    name = "crashpad_client_link_test",
+    srcs = ["//bazel:crashpad_client_link_test.cc"],
+    target_compatible_with = crashpad_supported_platforms(),
+    deps = [":crashpad_client"],
+)
+
+cc_library(
+    name = "crashpad_snapshot",
+    srcs = CRASHPAD_SNAPSHOT_COMMON_SRCS + select({
+        "@platforms//os:linux": CRASHPAD_SNAPSHOT_LINUX_SRCS,
+        "@platforms//os:macos": CRASHPAD_SNAPSHOT_MACOS_SRCS,
+        "//conditions:default": [],
+    }) + select({
+        "//config:linux_x86_64": CRASHPAD_SNAPSHOT_X86_SRCS,
+        "//config:macos_x86_64": CRASHPAD_SNAPSHOT_X86_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = CRASHPAD_SNAPSHOT_COMMON_HDRS + select({
+        "@platforms//os:linux": CRASHPAD_SNAPSHOT_LINUX_HDRS,
+        "@platforms//os:macos": CRASHPAD_SNAPSHOT_MACOS_HDRS,
+        "//conditions:default": [],
+    }) + select({
+        "//config:linux_x86_64": CRASHPAD_SNAPSHOT_X86_HDRS,
+        "//config:macos_x86_64": CRASHPAD_SNAPSHOT_X86_HDRS,
+        "//conditions:default": [],
+    }),
+    copts = crashpad_copts(),
+    includes = ["external/crashpad"],
+    textual_hdrs = select({
+        "@platforms//os:macos": CRASHPAD_SNAPSHOT_MACOS_TEXTUAL_HDRS,
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":crashpad_client",
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_util",
+        ":mini_chromium",
+    ],
+)
+
+cc_library(
+    name = "crashpad_minidump",
+    srcs = CRASHPAD_MINIDUMP_SRCS,
+    hdrs = CRASHPAD_MINIDUMP_HDRS,
+    copts = crashpad_copts(),
+    includes = ["external/crashpad"],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_snapshot",
+        ":crashpad_util",
+        ":mini_chromium",
+    ],
+)
+
+cc_library(
+    name = "crashpad_handler_lib",
+    srcs = CRASHPAD_HANDLER_COMMON_SRCS + select({
+        "@platforms//os:linux": CRASHPAD_HANDLER_LINUX_SRCS,
+        "@platforms//os:macos": CRASHPAD_HANDLER_MACOS_SRCS,
+        "//conditions:default": [],
+    }),
+    hdrs = CRASHPAD_HANDLER_COMMON_HDRS + select({
+        "@platforms//os:linux": CRASHPAD_HANDLER_LINUX_HDRS,
+        "@platforms//os:macos": CRASHPAD_HANDLER_MACOS_HDRS,
+        "//conditions:default": [],
+    }),
+    copts = crashpad_copts(),
+    includes = ["external/crashpad"],
+    deps = [
+        ":crashpad_compat",
+        ":crashpad_interface",
+        ":crashpad_minidump",
+        ":crashpad_snapshot",
+        ":crashpad_tools",
+        ":crashpad_util",
+        ":mini_chromium",
+    ],
+)
+
+# Crashpad intentionally discovers libcurl with dlopen() on Linux. Give the
+# handler a Bazel-owned shared object and runtime search path so it does not
+# depend on an ambient system libcurl. The anchor's undefined curl_version
+# reference keeps the dynamic dependency despite the handler's dlsym-based API.
+cc_import(
+    name = "_crashpad_curl_runtime",
+    shared_library = "@curl//:curl_shared",
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_crashpad_curl_runtime_anchor",
+    srcs = ["//bazel:crashpad_curl_runtime_anchor.c"],
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":_crashpad_curl_runtime",
+        "@curl//:curl_shared_lib_headers",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "crashpad_handler",
+    srcs = ["external/crashpad/handler/main.cc"] + select({
+        "@platforms//os:linux": ["external/crashpad/client/pthread_create_linux.cc"],
+        "//conditions:default": [],
+    }),
+    copts = crashpad_copts(),
+    linkstatic = True,
+    target_compatible_with = crashpad_supported_platforms() + select({
+        "//config:crashpad_stacktrace_disabled": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":crashpad_client",
+        ":crashpad_getopt",
+        ":crashpad_handler_lib",
+        ":crashpad_interface",
+        ":crashpad_minidump",
+        ":crashpad_snapshot",
+        ":crashpad_tools",
+        ":crashpad_util",
+        ":mini_chromium",
+    ] + select({
+        "@platforms//os:linux": [":_crashpad_curl_runtime_anchor"],
+        "//conditions:default": [],
+    }),
+)
+
+_SENTRY_IMPLEMENTATION_SRCS = COMMON_SRCS + UNIX_SRCS + DEFAULT_FEATURE_SRCS + select({
+    "@platforms//os:linux": LINUX_SRCS,
+    "@platforms//os:macos": MACOS_SRCS,
+    "//conditions:default": [],
+}) + select({
+    "//config:backend_breakpad": [],
+    "//config:backend_crashpad_or_auto": [],
+    "//config:backend_custom": [],
+    "//config:backend_inproc": BACKEND_SRCS["inproc"],
+    "//config:backend_native": BACKEND_SRCS["native"],
+    "//config:backend_none": BACKEND_SRCS["none"],
+    "//conditions:default": [],
+}) + select({
+    "//config:transport_auto": TRANSPORT_SRCS["curl"],
+    "//config:transport_curl": TRANSPORT_SRCS["curl"],
+    "//config:transport_custom": [],
+    "//config:transport_none": TRANSPORT_SRCS["none"],
+    "//conditions:default": [],
+}) + select({
+    "//config:screenshot_auto": SCREENSHOT_SRCS["none"],
+    "//config:screenshot_custom": [],
+    "//config:screenshot_none": SCREENSHOT_SRCS["none"],
+    "//conditions:default": [],
+})
+
+_SENTRY_IMPLEMENTATION_DEFINES = [
+    "SENTRY_BATCHER_BUFFER_COUNT=$(SENTRY_BATCHER_BUFFER_COUNT_VALUE)",
+    "SENTRY_HANDLER_STACK_SIZE=$(SENTRY_HANDLER_STACK_SIZE_VALUE)",
+] + select({
+    "//config:linux_aarch64": [
+        "SENTRY_WITH_UNWINDER_LIBUNWIND",
+        "SIZEOF_LONG=8",
+    ],
+    "//config:linux_x86_64": [
+        "SENTRY_WITH_UNWINDER_LIBUNWIND",
+        "SIZEOF_LONG=8",
+    ],
+    "//config:macos_aarch64": [
+        "SENTRY_WITH_UNWINDER_LIBUNWIND_MAC",
+        "SIZEOF_LONG=8",
+    ],
+    "//config:macos_x86_64": [
+        "SENTRY_WITH_UNWINDER_LIBUNWIND_MAC",
+        "SIZEOF_LONG=8",
+    ],
+    "//conditions:default": [],
+}) + select({
+    "//config:backend_breakpad": ["SENTRY_BACKEND_BREAKPAD"],
+    "//config:backend_crashpad_or_auto": ["SENTRY_BACKEND_CRASHPAD"],
+    "//config:backend_inproc": [
+        "SENTRY_BACKEND_INPROC",
+        "SENTRY_WITH_INPROC_BACKEND",
+    ],
+    "//config:backend_native": [
+        "SENTRY_BACKEND_NATIVE",
+        "SENTRY_WITH_NATIVE_BACKEND",
+    ],
+    "//config:backend_none": [],
+    "//conditions:default": [],
+}) + select({
+    "//config:screenshot_auto": ["SENTRY_SCREENSHOT_NONE"],
+    "//config:screenshot_custom": ["SENTRY_SCREENSHOT_CUSTOM"],
+    "//config:screenshot_none": ["SENTRY_SCREENSHOT_NONE"],
+    "//conditions:default": [],
+}) + select({
+    "//config:sentry_curl_linked": ["SENTRY_LINK_CURL"],
+    "//conditions:default": [],
+}) + select({
+    "//config:transport_compression_enabled": ["SENTRY_TRANSPORT_COMPRESSION"],
+    "//conditions:default": [],
+}) + select({
+    "//config:integration_platform_enabled": ["SENTRY_INTEGRATION_PLATFORM"],
+    "//conditions:default": [],
+}) + select({
+    "//config:integration_qt_enabled": ["SENTRY_INTEGRATION_QT"],
+    "//conditions:default": [],
+}) + select({
+    "//config:embed_info_enabled": ["SENTRY_EMBED_INFO=1"],
+    "//conditions:default": [],
+})
+
+_SENTRY_STATIC_LINK_DEPS = [":_sentry_mpack"] + select({
+    "//config:embed_info_enabled": [":_sentry_embedded_info_static"],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//os:linux": ["//config:libunwind"],
+    "//conditions:default": [],
+}) + select({
+    "//config:backend_breakpad": [":_sentry_breakpad_backend"],
+    "//config:backend_crashpad_or_auto": [":_sentry_crashpad_backend"],
+    "//config:backend_custom": ["//config:custom_backend"],
+    "//conditions:default": [],
+}) + select({
+    "//config:sentry_curl_linked": ["@curl//:curl"],
+    "//config:sentry_curl_runtime_loaded": ["@curl//:curl_shared_lib_headers"],
+    "//conditions:default": [],
+}) + select({
+    "//config:transport_compression_enabled": ["@zlib//:zlib"],
+    "//conditions:default": [],
+}) + select({
+    "//config:transport_custom": ["//config:custom_transport"],
+    "//conditions:default": [],
+}) + select({
+    "//config:screenshot_custom": ["//config:custom_screenshot"],
+    "//conditions:default": [],
+}) + select({
+    "//config:integration_platform_enabled": ["//config:platform_integration"],
+    "//conditions:default": [],
+}) + select({
+    "//config:integration_qt_enabled": [":_sentry_qt_integration"],
+    "//conditions:default": [],
+})
+
+_SENTRY_SHARED_LINK_DEPS = [":_sentry_mpack"] + select({
+    "//config:embed_info_enabled": [":_sentry_embedded_info_shared"],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//os:linux": ["//config:libunwind"],
+    "//conditions:default": [],
+}) + select({
+    "//config:backend_breakpad": [":_sentry_breakpad_backend_shared"],
+    "//config:backend_crashpad_or_auto": [":_sentry_crashpad_backend_shared"],
+    "//config:backend_custom": ["//config:custom_backend"],
+    "//conditions:default": [],
+}) + select({
+    "//config:sentry_curl_linked": ["@curl//:curl"],
+    "//config:sentry_curl_runtime_loaded": ["@curl//:curl_shared_lib_headers"],
+    "//conditions:default": [],
+}) + select({
+    "//config:transport_compression_enabled": ["@zlib//:zlib"],
+    "//conditions:default": [],
+}) + select({
+    "//config:transport_custom": ["//config:custom_transport"],
+    "//conditions:default": [],
+}) + select({
+    "//config:screenshot_custom": ["//config:custom_screenshot"],
+    "//conditions:default": [],
+}) + select({
+    "//config:integration_platform_enabled": ["//config:platform_integration"],
+    "//conditions:default": [],
+}) + select({
+    "//config:integration_qt_enabled": [":_sentry_qt_integration_shared"],
+    "//conditions:default": [],
+})
+
+_SENTRY_PRIVATE_HEADER_DEPS = [":_sentry_private_headers"] + select({
+    "//config:backend_native": [":_sentry_native_private_headers"],
+    "//conditions:default": [],
+})
+
+alias(
+    name = "sentry_crash",
+    actual = ":sentry-crash",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "sentry_extension_api",
+    hdrs = ["include/sentry.h"] + COMMON_PRIVATE_HDRS,
+    defines = [
+        "SENTRY_SDK_NAME=\\\"$(SENTRY_SDK_NAME_VALUE)\\\"",
+        "SENTRY_SDK_VERSION=\\\"$(SENTRY_SDK_VERSION_VALUE)\\\"",
+    ],
+    includes = [
+        "include",
+        "src",
+    ],
+    target_compatible_with = _SENTRY_SUPPORTED_PLATFORMS,
+    toolchains = [
+        "//config:sdk_name",
+        "//config:sdk_version",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "_sentry_breakpad_backend",
+    srcs = BACKEND_SRCS["breakpad"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ],
+    implementation_deps = [
+        ":sentry_extension_api",
+        "//config:breakpad_client",
+    ],
+    local_defines = [
+        "SENTRY_BUILD_STATIC",
+    ] + _SENTRY_IMPLEMENTATION_DEFINES,
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_breakpad_backend_shared",
+    srcs = BACKEND_SRCS["breakpad"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ],
+    implementation_deps = [
+        ":sentry_extension_api",
+        "//config:breakpad_client",
+    ],
+    local_defines = [
+        "SENTRY_BUILD_SHARED",
+    ] + _SENTRY_IMPLEMENTATION_DEFINES,
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_crashpad_backend",
+    srcs = BACKEND_SRCS["crashpad"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ],
+    data = [":crashpad_handler"],
+    implementation_deps = [
+        ":sentry_extension_api",
+        "//:crashpad_client",
+    ],
+    local_defines = [
+        "SENTRY_BUILD_STATIC",
+    ] + _SENTRY_IMPLEMENTATION_DEFINES,
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_crashpad_backend_shared",
+    srcs = BACKEND_SRCS["crashpad"],
+    copts = [
+        "-std=c++17",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ],
+    data = [":crashpad_handler"],
+    implementation_deps = [
+        ":sentry_extension_api",
+        "//:crashpad_client",
+    ],
+    local_defines = [
+        "SENTRY_BUILD_SHARED",
+    ] + _SENTRY_IMPLEMENTATION_DEFINES,
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_qt_integration",
+    srcs = INTEGRATION_SRCS["qt"],
+    copts = ["-std=c++17"],
+    implementation_deps = [
+        ":sentry_extension_api",
+        "//config:qt_core",
+    ],
+    includes = ["src"],
+    local_defines = ["SENTRY_BUILD_STATIC"],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_qt_integration_shared",
+    srcs = INTEGRATION_SRCS["qt"],
+    copts = ["-std=c++17"],
+    implementation_deps = [
+        ":sentry_extension_api",
+        "//config:qt_core",
+    ],
+    includes = ["src"],
+    local_defines = ["SENTRY_BUILD_SHARED"],
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "_sentry_embedded_info",
+    outs = ["_sentry_embedded_info.cpp"],
+    cmd = """
+set -eu
+sdk_version='$(SENTRY_SDK_VERSION_VALUE)'
+version_base="$${sdk_version%%[-+]*}"
+platform='$(SENTRY_BUILD_PLATFORM_NAME_VALUE)'
+if [ -z "$$platform" ]; then
+  platform='""" + select({
+        "@platforms//os:linux": "Linux",
+        "@platforms//os:macos": "Darwin",
+        "//conditions:default": "",
+    }) + """'
+fi
+build_id='$(SENTRY_BUILD_ID_VALUE)'
+if [ -z "$$build_id" ]; then
+  case "$$sdk_version" in
+    "$$version_base"+*) build_id="$${sdk_version#*+}" ;;
+    *) build_id='unstamped' ;;
+  esac
+fi
+build_variant='$(SENTRY_BUILD_VARIANT_VALUE)'
+printf '%s\n' \\
+  '#include "sentry.h"' \\
+  '' \\
+  'extern "C" SENTRY_API const char sentry_library_info[];' \\
+  > "$@"
+printf 'extern "C" SENTRY_API const char sentry_library_info[] = "SENTRY_VERSION:%s;PLATFORM:%s;BUILD:%s;VARIANT:%s;CONFIG:%s;END";\n' \\
+  "$$version_base" "$$platform" "$$build_id" "$$build_variant" '$(COMPILATION_MODE)' \\
+  >> "$@"
+""",
+    toolchains = [
+        "//config:build_id",
+        "//config:build_platform_name",
+        "//config:build_variant",
+        "//config:sdk_version",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_private_headers",
+    hdrs = COMMON_PRIVATE_HDRS,
+    includes = ["src"],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "_sentry_native_private_headers",
+    hdrs = NATIVE_BACKEND_PRIVATE_HDRS + NATIVE_DAEMON_PRIVATE_HDRS,
+    includes = ["src/backends/native"],
+    visibility = ["//visibility:private"],
+)
+
+# Keep the generated C++ translation unit separate from the SDK's C
+# compilation actions. Native-backend targets require GNU C language modes,
+# which Clang correctly rejects when they leak onto this C++ source.
+cc_library(
+    name = "_sentry_embedded_info_static",
+    srcs = [":_sentry_embedded_info"],
+    hdrs = ["include/sentry.h"],
+    copts = [
+        "-std=c++17",
+        "-fvisibility=hidden",
+    ],
+    local_defines = ["SENTRY_BUILD_STATIC"],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:private"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "_sentry_embedded_info_shared",
+    srcs = [":_sentry_embedded_info"],
+    hdrs = ["include/sentry.h"],
+    copts = [
+        "-std=c++17",
+        "-fvisibility=hidden",
+    ],
+    local_defines = ["SENTRY_BUILD_SHARED"],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:private"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "_sentry_mpack",
+    srcs = [
+        "src/sentry_mpack.c",
+        "src/sentry_mpack.h",
+        "vendor/mpack.h",
+    ],
+    copts = [
+        "-w",
+        "-fvisibility=hidden",
+    ],
+    includes = ["src"],
+    textual_hdrs = ["vendor/mpack.c"],
+    visibility = ["//visibility:private"],
+)
+
+cc_binary(
+    name = "sentry-crash",
+    srcs = ["include/sentry.h"] + COMMON_SRCS + UNIX_SRCS + DEFAULT_FEATURE_SRCS + COMMON_PRIVATE_HDRS + BACKEND_SRCS["native"] + NATIVE_BACKEND_PRIVATE_HDRS + NATIVE_DAEMON_COMMON_SRCS + NATIVE_DAEMON_PRIVATE_HDRS + select({
+        "@platforms//os:linux": LINUX_SRCS + NATIVE_DAEMON_LINUX_SRCS,
+        "@platforms//os:macos": MACOS_SRCS + NATIVE_DAEMON_MACOS_SRCS,
+        "//conditions:default": [],
+    }) + select({
+        "//config:transport_auto": TRANSPORT_SRCS["curl"],
+        "//config:transport_curl": TRANSPORT_SRCS["curl"],
+        "//config:transport_custom": [],
+        "//config:transport_none": TRANSPORT_SRCS["none"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:screenshot_auto": SCREENSHOT_SRCS["none"],
+        "//config:screenshot_custom": [],
+        "//config:screenshot_none": SCREENSHOT_SRCS["none"],
+        "//conditions:default": [],
+    }),
+    copts = [
+        "-std=gnu99",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ],
+    defines = [
+        "SENTRY_BUILD_STATIC",
+        "SENTRY_CRASH_DAEMON_STANDALONE",
+        "SENTRY_SDK_NAME=\\\"$(SENTRY_SDK_NAME_VALUE)\\\"",
+        "SENTRY_SDK_VERSION=\\\"$(SENTRY_SDK_VERSION_VALUE)\\\"",
+    ],
+    includes = [
+        "include",
+        "src",
+        "src/backends/native",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lrt",
+        ],
+        "@platforms//os:macos": [
+            "-framework CoreFoundation",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:link_pthread_auto": ["-lpthread"],
+        "//config:link_pthread_off": [],
+        "//config:link_pthread_on": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "SENTRY_BACKEND_NATIVE",
+        "SENTRY_BATCHER_BUFFER_COUNT=$(SENTRY_BATCHER_BUFFER_COUNT_VALUE)",
+        "SENTRY_HANDLER_STACK_SIZE=$(SENTRY_HANDLER_STACK_SIZE_VALUE)",
+        "SENTRY_WITH_NATIVE_BACKEND",
+    ] + select({
+        "//config:linux_aarch64": [
+            "SENTRY_WITH_UNWINDER_LIBUNWIND",
+            "SENTRY_WITH_UNWINDER_LIBUNWIND_REMOTE",
+            "SIZEOF_LONG=8",
+        ],
+        "//config:linux_x86_64": [
+            "SENTRY_WITH_UNWINDER_LIBUNWIND",
+            "SENTRY_WITH_UNWINDER_LIBUNWIND_REMOTE",
+            "SIZEOF_LONG=8",
+        ],
+        "//config:macos_aarch64": [
+            "SENTRY_WITH_UNWINDER_LIBUNWIND_MAC",
+            "SIZEOF_LONG=8",
+        ],
+        "//config:macos_x86_64": [
+            "SENTRY_WITH_UNWINDER_LIBUNWIND_MAC",
+            "SIZEOF_LONG=8",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:screenshot_auto": ["SENTRY_SCREENSHOT_NONE"],
+        "//config:screenshot_custom": ["SENTRY_SCREENSHOT_CUSTOM"],
+        "//config:screenshot_none": ["SENTRY_SCREENSHOT_NONE"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:sentry_crash_curl_linked": ["SENTRY_LINK_CURL"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:transport_compression_enabled": ["SENTRY_TRANSPORT_COMPRESSION"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:embed_info_enabled": ["SENTRY_EMBED_INFO=1"],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = _SENTRY_SUPPORTED_CONFIGURATION + select({
+        "//config:backend_native": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+        "//config:sdk_name",
+        "//config:sdk_version",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [":_sentry_mpack"] + select({
+        "//config:embed_info_enabled": [":_sentry_embedded_info_static"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:linux": ["//config:libunwind_remote"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:sentry_crash_curl_linked": ["@curl"],
+        "//config:sentry_crash_curl_runtime_loaded": ["@curl//:curl_shared_lib_headers"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:transport_compression_enabled": ["@zlib"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:transport_custom": ["//config:custom_transport"],
+        "//conditions:default": [],
+    }) + select({
+        "//config:screenshot_custom": ["//config:custom_screenshot"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "sentry",
+    srcs = _SENTRY_IMPLEMENTATION_SRCS,
+    hdrs = ["include/sentry.h"],
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ] + select({
+        "//config:backend_native": ["-std=gnu11"],
+        "//conditions:default": [],
+    }),
+    data = select({
+        "//config:backend_native": [":sentry_crash"],
+        "//conditions:default": [],
+    }),
+    defines = ["SENTRY_BUILD_STATIC"] + [
+        "SENTRY_SDK_NAME=\\\"$(SENTRY_SDK_NAME_VALUE)\\\"",
+        "SENTRY_SDK_VERSION=\\\"$(SENTRY_SDK_VERSION_VALUE)\\\"",
+    ],
+    implementation_deps = _SENTRY_PRIVATE_HEADER_DEPS + _SENTRY_STATIC_LINK_DEPS,
+    includes = [],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:backend_native_macos": [
+            "-framework CoreFoundation",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:link_pthread_auto": ["-lpthread"],
+        "//config:link_pthread_off": [],
+        "//config:link_pthread_on": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = _SENTRY_IMPLEMENTATION_DEFINES,
+    strip_include_prefix = "include",
+    target_compatible_with = _SENTRY_SUPPORTED_CONFIGURATION,
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+        "//config:sdk_name",
+        "//config:sdk_version",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [],
+)
+
+cc_library(
+    name = "_sentry_shared_impl",
+    srcs = _SENTRY_IMPLEMENTATION_SRCS,
+    hdrs = ["include/sentry.h"],
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ] + select({
+        "//config:backend_native": ["-std=gnu11"],
+        "//conditions:default": [],
+    }),
+    data = select({
+        "//config:backend_native": [":sentry_crash"],
+        "//conditions:default": [],
+    }),
+    defines = [
+        "SENTRY_SDK_NAME=\\\"$(SENTRY_SDK_NAME_VALUE)\\\"",
+        "SENTRY_SDK_VERSION=\\\"$(SENTRY_SDK_VERSION_VALUE)\\\"",
+    ],
+    implementation_deps = _SENTRY_PRIVATE_HEADER_DEPS + _SENTRY_SHARED_LINK_DEPS,
+    includes = [],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:backend_native_macos": [
+            "-framework CoreFoundation",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:link_pthread_auto": ["-lpthread"],
+        "//config:link_pthread_off": [],
+        "//config:link_pthread_on": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = _SENTRY_IMPLEMENTATION_DEFINES + ["SENTRY_BUILD_SHARED"],
+    strip_include_prefix = "include",
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+        "//config:sdk_name",
+        "//config:sdk_version",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [],
+)
+
+cc_shared_library(
+    name = "sentry_shared",
+    additional_linker_inputs = select({
+        "@platforms//os:linux": ["src/exports.map"],
+        "//conditions:default": [],
+    }),
+    shared_lib_name = select({
+        "@platforms//os:linux": "libsentry.so",
+        "@platforms//os:macos": "libsentry.dylib",
+        "//conditions:default": "libsentry.so",
+    }),
+    target_compatible_with = _SENTRY_SUPPORTED_CONFIGURATION,
+    user_link_flags = select({
+        "@platforms//os:linux": [
+            "-Wl,--build-id=sha1",
+            "-Wl,--version-script=$(location src/exports.map)",
+        ],
+        "@platforms//os:macos": [
+            "-Wl,-dead_strip_dylibs",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":_sentry_shared_impl"],
+)
+
+# cc_shared_library intentionally does not provide CcInfo. This wrapper is
+# the rules_cc-supported way to make the produced dynamic library and its
+# public compilation interface consumable through a normal deps edge.
+cc_library(
+    name = "sentry_shared_library",
+    srcs = [":sentry_shared"],
+    hdrs = ["include/sentry.h"],
+    data = select({
+        "//config:backend_crashpad_or_auto": [":crashpad_handler"],
+        "//config:backend_native": [":sentry_crash"],
+        "//conditions:default": [],
+    }),
+    defines = [
+        "SENTRY_SDK_NAME=\\\"$(SENTRY_SDK_NAME_VALUE)\\\"",
+        "SENTRY_SDK_VERSION=\\\"$(SENTRY_SDK_VERSION_VALUE)\\\"",
+    ],
+    strip_include_prefix = "include",
+    target_compatible_with = _SENTRY_SUPPORTED_CONFIGURATION,
+    toolchains = [
+        "//config:sdk_name",
+        "//config:sdk_version",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "_sentry_unittest_impl",
+    srcs = _SENTRY_IMPLEMENTATION_SRCS,
+    hdrs = ["include/sentry.h"] + COMMON_PRIVATE_HDRS + ["vendor/acutest.h"] + select({
+        "//config:backend_native": NATIVE_BACKEND_PRIVATE_HDRS + NATIVE_DAEMON_PRIVATE_HDRS,
+        "//conditions:default": [],
+    }),
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Wno-gnu-include-next",
+        "-Wno-multichar",
+        "-Wno-variadic-macros",
+        "-fvisibility=hidden",
+    ] + select({
+        "//config:backend_native": ["-std=gnu11"],
+        "//conditions:default": [],
+    }),
+    data = select({
+        "//config:backend_native": [":sentry_crash"],
+        "//conditions:default": [],
+    }),
+    defines = ["SENTRY_BUILD_STATIC"] + [
+        "SENTRY_SDK_NAME=\\\"$(SENTRY_SDK_NAME_VALUE)\\\"",
+        "SENTRY_SDK_VERSION=\\\"$(SENTRY_SDK_VERSION_VALUE)\\\"",
+        "SENTRY_UNITTEST",
+    ] + _SENTRY_IMPLEMENTATION_DEFINES,
+    implementation_deps = [],
+    includes = [
+        "include",
+        "src",
+    ] + select({
+        "//config:backend_native": ["src/backends/native"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:backend_native_macos": [
+            "-framework CoreFoundation",
+            "-framework Security",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//config:link_pthread_auto": ["-lpthread"],
+        "//config:link_pthread_off": [],
+        "//config:link_pthread_on": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = [],
+    strip_include_prefix = "",
+    target_compatible_with = _SENTRY_SUPPORTED_CONFIGURATION,
+    toolchains = [
+        "//config:batcher_buffer_count",
+        "//config:handler_stack_size",
+        "//config:sdk_name",
+        "//config:sdk_version",
+    ],
+    visibility = ["//tests/unit:__pkg__"],
+    deps = _SENTRY_STATIC_LINK_DEPS,
+)
