@@ -1,0 +1,237 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+# SDL's non-interactive test programs, run the way SDL's ctest runs them:
+# headless on the dummy video and audio drivers, with assertions fatal.
+# Every program test/CMakeLists.txt marks NONINTERACTIVE is here; the one
+# left out is pretest, which upstream builds for 32-bit Windows only.
+# SDL_TESTS_QUICK=1 as SDL's CI sets it for the whole ctest run.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L497-L505
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/.github/workflows/generic.yml#L244-L245
+_ENV = {
+    "SDL_ASSERT": "abort",
+    "SDL_AUDIO_DRIVER": "dummy",
+    "SDL_TESTS_QUICK": "1",
+    "SDL_VIDEO_DRIVER": "dummy",
+}
+
+# ctest runs testautomation and testplatform a second time with every CPU
+# feature masked off.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L681-L688
+_ENV_NO_SIMD = dict(
+    _ENV,
+    SDL_CPU_FEATURE_MASK = "-all",
+)
+
+# Without HAVE_BUILD_CONFIG testevdev passes without testing anything.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L144
+_DEFINES = ["HAVE_BUILD_CONFIG"]
+
+_DEPS = [
+    "@sdl3",
+    "@sdl3//:sdl3_test",
+    "@sdl3//:test_internals",
+]
+
+# SDL's tests include SDL's private headers by relative path, so
+# layering_check cannot work for them.
+_FEATURES = ["-layering_check"]
+
+# testver is C90 upstream.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L430
+_C90 = select({
+    "@rules_cc//cc/compiler:clang": ["-std=c90"],
+    "@rules_cc//cc/compiler:gcc": ["-std=c90"],
+    "//conditions:default": [],
+})
+
+# main() comes from testautomation.c through SDL_main.h, hence alwayslink;
+# the library lets the two runs below share the objects.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L324-L325
+cc_library(
+    name = "testautomation_lib",
+    testonly = True,
+    srcs = glob([
+        "testautomation*.c",
+        "testautomation*.h",
+    ]),
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+    alwayslink = True,
+)
+
+# ctest runs these two serially for temporary files in the working directory;
+# under Bazel each test has its own TEST_TMPDIR and runfiles tree.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L687-L688
+cc_test(
+    name = "testautomation",
+    size = "medium",
+    env = _ENV,
+    features = _FEATURES,
+    deps = [":testautomation_lib"],
+)
+
+cc_test(
+    name = "testautomation_no_simd",
+    size = "medium",
+    env = _ENV_NO_SIMD,
+    features = _FEATURES,
+    deps = [":testautomation_lib"],
+)
+
+cc_test(
+    name = "testplatform_no_simd",
+    size = "small",
+    srcs = ["testplatform.c"],
+    env = _ENV_NO_SIMD,
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+)
+
+# With the timeout ctest gives each, where that is above the default.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L321-L444
+[
+    cc_test(
+        name = name,
+        size = "small",
+        timeout = timeout,
+        srcs = [name + ".c"],
+        copts = copts,
+        env = _ENV,
+        features = _FEATURES,
+        local_defines = _DEFINES,
+        deps = _DEPS,
+    )
+    for name, timeout, copts in [
+        ("testatomic", "short", []),
+        ("testaudioinfo", "short", []),
+        ("testbounds", "short", []),
+        ("testdisplayinfo", "short", []),
+        ("testerror", "short", []),
+        ("testevdev", "short", []),
+        ("testfile", "short", []),
+        ("testfilesystem", "short", []),
+        ("testkeys", "short", []),
+        ("testlocale", "short", []),
+        ("testplatform", "short", []),
+        ("testpower", "short", []),
+        ("testqsort", "short", []),
+        ("testrwlock", "moderate", []),
+        ("testthread", "moderate", []),
+        ("testver", "short", _C90),
+        ("torturethread", "moderate", []),
+    ]
+]
+
+# testsymbols takes the address of every function SDL exports, which against
+# a static library catches a source file missing from the lists above.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L340
+cc_test(
+    name = "testsymbols",
+    size = "small",
+    srcs = ["testsymbols.c"],
+    args = [
+        "0",
+        "10",
+        "20",
+        "40",
+        "80",
+        "160",
+        "320",
+        "640",
+    ],
+    env = _ENV,
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+)
+
+# --automated generates its own images. Given a file name as well, the
+# program frees that argv string on exit and crashes.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L435
+cc_test(
+    name = "testyuv",
+    size = "small",
+    srcs = [
+        "testutils.c",
+        "testutils.h",
+        "testyuv.c",
+        "testyuv_cvt.c",
+        "testyuv_cvt.h",
+    ],
+    args = ["--automated"],
+    env = _ENV,
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+)
+
+# ctest passes childprocess by absolute path; bazel_testprocess_main.cc finds
+# both programs in the runfiles, which on Windows are a manifest, not a tree.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/CMakeLists.txt#L456-L463
+cc_binary(
+    name = "childprocess",
+    testonly = True,
+    srcs = ["childprocess.c"],
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+)
+
+cc_binary(
+    name = "testprocess_bin",
+    testonly = True,
+    srcs = ["testprocess.c"],
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+)
+
+cc_test(
+    name = "testprocess",
+    size = "small",
+    srcs = ["bazel_testprocess_main.cc"],
+    args = [
+        "$(rlocationpath :testprocess_bin)",
+        "$(rlocationpath :childprocess)",
+    ],
+    data = [
+        ":childprocess",
+        ":testprocess_bin",
+    ],
+    env = _ENV,
+    features = _FEATURES,
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+# SDL_ASSERT_LEVEL=1 compiles out testsem's 2050 ms deadline check, as SDL's
+# own RelWithDebInfo CI does for the whole suite. macOS timer leeway misses it
+# by 12 to 150 ms; Linux and Windows measure 1999 to 2000 ms and keep it.
+# https://github.com/libsdl-org/SDL/blob/release-3.4.16/test/testsem.c#L106-L126
+cc_test(
+    name = "testsem",
+    size = "small",
+    timeout = "moderate",
+    srcs = ["testsem.c"],
+    args = ["10"],
+    env = _ENV,
+    features = _FEATURES,
+    local_defines = _DEFINES + select({
+        "@platforms//os:macos": ["SDL_ASSERT_LEVEL=1"],
+        "//conditions:default": [],
+    }),
+    deps = _DEPS,
+)
+
+cc_test(
+    name = "testtimer",
+    size = "small",
+    timeout = "moderate",
+    srcs = ["testtimer.c"],
+    args = ["--no-interactive"],
+    env = _ENV,
+    features = _FEATURES,
+    local_defines = _DEFINES,
+    deps = _DEPS,
+)
