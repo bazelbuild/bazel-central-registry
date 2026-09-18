@@ -1,0 +1,84 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+exports_files([
+    "Cargo.lock",
+    "Cargo.toml",
+    "gdk-pixbuf-loader/io-svg.c",
+])
+
+_VERSION_SUBSTITUTIONS = {
+    "@LIBRSVG_MAJOR_VERSION@": "2",
+    "@LIBRSVG_MINOR_VERSION@": "61",
+    "@LIBRSVG_MICRO_VERSION@": "4",
+    "@PACKAGE_VERSION@": "2.61.4",
+}
+
+expand_template(
+    name = "version",
+    out = "include/librsvg/rsvg-version.h",
+    substitutions = _VERSION_SUBSTITUTIONS,
+    template = "include/librsvg/rsvg-version.h.in",
+)
+
+expand_template(
+    name = "rust_version",
+    out = "version.rs",
+    substitutions = _VERSION_SUBSTITUTIONS,
+    template = "version.rs.in",
+    visibility = ["//librsvg-c:__pkg__"],
+)
+
+expand_template(
+    name = "features",
+    out = "include/librsvg/rsvg-features.h",
+    substitutions = {"@LIBRSVG_HAVE_PIXBUF@": "1"},
+    template = "include/librsvg/rsvg-features.h.in",
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["include/librsvg/*.h"]) + [
+        ":features",
+        ":version",
+    ],
+    includes = ["include"],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@cairo",
+        "@gdk-pixbuf//gdk-pixbuf:headers",
+        "@glib//gio",
+        "@glib//gobject",
+    ],
+)
+
+# Rust consumers should depend on librsvg-c through Cargo and use :headers and
+# :pixbuf_loader separately, so that the Rust renderer is only linked once.
+alias(
+    name = "rsvg",
+    actual = "//librsvg-c",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "librsvg",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":rsvg",
+    ],
+)
+
+# The adapter calls the renderer's C API; it deliberately does not pull the
+# renderer into a Rust application's CcInfo a second time.
+cc_library(
+    name = "pixbuf_loader",
+    srcs = ["gdk-pixbuf-loader/io-svg.c"],
+    local_defines = ["GDK_PIXBUF_ENABLE_BACKEND"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        "@gdk-pixbuf//gdk-pixbuf:headers",
+    ],
+)

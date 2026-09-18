@@ -1,0 +1,93 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "gen_dispatch",
+    srcs = ["src/gen_dispatch.py"],
+    main = "src/gen_dispatch.py",
+)
+
+[
+    genrule(
+        name = api + "_dispatch",
+        srcs = ["registry/" + api + ".xml"],
+        outs = ["src/" + api + "_generated_dispatch.c"],
+        cmd = "$(location :gen_dispatch) --source --no-header --outputdir=$(@D) $(SRCS)",
+        tools = [":gen_dispatch"],
+    )
+    for api in [
+        "gl",
+        "glx",
+        "egl",
+    ]
+]
+
+[
+    genrule(
+        name = api + "_header",
+        srcs = ["registry/" + api + ".xml"],
+        outs = ["include/epoxy/" + api + "_generated.h"],
+        cmd = "$(location :gen_dispatch) --header --no-source --outputdir=$(@D) $(SRCS)",
+        tools = [":gen_dispatch"],
+    )
+    for api in [
+        "gl",
+        "glx",
+        "egl",
+    ]
+]
+
+write_file(
+    name = "config",
+    out = "src/config.h",
+    content = [
+        "#define ENABLE_GLX 1",
+        "#define ENABLE_EGL 1",
+        "#define HAVE_KHRPLATFORM_H 1",
+        "#define ENABLE_X11 1",
+        "#define EPOXY_PUBLIC __attribute__((visibility(\"default\"))) extern",
+    ],
+)
+
+cc_library(
+    name = "epoxy",
+    srcs = [
+        "src/dispatch_common.c",
+        "src/dispatch_egl.c",
+        "src/dispatch_glx.c",
+        ":egl_dispatch",
+        ":gl_dispatch",
+        ":glx_dispatch",
+    ],
+    hdrs = [
+        "include/epoxy/common.h",
+        "include/epoxy/egl.h",
+        "include/epoxy/gl.h",
+        "include/epoxy/glx.h",
+        "src/dispatch_common.h",
+        ":config",
+        ":egl_header",
+        ":gl_header",
+        ":glx_header",
+    ],
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = ["-ldl"],
+    linkstatic = True,
+    local_defines = ["_GNU_SOURCE"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@egl-registry//:EGL_headers",
+        "@libx11",
+    ],
+)
+
+alias(
+    name = "libepoxy",
+    actual = ":epoxy",
+    visibility = ["//visibility:public"],
+)

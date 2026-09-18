@@ -1,0 +1,75 @@
+# rules_clj — Bazel rules for Clojure.
+#
+# 0.2.0, not 1.0.0. Everything in docs/design.md is implemented and tested, but nothing
+# has been used in anger by anyone but its author, and the API should be allowed to move
+# once real use finds the parts that are wrong.
+#
+# The version declared here must equal the tag: both the release workflow and
+# release_prep.sh cross-check them, so that an archive can never claim a
+# version other than the one it was cut from. The v0.1.0-rc1 rehearsal ran the
+# whole pipeline — tag gates, attested archive, BCR entry — before this became
+# the real thing.
+module(
+    name = "rules_clj",
+    version = "0.2.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+
+# Bazel 9 reduced the native java_* rules to stubs and moved JavaInfo and
+# java_common out of the Starlark globals, so both the rules and the BUILD files
+# here take them from rules_java.
+bazel_dep(name = "rules_java", version = "9.8.0")
+
+# The Clojure runtime: three jars pinned by digest, exposed as a toolchain. Not
+# rules_jvm_external — see clojure/extensions.bzl for why a resolver is the wrong
+# tool for a fixed list of three files.
+clojure = use_extension("//clojure:extensions.bzl", "clojure")
+use_repo(clojure, "rules_clj_clojure_1_12_1")
+
+register_toolchains("@rules_clj_clojure_1_12_1//:toolchain")
+
+# The lock tool's own dependencies, fetched through the same extension a consumer uses.
+# Its lockfile was generated once with the Clojure CLI and committed; nothing in a build
+# needs the CLI. See tools/lock.
+clj_deps = use_extension("//clojure:extensions.bzl", "deps", dev_dependency = True)
+clj_deps.install(
+    name = "rules_clj_lock_deps",
+    lock = "//tools/lock:deps.lock.json",
+)
+use_repo(clj_deps, "rules_clj_lock_deps")
+
+# --- development only, from here down ---------------------------------------
+#
+# A consumer of a ruleset should inherit the rules and nothing else. Everything
+# below is for building and checking this repository itself, so it is all
+# dev_dependency: ignored entirely when rules_clj is not the root module.
+
+# Starlark formatting, wired as a Bazel test (see //bazel/dev).
+#
+# buildifier_prebuilt's own rules rather than aspect_rules_lint's format_test: the
+# latter routes formatting through a multirun that pulls in rules_go, and the
+# rules_go version it resolves does not load on Bazel 9 ("The CcInfo symbol has been
+# removed"). buildifier_prebuilt ships prebuilt binaries and needs no toolchain of
+# another language to check Starlark.
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3", dev_dependency = True)
+
+# aspect_rules_lint for its LINT ASPECTS only — shellcheck over the shell scripts,
+# wired as ordinary `lint`-tagged tests (see //bazel/lint). The format side stays
+# rejected for the rules_go reason above; shellcheck itself is reachable because
+# aspect_rules_lint aliases it inside its own repo, where @multitool is visible.
+# protoc-gen-clojure runs this exact wiring on Bazel 8 and 9.
+bazel_dep(name = "aspect_rules_lint", version = "2.7.2", dev_dependency = True)
+
+# Never used directly. aspect_rules_lint declares rules_go 0.42.0, whose toolchain
+# registration cannot even be RESOLVED on Bazel 9 ("The CcInfo symbol has been
+# removed" while loading cgo.bzl) — which breaks toolchain resolution for every
+# test target, lint or not. This lifts the selected version to one that loads on
+# both majors; protoc-gen-clojure gets the same lift implicitly from its other
+# deps, which is why the identical wiring works there without this line.
+bazel_dep(name = "rules_go", version = "0.59.0", dev_dependency = True)
+
+# Solely to declare sh_library targets for the shellcheck aspect to attach to:
+# every script here is invoked by path (workspace status, CI, a human), never as
+# a Bazel binary.
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)

@@ -1,0 +1,96 @@
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+LINUX_ONLY = select({
+    "@platforms//os:linux": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+filegroup(
+    name = "word_lists",
+    srcs = glob(["data/tdict-*.txt"]),
+)
+
+# Same sorted input and compiler invocation as upstream data/Makefile.am.
+genrule(
+    name = "compile_dictionary",
+    srcs = [
+        ":word_lists",
+        "data/thbrk.abm",
+    ],
+    outs = ["bazel_data/thbrk.tri"],
+    cmd = """
+        export LC_ALL=C
+        cat $(locations :word_lists) | sort -u > "$(@D)/tdict.txt"
+        cp $(location data/thbrk.abm) "$(@D)/thbrk.abm"
+        $(location @libdatrie//:trietool) -p "$(@D)" thbrk add-list -e UTF-8 "$(@D)/tdict.txt"
+    """,
+    target_compatible_with = LINUX_ONLY,
+    tools = ["@libdatrie//:trietool"],
+)
+
+filegroup(
+    name = "dictionary",
+    srcs = [":compile_dictionary"],
+    visibility = ["//visibility:public"],
+)
+
+# Embed the same generated dictionary so the default API also works without
+# runfiles or a process-wide environment variable, including after relocation.
+cc_binary(
+    name = "embed_dictionary_tool",
+    srcs = ["bazel_tools/embed_dictionary.c"],
+    linkstatic = True,
+)
+
+run_binary(
+    name = "embed_dictionary",
+    srcs = [":dictionary"],
+    outs = ["src/thbrk/bazel-dictionary.h"],
+    args = [
+        "$(location :dictionary)",
+        "$(location src/thbrk/bazel-dictionary.h)",
+    ],
+    target_compatible_with = LINUX_ONLY,
+    tool = ":embed_dictionary_tool",
+)
+
+cc_library(
+    name = "thai",
+    srcs = [
+        "src/libthai.c",
+        "src/thbrk/brk-common.c",
+        "src/thbrk/brk-ctype.c",
+        "src/thbrk/brk-maximal.c",
+        "src/thbrk/thbrk.c",
+        "src/thcell/thcell.c",
+        "src/thcoll/cweight.c",
+        "src/thcoll/thcoll.c",
+        "src/thctype/thctype.c",
+        "src/thctype/wtt.c",
+        "src/thinp/thinp.c",
+        "src/thrend/thrend.c",
+        "src/thstr/thstr.c",
+        "src/thwbrk/thwbrk.c",
+        "src/thwchar/thwchar.c",
+        "src/thwctype/thwctype.c",
+        "src/thwstr/thwstr.c",
+        ":embed_dictionary",
+    ] + glob(["src/**/*.h"]),
+    hdrs = glob(["include/thai/*.h"]),
+    includes = ["include"],
+    # fmemopen reads the embedded dictionary using libdatrie's public API.
+    local_defines = ["_POSIX_C_SOURCE=200809L"],
+    target_compatible_with = LINUX_ONLY,
+    visibility = ["//visibility:public"],
+    deps = ["@libdatrie"],
+)
+
+exports_files(glob(["tests/test_th*.c"]))
+
+alias(
+    name = "libthai",
+    actual = ":thai",
+    visibility = ["//visibility:public"],
+)

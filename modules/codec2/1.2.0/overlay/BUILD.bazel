@@ -1,0 +1,152 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_MATH_LINKOPTS = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["-lm"],
+})
+
+cc_binary(
+    name = "codebook_generator",
+    srcs = ["src/generate_codebook.c"],
+    linkopts = _MATH_LINKOPTS,
+    visibility = ["//visibility:private"],
+)
+
+_CODEBOOKS = {
+    "codebook": (
+        "lsp_cb",
+        ["src/codebook/lsp{}.txt".format(index) for index in range(1, 11)],
+    ),
+    "codebookd": (
+        "lsp_cbd",
+        ["src/codebook/dlsp{}.txt".format(index) for index in range(1, 11)],
+    ),
+    "codebookjmv": (
+        "lsp_cbjmv",
+        ["src/codebook/lspjmv{}.txt".format(index) for index in range(1, 4)],
+    ),
+    "codebookge": (
+        "ge_cb",
+        ["src/codebook/gecb.txt"],
+    ),
+    "codebooknewamp1": (
+        "newamp1vq_cb",
+        ["src/codebook/train_120_{}.txt".format(index) for index in range(1, 3)],
+    ),
+    "codebooknewamp1_energy": (
+        "newamp1_energy_cb",
+        ["src/codebook/newamp1_energy_q.txt"],
+    ),
+    "codebooknewamp2": (
+        "newamp2vq_cb",
+        ["src/codebook/codes_450.txt"],
+    ),
+    "codebooknewamp2_energy": (
+        "newamp2_energy_cb",
+        ["src/codebook/newamp2_energy_q.txt"],
+    ),
+}
+
+[
+    genrule(
+        name = "generate_{}".format(name),
+        srcs = inputs,
+        outs = ["generated/{}.c".format(name)],
+        cmd = "$(location :codebook_generator) {} $(SRCS) > $@".format(symbol),
+        tools = [":codebook_generator"],
+    )
+    for name, (symbol, inputs) in _CODEBOOKS.items()
+]
+
+cc_library(
+    name = "version_headers",
+    hdrs = ["include/codec2/version.h"],
+    includes = ["include"],
+)
+
+cc_library(
+    name = "codec2",
+    srcs = [
+        "src/HRA_112_112.c",
+        "src/HRA_56_56.c",
+        "src/HRAa_1536_512.c",
+        "src/HRAb_396_504.c",
+        "src/H_1024_2048_4f.c",
+        "src/H_128_256_5.c",
+        "src/H_16200_9720.c",
+        "src/H_2064_516_sparse.c",
+        "src/H_212_158.c",
+        "src/H_256_512_4.c",
+        "src/H_256_768_22.c",
+        "src/H_4096_8192_3d.c",
+        "src/codec2.c",
+        "src/codec2_fft.c",
+        "src/codec2_fifo.c",
+        "src/cohpsk.c",
+        "src/dump.c",
+        "src/fdmdv.c",
+        "src/filter.c",
+        "src/fm.c",
+        "src/fmfsk.c",
+        "src/freedv_1600.c",
+        "src/freedv_2020.c",
+        "src/freedv_700.c",
+        "src/freedv_api.c",
+        "src/freedv_data_channel.c",
+        "src/freedv_fsk.c",
+        "src/freedv_vhf_framing.c",
+        "src/fsk.c",
+        "src/golay23.c",
+        "src/gp_interleaver.c",
+        "src/interldpc.c",
+        "src/interp.c",
+        "src/kiss_fft.c",
+        "src/kiss_fftr.c",
+        "src/ldpc_codes.c",
+        "src/linreg.c",
+        "src/lpc.c",
+        "src/lpcnet_freq.c",
+        "src/lsp.c",
+        "src/mbest.c",
+        "src/modem_stats.c",
+        "src/mpdecode_core.c",
+        "src/newamp1.c",
+        "src/nlp.c",
+        "src/ofdm.c",
+        "src/ofdm_mode.c",
+        "src/pack.c",
+        "src/phase.c",
+        "src/phi0.c",
+        "src/postfilter.c",
+        "src/quantise.c",
+        "src/reliable_text.c",
+        "src/sine.c",
+        "src/varicode.c",
+    ] + [":generate_{}".format(name) for name in _CODEBOOKS],
+    hdrs = glob(["src/*.h"]),
+    include_prefix = "codec2",
+    includes = ["src"],
+    linkopts = _MATH_LINKOPTS,
+    # Speex defines incompatible internal helpers with these same public symbols.
+    local_defines = [
+        "GIT_HASH=\\\"1.2.0\\\"",
+        "lpc_to_lsp=codec2_lpc_to_lsp",
+        "lsp_to_lpc=codec2_lsp_to_lpc",
+    ],
+    strip_include_prefix = "src",
+    deps = [":version_headers"],
+)
+
+cc_test(
+    name = "data_channel_test",
+    srcs = ["unittest/tfreedv_data_channel.c"],
+    deps = [":codec2"],
+)
+
+cc_test(
+    name = "qam16_test",
+    srcs = ["unittest/tqam16.c"],
+    deps = [":codec2"],
+)

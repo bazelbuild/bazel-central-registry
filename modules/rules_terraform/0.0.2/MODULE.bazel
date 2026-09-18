@@ -1,0 +1,73 @@
+"""rules_terraform"""
+
+module(
+    name = "rules_terraform",
+    version = "0.0.2",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_go", version = "0.59.0")
+bazel_dep(name = "gazelle", version = "0.43.0")
+bazel_dep(name = "bazel_lib", version = "3.1.0")
+
+# Toolchains: no user config. The extensions materialize a hub each that
+# declares one toolchain per supported (version, platform), guarded by
+# `target_settings` on `//<engine>/settings:version_<v>`. Downstream users
+# pick a version by flipping that flag; nothing else changes.
+terraform_toolchains = use_extension("//terraform:extensions.bzl", "terraform_toolchains")
+use_repo(terraform_toolchains, "terraform", "terraform_toolchains")
+
+register_toolchains("@terraform_toolchains//:all")
+
+opentofu_toolchains = use_extension("//opentofu:extensions.bzl", "opentofu_toolchains")
+use_repo(opentofu_toolchains, "opentofu", "tofu_toolchains")
+
+register_toolchains("@tofu_toolchains//:all")
+
+# Providers/modules for the in-repo test fixtures. Dev-only so downstream
+# consumers of rules_terraform don't materialize our test hubs.
+terraform = use_extension("//terraform:extensions.bzl", "terraform", dev_dependency = True)
+terraform.providers(
+    name = "test_providers_with_provider",
+    lock = "//tests/with_provider:.terraform.lock.hcl",
+)
+terraform.providers(
+    name = "test_providers_with_modules_ext",
+    lock = "//tests/with_modules_ext:.terraform.lock.hcl",
+)
+terraform.providers(
+    name = "test_providers_with_third_party",
+    lock = "//tests/with_third_party_provider:.terraform.lock.hcl",
+)
+terraform.modules(
+    name = "test_registry_modules",
+    root = "//tests/with_registry_module:main.tf",
+)
+
+# Pointed at the shared library, not at the root module that consumes it —
+# the root has no `module` block naming a registry module, so scanning it
+# would find nothing. See //tests/nested_registry.
+terraform.modules(
+    name = "test_nested_registry_modules",
+    root = "//tests/nested_registry/modules/wrapper:main.tf",
+)
+use_repo(
+    terraform,
+    "test_nested_registry_modules",
+    "test_providers_with_modules_ext",
+    "test_providers_with_provider",
+    "test_providers_with_third_party",
+    "test_registry_modules",
+)
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.23.4")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "rules_rust_mdbook", version = "0.71.3", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "rules_venv", version = "0.19.0", dev_dependency = True)
