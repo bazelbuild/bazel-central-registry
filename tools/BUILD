@@ -223,3 +223,9 @@ py_test(
         "module_selector",
     ],
 )
+
+py_test(
+    name = "ci_metadata_isolation_canary",
+    srcs = ["ci_metadata_isolation_canary.py"],
+    tags = ["no-sandbox"],
+)
