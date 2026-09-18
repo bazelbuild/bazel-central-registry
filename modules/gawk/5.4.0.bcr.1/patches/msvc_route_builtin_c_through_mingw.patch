@@ -1,0 +1,36 @@
+Route MSVC through the MinGW gates in builtin.c.
+
+`gawk_system()` uses POSIX `fork`/`sigaction`/`SIGQUIT` on the non-VMS,
+non-MinGW path; MSVC has none of those. Extending the existing
+`defined(VMS) || defined(__MINGW32__)` gate to also fire for `_MSC_VER`
+routes MSVC to the simple `return system(command)` fallback. This
+mirrors gawk's existing SunPro/VMS-style compiler carve-outs.
+
+This is part of a paired patch with `msvc_route_io_c_through_mingw.patch`;
+both must apply for MSVC to compile. Split into per-file patches
+because Bazel's `ctx.patch` cannot parse multi-file unified diffs in a
+single file.
+
+--- builtin.c
++++ builtin.c
+@@ -3366,9 +3366,9 @@
+ int
+ gawk_system(const char *command)
+ {
+-#if defined(VMS) || defined(__MINGW32__)
++#if defined(VMS) || defined(__MINGW32__) || defined(_MSC_VER)
+ 	return system(command);
+-#else /* ! (defined(VMS) || defined(__MINGW32__)) */
++#else /* ! (defined(VMS) || defined(__MINGW32__) || defined(_MSC_VER)) */
+ 	pid_t childpid;
+ 	int status;
+ 
+@@ -3426,7 +3426,7 @@
+ 
+ 		return status;
+ 	}
+-#endif /* ! (defined(VMS) || defined(__MINGW32__)) */
++#endif /* ! (defined(VMS) || defined(__MINGW32__) || defined(_MSC_VER)) */
+ }
+ 
+ /* do_dump_node --- dump the offsets of the NODE struct */
