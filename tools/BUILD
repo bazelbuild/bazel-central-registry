@@ -71,6 +71,12 @@ py_test(
     deps = [":bcr_validation"],
 )
 
+py_test(
+    name = "ci_permission_boundary_canary",
+    srcs = ["ci_permission_boundary_canary.py"],
+    tags = ["no-sandbox"],
+)
+
 py_library(
     name = "verify_stable_archives",
     srcs = ["verify_stable_archives.py"],
