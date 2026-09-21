@@ -120,23 +120,14 @@ def main():
 
     sorted_modules = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)
 
-    target_modules = {
-        m.strip()
-        for item in args.dependents_of
-        for m in item.split(",")
-        if m.strip()
-    }
+    target_modules = {m.strip() for item in args.dependents_of for m in item.split(",") if m.strip()}
     if target_modules:
         direct_dependents = set()
         for target in target_modules:
             if G.has_node(target):
                 direct_dependents.update(G.predecessors(target))
         direct_dependents -= target_modules
-        sorted_modules = [
-            (module, score)
-            for module, score in sorted_modules
-            if module in direct_dependents
-        ]
+        sorted_modules = [(module, score) for module, score in sorted_modules if module in direct_dependents]
 
     N = min(args.top_n, len(sorted_modules))
 
