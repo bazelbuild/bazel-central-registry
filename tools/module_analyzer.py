@@ -90,6 +90,12 @@ def main():
         action="store_true",
         help="Only print the module names without the scores (default: False).",
     )
+    parser.add_argument(
+        "--dependents_of",
+        action="append",
+        default=[],
+        help="Only print modules that directly depend on the specified module(s). Can be specified multiple times or comma-separated.",
+    )
 
     args = parser.parse_args()
 
@@ -114,6 +120,15 @@ def main():
 
     sorted_modules = sorted(pagerank.items(), key=lambda x: x[1], reverse=True)
 
+    target_modules = {m.strip() for item in args.dependents_of for m in item.split(",") if m.strip()}
+    if target_modules:
+        direct_dependents = set()
+        for target in target_modules:
+            if G.has_node(target):
+                direct_dependents.update(G.predecessors(target))
+        direct_dependents -= target_modules
+        sorted_modules = [(module, score) for module, score in sorted_modules if module in direct_dependents]
+
     N = min(args.top_n, len(sorted_modules))
 
     if args.name_only:
@@ -121,7 +136,10 @@ def main():
             print(module)
         return
 
-    print(f"Top {N} Modules by PageRank:")
+    if target_modules:
+        print(f"Top {N} Direct Dependents of {', '.join(sorted(target_modules))} by PageRank:")
+    else:
+        print(f"Top {N} Modules by PageRank:")
     for module, score in sorted_modules[:N]:
         print(f"{module}: {score:.6f}")
 
