@@ -1,0 +1,284 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros", "utils")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# A plain ./configure enables all four: approx and alloca outright (configure.ac:77, :111),
+# wchar and multibyte on detection (:280, :471), so each flag can only subtract.
+bool_flag(
+    name = "alloca",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "approx",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "multibyte",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "wchar",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "tre",
+    actual = "//lib:tre",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "posix",
+    actual = "//posix",
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "alloca_on",
+    flag_values = {":alloca": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "approx_on",
+    flag_values = {":approx": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "multibyte_on",
+    flag_values = {":multibyte": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "wchar_on",
+    flag_values = {":wchar": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+# --enable-debug (configure.ac:46-53), an exact xor: TRE_DEBUG or NDEBUG, never neither.
+config_setting(
+    name = "debug",
+    values = {"compilation_mode": "dbg"},
+    visibility = ["//:__subpackages__"],
+)
+
+selects.config_setting_group(
+    name = "multibyte_and_wchar_on",
+    # configure.ac:474-478 refuses --enable-multibyte without wide characters, and the
+    # combination does not compile: lib/tre-match-backtrack.c:252 memsets an `mbstate' local
+    # that :212 declares inside an #ifdef TRE_WCHAR.
+    match_all = [
+        ":multibyte_on",
+        ":wchar_on",
+    ],
+    visibility = ["//:__subpackages__"],
+)
+
+package_info(
+    name = "package_info",
+    package_name = "TRE",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "TRE_VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_tarname = "tre",
+)
+
+# Upstream's wide-character gate, reproduced in full: every probe at configure.ac:393-434 must
+# pass before TRE_WCHAR at :456-458, except the mbstate_t one at :410-412, which informs
+# TRE_MULTIBYTE instead. Most of these are read by no C file and exist only to decide this,
+# and dropping any widens TRE_WCHAR past what the sources survive: with it on and neither
+# wcsrtombs nor wcstombs, lib/tre-parse.c:319-329 compiles out both conversion branches and
+# tre_ctype() at :337 reads uninitialised stack for any [[:alpha:]].
+_WCHAR_AVAILABLE = [
+    "HAVE_WCHAR_H",
+    "HAVE_WCTYPE_H",
+    "HAVE_WCHAR_T",
+    "HAVE_WINT_T",
+    "HAVE_WCSRTOMBS || HAVE_WCSTOMBS",
+    "HAVE_ISWLOWER",
+    "HAVE_ISWUPPER",
+    "HAVE_TOWLOWER",
+    "HAVE_TOWUPPER",
+    "HAVE_WCSCHR",
+    "HAVE_WCSCPY",
+    "HAVE_WCSLEN",
+    "HAVE_WCSNCPY",
+]
+
+_WIDE_INCLUDES = [
+    "#include <wchar.h>",
+    "#include <wctype.h>",
+]
+
+# Not translated, none having a consumer in what this module builds: NLS/gettext, libutf8,
+# the system-ABI mode, agrep, AC_USE_SYSTEM_EXTENSIONS, AX_DECL_WCHAR_MAX. reg_errcode_t is
+# the landmine -- upstream probes it only inside the system-ABI arm (configure.ac:246), and a
+# truthful probe on glibc suppresses the typedef local_includes/tre.h:68-70 supplies.
+autoconf(
+    name = "configure",
+    checks = macros.AC_CHECK_HEADERS([
+        "alloca.h",  # lib/regexec.c:16 and its three tre-match-*.c siblings
+        "getopt.h",  # tests/retest.c:40, tests/test-str-source.c:19
+        "sys/types.h",  # local_includes/tre.h:21
+        "unistd.h",  # tests/retest.c:38, tests/test-str-source.c:17
+        "wchar.h",  # lib/tre-internal.h:12 and five more under lib/
+        "wctype.h",  # lib/tre-internal.h:16 and five more under lib/
+    ]) + macros.AC_CHECK_FUNCS([
+        # configure.ac:266 probes these two with plain AC_CHECK_FUNCS, unlike the wide-character battery below.
+        "isascii",  # lib/tre-internal.h:92
+        "isblank",  # lib/tre-internal.h:95, tests/retest.c:1095
+    ]) + [
+        # Upstream probes these with AX_CHECK_FUNCS_COMP (m4/ax_check_funcs_comp.m4), which
+        # takes the function's address at file scope behind <wchar.h> and <wctype.h> rather
+        # than declaring the symbol, so a libc reaching the implementation through a renaming
+        # macro still answers yes. AC_CHECK_FUNCS' bare link test answers no there, and a
+        # false no here does not lose one macro -- it fails the gate above and drops
+        # wide-character support entirely.
+        #
+        # mbtowc and wcstombs always answer no: they are declared in <stdlib.h>, which
+        # upstream's prologue omits (configure.ac:381-391), so configure cannot see them
+        # either. Widening the prologue would diverge from ./configure, so the blind spot is
+        # reproduced, not corrected.
+        #
+        # wctype and iswctype do link on Windows, but the CRT's wctype("blank") returns 0, so
+        # [[:blank:]] fails at match time. patches/ excludes _WIN32 from TRE_USE_SYSTEM_WCTYPE
+        # (upstream PR #149) and lib/tre-parse.c:174-244's own tre_ctype() is used there.
+        checks.AC_TRY_LINK(
+            code = utils.AC_LANG_PROGRAM(
+                _WIDE_INCLUDES + ["void *tre_probe = (void *){};".format(func)],
+                "return tre_probe != (void *){};".format(func),
+            ),
+            define = "HAVE_{}".format(func.upper()),
+        )
+        for func in [
+            "iswblank",
+            "iswctype",
+            "iswlower",
+            "iswupper",
+            "mbrtowc",
+            "mbtowc",
+            "towlower",
+            "towupper",
+            "wcschr",
+            "wcscpy",
+            "wcslen",
+            "wcsncpy",
+            "wcsrtombs",
+            "wcstombs",
+            "wctype",
+        ]
+    ] + macros.AC_CHECK_TYPES(
+        # wchar_t and wint_t gate TRE_WCHAR (configure.ac:395, :404) and are read by no C file;
+        # mbstate_t is read at lib/tre-internal.h:42, lib/regcomp.c:54 and tests/retest.c:95.
+        [
+            "mbstate_t",
+            "wchar_t",
+            "wint_t",
+        ],
+        includes = _WIDE_INCLUDES,
+    ) + [
+        checks.AC_TRY_LINK(
+            name = "ac_cv_working_alloca",
+            code = "char *p = (char *) alloca (2 * sizeof (int)); if (p) return 0; return 1;",
+            define = "HAVE_ALLOCA",
+            includes = [
+                "#include <alloca.h>",
+                "#include <stdlib.h>",
+            ],
+        ),
+
+        # AC_C_INLINE (configure.ac:18). win32/config.h.in:176 hardcodes __inline; probing
+        # reaches that for any compiler rejecting bare `inline' in C without naming one.
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_c_inline",
+            code = "static inline int f(void) { return 0; }\nint main(void) { return f(); }\n",
+        ),
+        checks.AC_DEFINE(
+            "inline",
+            "__inline",
+            requires = ["!ac_cv_c_inline"],
+        ),
+
+        # configure.ac:263, the arm taken when system-ABI compatibility is off. AC_DEFINE emits
+        # its value verbatim, so `value' here is regex_t's field identifier, not a string.
+        checks.AC_DEFINE("TRE_REGEX_T_FIELD", "value"),
+
+        # configure.ac:25-27 cuts AC_INIT's version into three integer macros. package_info has
+        # no equivalent, so these are literals and must move with the version.
+        checks.AC_DEFINE("TRE_VERSION_1", 0),
+        checks.AC_DEFINE("TRE_VERSION_2", 9),
+        checks.AC_DEFINE("TRE_VERSION_3", 0),
+    ] + select({
+        ":debug": [checks.AC_DEFINE("TRE_DEBUG", 1)],
+        "//conditions:default": [checks.AC_DEFINE("NDEBUG", 1)],
+    }) + select({
+        ":approx_on": [checks.AC_DEFINE("TRE_APPROX", 1)],
+        "//conditions:default": [],
+    }) + select({
+        ":wchar_on": [checks.AC_DEFINE(
+            "TRE_WCHAR",
+            1,
+            requires = _WCHAR_AVAILABLE,
+        )],
+        "//conditions:default": [],
+    }) + select({
+        ":multibyte_and_wchar_on": [checks.AC_DEFINE(
+            "TRE_MULTIBYTE",
+            1,
+            requires = _WCHAR_AVAILABLE + [
+                "HAVE_MBSTATE_T",
+                "HAVE_MBRTOWC || HAVE_MBTOWC",
+            ],
+        )],
+        "//conditions:default": [],
+    }) + select({
+        # AC_FUNC_ALLOCA (configure.ac:114) defines TRE_USE_ALLOCA only once alloca is known to
+        # work, so the flag must not assert it alone: with it on and <alloca.h> missing,
+        # lib/regexec.c:23 falls back to declaring `char *alloca ();' itself.
+        ":alloca_on": [checks.AC_DEFINE(
+            "TRE_USE_ALLOCA",
+            1,
+            requires = [
+                "HAVE_ALLOCA_H",
+                "HAVE_ALLOCA",
+            ],
+        )],
+        "//conditions:default": [],
+    }),
+    visibility = ["//local_includes:__pkg__"],
+    deps = [":package_info"],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    # A root-package strip_include_prefix builds no include root on the older Bazel versions
+    # this module supports, so the prefix needs a real subdirectory.
+    out = "private/config.h",
+    template = "config.h.in",
+    deps = [":configure"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = ["private/config.h"],
+    strip_include_prefix = "private",
+    visibility = [
+        "//lib:__pkg__",
+        "//tests:__pkg__",
+    ],
+)

@@ -1,0 +1,49 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Upstream's regression programs (tests/Makefile.am:67-70 is what `make check' runs). Three
+# others ship beside them and are not built: wretest, whose locale tests fail wherever
+# en_US.ISO-8859-1 is absent and whose warning is not a skip (tests/retest.c:610-613);
+# randtest, an endless `while (1)' upstream itself keeps out of TESTS; and bench, an
+# EXTRA_PROGRAMS timing harness `make check' never builds.
+
+cc_test(
+    name = "retest",
+    size = "small",
+    srcs = ["retest.c"],
+    # HAVE_CONFIG_H reaches the program through automake's DEFS rather than through a header
+    # (tests/retest.c:27-29). tests/Makefile.am:25-34 keeps -DMALLOC_DEBUGGING out of the
+    # debugging build: "Malloc-debugging is not used for the debugging version since it would
+    # just get in the way."
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        "//:debug": [],
+        "//conditions:default": ["MALLOC_DEBUGGING"],
+    }),
+    # config.h defining TRE_VERSION is what selects tre_regncomp/tre_regnexec and the
+    # "xmalloc.h" include at tests/retest.c:47-54; "tre-internal.h" follows at :56, both off the
+    # lib/ include path tests/Makefile.am:63 spells as -I$(top_srcdir)/lib. Upstream builds no
+    # libxtre under TRE_DEBUG (tests/Makefile.am:25-34), so that arm links //lib:tre.
+    deps = [
+        "//:config",
+        "//lib:internal_hdrs",
+        "//local_includes:tre_config_unprefixed",
+    ] + select({
+        "//:debug": ["//lib:tre"],
+        "//conditions:default": ["//lib:xtre"],
+    }),
+)
+
+cc_test(
+    name = "test_str_source",
+    size = "small",
+    srcs = ["test-str-source.c"],
+    # tests/Makefile.am:22-23 never gives this one -DMALLOC_DEBUGGING.
+    local_defines = ["HAVE_CONFIG_H"],
+    # The ordinary library in every configuration (tests/Makefile.am:22-23). The -lm there has
+    # no reader: nothing in tests/test-str-source.c includes a math header.
+    deps = [
+        "//:config",
+        "//lib:internal_hdrs",
+        "//lib:tre",
+        "//local_includes:tre_config_unprefixed",
+    ],
+)
