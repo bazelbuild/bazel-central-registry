@@ -1,0 +1,201 @@
+Route MSVC through the MinGW gates in io.c.
+
+Upstream gawk has Windows-native code paths gated on `__MINGW32__` in
+`two_way_open`, `wait_any`, `wait_any_block_signals`, `gawk_popen`,
+and `gawk_popen_write` that substitute `spawnl`/`_cwait`/`popen` (and
+skip POSIX-only APIs like `fork`, `sigaction`, `SIGQUIT`, `SIGHUP`)
+for the Linux/macOS defaults. MSVC needs the same routing because it
+lacks `fork`/`sigaction`/`SIGQUIT`/`SIGHUP` too — but `__MINGW32__` is
+set by the MinGW compiler, not the OS, so MSVC misses the existing
+gating and the POSIX-only path runs.
+
+Extending each gate to also fire for `_MSC_VER` mirrors gawk's
+existing SunPro/VMS-style carve-outs and lets MSVC reuse the
+Windows-native implementations. The MinGW-only functions (`_spawnl`,
+`_cwait`, `_popen`, `_pipe`) all exist in MSVC's CRT under
+underscore-prefixed names; `msvc_shim.h` aliases the POSIX-form names
+so the call sites stay unchanged.
+
+`gawkmisc.c`'s `__MINGW32__` gate (which `#include`s `pc/mbc32.c` and
+`pc/gawkmisc.pc`) is deliberately left untouched — those files use
+GCC-only syntax (`__restrict__`, etc.) that MSVC cannot compile. MSVC
+stays on the `posix/gawkmisc.c` path; only the in-place gates within
+`io.c` that select Windows-native I/O get extended.
+
+This patch also routes MSVC to the VMS fallback for `read_with_timeout`
+(returning a plain `read()` instead of the `select()`-based path). On
+Windows, `select()`/`fd_set` live in `<winsock2.h>` and only work on
+sockets; pulling them in would require linking `ws2_32.lib` and would
+still not work on regular file descriptors. The VMS fallback skips
+the timeout but is correct for the rest of the I/O semantics.
+
+This is part of a paired patch with
+`msvc_route_builtin_c_through_mingw.patch`; both must apply for MSVC
+to compile.
+
+--- io.c
++++ io.c
+@@ -2358,7 +2358,7 @@
+ 	int ptoc[2], ctop[2];
+ 	int pid;
+ 	int save_errno;
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ 	int save_stdout, save_stdin;
+ 	char *qcmd = NULL;
+ #endif
+@@ -2374,7 +2374,7 @@
+ 		return false;
+ 	}
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ 	save_stdin = dup(0);	/* duplicate stdin */
+ 	save_stdout = dup(1);	/* duplicate stdout */
+ 
+@@ -2447,7 +2447,7 @@
+ 		return false;
+ 	}
+ 
+-#else /* NOT __MINGW32__ */
++#else /* NOT (__MINGW32__ || _MSC_VER) */
+ 	if ((pid = fork()) < 0) {
+ 		save_errno = errno;
+ 		close(ptoc[0]); close(ptoc[1]);
+@@ -2475,7 +2475,7 @@
+ 		execl("/bin/sh", "sh", "-c", str, NULL);
+ 		_exit(errno == ENOENT ? 127 : 126);
+ 	}
+-#endif /* NOT __MINGW32__ */
++#endif /* NOT (__MINGW32__ || _MSC_VER) */
+ 
+ 	/* parent */
+ 	if ((BINMODE & BINMODE_INPUT) != 0)
+@@ -2515,7 +2515,7 @@
+ 	else
+ 		find_output_wrapper(& rp->output);
+ 
+-#if !defined(__MINGW32__)
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+ 	os_close_on_exec(ctop[0], str, "pipe", "from");
+ 	os_close_on_exec(ptoc[1], str, "pipe", "to");
+ 
+@@ -2575,7 +2575,7 @@
+ 	void (*hstat)(int), (*istat)(int), (*qstat)(int);
+ 
+ 	istat = signal(SIGINT, SIG_IGN);
+-#ifndef __MINGW32__
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+ 	hstat = signal(SIGHUP, SIG_IGN);
+ 	qstat = signal(SIGQUIT, SIG_IGN);
+ #endif
+@@ -2587,7 +2587,7 @@
+ 	sigprocmask(SIG_SETMASK, & oldset, NULL);
+ #else
+ 	signal(SIGINT, istat);
+-#ifndef __MINGW32__
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+ 	signal(SIGHUP, hstat);
+ 	signal(SIGQUIT, qstat);
+ #endif
+@@ -2604,7 +2604,7 @@
+ 	int status = 0;
+ 	struct redirect *redp;
+ 
+-#ifdef __MINGW32__
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ 	if (interesting < 0) {
+ 		status = -1;
+ 		pid = -1;
+@@ -2619,7 +2619,7 @@
+ 				break;
+ 			}
+ 	}
+-#else /* ! __MINGW32__ */
++#else /* ! (__MINGW32__ || _MSC_VER) */
+ 	for (;;) {
+ # if defined(HAVE_WAITPID) && defined(WNOHANG)
+ 		/*
+@@ -2648,7 +2648,7 @@
+ 		if (pid == -1 && errno == ECHILD)
+ 			break;
+ 	}
+-#endif /* ! __MINGW32__ */
++#endif /* ! (__MINGW32__ || _MSC_VER) */
+ 	return status;
+ }
+ 
+@@ -2659,7 +2659,7 @@
+ {
+ 	int p[2];
+ 	int pid;
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ 	int save_stdout;
+ 	char *qcmd = NULL;
+ #endif
+@@ -2675,7 +2675,7 @@
+ 	if (pipe(p) < 0)
+ 		fatal(_("cannot open pipe `%s': %s"), cmd, strerror(errno));
+ 
+-#if defined(__MINGW32__)
++#if defined(__MINGW32__) || defined(_MSC_VER)
+ 	rp->iop = NULL;
+ 	save_stdout = dup(1); /* save stdout */
+ 	if (save_stdout == -1) {
+@@ -2710,7 +2710,7 @@
+ 	}
+ 	close(save_stdout);
+ 
+-#else /* NOT __MINGW32__ */
++#else /* NOT (__MINGW32__ || _MSC_VER) */
+ 	if ((pid = fork()) == 0) {
+ 		if (close(1) == -1)
+ 			fatal(_("close of stdout in child failed: %s"),
+@@ -2723,14 +2723,14 @@
+ 		execl("/bin/sh", "sh", "-c", cmd, NULL);
+ 		_exit(errno == ENOENT ? 127 : 126);
+ 	}
+-#endif /* NOT __MINGW32__ */
++#endif /* NOT (__MINGW32__ || _MSC_VER) */
+ 
+ 	if (pid == -1) {
+ 		close(p[0]); close(p[1]);
+ 		fatal(_("cannot create child process for `%s' (fork: %s)"), cmd, strerror(errno));
+ 	}
+ 	rp->pid = pid;
+-#if !defined(__MINGW32__)
++#if !defined(__MINGW32__) && !defined(_MSC_VER)
+ 	if (close(p[1]) == -1) {
+ 		close(p[0]);
+ 		fatal(_("close of pipe failed: %s"), strerror(errno));
+@@ -4517,7 +4517,7 @@
+ static ssize_t
+ read_with_timeout(int fd, void *buf, size_t size)
+ {
+-#if ! defined(VMS)
++#if ! defined(VMS) && ! defined(_MSC_VER)
+ 	fd_set readfds;
+ 	struct timeval tv;
+ #ifdef __MINGW32__
+@@ -4560,9 +4560,9 @@
+ 	errno = EAGAIN;
+ #endif
+ 	return -1;
+-#else  /* VMS */
++#else  /* VMS || _MSC_VER */
+ 	return read(fd, buf, size);
+-#endif	/* VMS */
++#endif	/* VMS || _MSC_VER */
+ }
+ 
+ /*
+@@ -4700,7 +4700,7 @@
+ static FILE *
+ gawk_popen_write(const char *cmd)
+ {
+-#if defined(VMS) || defined(__MINGW32__)
++#if defined(VMS) || defined(__MINGW32__) || defined(_MSC_VER)
+ 	return popen(cmd, binmode("w"));
+ #else
+ 	pid_t childpid;
