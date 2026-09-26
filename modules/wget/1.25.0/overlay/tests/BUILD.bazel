@@ -1,0 +1,51 @@
+"""Upstream's C unit tests (from tests/Makefile.am).
+
+The Perl suite in this directory (`Test-*.px`, tests/Makefile.am:47) is not
+wired up: its HTTPServer.pm and SSLServer.pm are built on CPAN's HTTP::Daemon
+and IO::Socket::SSL, which no registry module provides.  The Python suite
+under testenv/ covers the same ground and is wired up as this module's BCR
+test module (testenv/MODULE.bazel), so that the Python toolchain it needs
+stays out of every consumer's dependency graph.
+"""
+
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# `//:libunittest` compiles the src/ files with -DTESTING, under which they
+# include this header.
+exports_files(
+    ["unit-tests.h"],
+    visibility = ["//:__pkg__"],
+)
+
+# unit-tests (tests/Makefile.am:94): the wget sources built with -DTESTING
+# plus this driver.  Just the C dialect and no warnings, as for the shipped
+# code.
+cc_test(
+    name = "unit-tests",
+    size = "small",
+    srcs = [
+        "unit-tests.c",
+        "unit-tests.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": [
+            "/w",
+            "/std:c11",
+        ],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "/w",
+            "/std:c11",
+        ],
+        "//conditions:default": [
+            "-w",
+            "-std=gnu11",
+        ],
+    }),
+    # tests/Makefile.am:118.
+    local_defines = ['LOCALEDIR=\\"$(LOCALEDIR)\\"'],
+    toolchains = ["//:install_dirs"],
+    deps = [
+        "//:gnulib",
+        "//:libunittest",
+    ],
+)
