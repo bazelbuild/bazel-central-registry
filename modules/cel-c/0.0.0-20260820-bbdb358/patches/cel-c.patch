@@ -1,0 +1,243 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 0b34e51..d939821 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -14,6 +14,7 @@
+ 
+ module(
+     name = "cel-c",
++    version = "0.0.0-20260820-bbdb358",
+ )
+ 
+ bazel_dep(
+@@ -27,14 +28,17 @@ bazel_dep(
+ bazel_dep(
+     name = "google_benchmark",
+     version = "1.9.5",
++    dev_dependency = True,
+ )
+ bazel_dep(
+     name = "fuzztest",
+     version = "20250805.0",
++    dev_dependency = True,
+ )
+ bazel_dep(
+     name = "googletest",
+     version = "1.17.0",
++    dev_dependency = True,
+ )
+ bazel_dep(
+     name = "protobuf",
+@@ -55,6 +59,7 @@ bazel_dep(
+ bazel_dep(
+     name = "cel-cpp",
+     version = "0.14.0",
++    dev_dependency = True,
+ )
+ bazel_dep(
+     name = "rules_license",
+@@ -68,23 +73,3 @@ bazel_dep(
+     name = "googleapis-upb",
+     version = "1.1.5",
+ )
+-
+-git_override(
+-    module_name = "protobuf",
+-    commit = "6d03e4f090d809c87a8274b56d609ccc067632f1",
+-    remote = "https://github.com/protocolbuffers/protobuf",
+-)
+-
+-git_override(
+-    module_name = "cel-cpp",
+-    commit = "6e1cb5311aa17ddc2ed9e4fd30e042d4c592b359",
+-    remote = "https://github.com/google/cel-cpp",
+-)
+-
+-multiple_version_override(
+-    module_name = "rules_swift",
+-    versions = [
+-        "2.4.0",
+-        "3.0.2",
+-    ],
+-)
+diff --git a/cel-c/BUILD b/cel-c/BUILD
+index 9ab4544..b4082da 100644
+--- a/cel-c/BUILD
++++ b/cel-c/BUILD
+@@ -34,6 +34,9 @@ package_group(
+     includes = [
+         ":internal",
+     ],
++    packages = [
++        "public",
++    ],
+ )
+ 
+ package_group(
+diff --git a/cel-c/constant.h b/cel-c/constant.h
+index 0d57d5a..ef1c8bc 100644
+--- a/cel-c/constant.h
++++ b/cel-c/constant.h
+@@ -47,12 +47,10 @@ typedef enum CEL_ATTRIBUTE_OPEN_ENUM {
+ //
+ // Represents a constant as specified by the Common Expression Language.
+ typedef struct {
+-  union {
+ #ifdef _MSC_VER
+ #pragma pack(push, 4)
+ #endif
+-    struct {
+-      union CEL_ATTRIBUTE_PACKED(4) {
++      alignas(8) union CEL_ATTRIBUTE_PACKED(4) {
+         bool b;      // bool
+         int64_t i;   // int
+         uint64_t u;  // uint
+@@ -65,12 +63,9 @@ typedef struct {
+         cel_Timestamp t;  // timestamp
+       } data;
+       cel_ConstantKind kind;
+-    };
+ #ifdef _MSC_VER
+ #pragma pack(pop)
+ #endif
+-    alignas(8) char raw[16];
+-  };
+ } cel_Constant;
+ 
+ CEL_STATIC_ASSERT(sizeof(cel_Constant) == 16);
+diff --git a/cel-c/internal/message_equality.cc b/cel-c/internal/message_equality.cc
+index 409c6b2..599be4b 100644
+--- a/cel-c/internal/message_equality.cc
++++ b/cel-c/internal/message_equality.cc
+@@ -69,12 +69,15 @@ _cel_MessageEqualityState_Arena(_cel_MessageEqualityState* cel_nonnull state) {
+   return arena;
+ }
+ 
++// Must be last.
++#include "upb/port/def.inc"
++
+ CEL_ATTRIBUTE_NODISCARD
+ static bool _cel_MessageEqualityState_UnknownEquals(
+     _cel_MessageEqualityState* cel_nonnull state,
+     const upb_Message* cel_nonnull lhs, const upb_Message* cel_nonnull rhs) {
+   upb_UnknownCompareResult result =
+-      _upb_Message_UnknownFieldsAreEqual(lhs, rhs, state->depth);
++      UPB_PRIVATE(_upb_Message_UnknownFieldsAreEqual)(lhs, rhs, state->depth);
+   switch (result) {
+     case kUpb_UnknownCompareResult_Equal:
+       return true;
+@@ -90,6 +93,8 @@ static bool _cel_MessageEqualityState_UnknownEquals(
+   }
+ }
+ 
++#include "upb/port/undef.inc"
++
+ CEL_ATTRIBUTE_NODISCARD
+ static bool _cel_MessageEqualityState_FieldHomoEquals(
+     _cel_MessageEqualityState* cel_nonnull state, upb_MessageValue lhs_val,
+diff --git a/cel-c/internal/regexp.cc b/cel-c/internal/regexp.cc
+index c36a429..bb54647 100644
+--- a/cel-c/internal/regexp.cc
++++ b/cel-c/internal/regexp.cc
+@@ -29,6 +29,7 @@
+ #include "cel-c/string_view.h"
+ #include "cel-c/string_view_absl.h"
+ #include "re2/re2.h"
++#include "re2/stringpiece.h"
+ 
+ CEL_BEGIN_DECLS
+ 
+@@ -50,19 +51,33 @@ struct RE2CArg final {
+   RE2CArg& operator=(const RE2CArg&) = delete;
+   RE2CArg& operator=(RE2CArg&&) = delete;
+ 
+-  absl::string_view string;
++  re2::StringPiece string;
+   RE2::Arg arg;
+ };
+ 
+ static_assert(std::is_trivially_destructible_v<RE2CArg>);
+ static_assert(alignof(RE2CArg) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+ 
+-using MatchFunction = bool (*)(absl::string_view, const RE2&,
++using MatchFunction = bool (*)(re2::StringPiece, const RE2&,
+                                const RE2::Arg* const*, int);
+ 
++// RE2::FullMatchN() and RE2::PartialMatchN() take their subject by const
++// reference in older releases of RE2 and by value in newer ones, so their
++// addresses cannot be taken through a single function pointer type. Wrapping
++// them keeps this file buildable against both.
++bool Re2FullMatchN(re2::StringPiece subject, const RE2& re2,
++                   const RE2::Arg* const* args, int argc) {
++  return RE2::FullMatchN(subject, re2, args, argc);
++}
++
++bool Re2PartialMatchN(re2::StringPiece subject, const RE2& re2,
++                      const RE2::Arg* const* args, int argc) {
++  return RE2::PartialMatchN(subject, re2, args, argc);
++}
++
+ CEL_ATTRIBUTE_NODISCARD
+ CEL_ATTRIBUTE_NOINLINE
+-bool _cel_RegExp_Match(const RE2& re2, absl::string_view subject,
++bool _cel_RegExp_Match(const RE2& re2, re2::StringPiece subject,
+                        MatchFunction cel_nonnull match,
+                        cel_Status* cel_nonnull status, size_t argc,
+                        va_list argv) {
+@@ -98,7 +113,8 @@ bool _cel_RegExp_Match(const RE2& re2, absl::string_view subject,
+   for (size_t i = 0; i < argc; ++i) {
+     cel_StringView* arg = va_arg(argv, cel_StringView*);
+     CEL_ASSERT_NOT_NULL(arg);
+-    *arg = cel_StringView_FromAbsl(re2_cargs[i].string);
++    *arg = cel_StringView_FromAbsl(absl::string_view(
++        re2_cargs[i].string.data(), re2_cargs[i].string.size()));
+   }
+   return true;
+ }
+@@ -195,7 +211,7 @@ extern "C" CEL_ATTRIBUTE_NOTHROW bool _cel_RegExp_FullMatch(
+   va_start(argv, argc);
+   const bool match = _cel_RegExp_Match(
+       *std::launder(reinterpret_cast<const RE2*>(&regexp->re2[0])),
+-      cel_StringView_ToAbsl(subject), &RE2::FullMatchN, status, argc, argv);
++      cel_StringView_ToAbsl(subject), &Re2FullMatchN, status, argc, argv);
+   va_end(argv);
+   return match;
+ }
+@@ -211,7 +227,7 @@ extern "C" CEL_ATTRIBUTE_NOTHROW bool _cel_RegExp_PartialMatch(
+   va_start(argv, argc);
+   const bool match = _cel_RegExp_Match(
+       *std::launder(reinterpret_cast<const RE2*>(&regexp->re2[0])),
+-      cel_StringView_ToAbsl(subject), &RE2::PartialMatchN, status, argc, argv);
++      cel_StringView_ToAbsl(subject), &Re2PartialMatchN, status, argc, argv);
+   va_end(argv);
+   return match;
+ }
+diff --git a/cel-c/status.cc b/cel-c/status.cc
+index e90fbd9..54a9bc7 100644
+--- a/cel-c/status.cc
++++ b/cel-c/status.cc
+@@ -73,10 +73,24 @@ static CEL_NONNULL(_cel_StatusRep*)
+   return (_cel_StatusRep*)status;
+ }
+ 
++#ifndef __cplusplus
+ #define _cel_Status_Rep(status)                 \
+   (_Generic((status),                           \
+        const cel_Status*: _cel_Status_ConstRep, \
+        cel_Status*: _cel_Status_MutableRep)((status)))
++#else
++CEL_ATTRIBUTE_NODISCARD
++static CEL_INLINE CEL_NONNULL(const _cel_StatusRep*)
++    _cel_Status_Rep(CEL_NONNULL(const cel_Status*) status) {
++  return _cel_Status_ConstRep(status);
++}
++
++CEL_ATTRIBUTE_NODISCARD
++static CEL_INLINE CEL_NONNULL(_cel_StatusRep*)
++    _cel_Status_Rep(CEL_NONNULL(cel_Status*) status) {
++  return _cel_Status_MutableRep(status);
++}
++#endif
+ 
+ static void _cel_StatusRepPayload_Construct(CEL_NONNULL(_cel_StatusRepPayload*)
+                                                 payload) {
