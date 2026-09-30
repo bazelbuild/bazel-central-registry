@@ -1,0 +1,115 @@
+# Hand-written equivalent of the libFLAC target in upstream src/libFLAC/CMakeLists.txt,
+# configured as a static library with Ogg support. The configure-time checks from
+# CMakeLists.txt / config.cmake.h.in are replaced by bazel/config.h. libFLAC++ and the
+# command-line programs are not built.
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:private"])
+
+cc_library(
+    name = "config",
+    hdrs = ["bazel/config.h"],
+    strip_include_prefix = "bazel",
+)
+
+cc_library(
+    name = "private_headers",
+    hdrs = glob([
+        "include/FLAC/*.h",
+        "include/share/*.h",
+        "src/libFLAC/include/private/*.h",
+        "src/libFLAC/include/protected/*.h",
+    ]),
+    includes = [
+        "include",
+        "src/libFLAC/include",
+    ],
+    textual_hdrs = glob(["src/libFLAC/deduplication/*.c"]),
+)
+
+_COMMON_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/fp:fast",
+        "/wd4267",
+        "/wd4996",
+    ],
+    "//conditions:default": [
+        "-fassociative-math",
+        "-fno-signed-zeros",
+        "-fno-trapping-math",
+        "-freciprocal-math",
+        "-w",
+    ],
+})
+
+_LOCAL_DEFINES = [
+    "FLAC__NO_DLL",
+    "HAVE_CONFIG_H",
+] + select({
+    "@platforms//os:windows": [
+        "_CRT_SECURE_NO_WARNINGS",
+        "_USE_MATH_DEFINES",
+    ],
+    "//conditions:default": [],
+})
+
+# Upstream compiles these with /arch:AVX2 under MSVC; GCC and Clang use per-function
+# target attributes instead, so no extra flags are needed there.
+_AVX2_SRCS = [
+    "src/libFLAC/fixed_intrin_avx2.c",
+    "src/libFLAC/lpc_intrin_avx2.c",
+    "src/libFLAC/lpc_intrin_fma.c",
+    "src/libFLAC/stream_encoder_intrin_avx2.c",
+]
+
+cc_library(
+    name = "flac_avx2",
+    srcs = _AVX2_SRCS,
+    copts = _COMMON_COPTS + select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/arch:AVX2"],
+        "//conditions:default": [],
+    }),
+    local_defines = _LOCAL_DEFINES,
+    deps = [
+        ":config",
+        ":private_headers",
+        "@ogg",
+    ],
+)
+
+cc_library(
+    name = "flac",
+    srcs = glob(
+        ["src/libFLAC/*.c"],
+        exclude = _AVX2_SRCS,
+    ) + select({
+        "@platforms//os:windows": ["src/share/win_utf8_io/win_utf8_io.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(["include/FLAC/*.h"]),
+    copts = _COMMON_COPTS,
+    defines = ["FLAC__NO_DLL"],
+    implementation_deps = [
+        ":config",
+        ":flac_avx2",
+        ":private_headers",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lm",
+            "-lpthread",
+        ],
+    }),
+    local_defines = _LOCAL_DEFINES,
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+    deps = ["@ogg"],
+)
+
+alias(
+    name = "FLAC",
+    actual = ":flac",
+    visibility = ["//visibility:public"],
+)
