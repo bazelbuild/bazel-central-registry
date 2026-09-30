@@ -1,0 +1,73 @@
+load(":boost_test_suite.bzl", "boost_test_suite")
+
+# Upstream `compile-fail` targets.
+_COMPILE_FAIL = glob(["**/*_error.cpp"])
+
+# Not referenced by test/Jamfile.v2: they need a build without variadic
+# templates, which none of the supported compilers gives us.
+_NO_VARIADIC_TEMPLATES = glob(["**/*_no_tva.cpp"])
+
+# Compiled into the tests that exercise them rather than being tests.
+_LIB_SOURCES = glob(["disable/lib_*.cpp"])
+
+# These link the sources above as separate shared libraries; upstream has
+# disabled no_post_except_lib for that reason, see the comment in
+# test/Jamfile.v2. The `*_unit` variants below cover the same code.
+_NEEDS_SHARED_LIBS = [
+    "disable/no_post_except_lib.cpp",
+    "disable/other_assertions_lib.cpp",
+]
+
+_PERMISSIVE = ["BOOST_CONTRACT_PERMISSIVE"]
+
+_NO_POST_EXCEPT = [
+    "BOOST_CONTRACT_NO_POSTCONDITIONS",
+    "BOOST_CONTRACT_NO_EXCEPTS",
+]
+
+boost_test_suite(
+    name = "upstream_tests",
+    srcs = glob(
+        ["**/*.cpp"],
+        exclude = _COMPILE_FAIL + _LIB_SOURCES + _NEEDS_SHARED_LIBS +
+                  _NO_VARIADIC_TEMPLATES + [
+            # A CMake consumer fixture, not a test.
+            "cmake_test/**",
+        ],
+    ),
+    # The sources upstream compiles into these tests.
+    extra_srcs = {
+        "disable/no_post_except_unit.cpp": [
+            "disable/lib_x.cpp",
+            "disable/lib_y.cpp",
+        ],
+        "disable/other_assertions_unit.cpp": [
+            "disable/lib_a.cpp",
+            "disable/lib_b.cpp",
+        ],
+    },
+    # The defines upstream sets in test/Jamfile.v2.
+    local_defines = {
+        "check/audit.cpp": ["BOOST_CONTRACT_AUDITS"],
+        "disable/audit.cpp": ["BOOST_CONTRACT_AUDITS"],
+        "disable/no_post_except_unit.cpp": _NO_POST_EXCEPT,
+        "disable/nothing_for_pre_prog.cpp": [
+            "BOOST_CONTRACT_PRECONDITIONS_DISABLE_NO_ASSERTION",
+        ],
+        "invariant/mutable_permissive.cpp": _PERMISSIVE,
+        "invariant/static_const_permissive.cpp": _PERMISSIVE,
+        "invariant/static_cv_permissive.cpp": _PERMISSIVE,
+        "invariant/static_mutable_permissive.cpp": _PERMISSIVE,
+        "invariant/static_permissive.cpp": _PERMISSIVE,
+        "invariant/static_volatile_permissive.cpp": _PERMISSIVE,
+        "invariant/volatile_permissive.cpp": _PERMISSIVE,
+        "public_function/max_args0.cpp": ["BOOST_CONTRACT_MAX_ARGS=0"],
+        "public_function/max_args1.cpp": ["BOOST_CONTRACT_MAX_ARGS=1"],
+        "public_function/max_args2.cpp": ["BOOST_CONTRACT_MAX_ARGS=2"],
+        "public_function/override_permissive.cpp": _PERMISSIVE,
+        # Upstream spells this `{ throw err(); }`; defines cannot carry spaces.
+        "specify/missing_check.cpp": [
+            "BOOST_CONTRACT_ON_MISSING_CHECK_DECL={throw(err());}",
+        ],
+    },
+)

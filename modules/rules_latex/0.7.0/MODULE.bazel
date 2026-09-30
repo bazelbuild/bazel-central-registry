@@ -1,0 +1,51 @@
+"""rules_latex - Bazel rules for building LaTeX documents with Tectonic.
+
+See https://github.com/nicklambourne/rules_latex for details.
+"""
+
+module(
+    name = "rules_latex",
+    version = "0.7.0",
+    compatibility_level = 1,
+)
+
+# Standard dependencies.
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_python", version = "1.9.2")
+
+# Stardoc generates the Markdown that backs the user guide at
+# https://nicklambourne.github.io/rules_latex/. Marked as a dev-only
+# dependency because consumers of rules_latex don't need it; only
+# our own //docs:* targets do.
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.5.0", dev_dependency = True)
+
+# rules_latex's private build tools run on their own Python version instead
+# of inheriting the root module's default. Do not call python.defaults() here:
+# consumers may use a different Python version for their own targets.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.13")
+
+# Module extension that registers the tectonic toolchain repos.
+tectonic = use_extension("//latex/toolchain:extensions.bzl", "tectonic")
+tectonic.toolchain()
+use_repo(
+    tectonic,
+    "rules_latex_tectonic_toolchains",
+    # Per-platform repos that hold the downloaded tectonic binaries.
+    "rules_latex_tectonic_linux_aarch64",
+    "rules_latex_tectonic_linux_x86_64",
+    "rules_latex_tectonic_macos_aarch64",
+    "rules_latex_tectonic_macos_x86_64",
+)
+
+register_toolchains("@rules_latex_tectonic_toolchains//:all")
+
+# Module extension that vendors PDF.js for latex_live. Always
+# materialised so the rule's default _pdfjs_lib / _pdfjs_worker
+# attributes resolve cleanly; the actual ~10 MB download only happens
+# when something in the build graph references the @rules_latex_pdfjs
+# repo (i.e. when a latex_live target is built).
+pdfjs = use_extension("//latex/web:extensions.bzl", "pdfjs")
+use_repo(pdfjs, "rules_latex_pdfjs")
