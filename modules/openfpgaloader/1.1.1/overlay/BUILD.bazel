@@ -1,0 +1,457 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+exports_files(["LICENSE"])
+
+# ---- Data filegroups --------------------------------------------------------
+#
+# Bit-stream data files upstream installs under `<prefix>/share/openFPGALoader/`.
+# Downstream targets that want SPI-/BPI-over-JTAG programming to work under
+# `bazel run` should add these to their `data =` attribute; the patched
+# `resolve_data_file()` helper in this port looks them up via the runfiles
+# library first and falls back to `$OPENFPGALOADER_SOJ_DIR` / `DATA_DIR` if
+# they aren't present.
+
+filegroup(
+    name = "spi_over_jtag_data",
+    srcs = glob([
+        "spiOverJtag/spiOverJtag_*.bit",
+        "spiOverJtag/spiOverJtag_*.bit.gz",
+        "spiOverJtag/spiOverJtag_*.rbf",
+        "spiOverJtag/spiOverJtag_*.rbf.gz",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "bpi_over_jtag_data",
+    srcs = glob(["bpiOverJtag/bpiOverJtag_*.bit.gz"]),
+    visibility = ["//visibility:public"],
+)
+
+# ---- Features ---------------------------------------------------------------
+#
+# Each entry spawns a `bool_flag(name = "enable_<name>", ...)` and a matching
+# `config_setting(name = "_<name>_on", ...)`. All defaults are ON.
+#
+#   * Vendor / cable / support flags mirror the CMake ENABLE_* options.
+#   * `remote_bitbang`, `xvc_client`: upstream forces OFF on Windows regardless
+#     of the flag value. See the `*_active` composites below.
+#   * `libgpiod`: upstream only exposes this on Linux. See `_libgpiod_active`.
+#   * `runfiles_lookup`: Bazel-only. When on, the binary links the runfiles
+#     library and `resolveDataFile()` consults it before falling back to
+#     `$OPENFPGALOADER_SOJ_DIR` / `DATA_DIR`. The spi/bpi bridge bitstream
+#     filegroups are also wired into `data =` so `bazel run` works end-to-end.
+#     Turn OFF for a strictly CMake-equivalent binary with no runfiles dep
+#     and no bundled bitstreams.
+
+_FEATURES = [
+    # Vendor supports (CMake ENABLE_VENDORS_ALL).
+    "altera",
+    "anlogic",
+    "gowin",
+    "lattice",
+    "xilinx",
+    # Cables (CMake ENABLE_CABLE_ALL).
+    "anlogic_cable",
+    "ch347",
+    "dfu",
+    "dirtyjtag",
+    "esp_usb",
+    "gowin_gwu2x",
+    "jlink",
+    "libgpiod",
+    "remote_bitbang",
+    "svf",
+    "usb_blaster_ii",
+    "usb_scan",
+    "xvc_client",
+    # Bazel-specific integration knobs.
+    "runfiles_lookup",
+]
+
+[
+    bool_flag(
+        name = "enable_" + _feat,
+        build_setting_default = True,
+        visibility = ["//visibility:public"],
+    )
+    for _feat in _FEATURES
+]
+
+[
+    config_setting(
+        name = "_" + _feat + "_on",
+        flag_values = {":enable_" + _feat: "True"},
+    )
+    for _feat in _FEATURES
+]
+
+# ---- OS + derived composites ------------------------------------------------
+
+selects.config_setting_group(
+    name = "_not_windows",
+    match_any = [
+        "@platforms//os:linux",
+        "@platforms//os:macos",
+    ],
+)
+
+# clang-cl and msvc-cl share the same MSVC-style command-line dialect.
+selects.config_setting_group(
+    name = "_msvc_family",
+    match_any = [
+        "@rules_cc//cc/compiler:clang-cl",
+        "@rules_cc//cc/compiler:msvc-cl",
+    ],
+)
+
+# ENABLE_LATTICE || ENABLE_XILINX -> jedParser / mcsParser.
+selects.config_setting_group(
+    name = "_lattice_or_xilinx_on",
+    match_any = [
+        ":_lattice_on",
+        ":_xilinx_on",
+    ],
+)
+
+# USE_LIBUSB_LL: enabled when USB_SCAN or GOWIN_GWU2X is on.
+selects.config_setting_group(
+    name = "_libusb_ll_on",
+    match_any = [
+        ":_gowin_gwu2x_on",
+        ":_usb_scan_on",
+    ],
+)
+
+# Remote-bitbang and XVC client are unconditionally OFF on Windows upstream.
+selects.config_setting_group(
+    name = "_remote_bitbang_active",
+    match_all = [
+        ":_not_windows",
+        ":_remote_bitbang_on",
+    ],
+)
+
+selects.config_setting_group(
+    name = "_xvc_client_active",
+    match_all = [
+        ":_not_windows",
+        ":_xvc_client_on",
+    ],
+)
+
+# libgpiod is unconditionally OFF outside Linux upstream.
+selects.config_setting_group(
+    name = "_libgpiod_active",
+    match_all = [
+        "@platforms//os:linux",
+        ":_libgpiod_on",
+    ],
+)
+
+# ---- Base sources / defines -------------------------------------------------
+
+_VERSION_DEFINES = [
+    'VERSION=\\"v1.1.1\\"',
+    'DATA_DIR=\\"/usr/local/share\\"',
+    'ISE_DIR=\\"/opt/Xilinx/14.7\\"',
+    'BLASTERII_DIR=\\"\\"',
+]
+
+_CORE_SOURCES = [
+    "src/bpiFlash.cpp",
+    "src/common.cpp",
+    "src/configBitstreamParser.cpp",
+    # Overlay-provided helper (see patches/0001-runfiles-lookup-for-jtag-bridge-data.patch).
+    "src/dataResolver.cpp",
+    "src/device.cpp",
+    "src/display.cpp",
+    "src/epcq.cpp",
+    "src/jtag.cpp",
+    "src/main.cpp",
+    "src/progressBar.cpp",
+    "src/rawParser.cpp",
+    "src/spiFlash.cpp",
+    "src/spiInterface.cpp",
+]
+
+# cc_binary has no `hdrs` attribute; headers must live in `srcs` so Bazel's
+# sandbox exposes them to `#include`. The glob picks up the overlay-added
+# `dataResolver.hpp` alongside upstream headers.
+_HEADERS = glob(["src/*.hpp"])
+
+# USE_FX2_LL is derived from ENABLE_USB_BLASTERII upstream.
+_FX2_LL_SRCS = [
+    "src/fx2_ll.cpp",
+    "src/ihexParser.cpp",
+]
+
+# ------------------------------------------------------------------------------
+
+cc_binary(
+    name = "openFPGALoader",
+    srcs = _CORE_SOURCES + _HEADERS +
+           select({
+               "@platforms//os:windows": ["src/pathHelper.cpp"],
+               "//conditions:default": [],
+           }) +
+           # Vendor sources.
+           select({
+               ":_altera_on": [
+                   "src/altera.cpp",
+                   "src/pofParser.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_anlogic_on": [
+                   "src/anlogic.cpp",
+                   "src/anlogicBitParser.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_gowin_on": [
+                   "src/fsparser.cpp",
+                   "src/gowin.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_lattice_on": [
+                   "src/feaparser.cpp",
+                   "src/lattice.cpp",
+                   "src/latticeBitParser.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_xilinx_on": [
+                   "src/bitparser.cpp",
+                   "src/xilinx.cpp",
+                   "src/xilinxMapParser.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_lattice_or_xilinx_on": [
+                   "src/jedParser.cpp",
+                   "src/mcsParser.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           # Cable sources.
+           select({
+               ":_anlogic_cable_on": ["src/anlogicCable.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_ch347_on": ["src/ch347jtag.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_dfu_on": [
+                   "src/dfu.cpp",
+                   "src/dfuFileParser.cpp",
+               ],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_dirtyjtag_on": ["src/dirtyJtag.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_esp_usb_on": ["src/esp_usb_jtag.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_gowin_gwu2x_on": ["src/gwu2x_jtag.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_jlink_on": ["src/jlink.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_usb_blaster_ii_on": ["src/usbBlaster.cpp"] + _FX2_LL_SRCS,
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_libusb_ll_on": ["src/libusb_ll.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_svf_on": ["src/svf_jtag.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_remote_bitbang_active": ["src/remoteBitbang_client.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_xvc_client_active": ["src/xvc_client.cpp"],
+               "//conditions:default": [],
+           }) +
+           select({
+               ":_libgpiod_active": ["src/libgpiodJtagBitbang.cpp"],
+               "//conditions:default": [],
+           }),
+    copts = select({
+        # Suppress all warnings — this is a third-party port; upstream owns the
+        # warning cleanups. `/w` for MSVC family, `-w` for gcc/clang.
+        ":_msvc_family": [
+            "/std:c++17",
+            "/utf-8",
+            "/EHsc",
+            "/w",
+        ],
+        "//conditions:default": [
+            "-std=c++17",
+            "-w",
+        ],
+    }),
+    data = [
+        ":bpi_over_jtag_data",
+        ":spi_over_jtag_data",
+    ],
+    linkopts = select({
+        # ntohs / ntohl live in ws2_32 on Windows.
+        ":_msvc_family": ["-DEFAULTLIB:ws2_32.lib"],
+        "@rules_cc//cc/compiler:mingw-gcc": ["-lws2_32"],
+        # POSIX toolchains: XVC client uses std::thread, which needs pthread.
+        "//conditions:default": ["-pthread"],
+    }),
+    local_defines = _VERSION_DEFINES + [
+                        # libusb is always required by this port (no ftdi-only build path).
+                        "USE_LIBUSB",
+                        # zlib is always available via the BCR dep.
+                        "HAS_ZLIB=1",
+                    ] +
+                    # Wire resolveDataFile() to consult Bazel's runfiles tree
+                    # before falling back to DATA_DIR. See patch
+                    # 0001-runfiles-lookup-for-jtag-bridge-data.patch.
+                    select({
+                        ":_runfiles_lookup_on": ["USE_RULES_CC_RUNFILES"],
+                        "//conditions:default": [],
+                    }) +
+                    # libusb_attach_kernel_driver is only available on Linux
+                    # (matches the `-DATTACH_KERNEL` upstream sets for
+                    # CMAKE_SYSTEM_NAME=Linux).
+                    select({
+                        "@platforms//os:linux": ["ATTACH_KERNEL"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        "@platforms//os:windows": [
+                            "_CRT_SECURE_NO_WARNINGS",
+                            "_CRT_NONSTDC_NO_DEPRECATE",
+                            "NOMINMAX",
+                            "WIN32_LEAN_AND_MEAN",
+                        ],
+                        "//conditions:default": [],
+                    }) +
+                    # Vendor defines.
+                    select({
+                        ":_altera_on": ["ENABLE_ALTERA_SUPPORT=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_anlogic_on": ["ENABLE_ANLOGIC_SUPPORT=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_gowin_on": ["ENABLE_GOWIN_SUPPORT=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_lattice_on": ["ENABLE_LATTICE_SUPPORT=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_xilinx_on": ["ENABLE_XILINX_SUPPORT=1"],
+                        "//conditions:default": [],
+                    }) +
+                    # Cable defines.
+                    select({
+                        ":_anlogic_cable_on": ["ENABLE_ANLOGIC_CABLE=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_ch347_on": ["ENABLE_CH347=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_dfu_on": ["ENABLE_DFU=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_dirtyjtag_on": ["ENABLE_DIRTYJTAG=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_esp_usb_on": ["ENABLE_ESP_USB=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_gowin_gwu2x_on": ["ENABLE_GOWIN_GWU2X=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_jlink_on": ["ENABLE_JLINK=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_usb_blaster_ii_on": [
+                            "ENABLE_USBBLASTER",
+                            "ENABLE_USB_BLASTERII",
+                            "USE_FX2_LL",
+                        ],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_usb_scan_on": ["ENABLE_USB_SCAN=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_libusb_ll_on": ["USE_LIBUSB_LL"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_svf_on": ["ENABLE_SVF_JTAG"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_remote_bitbang_active": ["ENABLE_REMOTEBITBANG=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_xvc_client_active": ["ENABLE_XVC_CLIENT=1"],
+                        "//conditions:default": [],
+                    }) +
+                    select({
+                        ":_libgpiod_active": [
+                            "ENABLE_LIBGPIOD=1",
+                            "USE_DEVICE_ARG",
+                        ],
+                        "//conditions:default": [],
+                    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libusb",
+        "@zlib",
+    ] + select({
+        ":_libgpiod_active": ["@libgpiod"],
+        "//conditions:default": [],
+    }) + select({
+        ":_runfiles_lookup_on": ["@rules_cc//cc/runfiles"],
+        "//conditions:default": [],
+    }),
+)
+
+alias(
+    name = "openfpgaloader",
+    actual = ":openFPGALoader",
+    visibility = ["//visibility:public"],
+)

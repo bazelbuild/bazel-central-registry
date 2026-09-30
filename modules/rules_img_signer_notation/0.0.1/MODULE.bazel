@@ -1,0 +1,47 @@
+module(
+    name = "rules_img_signer_notation",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_go", version = "0.61.1")
+bazel_dep(name = "gazelle", version = "0.51.3")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(go_mod = "//:go.mod")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_google_go_containerregistry",
+    "com_github_notaryproject_notation_core_go",
+    "com_github_notaryproject_tspclient_go",
+    "com_github_opencontainers_go_digest",
+    "com_github_opencontainers_image_spec",
+)
+
+# Resolve the plugin binary: prebuilt download for released versions, or the
+# source-built go_binary for any other commit / local / git_override build.
+prebuilt = use_extension("//prebuilt:prebuilt.bzl", "prebuilt_signer")
+prebuilt.from_file(
+    basename = "notation",
+    lockfile = "//:prebuilt_lockfile.json",
+)
+prebuilt.source(target = "//cmd/notation")
+use_repo(prebuilt, "rules_img_signer_notation_resolved")
+
+# Download the official upstream notation CLI (kept in sync with the
+# notation-core-go library in go.mod) so integration tests can verify signatures
+# with the real tool. Exposed as @rules_img_signer_notation//notation.
+notation_cli = use_extension("//cli:cli.bzl", "notation_cli")
+notation_cli.from_file(lockfile = "//cli:notation_cli.lock.json")
+use_repo(
+    notation_cli,
+    "notation_cli_darwin_amd64",
+    "notation_cli_darwin_arm64",
+    "notation_cli_linux_amd64",
+    "notation_cli_linux_arm64",
+    "notation_cli_windows_amd64",
+)

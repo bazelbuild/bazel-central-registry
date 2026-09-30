@@ -1,0 +1,606 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+exports_files(["MODULE.bazel"])
+
+# ---------------------------------------------------------------------------
+# Build flags
+# ---------------------------------------------------------------------------
+#
+# Each row: (flag_name, config.h define name, default value). The row drives
+# a `bool_flag`, a matching `<flag>_enabled` `config_setting`, and a
+# conditional `AC_DEFINE(define, 1)` appended to the autoconf check list.
+_FEATURE_FLAGS = [
+    ("jobserver", "MAKE_JOBSERVER", True),
+    ("load", "MAKE_LOAD", True),
+    ("posix_spawn", "USE_POSIX_SPAWN", True),
+    ("case_insensitive_fs", "HAVE_CASE_INSENSITIVE_FS", False),
+]
+
+[
+    bool_flag(
+        name = flag,
+        build_setting_default = default,
+        visibility = ["//visibility:public"],
+    )
+    for flag, _, default in _FEATURE_FLAGS
+]
+
+[
+    config_setting(
+        name = flag + "_enabled",
+        flag_values = {":" + flag: "true"},
+    )
+    for flag, _, _ in _FEATURE_FLAGS
+]
+
+# ---------------------------------------------------------------------------
+# Shared select() values
+# ---------------------------------------------------------------------------
+
+# Marks a target as incompatible with Windows. Used to prune the
+# POSIX-flavored autoconf pipeline when building on Windows, where the
+# `:config_h` alias routes to `src/config.h.W32` instead.
+_INCOMPATIBLE_WITH_WINDOWS = select({
+    "@platforms//os:windows": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
+
+# `msvc-cl` and `clang-cl` both consume the MSVC flag dialect (`/std:`,
+# `/wd`, ...). Hoist so the two branches don't drift.
+_MSVC_STYLE_COPTS = [
+    "/std:c11",
+    "/wd4267",  # size_t -> int narrowing; benign in this codebase.
+]
+
+# Windows system libraries pulled in by src/w32/**:
+#   * user32 for wsprintf (w32err.c)
+#   * advapi32 for InitializeSecurityDescriptor (subproc/sub_proc.c)
+# kernel32.lib (FormatMessage, Create*, ...) is default-linked by every
+# Windows cc_toolchain. Upstream's build_w32.bat links a larger set for
+# defensive/optional-feature reasons; we only add what the w32 backend
+# actually references. Flag dialect follows the linker driver: MSVC and
+# clang-cl want `/DEFAULTLIB:`, MinGW-GCC wants `-l`.
+_WIN32_MSVC_LINKOPTS = [
+    "/DEFAULTLIB:advapi32.lib",
+    "/DEFAULTLIB:user32.lib",
+]
+_WIN32_MINGW_LINKOPTS = [
+    "-ladvapi32",
+    "-luser32",
+]
+
+# ---------------------------------------------------------------------------
+# Package metadata (PACKAGE_NAME, PACKAGE_VERSION, ...)
+# ---------------------------------------------------------------------------
+
+package_info(
+    name = "make_package_info",
+    package_name = "GNU Make",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "bug-make@gnu.org",
+    package_url = "https://www.gnu.org/software/make/",
+)
+
+# ---------------------------------------------------------------------------
+# Autoconf-generated config.h (POSIX hosts)
+#
+# The checks below probe POSIX-flavored headers/functions and would all fail
+# under MSVC. Windows builds skip this whole pipeline via
+# `_INCOMPATIBLE_WITH_WINDOWS` and consume the hand-maintained
+# `src/config.h.W32` verbatim (see the `:config_h` select further down).
+#
+# HAVE_* names for headers/functions that are *guaranteed present* on every
+# supported POSIX host (C89 / mandatory POSIX) are pinned via
+# `_ALWAYS_PRESENT_*` below rather than probed — it saves one compile
+# action per probe on every build, and the checks would never actually
+# vary on our platform matrix.
+# ---------------------------------------------------------------------------
+
+# Optional / obsolescent / platform-specific headers whose presence really
+# does vary across debian/macos/ubuntu.
+_HEADER_CHECKS = macros.AC_CHECK_HEADERS([
+    "alloca.h",
+    "dlfcn.h",
+    "mach/mach.h",
+    "memory.h",
+    "minix/config.h",
+    "ndir.h",
+    "nlist.h",
+    "spawn.h",
+    "sys/dir.h",
+    "sys/file.h",
+    "sys/loadavg.h",
+    "sys/ndir.h",
+    "sys/timeb.h",
+    "vfork.h",
+])
+
+# Optional functions — genuinely missing on at least one supported host.
+_FUNCTION_CHECKS = macros.AC_CHECK_FUNCS([
+    "clock_gettime",
+    "eaccess",
+    "gethostbyname",
+    "memrchr",
+    "mempcpy",
+    "mktemp",
+    "posix_spawn",
+    "posix_spawnattr_setsigmask",
+    "setegid",
+    "seteuid",
+    "setlinebuf",
+    "setregid",
+    "setreuid",
+    "sigsetmask",
+    "stpcpy",
+    "strndup",
+    "vfork",
+    "wait3",
+])
+
+_DLFCN_DECL_CHECKS = macros.AC_CHECK_DECLS(
+    [
+        "dlopen",
+        "dlsym",
+        "dlerror",
+    ],
+    includes = ["#include <dlfcn.h>"],
+)
+
+_SIGLIST_DECL_CHECKS = macros.AC_CHECK_DECLS(
+    [
+        "sys_siglist",
+        "_sys_siglist",
+        "__sys_siglist",
+    ],
+    includes = [
+        "#include <signal.h>",
+        "#include <unistd.h>",
+    ],
+)
+
+_MEMBER_CHECKS = macros.AC_CHECK_MEMBERS(
+    ["struct dirent.d_type"],
+    includes = ["#include <dirent.h>"],
+)
+
+# Type checks split by required include: intmax_t / uintmax_t need
+# <stdint.h>, sig_atomic_t needs <signal.h>, and `long long int` needs no
+# header at all.
+_TYPE_CHECKS = (
+    macros.AC_CHECK_TYPES(
+        [
+            "intmax_t",
+            "uintmax_t",
+        ],
+        includes = ["#include <stdint.h>"],
+    ) + macros.AC_CHECK_TYPES(
+        [
+            "long long int",
+            "unsigned long long int",
+        ],
+    ) + macros.AC_CHECK_TYPES(
+        ["sig_atomic_t"],
+        includes = ["#include <signal.h>"],
+    )
+)
+
+# `SA_RESTART` is a signal.h macro (not a function or type), and
+# `getloadavg` is declared in <stdlib.h> or <sys/loadavg.h> depending on
+# the platform. Neither fits AC_CHECK_HEADERS/FUNCS.
+_EXTRA_COMPILE_CHECKS = [
+    checks.AC_TRY_COMPILE(
+        name = "make_cv_sa_restart",
+        code = """\
+#include <signal.h>
+int main(void) { return SA_RESTART; }
+""",
+        define = "HAVE_SA_RESTART",
+    ),
+    checks.AC_CHECK_DECL(
+        "getloadavg",
+        define = "HAVE_DECL_GETLOADAVG",
+        includes = ["#include <stdlib.h>"],
+    ),
+    # `src/main.c` has a static `bsd_signal` fallback gated on
+    # `#if !HAVE_DECL_BSD_SIGNAL`. macOS declares `bsd_signal` in
+    # <signal.h>, so the fallback conflicts with the system decl unless we
+    # set HAVE_DECL_BSD_SIGNAL=1 there; on modern glibc bsd_signal was
+    # removed (>= 2.26) so the check returns 0 and the fallback is used.
+    # Matches configure.ac's `AC_CHECK_DECLS([bsd_signal], ...)`.
+    checks.AC_CHECK_DECL(
+        "bsd_signal",
+        define = "HAVE_DECL_BSD_SIGNAL",
+        includes = [
+            "#define _GNU_SOURCE 1",
+            "#include <signal.h>",
+        ],
+    ),
+    # `lib/findprog-in.c` calls `eaccess` unguarded. Autoconf's convention
+    # (see AC_FUNC_EACCESS in configure.ac) is to alias it to `access` when
+    # missing; `access` differs subtly (real vs. effective uid), but it's
+    # the accepted portable fallback and matches what upstream does.
+    #
+    # Condition is inverted (`!ac_cv_func_eaccess`) so the "eaccess exists"
+    # case falls into `if_false = None` and produces no #define. Using the
+    # positive form with `if_true = None` still emits `#define eaccess`
+    # (empty) because the resolver treats condition-true as always-emit.
+    checks.AC_DEFINE(
+        "eaccess",
+        condition = "!ac_cv_func_eaccess",
+        if_false = None,
+        if_true = "access",
+    ),
+]
+
+# Headers guaranteed present on every supported POSIX host.
+_ALWAYS_PRESENT_HEADERS = [
+    "dirent.h",
+    "fcntl.h",
+    "inttypes.h",
+    "limits.h",
+    "locale.h",
+    "stdbool.h",
+    "stdint.h",
+    "stdio.h",
+    "stdlib.h",
+    "strings.h",
+    "string.h",
+    "sys/param.h",
+    "sys/resource.h",
+    "sys/select.h",
+    "sys/stat.h",
+    "sys/time.h",
+    "sys/types.h",
+    "sys/wait.h",
+    "unistd.h",
+    "wchar.h",
+]
+
+# Functions guaranteed present on every supported POSIX host (glibc / musl
+# / libSystem all provide them).
+_ALWAYS_PRESENT_FUNCS = [
+    "atexit",
+    "dup",
+    "dup2",
+    "fdopen",
+    "fork",
+    "getcwd",
+    "getgroups",
+    "gethostname",
+    "getrlimit",
+    "gettimeofday",
+    "isatty",
+    "lstat",
+    "mkfifo",
+    "mkstemp",
+    "pipe",
+    "pselect",
+    "readlink",
+    "realpath",
+    "setrlimit",
+    "setvbuf",
+    "sigaction",
+    "socket",
+    "strcasecmp",
+    "strcoll",
+    "strdup",
+    "strerror",
+    "strncasecmp",
+    "strsignal",
+    "strtoll",
+    "ttyname",
+    "umask",
+    "waitpid",
+]
+
+_STATIC_DEFINES = [
+    checks.AC_DEFINE("MK_CONFIGURE", 1),
+    checks.AC_DEFINE("STDC_HEADERS", 1),
+    # `lib/getloadavg.c` has an #ifdef GNULIB_TEST_GETLOADAVG guard around a
+    # replacement wrapper. We don't compile the gnulib copy so pin it to 0.
+    checks.AC_DEFINE("GNULIB_TEST_GETLOADAVG", 0),
+    checks.AC_DEFINE("MAKE_CXX", "\"\""),
+    # Symlink timestamp checking works whenever we have both lstat and
+    # readlink, which is true on every currently-supported POSIX host.
+    checks.AC_DEFINE("MAKE_SYMLINKS", 1),
+    # Low-resolution timestamps (1-second granularity): the hi-res path needs
+    # ST_MTIM_NSEC, whose expansion differs across libc (glibc: st_mtim.tv_nsec,
+    # macOS: st_mtimespec.tv_nsec). Pinning to 0 avoids the platform matrix.
+    checks.AC_DEFINE("FILE_TIMESTAMP_HI_RES", 0),
+    checks.AC_DEFINE("PATH_SEPARATOR_CHAR", "':'"),
+    # SCCS is essentially extinct; bare 'get' matches `configure`'s fallback
+    # when /usr/sccs/get isn't found.
+    checks.AC_DEFINE("SCCS_GET", "\"get\""),
+] + [
+    checks.AC_DEFINE(
+        "HAVE_" + h.replace("/", "_").replace(".", "_").upper(),
+        1,
+    )
+    for h in _ALWAYS_PRESENT_HEADERS
+] + [
+    checks.AC_DEFINE(
+        "HAVE_" + fn.upper(),
+        1,
+    )
+    for fn in _ALWAYS_PRESENT_FUNCS
+]
+
+autoconf(
+    name = "config_checks",
+    checks = (
+                 _HEADER_CHECKS +
+                 _FUNCTION_CHECKS +
+                 _DLFCN_DECL_CHECKS +
+                 _SIGLIST_DECL_CHECKS +
+                 _MEMBER_CHECKS +
+                 _TYPE_CHECKS +
+                 _EXTRA_COMPILE_CHECKS +
+                 _STATIC_DEFINES
+             ) +
+             # One select per feature flag: Bazel doesn't provide a `sum(selects)`
+             # primitive, so this stays unrolled. The names line up with `_FEATURE_FLAGS`.
+             select({
+                 ":jobserver_enabled": [checks.AC_DEFINE("MAKE_JOBSERVER", 1)],
+                 "//conditions:default": [],
+             }) + select({
+        ":load_enabled": [checks.AC_DEFINE("MAKE_LOAD", 1)],
+        "//conditions:default": [],
+    }) + select({
+        ":posix_spawn_enabled": [checks.AC_DEFINE("USE_POSIX_SPAWN", 1)],
+        "//conditions:default": [],
+    }) + select({
+        ":case_insensitive_fs_enabled": [checks.AC_DEFINE("HAVE_CASE_INSENSITIVE_FS", 1)],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = _INCOMPATIBLE_WITH_WINDOWS,
+    deps = [":make_package_info"],
+)
+
+autoconf_hdr(
+    name = "config_h_posix",
+    out = "src/config_posix.h",
+    substitutions = {
+        # `config.guess` isn't available under Bazel — pin a stable placeholder.
+        "#undef MAKE_HOST": "#define MAKE_HOST \"bazel-build\"",
+    },
+    target_compatible_with = _INCOMPATIBLE_WITH_WINDOWS,
+    template = "src/config.h.in",
+    deps = [":config_checks"],
+)
+
+# `#include "config.h"` needs an actual file at src/config.h; select the
+# platform-specific source in-place so we don't stage the Windows copy
+# through a redundant intermediate on every build.
+#
+# On Windows the source is upstream's hand-maintained `src/config.h.W32`
+# verbatim (it #includes "mkconfig.h" for PACKAGE_* constants and
+# "../src/mkcustom.h" at the bottom, both of which are checked in under
+# src/). A `patches/` entry in source.json widens one MinGW-only guard
+# (`HAVE_UMASK`) to also cover MSVC/clang-cl — see patches/msvc-have-umask.patch.
+copy_file(
+    name = "config_h",
+    src = select({
+        "@platforms//os:windows": "src/config.h.W32",
+        "//conditions:default": ":config_h_posix",
+    }),
+    out = "src/config.h",
+)
+
+# ---------------------------------------------------------------------------
+# Generated headers
+# ---------------------------------------------------------------------------
+
+# `src/guile.c` includes `gmk-default.h`, which upstream generates by
+# stringifying `src/gmk-default.scm`. Guile support is off in the Bazel build
+# so we emit a placeholder that keeps `guile.c` compilable.
+write_file(
+    name = "gmk_default_h",
+    out = "src/gmk-default.h",
+    content = ["static const char *const GUILE_module_defn = \"\";"],
+)
+
+# On Windows there's no system <glob.h>/<fnmatch.h>; the gnulib copies under
+# lib/ ship as `.in.h` templates and are used as-is (no @VAR@ substitutions).
+# copy_file materializes them at the paths the sources #include.
+copy_file(
+    name = "lib_glob_h",
+    src = "lib/glob.in.h",
+    out = "lib/glob.h",
+)
+
+copy_file(
+    name = "lib_fnmatch_h",
+    src = "lib/fnmatch.in.h",
+    out = "lib/fnmatch.h",
+)
+
+# ---------------------------------------------------------------------------
+# Source lists
+# ---------------------------------------------------------------------------
+
+# `src/posixos.c` (POSIX OS backend) and the w32 sources are mutually exclusive.
+# See the `srcs = ... + select(...)` on the cc_binary below.
+MAKE_SRCS = [
+    "src/ar.c",
+    "src/arscan.c",
+    "src/commands.c",
+    "src/default.c",
+    "src/dir.c",
+    "src/expand.c",
+    "src/file.c",
+    "src/function.c",
+    "src/getopt.c",
+    "src/getopt1.c",
+    "src/guile.c",
+    "src/hash.c",
+    "src/implicit.c",
+    "src/job.c",
+    "src/load.c",
+    "src/loadapi.c",
+    "src/main.c",
+    "src/misc.c",
+    "src/output.c",
+    "src/read.c",
+    "src/remake.c",
+    "src/remote-stub.c",
+    "src/rule.c",
+    "src/shuffle.c",
+    "src/signame.c",
+    "src/strcache.c",
+    "src/variable.c",
+    "src/version.c",
+    "src/vpath.c",
+]
+
+MAKE_HDRS = [
+    "src/commands.h",
+    "src/debug.h",
+    "src/dep.h",
+    "src/filedef.h",
+    "src/getopt.h",
+    "src/gettext.h",
+    "src/gnumake.h",
+    "src/hash.h",
+    "src/job.h",
+    "src/makeint.h",
+    # mkconfig.h is checked-in and provides PACKAGE_NAME/PACKAGE_STRING/...
+    # on hosts that skip autoconf (currently Windows via src/config.h.W32).
+    "src/mkconfig.h",
+    "src/mkcustom.h",
+    "src/os.h",
+    "src/output.h",
+    "src/rule.h",
+    "src/shuffle.h",
+    "src/variable.h",
+]
+
+# Gnulib helpers. `concat-filename.c` and `findprog-in.c` are only referenced
+# by `src/job.c` inside `#ifdef USE_POSIX_SPAWN`, and Windows doesn't have
+# posix_spawn, so keep them out of the Windows source list — the gnulib
+# headers use `_GL_ATTRIBUTE_*` macros and `<unistd.h>` that MSVC doesn't
+# provide. See the cc_binary `srcs` select below.
+POSIX_LIB_SRCS = [
+    "lib/concat-filename.c",
+    "lib/findprog-in.c",
+]
+
+# `intprops.h` is portable and referenced from src/*.c on every host, so it
+# stays unconditional. The rest of the lib/ headers are only used by
+# `POSIX_LIB_SRCS` and drop out on Windows alongside them.
+LIB_HDRS = [
+    "lib/intprops.h",
+    "lib/intprops-internal.h",
+]
+
+POSIX_LIB_HDRS = [
+    "lib/concat-filename.h",
+    "lib/filename.h",
+    "lib/findprog.h",
+]
+
+# Windows-only backend: process/job control, dirent+dlfcn shims, MSVC-safe
+# POSIX helpers. The header list is included in `srcs` so Bazel tracks
+# their content for change detection even though they're only #include'd.
+W32_SRCS = [
+    "src/w32/pathstuff.c",
+    "src/w32/w32os.c",
+    "src/w32/compat/dirent.c",
+    "src/w32/compat/posixfcn.c",
+    "src/w32/subproc/misc.c",
+    "src/w32/subproc/sub_proc.c",
+    "src/w32/subproc/w32err.c",
+]
+
+W32_HDRS = [
+    "src/w32/include/dirent.h",
+    "src/w32/include/dlfcn.h",
+    "src/w32/include/pathstuff.h",
+    "src/w32/include/sub_proc.h",
+    "src/w32/include/w32err.h",
+    "src/w32/subproc/proc.h",
+]
+
+# On Windows there's no system glob/fnmatch, so pull in the gnulib copies.
+# lib/getloadavg.c is a portable fallback — Windows doesn't have getloadavg.
+W32_LIB_SRCS = [
+    "lib/fnmatch.c",
+    "lib/glob.c",
+    "lib/getloadavg.c",
+]
+
+# ---------------------------------------------------------------------------
+# `make` binary
+# ---------------------------------------------------------------------------
+
+cc_binary(
+    name = "make",
+    srcs = MAKE_SRCS + MAKE_HDRS + LIB_HDRS + [
+        ":config_h",
+        ":gmk_default_h",
+    ] + select({
+        "@platforms//os:windows": W32_SRCS + W32_HDRS + W32_LIB_SRCS + [
+            ":lib_fnmatch_h",
+            ":lib_glob_h",
+        ],
+        "//conditions:default": ["src/posixos.c"] + POSIX_LIB_SRCS + POSIX_LIB_HDRS,
+    }),
+    # Compiler flags follow the target's flag dialect, not the target OS:
+    # `msvc-cl` / `clang-cl` share MSVC-style `/std:` / `/wd` flags,
+    # everything else (gcc, clang, MinGW-gcc) uses the GCC dialect. Pinning
+    # the C dialect ensures upstream's C11-isms (e.g. `_Noreturn`) compile
+    # regardless of the cc_toolchain's default.
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": _MSVC_STYLE_COPTS,
+        "@rules_cc//cc/compiler:msvc-cl": _MSVC_STYLE_COPTS,
+        "//conditions:default": [
+            "-std=gnu11",
+            "-Wno-unused-result",
+        ],
+    }),
+    includes = [
+        "lib",
+        "src",
+    ] + select({
+        "@platforms//os:windows": ["src/w32/include"],
+        "//conditions:default": [],
+    }),
+    # `src/load.c` (MAKE_LOAD) needs dlopen. On Linux/BSD that lives in libdl
+    # and needs `-ldl`; macOS provides it via libSystem, and Windows uses
+    # LoadLibrary (kernel32.lib is default-linked). The second select adds
+    # advapi32/user32 for the w32 backend — see `_WIN32_*_LINKOPTS` above.
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }) + select({
+        "@rules_cc//cc/compiler:clang-cl": _WIN32_MSVC_LINKOPTS,
+        "@rules_cc//cc/compiler:msvc-cl": _WIN32_MSVC_LINKOPTS,
+        "@rules_cc//cc/compiler:mingw-gcc": _WIN32_MINGW_LINKOPTS,
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "HAVE_CONFIG_H",
+    ] + select({
+        # config.h.W32 (via the checked-in mkconfig.h) already hardcodes
+        # reasonable defaults for LIBDIR/INCLUDEDIR/LOCALEDIR on Windows.
+        # HAVE_UMASK is added at config.h generation time (see
+        # `:config_h_w32`), not here.
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "LIBDIR=\\\"/usr/local/lib\\\"",
+            "INCLUDEDIR=\\\"/usr/local/include\\\"",
+            "LOCALEDIR=\\\"/usr/local/share/locale\\\"",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)

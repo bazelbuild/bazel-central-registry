@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//:liburing_configure.bzl", "liburing_configure")
+
+# liburing picks its compatibility shims by compiling probe programs, so the
+# probes have to see the same compiler and flags the library itself is built
+# with.  liburing_configure asks the toolchain for that command line; a genrule
+# can only reach $(CC_FLAGS), which omits the target triple and makes every
+# probe fail when cross compiling.
+#
+# Because the probes get the real command line, the headers they read -- libc
+# and the kernel uapi ones describing io_uring itself -- come from the
+# toolchain's sysroot, the same place the library's own compiles get them.  The
+# generated shims therefore describe the target, not the machine running the
+# build.
+liburing_configure(
+    name = "generate_headers",
+    srcs = [
+        "Makefile.common",
+        "liburing.spec",
+    ],
+    outs = [
+        "config-host.h",
+        "src/include/liburing/compat.h",
+        "src/include/liburing/io_uring_version.h",
+    ],
+    configure = "configure",
+)
+
+cc_library(
+    name = "uring",
+    srcs = [
+        "config-host.h",
+        "src/include/liburing/compat.h",
+        "src/include/liburing/io_uring_version.h",
+        "src/queue.c",
+        "src/register.c",
+        "src/setup.c",
+        "src/syscall.c",
+        "src/version.c",
+    ] + glob([
+        "src/arch/**/*.h",
+        "src/*.h",
+    ]),
+    hdrs = glob(["src/include/**/*.h"]),
+
+    # cflags aligned with upstream:
+    # https://github.com/axboe/liburing/blob/master/src/Makefile#L13
+    copts = [
+        "-D_GNU_SOURCE",
+        "-D_LARGEFILE_SOURCE",
+        "-D_FILE_OFFSET_BITS=64",
+        "-DLIBURING_INTERNAL",
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+        "-fno-stack-protector",
+        "-include config-host.h",
+    ],
+    includes = ["src/include"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "liburing",
+    actual = ":uring",
+    visibility = ["//visibility:public"],
+)

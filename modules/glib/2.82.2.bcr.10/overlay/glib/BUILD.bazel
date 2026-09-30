@@ -1,0 +1,452 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_applicable_licenses = ["//:license"])
+
+# meson.build project-wide adds /utf-8 for MSVC.  Without it cl reads
+# these sources in the system ANSI codepage and mangles non-ASCII
+# string literals -- glib/tests/unicode.c's normalization data, for one.
+#
+# Bazel 7's MSVC toolchain also passes /DCOMPILER_MSVC by default, which
+# collides with the CompilerType enum in gio/glib-compile-resources.c.
+# Bazel 8 dropped it; glib reads _MSC_VER, never this, so drop it too.
+MSVC_COPTS = select({
+    "@platforms//os:windows": [
+        "/utf-8",
+        "/UCOMPILER_MSVC",
+    ],
+    "//conditions:default": [],
+})
+
+PUBLIC_HDRS = [
+    "deprecated/gallocator.h",
+    "deprecated/gcache.h",
+    "deprecated/gcompletion.h",
+    "deprecated/gmain.h",
+    "deprecated/grel.h",
+    "deprecated/gthread.h",
+    "galloca.h",
+    "garray.h",
+    "gasyncqueue.h",
+    "gatomic.h",
+    "gbacktrace.h",
+    "gbase64.h",
+    "gbitlock.h",
+    "gbookmarkfile.h",
+    "gbytes.h",
+    "gcharset.h",
+    "gchecksum.h",
+    "gconvert.h",
+    "gdataset.h",
+    "gdate.h",
+    "gdatetime.h",
+    "gdir.h",
+    "genviron.h",
+    "gerror.h",
+    "gfileutils.h",
+    "ggettext.h",
+    "ghash.h",
+    "ghmac.h",
+    "ghook.h",
+    "ghostutils.h",
+    "gi18n-lib.h",
+    "gi18n.h",
+    "giochannel.h",
+    "gkeyfile.h",
+    "glib-autocleanups.h",
+    "glib-object.h",
+    "glib-typeof.h",
+    "glib-unix.h",
+    "glib.h",
+    "glist.h",
+    "gmacros.h",
+    "gmain.h",
+    "gmappedfile.h",
+    "gmarkup.h",
+    "gmem.h",
+    "gmessages.h",
+    "gnode.h",
+    "goption.h",
+    "gpathbuf.h",
+    "gpattern.h",
+    "gpoll.h",
+    "gprimes.h",
+    "gprintf.h",
+    "gqsort.h",
+    "gquark.h",
+    "gqueue.h",
+    "grand.h",
+    "grcbox.h",
+    "grefcount.h",
+    "grefstring.h",
+    "gregex.h",
+    "gscanner.h",
+    "gsequence.h",
+    "gshell.h",
+    "gslice.h",
+    "gslist.h",
+    "gspawn.h",
+    "gstdio.h",
+    "gstrfuncs.h",
+    "gstring.h",
+    "gstringchunk.h",
+    "gstrvbuilder.h",
+    "gtestutils.h",
+    "gthread.h",
+    "gthreadpool.h",
+    "gtimer.h",
+    "gtimezone.h",
+    "gtrashstack.h",
+    "gtree.h",
+    "gtypes.h",
+    "gunicode.h",
+    "guri.h",
+    "gutils.h",
+    "guuid.h",
+    "gvariant.h",
+    "gvarianttype.h",
+    "gversion.h",
+]
+
+PUBLIC_HDRS_WIN32 = [
+    "gwin32.h",
+]
+
+INTERNAL_HDRS = glob(["*private.h"]) + [
+    "gbsearcharray.h",
+    "gconstructor.h",
+    "glib_trace.h",
+    "glib-init.h",
+    "glibintl.h",
+    "gmain-internal.h",
+    "gmirroringtable.h",
+    "gprintfint.h",
+    "gscripttable.h",
+    "gtranslit-data.h",
+    "gunibreak.h",
+    "gunichartables.h",
+    "gunicomp.h",
+    "gunidecomp.h",
+    "gvalgrind.h",
+    "gvariant-core.h",
+    "gvariant-internal.h",
+    "gvariant-serialiser.h",
+    "gvarianttypeinfo.h",
+    "gwakeup.h",
+    "msvc_recommended_pragmas.h",
+    "valgrind.h",
+]
+
+ALL_HDRS = glob([
+    "*.h",
+    "deprecated/*.h",
+])
+
+filegroup(
+    name = "all_hdrs",
+    srcs = ALL_HDRS,
+    visibility = ["//:__subpackages__"],
+)
+
+filegroup(
+    name = "gconstructor_h",
+    srcs = ["gconstructor.h"],
+    visibility = ["//gio:__pkg__"],
+)
+
+filegroup(
+    name = "gunicode_h",
+    srcs = ["gunicode.h"],
+    visibility = ["//gobject:__pkg__"],
+)
+
+NO_RENAME = [
+    "glib.h",
+    "glib-object.h",
+    "glib-unix.h",
+]
+
+[expand_template(
+    name = "public_hdr_" + hdr.replace("/", "_"),
+    out = "include_glib-2.0/" + (hdr if hdr in NO_RENAME else "glib/" + hdr),
+    substitutions = {},
+    template = hdr,
+) for hdr in (PUBLIC_HDRS + PUBLIC_HDRS_WIN32)]
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+[
+    V_MAJOR,
+    V_MINOR,
+    V_MICRO,
+] = UPSTREAM_VERSION.split(".", 3)
+
+expand_template(
+    name = "glibconfig_h",
+    out = "include_glib-2.0/glibconfig.h",
+    substitutions = {
+        "@GLIB_MAJOR_VERSION@": V_MAJOR,
+        "@GLIB_MINOR_VERSION@": V_MINOR,
+        "@GLIB_MICRO_VERSION@": V_MICRO,
+    },
+    template = select({
+        "@platforms//os:windows": "glibconfig.h.in-windows",
+        "//conditions:default": "glibconfig.h.in-posix",
+    }),
+)
+
+genrule(
+    name = "gversionmacros_h",
+    srcs = ["gversionmacros.h.in"],
+    outs = ["include_glib-2.0/glib/gversionmacros.h"],
+    cmd = "$(PYTHON3) $(location //tools:gen-visibility-macros.py) " +
+          UPSTREAM_VERSION + " versions-macros $(location gversionmacros.h.in) $@",
+    toolchains = ["@rules_python//python:current_py_toolchain"],
+    tools = ["//tools:gen-visibility-macros.py"],
+)
+
+genrule(
+    name = "glib-visibility_h",
+    outs = ["include_glib-2.0/glib/glib-visibility.h"],
+    cmd = "$(PYTHON3) $(location //tools:gen-visibility-macros.py) " +
+          UPSTREAM_VERSION + " visibility-macros GLIB $@",
+    toolchains = ["@rules_python//python:current_py_toolchain"],
+    tools = ["//tools:gen-visibility-macros.py"],
+)
+
+# The generated public headers on their own.  glib/gnulib needs glib.h,
+# which pulls in glibconfig.h, but it cannot depend on :glib -- :glib
+# links it.  Upstream has the same shape: gnulib_lib takes glibinc as an
+# include directory rather than a dependency.
+cc_library(
+    name = "glib_generated_headers",
+    hdrs = [
+        ":public_hdr_" + hdr.replace("/", "_")
+        for hdr in PUBLIC_HDRS
+    ] + [
+        ":glib-visibility_h",
+        ":glibconfig_h",
+        ":gversionmacros_h",
+    ] + select({
+        "@platforms//os:windows": [
+            ":public_hdr_" + hdr.replace("/", "_")
+            for hdr in PUBLIC_HDRS_WIN32
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["include_glib-2.0"],
+    visibility = ["//:__subpackages__"],
+)
+
+cc_library(
+    name = "stub_intl",
+    hdrs = ["stub_libintl/libintl.h"],
+    includes = ["stub_libintl"],
+    visibility = ["//:__subpackages__"],
+)
+
+GLIB_POSIX_SRCS = [
+    "gspawn-posix.c",
+    "glib-unix.c",
+    "giounix.c",
+]
+
+GLIB_WIN32_SRCS = [
+    "giowin32.c",
+    "gwin32.c",
+    # glib/meson.build compiles this into the library; it defines the
+    # g_spawn_*_impl entry points gspawn.c dispatches to.  It also appears
+    # in GLIB_INTERNAL_TEXTUAL_HDRS below, because the helper executable
+    # includes it textually rather than linking against it.
+    "gspawn-win32.c",
+    # glib ships its own dirent for Windows, which gdir.c includes as
+    # "dirent/dirent.h".  wdirent.c is the only compiled entry point: it
+    # defines UNICODE and then textually includes dirent.c (listed under
+    # GLIB_INTERNAL_TEXTUAL_HDRS below, so it is available to the compile
+    # without being built on its own).
+    "dirent/wdirent.c",
+    "dirent/dirent.h",
+]
+
+GLIB_INTERNAL_TEXTUAL_HDRS = [
+    # Also a compiled source of :glib on Windows (see GLIB_WIN32_SRCS).  It
+    # is listed here too because gspawn-win32-helper.c includes it
+    # textually, with GSPAWN_HELPER defined so that only the shared
+    # definitions survive.
+    "gspawn-win32.c",
+    "gstdio-private.c",
+    "gthread-posix.c",
+    "gthread-win32.c",
+    "gwin32-private.c",
+    "win_iconv.c",
+    "dirent/dirent.c",
+]
+
+GLIB_TOOL_SRCS = [
+    "gtester.c",
+]
+
+# Built below as its own executables rather than into the library: it
+# carries a WinMain and textually includes gspawn-win32.c, so compiling it
+# into libglib would duplicate the g_spawn_*_impl symbols.  It still has to
+# be named here, or the *.c glob below sweeps it up on every platform.
+GLIB_HELPER_SRCS = [
+    "gspawn-win32-helper.c",
+]
+
+GLIB_SRCS = glob(
+    [
+        "*.c",
+        "deprecated/*.c",
+        "libcharset/*.c",
+        "libcharset/*.h",
+    ],
+    exclude = (
+        GLIB_POSIX_SRCS +
+        GLIB_WIN32_SRCS +
+        GLIB_INTERNAL_TEXTUAL_HDRS +
+        GLIB_TOOL_SRCS +
+        GLIB_HELPER_SRCS
+    ),
+)
+
+cc_library(
+    name = "glib_internal_textual_hdrs",
+    textual_hdrs = GLIB_INTERNAL_TEXTUAL_HDRS,
+    visibility = ["//:__subpackages__"],
+)
+
+REPO_ROOT = package_relative_label(":BUILD.bazel").workspace_root
+
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+cc_library(
+    name = "glib",
+    srcs = GLIB_SRCS + select({
+        "@platforms//os:windows": GLIB_WIN32_SRCS,
+        "//conditions:default": GLIB_POSIX_SRCS,
+    }) + PUBLIC_HDRS + INTERNAL_HDRS + select({
+        "@platforms//os:windows": PUBLIC_HDRS_WIN32,
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        ":public_hdr_" + hdr.replace("/", "_")
+        for hdr in PUBLIC_HDRS
+    ] + [
+        ":glib-visibility_h",
+        ":glibconfig_h",
+        ":gversionmacros_h",
+    ] + select({
+        "@platforms//os:windows": [
+            ":public_hdr_" + hdr.replace("/", "_")
+            for hdr in PUBLIC_HDRS_WIN32
+        ],
+        "//conditions:default": [],
+    }),
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+        "-I%s/glib/deprecated" % (INCLUDE_PREFIX,),
+    ] + MSVC_COPTS,
+    implementation_deps = [
+        ":glib_internal_textual_hdrs",
+        "//:config_h",
+        "@pcre2",
+    ] + select({
+        "@platforms//os:linux": [],
+        "//conditions:default": [":stub_intl"],
+    }) + select({
+        # glib/meson.build descends into gnulib only when the system
+        # printf is not good enough, which is every MSVC build.
+        "@platforms//os:windows": ["//glib/gnulib"],
+        "//conditions:default": [],
+    }),
+    includes = ["include_glib-2.0"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+        ],
+        "@platforms//os:macos": [
+            "-liconv",
+            "-framework",
+            "Carbon",
+        ],
+        # Upstream's win32_ldflags, which meson also exposes through
+        # glib-2.0.pc, plus winmm for the timeGetTime()/timeBeginPeriod()
+        # calls in gmain.c.  Spelled for link.exe, since the Windows arm of
+        # this port targets MSVC.
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:ws2_32.lib",
+            "-DEFAULTLIB:ole32.lib",
+            "-DEFAULTLIB:winmm.lib",
+            "-DEFAULTLIB:shlwapi.lib",
+            "-DEFAULTLIB:uuid.lib",
+            # A Visual Studio project links these by default and meson
+            # leans on that; Bazel's MSVC toolchain does not, so name them.
+            # advapi32: the registry and SID calls in gutils.c/gtimezone.c.
+            # user32: the message-loop calls in giowin32.c/gmessages.c.
+            # shell32: CommandLineToArgvW in goption.c.
+            "-DEFAULTLIB:advapi32.lib",
+            "-DEFAULTLIB:user32.lib",
+            "-DEFAULTLIB:shell32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        "_FILE_OFFSET_BITS=64",
+        "G_ENABLE_DEBUG",
+        "_GNU_SOURCE",
+        "G_LOG_DOMAIN='\"GLib\"'",
+        "GLIB_COMPILATION",
+        "GLIB_CHARSETALIAS_DIR='\"/usr/lib\"'",
+    ] + select({
+        # glib/meson.build's pcre2_static_args.  pcre2.h decorates its
+        # entry points __declspec(dllimport) under MSVC otherwise, and
+        # gregex.c fails to link against the static pcre2.
+        "@platforms//os:windows": ["PCRE2_STATIC"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# glib/meson.build builds these two for Windows.  g_spawn* there does not
+# launch the target program directly: it runs gspawn-win64-helper.exe (the
+# name gspawn-win32.c's HELPER_PROCESS expands to under _WIN64), which
+# gwin32.c locates by walking up from the calling executable's directory
+# and looking in "", "bin", "lib", "glib" and "gio" at each level.  Without
+# them every g_spawn* call fails with "Failed to execute helper program".
+[cc_binary(
+    name = "gspawn-win64-helper" + suffix,
+    srcs = ["gspawn-win32-helper.c"],
+    copts = [
+        "-I" + INCLUDE_PREFIX,
+        "-I%s/glib" % (INCLUDE_PREFIX,),
+    ] + MSVC_COPTS,
+    linkopts = [] if suffix else [
+        # meson's win_subsystem : 'windows'.  Without HELPER_CONSOLE the
+        # entry point is WinMain, and the console helper is the one that
+        # keeps a console attached.
+        "-SUBSYSTEM:WINDOWS",
+        "-ENTRY:WinMainCRTStartup",
+    ],
+    local_defines = [
+        "G_LOG_DOMAIN='\"GLib\"'",
+        "GLIB_COMPILATION",
+    ] + (["HELPER_CONSOLE"] if suffix else []),
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":glib",
+        ":glib_internal_textual_hdrs",
+        ":stub_intl",
+        "//:config_h",
+        # It includes gspawn-win32.c, which reaches gprintfint.h and from
+        # there gnulib/printf.h.
+        "//glib/gnulib",
+    ],
+) for suffix in [
+    "",
+    "-console",
+]]

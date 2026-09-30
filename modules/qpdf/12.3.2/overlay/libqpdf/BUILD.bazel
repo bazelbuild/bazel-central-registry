@@ -1,0 +1,491 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Dynamic link against the platform-provided libcrypto: the toolchain/platform
+# must supply the openssl headers, and -lcrypto resolves the platform's shared
+# libcrypto at the consumer link. Carrying no header dependency is deliberate:
+# the from-source openssl headers/archive here would let the hermetic libcrypto
+# satisfy qpdf's crypto symbols ahead of -lcrypto, silently degenerating this
+# arm into the from-source one. A toolchain without system openssl headers
+# therefore cannot build this arm.
+cc_library(
+    name = "crypto_system",
+    # GNU -l spelling kept: the openssl_system arm presumes a GNU-driver
+    # toolchain whose linker search path can resolve the system libcrypto.
+    linkopts = ["-lcrypto"],
+)
+
+# ---------------------------------------------------------------------------
+# Generated config header (qpdf/qpdf-config.h)
+# ---------------------------------------------------------------------------
+#
+# qpdf's CMake build runs configure_file() on qpdf/qpdf-config.h.in, turning a
+# table of configure-time probe results into #define / #undef lines. In a
+# hermetic build the pinned platform + toolchain *is* the static model of the
+# target, so each probe answer is known at analysis time and the template is
+# expanded by substituting each #cmakedefine line with exactly what
+# configure_file() would emit: `#define FOO 1` when the probe succeeds,
+# `/* #undef FOO */` when it fails.
+#
+# The keys are the exact template lines, and drift on a version bump is
+# asymmetric: a NEW #cmakedefine line passes through unexpanded and fails loud
+# at compile (#cmakedefine is not a valid preprocessor directive); a REMOVED or
+# renamed line leaves a dead substitution key that is silently ignored.
+
+# CHOICES pinned to upstream's normal-build defaults — deliberate decisions, not
+# omissions. Each is a security-policy or external-dependency default that the
+# overlay does not expose:
+#   AVOID_WINDOWS_HANDLE  — keep the standard Windows secure-random path.
+#   USE_INSECURE_RANDOM   — never substitute the insecure PRNG for OS entropy.
+#   SKIP_OS_SECURE_RANDOM — keep the OS secure-random provider.
+#   ZOPFLI                — the zopfli recompressor would add an external zopfli
+#                           dependency; qpdf builds fine without it.
+_CONFIG_POLICY_DEFAULTS = {
+    "#cmakedefine AVOID_WINDOWS_HANDLE 1": "/* #undef AVOID_WINDOWS_HANDLE */",
+    "#cmakedefine SKIP_OS_SECURE_RANDOM 1": "/* #undef SKIP_OS_SECURE_RANDOM */",
+    "#cmakedefine USE_INSECURE_RANDOM 1": "/* #undef USE_INSECURE_RANDOM */",
+    "#cmakedefine ZOPFLI 1": "/* #undef ZOPFLI */",
+}
+
+# USE_CRYPTO_GNUTLS is undef unconditionally: the flag offers no gnutls arm, so
+# the gnutls provider is never compiled and its macro never set.
+_CONFIG_NO_GNUTLS = {
+    "#cmakedefine USE_CRYPTO_GNUTLS 1": "/* #undef USE_CRYPTO_GNUTLS */",
+}
+
+# DEAD FACTS — undef unconditionally:
+#   _FILE_OFFSET_BITS — upstream sets it only when off_t is 32-bit *without*
+#                       macros (LFS_WITH_MACROS AND NOT LFS_WITHOUT_MACROS,
+#                       libqpdf/CMakeLists.txt LFS probes). Every supported
+#                       target has a native 64-bit off_t, so the faithful
+#                       expansion leaves it unset.
+#   SIZEOF_SIZE_T     — probed (check_type_size) but read by zero sources.
+#   HAVE_INTTYPES_H   — probed (check_include_file) but read by zero sources.
+#   HAVE_STDINT_H     — present in the template but upstream has no probe for it
+#                       at all, so configure_file() always leaves it undefined.
+_CONFIG_DEAD_FACTS = {
+    "#cmakedefine HAVE_INTTYPES_H 1": "/* #undef HAVE_INTTYPES_H */",
+    "#cmakedefine HAVE_STDINT_H 1": "/* #undef HAVE_STDINT_H */",
+    "#cmakedefine SIZEOF_SIZE_T ${SIZEOF_SIZE_T}": "/* #undef SIZEOF_SIZE_T */",
+    "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "/* #undef _FILE_OFFSET_BITS */",
+}
+
+# HAVE_TM_GMTOFF is undef everywhere: upstream's struct-tm probe stores its
+# result in the variable HAVE_EXTERN_TM_GMTOFF (libqpdf/CMakeLists.txt), a name
+# the template's `#cmakedefine HAVE_TM_GMTOFF` never references — so no qpdf
+# build ever defines it and QUtil's local-time path always falls through to the
+# `timezone` global. Defining it here would deviate from every upstream binary.
+_CONFIG_NO_TM_GMTOFF = {
+    "#cmakedefine HAVE_TM_GMTOFF 1": "/* #undef HAVE_TM_GMTOFF */",
+}
+
+# CHOICE exposed via the crypto flag. USE_CRYPTO_NATIVE / USE_CRYPTO_OPENSSL is
+# the compiled provider; DEFAULT_CRYPTO is the provider QPDFCryptoProvider
+# returns by default. The system arm compiles the same openssl provider, so it
+# reports "openssl" too. The define must track the flag because the common
+# QPDFCryptoProvider.cc registers providers under #ifdef on these macros.
+_CONFIG_CRYPTO = select(
+    {
+        "//:crypto_native": {
+            "#cmakedefine DEFAULT_CRYPTO \"${DEFAULT_CRYPTO}\"": "#define DEFAULT_CRYPTO \"native\"",
+            "#cmakedefine USE_CRYPTO_NATIVE 1": "#define USE_CRYPTO_NATIVE 1",
+            "#cmakedefine USE_CRYPTO_OPENSSL 1": "/* #undef USE_CRYPTO_OPENSSL */",
+        },
+        "//:crypto_openssl": {
+            "#cmakedefine DEFAULT_CRYPTO \"${DEFAULT_CRYPTO}\"": "#define DEFAULT_CRYPTO \"openssl\"",
+            "#cmakedefine USE_CRYPTO_NATIVE 1": "/* #undef USE_CRYPTO_NATIVE */",
+            "#cmakedefine USE_CRYPTO_OPENSSL 1": "#define USE_CRYPTO_OPENSSL 1",
+        },
+        "//:crypto_openssl_system": {
+            "#cmakedefine DEFAULT_CRYPTO \"${DEFAULT_CRYPTO}\"": "#define DEFAULT_CRYPTO \"openssl\"",
+            "#cmakedefine USE_CRYPTO_NATIVE 1": "/* #undef USE_CRYPTO_NATIVE */",
+            "#cmakedefine USE_CRYPTO_OPENSSL 1": "#define USE_CRYPTO_OPENSSL 1",
+        },
+    },
+    no_match_error = "unhandled //:crypto value",
+)
+
+# PLATFORM FACTS — keyed on the libc/ABI axis (the thing that actually decides
+# whether a symbol is present), not an OS proxy.
+
+# localtime_r (QUtil.cc, `#ifdef HAVE_LOCALTIME_R`) and random/srandom
+# (InsecureRandomDataProvider.cc, `#ifdef HAVE_RANDOM`) are POSIX functions
+# present on the POSIX libcs and absent from the Windows CRT.
+_CONFIG_POSIX_LOCALTIME_R = {
+    "#cmakedefine HAVE_LOCALTIME_R 1": "#define HAVE_LOCALTIME_R 1",
+}
+
+_CONFIG_UCRT_LOCALTIME_R = {
+    "#cmakedefine HAVE_LOCALTIME_R 1": "/* #undef HAVE_LOCALTIME_R */",
+}
+
+_CONFIG_POSIX_RANDOM = {
+    "#cmakedefine HAVE_RANDOM 1": "#define HAVE_RANDOM 1",
+}
+
+_CONFIG_UCRT_RANDOM = {
+    "#cmakedefine HAVE_RANDOM 1": "/* #undef HAVE_RANDOM */",
+}
+
+# extern long timezone (QUtil.cc, `#elif HAVE_EXTERN_LONG_TIMEZONE`): the global
+# is visible under each POSIX libc's default feature macros. On Windows the
+# consumer sits in the `#else` of `_WIN32` (Windows uses GetLocalTime), so the
+# macro is never read there — record its absence.
+_CONFIG_POSIX_TIMEZONE = {
+    "#cmakedefine HAVE_EXTERN_LONG_TIMEZONE 1": "#define HAVE_EXTERN_LONG_TIMEZONE 1",
+}
+
+_CONFIG_UCRT_TIMEZONE = {
+    "#cmakedefine HAVE_EXTERN_LONG_TIMEZONE 1": "/* #undef HAVE_EXTERN_LONG_TIMEZONE */",
+}
+
+# open_memstream (QUtil.cc, `#if defined(HAVE_MALLOC_INFO) && defined(HAVE_OPEN_MEMSTREAM)`)
+# is a POSIX.1-2008 function present on the POSIX libcs and absent from the
+# Windows CRT.
+_CONFIG_POSIX_OPEN_MEMSTREAM = {
+    "#cmakedefine HAVE_OPEN_MEMSTREAM 1": "#define HAVE_OPEN_MEMSTREAM 1",
+}
+
+_CONFIG_UCRT_OPEN_MEMSTREAM = {
+    "#cmakedefine HAVE_OPEN_MEMSTREAM 1": "/* #undef HAVE_OPEN_MEMSTREAM */",
+}
+
+# malloc_info(3) (QUtil.cc, backs the optional malloc-info dump) is a glibc
+# extension; asserting it where absent is a compile break, so it is opt-in via
+# the //:malloc_info flag.
+_CONFIG_GLIBC_MALLOC_INFO = {
+    "#cmakedefine HAVE_MALLOC_INFO 1": "#define HAVE_MALLOC_INFO 1",
+}
+
+_CONFIG_NO_MALLOC_INFO = {
+    "#cmakedefine HAVE_MALLOC_INFO 1": "/* #undef HAVE_MALLOC_INFO */",
+}
+
+# fseeko / fseeko64 (QUtil::seek/tell prefer `#if HAVE_FSEEKO`, then
+# `#elif HAVE_FSEEKO64`). These reproduce what upstream's
+# check_symbol_exists("fseeko"/"fseeko64", "stdio.h") answers per libc:
+#   POSIX libcs: fseeko is declared and off_t is natively 64-bit on every
+#     supported target; HAVE_FSEEKO64 stays undef — a redundant alternative the
+#     fseeko branch preempts.
+#   Windows CRT (mingw-w64): <stdio.h> declares BOTH unconditionally, so a
+#     faithful reproduction defines both. The fseeko branch wins with mingw's
+#     32-bit `_off_t` (_FILE_OFFSET_BITS is unset — dead fact above), so QUtil's
+#     QIntC narrowing range-errors at runtime on offsets > 2 GB. This matches
+#     the upstream binary for this header set rather than the 64-bit fseeko64
+#     path a hand-pick would prefer.
+#   MSVC UCRT (msvc-cl, and clang-cl, which defines _MSC_VER): <stdio.h>
+#     declares NEITHER symbol, so defining either is a link break. Both stay
+#     undef and QUtil::seek/tell fall through to their explicit _MSC_VER
+#     _fseeki64/_ftelli64 branch.
+_CONFIG_POSIX_FSEEKO = {
+    "#cmakedefine HAVE_FSEEKO 1": "#define HAVE_FSEEKO 1",
+    "#cmakedefine HAVE_FSEEKO64 1": "/* #undef HAVE_FSEEKO64 */",
+}
+
+_CONFIG_UCRT_FSEEKO = {
+    "#cmakedefine HAVE_FSEEKO 1": "#define HAVE_FSEEKO 1",
+    "#cmakedefine HAVE_FSEEKO64 1": "#define HAVE_FSEEKO64 1",
+}
+
+_CONFIG_MSVC_FSEEKO = {
+    "#cmakedefine HAVE_FSEEKO 1": "/* #undef HAVE_FSEEKO */",
+    "#cmakedefine HAVE_FSEEKO64 1": "/* #undef HAVE_FSEEKO64 */",
+}
+
+# POSIX bundle — the inverted encoding of the libc-capability statement: assert
+# the POSIX facts (localtime_r, random, the timezone global, open_memstream,
+# fseeko) on //conditions:default and carve out the one known exception, the
+# Windows CRT, where QUtil takes its _WIN32 branches and fseeko64 exists. This
+# covers every POSIX libc, including future ones, without a hand-maintained list;
+# on an exotic non-POSIX target the wrong case is a loud build break (undeclared
+# localtime_r / random), never a silent one.
+_CONFIG_LIBC = select({
+    "@platforms//os:windows": _CONFIG_UCRT_LOCALTIME_R | _CONFIG_UCRT_RANDOM | _CONFIG_UCRT_TIMEZONE |
+                              _CONFIG_UCRT_OPEN_MEMSTREAM,
+    "//conditions:default": _CONFIG_POSIX_LOCALTIME_R | _CONFIG_POSIX_RANDOM | _CONFIG_POSIX_TIMEZONE |
+                            _CONFIG_POSIX_OPEN_MEMSTREAM,
+}) | select({
+    "//:malloc_info_enabled": _CONFIG_GLIBC_MALLOC_INFO,
+    "//conditions:default": _CONFIG_NO_MALLOC_INFO,
+}) | select({
+    "//:windows_msvc": _CONFIG_MSVC_FSEEKO,
+    "//:windows_clang_cl": _CONFIG_MSVC_FSEEKO,
+    "@platforms//os:windows": _CONFIG_UCRT_FSEEKO,
+    "//conditions:default": _CONFIG_POSIX_FSEEKO,
+})
+
+expand_template(
+    name = "qpdf-config",
+    out = "qpdf/qpdf-config.h",
+    substitutions =
+        _CONFIG_POLICY_DEFAULTS |
+        _CONFIG_NO_GNUTLS |
+        _CONFIG_DEAD_FACTS |
+        _CONFIG_NO_TM_GMTOFF |
+        _CONFIG_CRYPTO |
+        _CONFIG_LIBC,
+    template = "qpdf/qpdf-config.h.in",
+)
+
+# Upstream's PRIVATE include dir (qpdf_SOURCE_DIR/libqpdf, -Ilibqpdf), exposed
+# as <qpdf/...> and <sph/...>. Never part of the module's public interface:
+# implementation_deps only.
+cc_library(
+    name = "internal_headers",
+    hdrs = [
+        "qpdf/AES_PDF_native.hh",
+        "qpdf/AcroForm.hh",
+        "qpdf/BitStream.hh",
+        "qpdf/BitWriter.hh",
+        "qpdf/ContentNormalizer.hh",
+        "qpdf/CryptoRandomDataProvider.hh",
+        "qpdf/InputSource_private.hh",
+        "qpdf/InsecureRandomDataProvider.hh",
+        "qpdf/JSONHandler.hh",
+        "qpdf/JSON_writer.hh",
+        "qpdf/MD5.hh",
+        "qpdf/MD5_native.hh",
+        "qpdf/NNTree.hh",
+        "qpdf/ObjTable.hh",
+        "qpdf/OffsetInputSource.hh",
+        "qpdf/Pipeline_private.hh",
+        "qpdf/Pl_AES_PDF.hh",
+        "qpdf/Pl_ASCII85Decoder.hh",
+        "qpdf/Pl_ASCIIHexDecoder.hh",
+        "qpdf/Pl_Base64.hh",
+        "qpdf/Pl_LZWDecoder.hh",
+        "qpdf/Pl_MD5.hh",
+        "qpdf/Pl_PNGFilter.hh",
+        "qpdf/Pl_RC4.hh",
+        "qpdf/Pl_SHA2.hh",
+        "qpdf/Pl_TIFFPredictor.hh",
+        "qpdf/QPDFArgParser.hh",
+        "qpdf/QPDFCrypto_gnutls.hh",
+        "qpdf/QPDFCrypto_native.hh",
+        "qpdf/QPDFCrypto_openssl.hh",
+        "qpdf/QPDFJob_private.hh",
+        "qpdf/QPDFObjectHandle_private.hh",
+        "qpdf/QPDFObject_private.hh",
+        "qpdf/QPDFParser.hh",
+        "qpdf/QPDFTokenizer_private.hh",
+        "qpdf/QPDFWriter_private.hh",
+        "qpdf/QPDF_Name.hh",
+        "qpdf/QPDF_private.hh",
+        "qpdf/RC4.hh",
+        "qpdf/RC4_native.hh",
+        "qpdf/ResourceFinder.hh",
+        "qpdf/SF_ASCII85Decode.hh",
+        "qpdf/SF_ASCIIHexDecode.hh",
+        "qpdf/SF_DCTDecode.hh",
+        "qpdf/SF_FlateLzwDecode.hh",
+        "qpdf/SF_RunLengthDecode.hh",
+        "qpdf/SHA2_native.hh",
+        "qpdf/SecureRandomDataProvider.hh",
+        "qpdf/Util.hh",
+        "qpdf/assert_debug.h",
+        "qpdf/assert_test.h",
+        "qpdf/auto_job_decl.hh",
+        "qpdf/auto_job_help.hh",
+        "qpdf/auto_job_init.hh",
+        "qpdf/auto_job_json_decl.hh",
+        "qpdf/auto_job_json_init.hh",
+        "qpdf/auto_job_schema.hh",
+        "qpdf/bits_functions.hh",
+        "qpdf/global_private.hh",
+        "qpdf/qpdf-c_impl.hh",
+        "qpdf/qpdflogger-c_impl.hh",
+        "qpdf/rijndael.h",
+        "sph/sph_sha2.h",
+        "sph/sph_types.h",
+        ":qpdf-config",
+    ],
+    strip_include_prefix = "/libqpdf",
+)
+
+# ---------------------------------------------------------------------------
+# libqpdf
+# ---------------------------------------------------------------------------
+#
+# srcs mirror libqpdf_SOURCES (libqpdf/CMakeLists.txt) exactly. Target named
+# for its archive: -lqpdf -> libqpdf.a.
+cc_library(
+    name = "qpdf",
+    srcs = [
+        "BitStream.cc",
+        "BitWriter.cc",
+        "Buffer.cc",
+        "BufferInputSource.cc",
+        "ClosedFileInputSource.cc",
+        "ContentNormalizer.cc",
+        "CryptoRandomDataProvider.cc",
+        "FileInputSource.cc",
+        "InputSource.cc",
+        "InsecureRandomDataProvider.cc",
+        "JSON.cc",
+        "JSONHandler.cc",
+        "MD5.cc",
+        "NNTree.cc",
+        "OffsetInputSource.cc",
+        "PDFVersion.cc",
+        "Pipeline.cc",
+        "Pl_AES_PDF.cc",
+        "Pl_ASCII85Decoder.cc",
+        "Pl_ASCIIHexDecoder.cc",
+        "Pl_Base64.cc",
+        "Pl_Buffer.cc",
+        "Pl_Concatenate.cc",
+        "Pl_Count.cc",
+        "Pl_DCT.cc",
+        "Pl_Discard.cc",
+        "Pl_Flate.cc",
+        "Pl_Function.cc",
+        "Pl_LZWDecoder.cc",
+        "Pl_OStream.cc",
+        "Pl_PNGFilter.cc",
+        "Pl_QPDFTokenizer.cc",
+        "Pl_RC4.cc",
+        "Pl_RunLength.cc",
+        "Pl_SHA2.cc",
+        "Pl_StdioFile.cc",
+        "Pl_String.cc",
+        "Pl_TIFFPredictor.cc",
+        "QPDF.cc",
+        "QPDFAcroFormDocumentHelper.cc",
+        "QPDFAnnotationObjectHelper.cc",
+        "QPDFArgParser.cc",
+        "QPDFCryptoProvider.cc",
+        "QPDFDocumentHelper.cc",
+        "QPDFEFStreamObjectHelper.cc",
+        "QPDFEmbeddedFileDocumentHelper.cc",
+        "QPDFExc.cc",
+        "QPDFFileSpecObjectHelper.cc",
+        "QPDFFormFieldObjectHelper.cc",
+        "QPDFJob.cc",
+        "QPDFJob_argv.cc",
+        "QPDFJob_config.cc",
+        "QPDFJob_json.cc",
+        "QPDFLogger.cc",
+        "QPDFMatrix.cc",
+        "QPDFObject.cc",
+        "QPDFObjectHandle.cc",
+        "QPDFObjectHelper.cc",
+        "QPDFOutlineDocumentHelper.cc",
+        "QPDFOutlineObjectHelper.cc",
+        "QPDFPageLabelDocumentHelper.cc",
+        "QPDFPageObjectHelper.cc",
+        "QPDFParser.cc",
+        "QPDFStreamFilter.cc",
+        "QPDFSystemError.cc",
+        "QPDFTokenizer.cc",
+        "QPDFUsage.cc",
+        "QPDFWriter.cc",
+        "QPDF_Array.cc",
+        "QPDF_Dictionary.cc",
+        "QPDF_Stream.cc",
+        "QPDF_String.cc",
+        "QPDF_encryption.cc",
+        "QPDF_json.cc",
+        "QPDF_linearization.cc",
+        "QPDF_objects.cc",
+        "QPDF_pages.cc",
+        "QTC.cc",
+        "QUtil.cc",
+        "RC4.cc",
+        "ResourceFinder.cc",
+        "SF_FlateLzwDecode.cc",
+        "SecureRandomDataProvider.cc",
+        "global.cc",
+        "qpdf-c.cc",
+        "qpdfjob-c.cc",
+        "qpdflogger-c.cc",
+    ] + select(
+        # The flag selects the crypto provider's sources into :qpdf, exactly as
+        # upstream appends them to libqpdf_SOURCES (libqpdf/CMakeLists.txt). A
+        # separate provider cc_library cannot work: the reference graph is
+        # circular across any split — QPDFCrypto_native.cc calls
+        # SecureRandomDataProvider (a libqpdf unit) while libqpdf's
+        # QPDFCryptoProvider.cc constructs the provider — so a two-archive link
+        # fails on ordering and a two-.so link fails on hidden visibility. One
+        # compiled library is upstream's model and the only linkable one.
+        {
+            # qpdf's built-in provider plus the bundled SPH SHA-2 units.
+            "//:crypto_native": [
+                "AES_PDF_native.cc",
+                "MD5_native.cc",
+                "QPDFCrypto_native.cc",
+                "RC4_native.cc",
+                "SHA2_native.cc",
+                "rijndael.cc",
+                "sha2.c",
+                "sha2big.c",
+            ],
+            # The libcrypto-backed provider, shared by the hermetic and system
+            # openssl arms — only the link differs.
+            "//:crypto_openssl": ["QPDFCrypto_openssl.cc"],
+            "//:crypto_openssl_system": ["QPDFCrypto_openssl.cc"],
+        },
+        no_match_error = "unhandled //:crypto value",
+    ),
+    # CMAKE_C/CXX_VISIBILITY_PRESET hidden (top CMakeLists.txt): the static build
+    # never defines libqpdf_EXPORTS, so DLL.h's QPDF_DLL is inert and hidden
+    # visibility keeps internal symbols out of the eventual link's surface. The
+    # MSVC-driver arms get [] because -fvisibility is a GNU-driver flag with no
+    # MSVC equivalent — MSVC symbols are already hidden unless
+    # __declspec-exported.
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "//conditions:default": ["-fvisibility=hidden"],
+    }),
+    # cxxopts not copts: the C++ units want -std=c++20 (CMAKE_CXX_STANDARD 20,
+    # CMAKE_CXX_EXTENSIONS OFF), but the native provider's sha2.c/sha2big.c are
+    # C and a C compile rejects a C++ -std flag.
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++20"],
+        "@rules_cc//cc/compiler:clang-cl": ["/std:c++20"],
+        "//conditions:default": ["-std=c++20"],
+    }),
+    implementation_deps = [":internal_headers"],
+    # SecureRandomDataProvider.cc uses wincrypt CryptGenRandom, which lives in
+    # advapi32 (top CMakeLists.txt appends Advapi32 to CMAKE_REQUIRED_LIBRARIES
+    # under WIN32). An archive doesn't link; this propagates to the consumer link.
+    # The MSVC-driver arms use the advapi32.lib spelling because link.exe
+    # ignores -l (LNK4044).
+    linkopts = select({
+        "//:windows_msvc": ["advapi32.lib"],
+        "//:windows_clang_cl": ["advapi32.lib"],
+        "@platforms//os:windows": ["-ladvapi32"],
+        "//conditions:default": [],
+    }),
+    # QPDF_DISABLE_QTC=1: the normal-build default (top CMakeLists.txt adds it
+    # unless ENABLE_QTC, which is OFF) — compiles out the QTC::TC test-coverage
+    # calls. Every other macro travels in the generated qpdf-config.h, not here.
+    local_defines = ["QPDF_DISABLE_QTC=1"],
+    # sha2.c / sha2big.c `#include "sph/md_helper.c"` after defining its
+    # round-function macros; it is not a standalone translation unit, so it must
+    # be a textual header, not a compiled src.
+    textual_hdrs = select({
+        "//:crypto_native": ["sph/md_helper.c"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    # zlib and libjpeg_turbo are non-droppable dep edges (header + link), not
+    # -lz/-ljpeg linkopts: Pl_Flate.cc includes <zlib.h> and Pl_DCT.cc includes
+    # <jpeglib.h>, both unconditionally compiled, and QPDF_Stream.cc's runtime
+    # filter dispatch takes &SF_DCTDecode::factory so the linker can never strip
+    # the DCT path. They stay in deps, not implementation_deps, because the
+    # public Pl_DCT.hh includes jpeglib.h. The crypto arm must supply the link
+    # requirement of the crypto source group selected into srcs.
+    deps = [
+        "//include:headers",
+        "@libjpeg_turbo//:jpeg",
+        "@zlib",
+    ] + select(
+        {
+            "//:crypto_native": [],
+            "//:crypto_openssl": ["@openssl//:crypto"],
+            "//:crypto_openssl_system": [":crypto_system"],
+        },
+        no_match_error = "unhandled //:crypto value",
+    ),
+)

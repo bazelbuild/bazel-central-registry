@@ -1,0 +1,153 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Counterpart of the LIBSAIS_USE_OPENMP option of the CMake build, off by
+# default as well. Enable it with --@libsais//:openmp.
+bool_flag(
+    name = "openmp",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "openmp_requested",
+    flag_values = {":openmp": "True"},
+)
+
+selects.config_setting_group(
+    name = "openmp_msvc_like",
+    match_all = [
+        ":openmp_requested",
+        ":msvc_like",
+    ],
+)
+
+selects.config_setting_group(
+    name = "openmp_gcc_like",
+    match_all = [
+        ":openmp_requested",
+        ":gcc_like",
+    ],
+)
+
+selects.config_setting_group(
+    name = "msvc_like",
+    match_any = [
+        "@rules_cc//cc/compiler:clang-cl",
+        "@rules_cc//cc/compiler:msvc-cl",
+    ],
+)
+
+selects.config_setting_group(
+    name = "gcc_like",
+    match_any = [
+        "@rules_cc//cc/compiler:clang",
+        "@rules_cc//cc/compiler:gcc",
+        "@rules_cc//cc/compiler:mingw-gcc",
+    ],
+)
+
+OPENMP_COPTS = select({
+    ":openmp_msvc_like": ["/openmp"],
+    ":openmp_gcc_like": ["-fopenmp"],
+    "//conditions:default": [],
+})
+
+# LIBSAIS_OPENMP gates the *_omp declarations in the public headers, so, like
+# the PUBLIC compile definition in the CMake build, it has to reach dependents.
+OPENMP_DEFINES = select({
+    ":openmp_msvc_like": ["LIBSAIS_OPENMP"],
+    ":openmp_gcc_like": ["LIBSAIS_OPENMP"],
+    "//conditions:default": [],
+})
+
+# MSVC and clang-cl link the OpenMP runtime on their own.
+OPENMP_LINKOPTS = select({
+    ":openmp_gcc_like": ["-fopenmp"],
+    "//conditions:default": [],
+})
+
+# Each library corresponds to one of the four API variants, combining the
+# symbol width of the input string with the width of the output arrays.
+# The 64-bit variants delegate to their 32-bit counterpart for inputs that
+# fit into int32_t, hence the dependency between them.
+
+# uint8_t input, int32_t output.
+cc_library(
+    name = "libsais",
+    srcs = ["src/libsais.c"],
+    hdrs = ["include/libsais.h"],
+    copts = OPENMP_COPTS,
+    defines = OPENMP_DEFINES,
+    includes = ["include"],
+    linkopts = OPENMP_LINKOPTS,
+)
+
+# uint16_t input, int32_t output.
+cc_library(
+    name = "libsais16",
+    srcs = ["src/libsais16.c"],
+    hdrs = ["include/libsais16.h"],
+    copts = OPENMP_COPTS,
+    defines = OPENMP_DEFINES,
+    includes = ["include"],
+    linkopts = OPENMP_LINKOPTS,
+)
+
+# uint8_t input, int64_t output.
+cc_library(
+    name = "libsais64",
+    srcs = ["src/libsais64.c"],
+    hdrs = ["include/libsais64.h"],
+    copts = OPENMP_COPTS,
+    defines = OPENMP_DEFINES,
+    includes = ["include"],
+    linkopts = OPENMP_LINKOPTS,
+    deps = [":libsais"],
+)
+
+# uint16_t input, int64_t output.
+cc_library(
+    name = "libsais16x64",
+    srcs = ["src/libsais16x64.c"],
+    hdrs = ["include/libsais16x64.h"],
+    copts = OPENMP_COPTS,
+    defines = OPENMP_DEFINES,
+    includes = ["include"],
+    linkopts = OPENMP_LINKOPTS,
+    deps = [":libsais16"],
+)
+
+cc_test(
+    name = "libsais_test",
+    srcs = ["test/libsais_test.c"],
+    deps = [":libsais"],
+)
+
+cc_test(
+    name = "libsais16_test",
+    srcs = ["test/libsais16_test.c"],
+    deps = [":libsais16"],
+)
+
+cc_test(
+    name = "libsais64_test",
+    srcs = ["test/libsais64_test.c"],
+    deps = [":libsais64"],
+)
+
+cc_test(
+    name = "libsais16x64_test",
+    srcs = ["test/libsais16x64_test.c"],
+    deps = [":libsais16x64"],
+)
+
+# Guards against the `VERSION` file at the repository root shadowing the C++
+# standard header <version> on case-insensitive file systems.
+cc_test(
+    name = "version_header_test",
+    srcs = ["test/version_header_test.cc"],
+    deps = [":libsais"],
+)

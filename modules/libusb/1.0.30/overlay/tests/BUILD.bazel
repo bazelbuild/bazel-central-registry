@@ -1,0 +1,55 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Wraps upstream's `stress` and `stress_mt` as Bazel `cc_test`s. Both call
+# `libusb_init_context()` in tight loops, which needs a real backend (Linux
+# /dev/bus/usb, macOS IOKit) — Bazel's default sandbox doesn't expose those,
+# so both are tagged `no-sandbox`. On a CI worker that has those on the host,
+# they exercise libusb's init / teardown paths thousands of times.
+#
+# `set_option`, `init_context`, and `macos` are not wired: they include the
+# internal `libusbi.h` header, which the current layout doesn't expose across
+# packages.
+
+_TEST_TAGS = ["no-sandbox"]
+
+# Suppress warnings — same policy as `:usb`: this is a third-party port and
+# upstream owns the warning cleanups.
+_MSVC_COPTS = [
+    "/utf-8",
+    "/w",
+]
+
+_GCC_COPTS = ["-w"]
+
+_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": _MSVC_COPTS,
+    "@rules_cc//cc/compiler:msvc-cl": _MSVC_COPTS,
+    "//conditions:default": _GCC_COPTS,
+})
+
+cc_test(
+    name = "stress_test",
+    srcs = [
+        "libusb_testlib.h",
+        "stress.c",
+        "testlib.c",
+    ],
+    copts = _COPTS,
+    tags = _TEST_TAGS,
+    deps = [
+        "//:_config",
+        "//:libusb",
+    ],
+)
+
+cc_test(
+    name = "stress_mt_test",
+    srcs = ["stress_mt.c"],
+    copts = _COPTS,
+    tags = _TEST_TAGS,
+    # `-pthread` comes from `:libusb`'s linkopts on POSIX.
+    deps = [
+        "//:_config",
+        "//:libusb",
+    ],
+)
