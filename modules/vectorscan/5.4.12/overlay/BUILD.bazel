@@ -1,0 +1,399 @@
+# Native build matching vectorscan/5.4.12 CMakeLists.txt source groups and ISA flags.
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load(":defs.bzl", "cc_compile_context")
+
+package(default_visibility = ["//visibility:private"])
+
+# Match the upstream release configuration. x86 builds retain all five runtime
+# variants; AArch64 uses the upstream default NEON runtime.
+write_file(
+    name = "config",
+    out = "config.h",
+    content = [
+        "#pragma once",
+        "#define ARCH_64_BIT",
+        "#define HAVE_CC_BUILTIN_ASSUME_ALIGNED",
+        "#define HAVE_CXX_BUILTIN_ASSUME_ALIGNED",
+        "#define HAVE_POSIX_MEMALIGN",
+        "#define HAVE_UNISTD_H",
+        "#define HS_OPTIMIZE",
+        "#define RELEASE_BUILD",
+    ] + select({
+        "@platforms//cpu:x86_64": [
+            "#define ARCH_X86_64",
+            "#define HAVE_C_X86INTRIN_H",
+            "#define HAVE_CXX_X86INTRIN_H",
+            "#define FAT_RUNTIME",
+            "#define BUILD_AVX2",
+            "#define BUILD_AVX512",
+            "#define BUILD_AVX512VBMI",
+        ],
+        "@platforms//cpu:aarch64": [
+            "#define ARCH_AARCH64",
+            "#define HAVE_C_ARM_NEON_H",
+        ],
+    }),
+)
+
+expand_template(
+    name = "version",
+    out = "src/hs_version.h",
+    substitutions = {
+        # Keep the version reproducible instead of embedding the build date.
+        "@BUILD_DATE@": "Bazel",
+        "@HS_MAJOR_VERSION@": "5",
+        "@HS_MINOR_VERSION@": "4",
+        "@HS_PATCH_VERSION@": "12",
+        "@HS_VERSION@": "5.4.12",
+    },
+    template = "src/hs_version.h.in",
+)
+
+cc_library(
+    name = "headers",
+    hdrs = [
+        "src/hs.h",
+        "src/hs_common.h",
+        "src/hs_compile.h",
+        "src/hs_runtime.h",
+        ":version",
+    ],
+    include_prefix = "hs",
+    strip_include_prefix = "src",
+)
+
+cc_library(
+    name = "internal_headers",
+    hdrs = glob([
+        "src/**/*.h",
+        "src/**/*.hpp",
+        "include/boost-patched/**/*.hpp",
+    ]) + [
+        ":config",
+        ":version",
+    ],
+    includes = [
+        ".",
+        "include",
+        "src",
+    ],
+    textual_hdrs = glob(["src/util/supervector/arch/**/impl.cpp"]),
+    deps = [":boost_headers"],
+)
+
+# Vectorscan only uses Boost headers, including its bundled graph fixes.
+cc_compile_context(
+    name = "boost_headers",
+    dep = ":boost_deps",
+)
+
+cc_library(
+    name = "boost_deps",
+    deps = [
+        "@boost.algorithm//:boost.algorithm",
+        "@boost.config//:boost.config",
+        "@boost.dynamic_bitset//:boost.dynamic_bitset",
+        "@boost.graph//:boost.graph",
+        "@boost.icl//:boost.icl",
+        "@boost.intrusive//:boost.intrusive",
+        "@boost.iterator//:boost.iterator",
+        "@boost.lexical_cast//:boost.lexical_cast",
+        "@boost.multi_array//:boost.multi_array",
+        "@boost.property_map//:boost.property_map",
+        "@boost.random//:boost.random",
+        "@boost.range//:boost.range",
+        "@boost.variant//:boost.variant",
+    ],
+)
+
+# Ragel's generated parsers require unsigned char, unlike the other sources.
+[
+    run_binary(
+        name = "ragel_" + parser,
+        srcs = ["src/parser/" + parser + ".rl"],
+        outs = ["src/parser/" + parser + ".cpp"],
+        args = [
+            "$(execpath src/parser/" + parser + ".rl)",
+            "-o",
+            "$(execpath src/parser/" + parser + ".cpp)",
+            "-G0",
+        ],
+        tool = "@ragel",
+    )
+    for parser in [
+        "Parser",
+        "control_verbs",
+    ]
+]
+
+# Vectorscan's Boost iterators predate the C++20 iterator requirements in libc++.
+# Keep the same language standards as its upstream build.
+CXXOPTS = ["-std=c++17"]
+
+COPTS = [
+    "-O3",
+    "-fPIC",
+    "-fvisibility=hidden",
+]
+
+BASELINE_COPTS = select({
+    "@platforms//cpu:x86_64": [
+        "-march=x86-64",
+        "-msse4.2",
+    ],
+    "@platforms//cpu:aarch64": ["-march=armv8-a"],
+})
+
+cc_library(
+    name = "parsers",
+    srcs = [
+        ":ragel_Parser",
+        ":ragel_control_verbs",
+    ],
+    copts = COPTS + BASELINE_COPTS + [
+        "-funsigned-char",
+        "-Wno-unused",
+    ],
+    cxxopts = CXXOPTS,
+    linkstatic = True,
+    local_defines = ["NDEBUG"],
+    deps = [":internal_headers"],
+)
+
+# Keep the generated parser objects in the compiler archive: its parser
+# components and generated parsers reference each other.
+filegroup(
+    name = "parser_objects",
+    srcs = [":parsers"],
+    output_group = "compilation_outputs",
+)
+
+cc_library(
+    name = "allocators",
+    srcs = ["src/alloc.c"],
+    conlyopts = ["-std=c17"],
+    copts = COPTS + BASELINE_COPTS,
+    linkstatic = True,
+    local_defines = ["NDEBUG"],
+    deps = [":internal_headers"],
+)
+
+# hs_exec_SRCS in the pinned upstream CMakeLists.txt. These sources are compiled
+# once per runtime ISA, separately from the regex compiler and shared allocators.
+RUNTIME_SRCS = [
+    "src/crc32.c",
+    "src/database.c",
+    "src/fdr/fdr.c",
+    "src/fdr/teddy.cpp",
+    "src/hwlm/hwlm.c",
+    "src/hwlm/noodle_engine.cpp",
+    "src/nfa/accel.c",
+    "src/nfa/castle.c",
+    "src/nfa/gough.c",
+    "src/nfa/lbr.c",
+    "src/nfa/limex_64.c",
+    "src/nfa/limex_accel.c",
+    "src/nfa/limex_native.c",
+    "src/nfa/limex_simd128.c",
+    "src/nfa/limex_simd256.c",
+    "src/nfa/limex_simd384.c",
+    "src/nfa/limex_simd512.c",
+    "src/nfa/mcclellan.c",
+    "src/nfa/mcsheng.c",
+    "src/nfa/mcsheng_data.c",
+    "src/nfa/mpv.c",
+    "src/nfa/nfa_api_dispatch.c",
+    "src/nfa/repeat.c",
+    "src/nfa/sheng.c",
+    "src/nfa/shufti.cpp",
+    "src/nfa/tamarama.c",
+    "src/nfa/truffle.cpp",
+    "src/rose/block.c",
+    "src/rose/catchup.c",
+    "src/rose/init.c",
+    "src/rose/match.c",
+    "src/rose/program_runtime.c",
+    "src/rose/stream.c",
+    "src/runtime.c",
+    "src/som/som_runtime.c",
+    "src/som/som_stream.c",
+    "src/stream_compress.c",
+    "src/util/multibit.c",
+    "src/util/state_compress.c",
+    "src/nfa/vermicelli_simd.cpp",
+]
+
+X86_VARIANTS = {
+    "core2": [
+        "-march=core2",
+        "-msse4.2",
+    ],
+    "corei7": [
+        "-march=corei7",
+        "-msse4.2",
+    ],
+    "avx2": ["-march=core-avx2"],
+    "avx512": ["-march=skylake-avx512"],
+    "avx512vbmi": ["-march=icelake-server"],
+}
+
+[
+    cc_library(
+        name = "runtime_" + isa,
+        srcs = RUNTIME_SRCS + ["src/util/supervector/arch/x86/impl.cpp"] + (
+            [
+                "src/fdr/teddy_fat.cpp",
+                "src/util/arch/x86/masked_move.c",
+            ] if isa in [
+                "avx2",
+                "avx512",
+                "avx512vbmi",
+            ] else []
+        ),
+        conlyopts = ["-std=c17"],
+        copts = COPTS + flags,
+        cxxopts = CXXOPTS,
+        linkstatic = True,
+        local_defines = ["NDEBUG"],
+        target_compatible_with = ["@platforms//cpu:x86_64"],
+        deps = [":internal_headers"],
+    )
+    for isa, flags in X86_VARIANTS.items()
+]
+
+[
+    filegroup(
+        name = "runtime_" + isa + "_archive",
+        srcs = [":runtime_" + isa],
+        output_group = "archive",
+    )
+    for isa in X86_VARIANTS
+]
+
+# Upstream's build_wrapper.sh renames runtime C symbols after each compilation.
+# Rename symbols defined in each native archive, including C++ templates: letting
+# the linker coalesce templates across ISAs can make AVX2 call AVX-512 code.
+# Undefined libc and shared allocator references remain untouched.
+[
+    genrule(
+        name = "prefix_" + isa,
+        srcs = [":runtime_" + isa + "_archive"],
+        outs = ["libhs_runtime_" + isa + ".a"],
+        cmd = """
+$(location @llvm//tools:llvm-nm) --defined-only --extern-only --format=posix $(location :runtime_%s_archive) \
+    | awk 'NF >= 3 {print $$1}' | LC_ALL=C sort -u \
+    | awk '{print $$1, "%s_" $$1}' > $@.syms
+$(location @llvm//tools:llvm-objcopy) --redefine-syms=$@.syms $(location :runtime_%s_archive) $@
+""" % (isa, isa, isa),
+        target_compatible_with = ["@platforms//cpu:x86_64"],
+        tools = [
+            "@llvm//tools:llvm-nm",
+            "@llvm//tools:llvm-objcopy",
+        ],
+    )
+    for isa in X86_VARIANTS
+]
+
+# The dispatcher references these archives, which in turn use the shared
+# allocators. Express that link order for linkers that scan archives once.
+cc_library(
+    name = "x86_runtime",
+    srcs = [":prefix_" + isa for isa in X86_VARIANTS],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+    deps = [":allocators"],
+)
+
+cc_library(
+    name = "vectorscan",
+    srcs = glob(
+        ["src/**/*.cpp"],
+        exclude = [
+            "src/**/*dump*.cpp",
+            "src/fdr/teddy.cpp",
+            "src/fdr/teddy_fat.cpp",
+            "src/hwlm/noodle_engine.cpp",
+            "src/nfa/shufti.cpp",
+            "src/nfa/truffle.cpp",
+            "src/nfa/vermicelli_simd.cpp",
+            "src/util/supervector/arch/**",
+        ],
+    ) + [
+        "src/hs_valid_platform.c",
+        "src/hs_version.c",
+        "src/scratch.c",
+        "src/util/dump_mask.cpp",
+        "src/util/multibit.c",
+        ":parser_objects",
+    ] + select({
+        "@platforms//cpu:x86_64": [
+            "src/dispatcher.c",
+            "src/util/arch/x86/cpuid_flags.c",
+        ],
+        "@platforms//cpu:aarch64": [src for src in RUNTIME_SRCS if src != "src/util/multibit.c"] + [
+            "src/util/arch/arm/cpuid_flags.c",
+            "src/util/supervector/arch/arm/impl.cpp",
+        ],
+    }),
+    conlyopts = ["-std=c17"],
+    copts = COPTS + BASELINE_COPTS,
+    cxxopts = CXXOPTS,
+    implementation_deps = [":internal_headers"] + select({
+        "@platforms//cpu:x86_64": [":x86_runtime"],
+        "@platforms//cpu:aarch64": [":allocators"],
+    }),
+    linkstatic = True,
+    local_defines = ["NDEBUG"],
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+# Exercise the upstream public API suite against the same library as Rust.
+run_binary(
+    name = "ragel_ExpressionParser",
+    srcs = ["util/ExpressionParser.rl"],
+    outs = ["util/ExpressionParser.cpp"],
+    args = [
+        "$(execpath util/ExpressionParser.rl)",
+        "-o",
+        "$(execpath util/ExpressionParser.cpp)",
+        "-G0",
+    ],
+    tool = "@ragel",
+)
+
+cc_test(
+    name = "unit_hyperscan",
+    srcs = glob([
+        "unit/hyperscan/*.cpp",
+        "unit/hyperscan/*.h",
+    ]) + [
+        "unit/gtest/gtest.h",
+        "unit/gtest/gtest-all.cc",
+        "util/ExpressionParser.h",
+        "util/expressions.cpp",
+        "util/expressions.h",
+        "util/string_util.h",
+        ":ragel_ExpressionParser",
+    ],
+    copts = COPTS + BASELINE_COPTS + ["-funsigned-char"],
+    cxxopts = CXXOPTS,
+    data = ["unit/hyperscan/bad_patterns.txt"] + glob(["unit/hyperscan/datafiles/*"]),
+    includes = [
+        "unit",
+        "util",
+    ],
+    local_defines = [
+        "GTEST_HAS_PTHREAD=0",
+        "NDEBUG",
+        "SRCDIR=../" + repository_name().lstrip("@"),
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":internal_headers",
+        ":vectorscan",
+    ],
+)
