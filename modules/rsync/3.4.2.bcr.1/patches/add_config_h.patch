@@ -2,12 +2,13 @@ diff --git a/config.h b/config.h
 new file mode 100644
 --- /dev/null
 +++ b/config.h
-@@ -0,0 +1,12 @@
+@@ -0,0 +1,13 @@
 +/* Dispatch to the config.h that rsync's configure generated for each OS.
 + * The Bazel build does not run configure, so these headers are checked in:
 + * config_macos.h comes from a macOS host, config_linux.h from Ubuntu with
 + * glibc, edited so it works across glibc versions (see the notes next to
-+ * HAVE_MALLINFO2, HAVE_STRLCPY and HAVE_STRLCAT). */
++ * HAVE_MALLINFO2, HAVE_STRLCPY and HAVE_STRLCAT). It is glibc-only; musl and
++ * other C libraries would need a header of their own. */
 +#if defined(__APPLE__)
 +#include "config_macos.h"
 +#elif defined(__linux__)
@@ -19,7 +20,7 @@ diff --git a/config_linux.h b/config_linux.h
 new file mode 100644
 --- /dev/null
 +++ b/config_linux.h
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,894 @@
 +/* config.h.  Generated from config.h.in by configure.  */
 +/* config.h.in.  Generated from configure.ac by autoheader.  */
 +
@@ -305,15 +306,8 @@ new file mode 100644
 +#define HAVE_MALLINFO 1
 +
 +/* Define to 1 if you have the 'mallinfo2' function. */
-+/* mallinfo2 arrived in glibc 2.33, where mallinfo became deprecated. Detect
-+   it so this header works on older glibc too; rsync falls back to mallinfo
-+   for its --debug memory statistics. */
-+#include <features.h>
-+#ifdef __GLIBC_PREREQ
-+#if __GLIBC_PREREQ(2, 33)
-+#define HAVE_MALLINFO2 1
-+#endif
-+#endif
++/* HAVE_MALLINFO2 is detected at the end of this file, after _GNU_SOURCE. */
++/* #undef HAVE_MALLINFO2 */
 +
 +/* Define to 1 if you have the <malloc.h> header file. */
 +#define HAVE_MALLOC_H 1
@@ -536,6 +530,9 @@ new file mode 100644
 +#define HAVE_STRUCT_UTIMBUF 1
 +
 +/* Define to 1 if you have the <sys/acl.h> header file. */
++/* Off on purpose, together with HAVE_ACL_LIBACL_H and SUPPORT_ACLS: Linux
++   ACL support needs libacl, which the BCR does not provide. rsync -A reports
++   an error in this build instead of copying ACLs. */
 +/* #undef HAVE_SYS_ACL_H */
 +
 +/* Define to 1 if you have the <sys/attr.h> header file. */
@@ -812,6 +809,7 @@ new file mode 100644
 +#define STDC_HEADERS 1
 +
 +/* Define to 1 to add support for ACLs */
++/* Off on purpose; see HAVE_SYS_ACL_H above. */
 +/* #undef SUPPORT_ACLS */
 +
 +/* Undefine if you do not want LZ4 compression. By default this is defined. */
@@ -894,6 +892,29 @@ new file mode 100644
 +
 +/* Define as 'int' if <sys/types.h> doesn't define. */
 +/* #undef uid_t */
++
++/* Everything below must stay after _GNU_SOURCE above: <features.h> is
++   evaluated once, on first inclusion, and fixes the feature set for the
++   whole translation unit. */
++#include <features.h>
++
++/* The values above came from configure on x86_64 glibc. They are only valid
++   on a 64-bit little-endian glibc target, so refuse anything else instead of
++   building a broken rsync. */
++#if !defined(__GLIBC__)
++#error "config_linux.h was generated for glibc; other Linux C libraries need their own config.h"
++#endif
++#if !defined(__LP64__) || \
++    (defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)
++#error "config_linux.h was generated for a 64-bit little-endian target"
++#endif
++
++/* mallinfo2 arrived in glibc 2.33, where mallinfo became deprecated. Detect
++   it so this header works on older glibc too; rsync falls back to mallinfo
++   for its --debug memory statistics. */
++#if __GLIBC_PREREQ(2, 33)
++#define HAVE_MALLINFO2 1
++#endif
 diff --git a/config_macos.h b/config_macos.h
 new file mode 100644
 --- /dev/null
