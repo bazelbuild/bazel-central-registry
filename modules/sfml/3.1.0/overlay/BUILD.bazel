@@ -43,8 +43,9 @@ _SUPPORTED_OS = select({
     "//conditions:default": ["@platforms//:incompatible"],
 })
 
-# Compiler options applied to all SFML sources. SFML's public headers require C++17,
-# which is the default for Bazel's Unix and Apple toolchains but not for MSVC.
+# Compiler options applied to all SFML sources. SFML requires C++17, which is not the
+# default of every toolchain (e.g. Bazel 7 on Linux passes -std=c++0x), so it is set
+# explicitly. Code that includes SFML's headers needs C++17 as well.
 _COPTS = select({
     "@rules_cc//cc/compiler:msvc-cl": [
         "/std:c++17",
@@ -55,7 +56,7 @@ _COPTS = select({
         "/std:c++17",
         "/utf-8",
     ],
-    "//conditions:default": [],
+    "//conditions:default": ["-std=c++17"],
 })
 
 _LOCAL_DEFINES = select({
@@ -193,7 +194,10 @@ objc_library(
     srcs = _WINDOW_MACOS_OBJC_SRCS,
     copts = ["-fno-objc-arc"],
     target_compatible_with = ["@platforms//os:macos"],
-    deps = [":private_headers"],
+    deps = [
+        ":private_headers",
+        ":window_headers",
+    ],
 )
 
 objc_library(
@@ -209,7 +213,25 @@ objc_library(
         ":private_headers",
         ":system",
         ":vulkan_headers",
+        ":window_headers",
     ],
+)
+
+# Public headers of sfml-window. They are a separate target so that the macOS
+# Objective-C++ sources, which window depends on, can include them.
+cc_library(
+    name = "window_headers",
+    hdrs = glob([
+        "include/SFML/Window/**/*.hpp",
+        "include/SFML/Window/**/*.inl",
+    ]) + [
+        "include/SFML/GpuPreference.hpp",
+        "include/SFML/OpenGL.hpp",
+        "include/SFML/Window.hpp",
+    ],
+    strip_include_prefix = "include",
+    target_compatible_with = _SUPPORTED_OS,
+    deps = [":system"],
 )
 
 cc_library(
@@ -220,14 +242,6 @@ cc_library(
         ":windows": glob(["src/SFML/Window/Win32/*.cpp"]),
         "//conditions:default": [],
     }),
-    hdrs = glob([
-        "include/SFML/Window/**/*.hpp",
-        "include/SFML/Window/**/*.inl",
-    ]) + [
-        "include/SFML/GpuPreference.hpp",
-        "include/SFML/OpenGL.hpp",
-        "include/SFML/Window.hpp",
-    ],
     copts = _COPTS,
     implementation_deps = [
         ":glad",
@@ -271,10 +285,12 @@ cc_library(
         "//conditions:default": [],
     }),
     local_defines = _LOCAL_DEFINES,
-    strip_include_prefix = "include",
     target_compatible_with = _SUPPORTED_OS,
     visibility = ["//visibility:public"],
-    deps = [":system"],
+    deps = [
+        ":system",
+        ":window_headers",
+    ],
 )
 
 ###############################################################################
