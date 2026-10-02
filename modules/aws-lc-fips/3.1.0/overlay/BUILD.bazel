@@ -1,0 +1,299 @@
+load("@aws-lc//bazel:fips.bzl", "aws_lc_fips_module")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+load(":sources.bzl", "CRYPTO_SRCS", "S2N_AARCH64", "S2N_COMMON", "S2N_X86_64", "SSL_SRCS")
+
+package(default_visibility = ["//visibility:private"])
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_aarch64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+SUPPORTED = select({
+    ":linux_x86_64": [],
+    ":linux_aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+FIPS_ASM = select({
+    ":linux_x86_64": glob(["generated-src/linux-x86_64/crypto/fipsmodule/*.S"]) + [
+        "third_party/s2n-bignum/x86_att/" + s
+        for s in S2N_COMMON + S2N_X86_64
+    ],
+    ":linux_aarch64": glob(["generated-src/linux-aarch64/crypto/fipsmodule/*.S"]) + [
+        "third_party/s2n-bignum/arm/" + s
+        for s in S2N_COMMON + S2N_AARCH64
+    ],
+    "//conditions:default": [],
+})
+
+EXTRA_ASM = select({
+    ":linux_x86_64": glob(
+        ["generated-src/linux-x86_64/crypto/**/*.S"],
+        exclude = [
+            "generated-src/linux-x86_64/crypto/fipsmodule/**",
+            "generated-src/linux-x86_64/crypto/test/**",
+        ],
+    ) + ["crypto/hrss/asm/poly_rq_mul.S"],
+    ":linux_aarch64": glob(
+        ["generated-src/linux-aarch64/crypto/**/*.S"],
+        exclude = [
+            "generated-src/linux-aarch64/crypto/fipsmodule/**",
+            "generated-src/linux-aarch64/crypto/test/**",
+        ],
+    ),
+    "//conditions:default": [],
+})
+
+# Tools are built from this FIPS release, not from the non-FIPS aws-lc module.
+go_library(
+    name = "ar",
+    srcs = glob(
+        ["util/ar/*.go"],
+        exclude = ["util/ar/*_test.go"],
+    ),
+    importpath = "boringssl.googlesource.com/boringssl/util/ar",
+)
+
+go_library(
+    name = "fipscommon",
+    srcs = glob(["util/fipstools/fipscommon/*.go"]),
+    importpath = "boringssl.googlesource.com/boringssl/util/fipstools/fipscommon",
+)
+
+go_binary(
+    name = "delocate",
+    srcs = glob(
+        ["util/fipstools/delocate/*.go"],
+        exclude = ["util/fipstools/delocate/*_test.go"],
+    ),
+    pure = "on",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ar",
+        ":fipscommon",
+    ],
+)
+
+go_binary(
+    name = "inject_hash",
+    srcs = glob(
+        ["util/fipstools/inject_hash/*.go"],
+        exclude = ["util/fipstools/inject_hash/*_test.go"],
+    ),
+    pure = "on",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ar",
+        ":fipscommon",
+    ],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["include/openssl/**/*.h"]),
+    includes = ["include"],
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "module_headers",
+    hdrs = glob([
+        "crypto/**/*.h",
+        "third_party/fiat/**/*.h",
+        "third_party/s2n-bignum/include/*.h",
+        "third_party/jitterentropy/*.h",
+    ]),
+    includes = ["third_party/s2n-bignum/include"],
+    textual_hdrs = glob(["crypto/fipsmodule/**/*.c"]),
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+aws_lc_fips_module(
+    name = "bcm",
+    src = "crypto/fipsmodule/bcm.c",
+    asm_headers = [
+        "include/openssl/arm_arch.h",
+        "include/openssl/asm_base.h",
+        "include/openssl/target.h",
+    ],
+    asm_srcs = FIPS_ASM,
+    copts = [
+        "-std=c11",
+        "-D_XOPEN_SOURCE=700",
+        "-fvisibility=hidden",
+    ],
+    defines = [
+        "BORINGSSL_IMPLEMENTATION",
+        "BORINGSSL_FIPS",
+        "S2N_BN_HIDE_SYMBOLS",
+        "FIPS_ENTROPY_SOURCE_PASSIVE",
+    ],
+    delocate = ":delocate",
+    inject_hash = ":inject_hash",
+    target_compatible_with = SUPPORTED,
+    deps = [":module_headers"],
+)
+
+cc_library(
+    name = "crypto",
+    srcs = CRYPTO_SRCS + EXTRA_ASM + [":bcm"],
+    hdrs = glob([
+        "crypto/**/*.h",
+        "third_party/fiat/**/*.h",
+        "third_party/s2n-bignum/include/*.h",
+        "third_party/jitterentropy/*.h",
+    ]),
+    copts = [
+        "-std=c11",
+        "-D_XOPEN_SOURCE=700",
+        "-fvisibility=hidden",
+    ],
+    defines = [
+        "BORINGSSL_FIPS",
+        "FIPS_ENTROPY_SOURCE_PASSIVE",
+    ],
+    includes = ["third_party/s2n-bignum/include"],
+    # Rust can append native archives after its standard-library runtime flags.
+    linkopts = [
+        "-pthread",
+        "-lc",
+        "-lgcc",
+    ],
+    linkstatic = True,
+    local_defines = [
+        "BORINGSSL_IMPLEMENTATION",
+        "S2N_BN_HIDE_SYMBOLS",
+    ],
+    target_compatible_with = SUPPORTED,
+    textual_hdrs = glob(["crypto/kyber/pqcrystals_kyber_ref_common/*.c"]),
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+cc_library(
+    name = "ssl",
+    srcs = SSL_SRCS,
+    hdrs = glob(["ssl/*.h"]),
+    linkstatic = True,
+    local_defines = ["BORINGSSL_IMPLEMENTATION"],
+    target_compatible_with = SUPPORTED,
+    visibility = ["//visibility:public"],
+    deps = [":crypto"],
+)
+
+cc_test(
+    name = "upstream_fips_test",
+    srcs = ["util/fipstools/test_fips.c"],
+    copts = ["-Wno-deprecated-declarations"],
+    target_compatible_with = SUPPORTED,
+    deps = [":crypto"],
+)
+
+cc_test(
+    name = "fips_smoke_test",
+    srcs = ["bcr_tests/fips_smoke.c"],
+    target_compatible_with = SUPPORTED,
+    deps = [":crypto"],
+)
+
+go_binary(
+    name = "break_hash",
+    testonly = True,
+    srcs = ["util/fipstools/break-hash.go"],
+    gotags = ["aws_lc_bazel_break_hash"],
+    pure = "on",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "integrity_test",
+    srcs = ["bcr_tests/integrity_test.go"],
+    args = [
+        "-smoke=$(rlocationpath :fips_smoke_test)",
+        "-break-hash=$(rlocationpath :break_hash)",
+    ],
+    data = [
+        ":break_hash",
+        ":fips_smoke_test",
+    ],
+    pure = "on",
+    target_compatible_with = SUPPORTED,
+    deps = ["@rules_go//go/runfiles"],
+)
+
+# Source bundles for library variants instantiated by downstream adapters.
+filegroup(
+    name = "public_headers",
+    srcs = glob(
+        ["include/openssl/**/*.h"],
+        exclude = ["include/openssl/boringssl_prefix_symbols*.h"],
+    ),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "private_headers",
+    hdrs = glob([
+        "include/openssl/**/*.h",
+        "crypto/**/*.h",
+        "third_party/fiat/**/*.h",
+        "third_party/s2n-bignum/include/*.h",
+        "third_party/jitterentropy/*.h",
+    ]),
+    includes = [
+        "include",
+        "third_party/s2n-bignum/include",
+    ],
+    textual_hdrs = glob([
+        "crypto/fipsmodule/**/*.c",
+        "crypto/kyber/pqcrystals_kyber_ref_common/*.c",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "crypto_sources",
+    srcs = CRYPTO_SRCS + EXTRA_ASM,
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ssl_sources",
+    srcs = SSL_SRCS + glob(["ssl/*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "fips_assembly",
+    srcs = FIPS_ASM,
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "assembly_headers",
+    srcs = [
+        "include/openssl/arm_arch.h",
+        "include/openssl/asm_base.h",
+        "include/openssl/target.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["crypto/fipsmodule/bcm.c"])
+
+exports_files(["bcr_tests/integrity_test.go"])
