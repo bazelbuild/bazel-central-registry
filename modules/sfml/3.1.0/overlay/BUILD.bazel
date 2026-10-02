@@ -1,0 +1,462 @@
+# Hand-written Bazel build for SFML 3.1.0, translated from upstream's CMake files
+# (src/SFML/*/CMakeLists.txt and cmake/Macros.cmake).
+#
+# Differences from the upstream CMake build:
+#   * SFML is always built as static libraries, so SFML_STATIC is a public define.
+#   * Third-party dependencies that upstream downloads with FetchContent come from the
+#     Bazel Central Registry instead: flac, freetype, harfbuzz, libssh2, mbedtls, ogg,
+#     sheenbidi, vorbis. Header-only libraries bundled in extlibs/headers are used as-is.
+#   * Supported platforms are Linux (X11 + GLX), macOS and Windows. The DRM, OpenGL ES,
+#     BSD, Android and iOS configurations are not wired up.
+#   * On Linux, libGL and libudev are linked from the system (no BCR modules exist for
+#     them), so their development packages must be installed: e.g. libgl-dev and
+#     libudev-dev on Debian/Ubuntu.
+#   * The network module needs Mbed TLS built with SFML's threading configuration and
+#     libssh2 using its Mbed TLS backend. network_tls.bzl applies both settings to
+#     those dependencies with a transition, so no command-line flags are needed.
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+load("//:network_tls.bzl", "sfml_tls_deps")
+
+package(default_visibility = ["//visibility:private"])
+
+config_setting(
+    name = "linux",
+    constraint_values = ["@platforms//os:linux"],
+)
+
+config_setting(
+    name = "macos",
+    constraint_values = ["@platforms//os:macos"],
+)
+
+config_setting(
+    name = "windows",
+    constraint_values = ["@platforms//os:windows"],
+)
+
+_SUPPORTED_OS = select({
+    ":linux": [],
+    ":macos": [],
+    ":windows": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# Compiler options applied to all SFML sources. SFML's public headers require C++17,
+# which is the default for Bazel's Unix and Apple toolchains but not for MSVC.
+_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/std:c++17",
+        "/utf-8",
+        "/permissive-",
+    ],
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/std:c++17",
+        "/utf-8",
+    ],
+    "//conditions:default": [],
+})
+
+_LOCAL_DEFINES = select({
+    ":windows": [
+        "_CRT_SECURE_NO_WARNINGS",
+        "_WINSOCK_DEPRECATED_NO_WARNINGS",
+    ],
+    "//conditions:default": [],
+})
+
+###############################################################################
+# Headers
+###############################################################################
+
+# SFML's private headers under src/, included as <SFML/Module/Foo.hpp>.
+cc_library(
+    name = "private_headers",
+    hdrs = glob([
+        "src/SFML/**/*.hpp",
+        "src/SFML/**/*.h",
+    ]),
+    includes = ["src"],
+)
+
+# Header-only libraries bundled with SFML in extlibs/headers.
+cc_library(
+    name = "unicodelib",
+    hdrs = glob(["extlibs/headers/cpp-unicodelib/*.h"]),
+    strip_include_prefix = "extlibs/headers/cpp-unicodelib",
+)
+
+cc_library(
+    name = "glad",
+    hdrs = glob(["extlibs/headers/glad/include/**/*.h"]),
+    strip_include_prefix = "extlibs/headers/glad/include",
+)
+
+cc_library(
+    name = "vulkan_headers",
+    hdrs = glob(["extlibs/headers/vulkan/*.h"]),
+    strip_include_prefix = "extlibs/headers/vulkan",
+)
+
+cc_library(
+    name = "stb_image",
+    hdrs = glob(["extlibs/headers/stb_image/*.h"]),
+    strip_include_prefix = "extlibs/headers/stb_image",
+)
+
+cc_library(
+    name = "qoi",
+    hdrs = ["extlibs/headers/qoi/qoi.h"],
+    strip_include_prefix = "extlibs/headers/qoi",
+)
+
+cc_library(
+    name = "miniaudio",
+    hdrs = ["extlibs/headers/miniaudio/miniaudio.h"],
+    # `includes` rather than strip_include_prefix, because the latter does not apply to
+    # textual_hdrs and miniaudio.c is #included by src/SFML/Audio/Miniaudio.cpp.
+    includes = ["extlibs/headers/miniaudio"],
+    textual_hdrs = ["extlibs/headers/miniaudio/miniaudio.c"],
+)
+
+cc_library(
+    name = "dr_mp3",
+    hdrs = ["extlibs/headers/dr_mp3/dr_mp3.h"],
+    strip_include_prefix = "extlibs/headers/dr_mp3",
+)
+
+cc_library(
+    name = "wepoll",
+    hdrs = ["extlibs/headers/wepoll/wepoll.h"],
+    strip_include_prefix = "extlibs/headers/wepoll",
+)
+
+###############################################################################
+# sfml-system
+###############################################################################
+
+cc_library(
+    name = "system",
+    srcs = glob(["src/SFML/System/*.cpp"]) + select({
+        ":windows": ["src/SFML/System/Win32/SleepImpl.cpp"],
+        "//conditions:default": ["src/SFML/System/Unix/SleepImpl.cpp"],
+    }),
+    hdrs = glob([
+        "include/SFML/System/**/*.hpp",
+        "include/SFML/System/**/*.inl",
+    ]) + [
+        "include/SFML/Config.hpp",
+        "include/SFML/System.hpp",
+    ],
+    copts = _COPTS,
+    # SFML is always built statically here.
+    defines = ["SFML_STATIC"],
+    implementation_deps = [
+        ":private_headers",
+        ":unicodelib",
+    ],
+    linkopts = select({
+        ":linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        ":windows": ["-DEFAULTLIB:winmm.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = _LOCAL_DEFINES,
+    strip_include_prefix = "include",
+    target_compatible_with = _SUPPORTED_OS,
+    visibility = ["//visibility:public"],
+)
+
+###############################################################################
+# sfml-window
+###############################################################################
+
+_WINDOW_COMMON_SRCS = glob(
+    ["src/SFML/Window/*.cpp"],
+    exclude = [
+        # Only used by the OpenGL ES / DRM / Android configurations.
+        "src/SFML/Window/EGLCheck.cpp",
+        "src/SFML/Window/EglContext.cpp",
+    ],
+)
+
+_WINDOW_MACOS_OBJC_SRCS = glob(["src/SFML/Window/macOS/*.m"])
+
+_WINDOW_MACOS_OBJCXX_SRCS = glob(["src/SFML/Window/macOS/*.mm"])
+
+# Objective-C sources. SFML uses manual reference counting, so ARC is disabled.
+objc_library(
+    name = "window_macos_objc",
+    srcs = _WINDOW_MACOS_OBJC_SRCS,
+    copts = ["-fno-objc-arc"],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [":private_headers"],
+)
+
+objc_library(
+    name = "window_macos_objcxx",
+    srcs = _WINDOW_MACOS_OBJCXX_SRCS,
+    copts = [
+        "-fno-objc-arc",
+        "-std=c++17",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [
+        ":glad",
+        ":private_headers",
+        ":system",
+        ":vulkan_headers",
+    ],
+)
+
+cc_library(
+    name = "window",
+    srcs = _WINDOW_COMMON_SRCS + select({
+        ":linux": glob(["src/SFML/Window/Unix/*.cpp"]),
+        ":macos": glob(["src/SFML/Window/macOS/*.cpp"]),
+        ":windows": glob(["src/SFML/Window/Win32/*.cpp"]),
+        "//conditions:default": [],
+    }),
+    hdrs = glob([
+        "include/SFML/Window/**/*.hpp",
+        "include/SFML/Window/**/*.inl",
+    ]) + [
+        "include/SFML/GpuPreference.hpp",
+        "include/SFML/OpenGL.hpp",
+        "include/SFML/Window.hpp",
+    ],
+    copts = _COPTS,
+    implementation_deps = [
+        ":glad",
+        ":private_headers",
+        ":vulkan_headers",
+    ] + select({
+        ":linux": [
+            "@libx11",
+            "@libxcursor",
+            "@libxi",
+            "@libxrandr",
+        ],
+        ":macos": [
+            ":window_macos_objc",
+            ":window_macos_objcxx",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        ":linux": [
+            "-lGL",
+            "-ludev",
+            "-ldl",
+        ],
+        ":macos": [
+            "-ObjC",
+            "-framework Foundation",
+            "-framework AppKit",
+            "-framework IOKit",
+            "-framework Carbon",
+            "-framework OpenGL",
+        ],
+        ":windows": [
+            "-DEFAULTLIB:advapi32.lib",
+            "-DEFAULTLIB:gdi32.lib",
+            "-DEFAULTLIB:opengl32.lib",
+            "-DEFAULTLIB:shell32.lib",
+            "-DEFAULTLIB:user32.lib",
+            "-DEFAULTLIB:winmm.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = _LOCAL_DEFINES,
+    strip_include_prefix = "include",
+    target_compatible_with = _SUPPORTED_OS,
+    visibility = ["//visibility:public"],
+    deps = [":system"],
+)
+
+###############################################################################
+# sfml-graphics
+###############################################################################
+
+cc_library(
+    name = "graphics",
+    srcs = glob(["src/SFML/Graphics/*.cpp"]),
+    hdrs = glob([
+        "include/SFML/Graphics/**/*.hpp",
+        "include/SFML/Graphics/**/*.inl",
+    ]) + ["include/SFML/Graphics.hpp"],
+    # Upstream compiles Image.cpp with -fno-strict-aliasing under GCC, otherwise saving
+    # PNGs may crash in stb_image_write. Applying it to the whole module is harmless.
+    copts = _COPTS + select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "//conditions:default": ["-fno-strict-aliasing"],
+    }),
+    implementation_deps = [
+        ":glad",
+        ":private_headers",
+        ":qoi",
+        ":stb_image",
+        "@freetype",
+        "@harfbuzz",
+        "@sheenbidi",
+    ],
+    local_defines = _LOCAL_DEFINES + ["STBI_FAILURE_USERMSG"],
+    strip_include_prefix = "include",
+    target_compatible_with = _SUPPORTED_OS,
+    visibility = ["//visibility:public"],
+    deps = [":window"],
+)
+
+###############################################################################
+# sfml-audio
+###############################################################################
+
+cc_library(
+    name = "audio",
+    srcs = glob(["src/SFML/Audio/*.cpp"]),
+    hdrs = glob([
+        "include/SFML/Audio/**/*.hpp",
+        "include/SFML/Audio/**/*.inl",
+    ]) + ["include/SFML/Audio.hpp"],
+    copts = _COPTS,
+    implementation_deps = [
+        ":dr_mp3",
+        ":miniaudio",
+        ":private_headers",
+        "@flac",
+        "@vorbis",
+        "@vorbis//:vorbisenc",
+        "@vorbis//:vorbisfile",
+    ],
+    linkopts = select({
+        ":linux": [
+            "-ldl",
+            "-lpthread",
+            "-lm",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = _LOCAL_DEFINES + [
+        # Matches the definitions in upstream src/SFML/Audio/CMakeLists.txt.
+        "OV_EXCLUDE_STATIC_CALLBACKS",
+        "FLAC__NO_DLL",
+        "MA_NO_MP3",
+        "MA_NO_FLAC",
+        "MA_NO_ENCODING",
+        "MA_NO_RESOURCE_MANAGER",
+        "MA_NO_GENERATION",
+        "MA_USE_STDINT",
+        # All supported targets are little-endian.
+        "SFML_IS_BIG_ENDIAN=0",
+    ],
+    strip_include_prefix = "include",
+    target_compatible_with = _SUPPORTED_OS,
+    visibility = ["//visibility:public"],
+    deps = [":system"],
+)
+
+###############################################################################
+# sfml-network
+###############################################################################
+
+# Mbed TLS configuration required by the network module. network_tls.bzl selects it
+# automatically for the network module's own copy of Mbed TLS.
+cc_library(
+    name = "mbedtls_config",
+    hdrs = [
+        "bazel/mbedtls_config/mbedtls/sfml_mbedtls_config.h",
+        "bazel/mbedtls_config/mbedtls/threading_alt.h",
+    ],
+    # Makes build_info.h include this config even where the default one is also visible
+    # on disk (e.g. unsandboxed Windows builds).
+    defines = ["MBEDTLS_CONFIG_FILE=\\\"sfml_mbedtls_config.h\\\""],
+    # threading.h includes "threading_alt.h" without a directory prefix.
+    includes = [
+        "bazel/mbedtls_config",
+        "bazel/mbedtls_config/mbedtls",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+sfml_tls_deps(
+    name = "network_tls_deps",
+    deps = [
+        "@libssh2",
+        "@mbedtls",
+    ],
+)
+
+cc_library(
+    name = "network",
+    srcs = glob(["src/SFML/Network/*.cpp"]) + select({
+        ":windows": ["src/SFML/Network/Win32/SocketImpl.cpp"],
+        "//conditions:default": ["src/SFML/Network/Unix/SocketImpl.cpp"],
+    }),
+    hdrs = glob(["include/SFML/Network/**/*.hpp"]) + ["include/SFML/Network.hpp"],
+    copts = _COPTS,
+    implementation_deps = [
+        ":network_tls_deps",
+        ":private_headers",
+    ] + select({
+        ":windows": [":wepoll"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        ":linux": ["-lresolv"],
+        ":macos": [
+            "-lresolv",
+            "-framework Security",
+            "-framework CoreFoundation",
+        ],
+        ":windows": [
+            "-DEFAULTLIB:crypt32.lib",
+            "-DEFAULTLIB:dnsapi.lib",
+            "-DEFAULTLIB:ws2_32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = _LOCAL_DEFINES,
+    strip_include_prefix = "include",
+    target_compatible_with = _SUPPORTED_OS,
+    visibility = ["//visibility:public"],
+    deps = [":system"],
+)
+
+###############################################################################
+# sfml-main (Windows only): provides WinMain, forwarding to main()
+###############################################################################
+
+cc_library(
+    name = "main",
+    srcs = ["src/SFML/Main/MainWin32.cpp"],
+    hdrs = ["include/SFML/Main.hpp"],
+    copts = _COPTS,
+    implementation_deps = [":private_headers"],
+    local_defines = _LOCAL_DEFINES,
+    strip_include_prefix = "include",
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:public"],
+    deps = [":system"],
+    alwayslink = True,
+)
+
+###############################################################################
+# Convenience target
+###############################################################################
+
+# All SFML modules. Depend on the individual modules instead to pull in less.
+cc_library(
+    name = "sfml",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":audio",
+        ":graphics",
+        ":network",
+        ":system",
+        ":window",
+    ],
+)
