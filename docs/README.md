@@ -209,6 +209,10 @@ To be submitted, a PR needs to:
   - If you see your presubmit check stuck on "blocked", a BCR maintainer needs to explicitly unblock the presubmit run or apply the `presubmit-auto-run` label to your PR. This is to avoid abuse of our CI system. Feel free to ping `@bazelbuild/bcr-maintainers` if you're blocked on this.
 - Pass certain other checks, especially for first-time contributors, such as CLA signing or GitHub workflows that require approval from BCR maintainers.
 
+The `bazel-io` bot regularly reviews open PRs and merges those that meet the requirements above, but these scheduled runs can be delayed by a few hours.
+To have a PR reviewed right away, anyone can comment `@bazel-io review` on the PR thread.
+The bot then merges the PR if all modified modules are approved by their maintainers and all checks pass, or replies with what is still missing.
+
 In case a release is broken, the PR to publish it may never be merged.
 Module maintainers can ask the `bazel-io` bot to close a PR by commenting `@bazel-io abandon` on the PR thread.
 This is intended for cases where the PR is opened by a bot account, and helps BCR maintainers keep the PR backlog manageable.
