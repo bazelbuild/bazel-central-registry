@@ -39,6 +39,14 @@ Both also have `with_defaults/` variants (e.g. `@ffmpeg//:with_defaults/ffmpeg`)
 
 Note that there is no `ffplay` binary as it requires SDL2 which is not in the bazel-central-registry. ([bazelbuild/bazel-central-registry#7077](https://github.com/bazelbuild/bazel-central-registry/issues/7077))
 
+### NVIDIA NVENC
+
+Starting with `7.1.1.bcr.beta.11` and `9.0.1.beta.bcr.3`, the H.264, HEVC, and
+AV1 NVENC encoders can be enabled with their component flags (for example,
+`--@ffmpeg//:enable_hevc_nvenc_encoder=True`). The build uses the `ffnvcodec`
+13.0.19.1 headers without requiring a CUDA toolkit; encoding at runtime
+requires a compatible NVIDIA driver (570 or newer on Linux).
+
 ### Install tree
 
 For consumers that need FFmpeg as files on disk instead of Bazel `cc_library`
