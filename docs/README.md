@@ -83,7 +83,7 @@ Additional validations implemented in the [bcr_presubmit.py](https://github.com/
 - The checked-in `MODULE.bazel`, `source.json`, patches files are not modified in the PR.
 - The files outside of `modules/` directory are not modified in the pull request if the PR is adding a new module version.
 
-Skip-check comments are intentionally lightweight escape hatches for optional validations. The bot records each skip by applying the corresponding label to the PR. These labels skip only the named checks; they do not by themselves approve a PR, merge a PR, or bypass other BCR validation and CI requirements.
+Skip-check comments are intentionally lightweight escape hatches for optional validations. Only the PR author or a repository collaborator can request a skip. The bot records each skip by applying the corresponding label to the PR. These labels skip only the named checks; they do not by themselves approve a PR, merge a PR, or bypass other BCR validation and CI requirements.
 
 ### Anonymous module test
 
