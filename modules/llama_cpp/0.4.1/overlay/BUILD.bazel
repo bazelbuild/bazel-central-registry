@@ -1,0 +1,366 @@
+# Bazel build for llama.cpp (ggml + libllama).
+#
+# Upstream builds with CMake; these targets reproduce the ggml base library, the
+# CPU backend, the CUDA backend and libllama. The CUDA backend is opt-in via
+# --@llama_cpp//:cuda=true. The remaining GPU backends (Vulkan, Metal, HIP,
+# SYCL) are not part of this module and can be layered on top of :ggml_base by
+# the consumer.
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library", "requires_cuda")
+
+package(default_visibility = ["//visibility:public"])
+
+licenses(["notice"])  # MIT
+
+exports_files(["LICENSE"])
+
+# Build ggml's CUDA backend into :ggml (and therefore :llama). Requires a CUDA
+# toolkit; see @rules_cuda for how to configure one.
+bool_flag(
+    name = "cuda",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "cuda_enabled",
+    flag_values = {":cuda": "True"},
+)
+
+# ggml_version() and llama_version() return these; upstream CMake expands them
+# into ggml-version.h / llama-version.h.
+GGML_VERSION = "0.24.0"
+
+LLAMA_VERSION = "0.4.1"
+
+COMMIT = "b29c606e28a01b1bc8c1351026a0fa6e616bf6c4"
+
+expand_template(
+    name = "ggml_version_h",
+    out = "ggml/src/ggml-version.h",
+    substitutions = {
+        "@GGML_VERSION@": GGML_VERSION,
+        "@GGML_BUILD_COMMIT@": COMMIT,
+    },
+    template = "ggml/src/ggml-version.h.in",
+)
+
+expand_template(
+    name = "llama_version_h",
+    out = "src/llama-version.h",
+    substitutions = {
+        "@LLAMA_VERSION@": LLAMA_VERSION,
+        "@LLAMA_BUILD_COMMIT@": COMMIT,
+    },
+    template = "src/llama-version.h.in",
+)
+
+config_setting(
+    name = "windows_x86_64",
+    constraint_values = [
+        "@platforms//os:windows",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "arm64",
+    constraint_values = ["@platforms//cpu:arm64"],
+)
+
+_MSVC_COPTS = [
+    "/bigobj",  # src/models/*.cpp exceed the COFF section limit
+    "/arch:AVX2",
+    "/wd4244",
+    "/wd4267",
+    "/wd4305",
+]
+
+_X86_COPTS = [
+    "-mavx2",
+    "-mfma",
+    "-mf16c",
+    "-Wno-unused-function",
+]
+
+COPTS = select({
+    ":windows_x86_64": _MSVC_COPTS,
+    ":linux_x86_64": _X86_COPTS,
+    ":macos_x86_64": _X86_COPTS,
+    "//conditions:default": [],
+})
+
+# llama.cpp requires C++17; older GCC and MSVC still default to C++14.
+CXXOPTS = select({
+    "@platforms//os:windows": ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+PLATFORM_DEFINES = select({
+    "@platforms//os:windows": [
+        "_CRT_SECURE_NO_WARNINGS",
+        "NOMINMAX",
+    ],
+    "//conditions:default": [],
+})
+
+# Only x86_64 and arm64 ship hand written kernels; everything else uses the
+# portable fallbacks behind GGML_CPU_GENERIC.
+ARCH_SRCS = select({
+    "@platforms//cpu:x86_64": [
+        "ggml/src/ggml-cpu/arch/x86/quants.c",
+        "ggml/src/ggml-cpu/arch/x86/repack.cpp",
+    ],
+    ":arm64": [
+        "ggml/src/ggml-cpu/arch/arm/quants.c",
+        "ggml/src/ggml-cpu/arch/arm/repack.cpp",
+    ],
+    "//conditions:default": [],
+})
+
+ARCH_DEFINES = select({
+    "@platforms//cpu:x86_64": [],
+    ":arm64": [],
+    "//conditions:default": ["GGML_CPU_GENERIC"],
+})
+
+# ggml-backend-reg.cpp calls ggml_backend_cuda_reg() behind this define, so it
+# must only be set when :ggml_cuda is actually linked in.
+CUDA_DEFINES = select({
+    ":cuda_enabled": ["GGML_USE_CUDA"],
+    "//conditions:default": [],
+})
+
+# ------------------------------------------------------------------ ggml core
+
+cc_library(
+    name = "ggml_base",
+    srcs = [
+        "ggml/src/ggml-alloc.c",
+        "ggml/src/ggml-backend-dl.cpp",
+        "ggml/src/ggml-backend-dl.h",
+        "ggml/src/ggml-backend-impl.h",
+        "ggml/src/ggml-backend-meta.cpp",
+        "ggml/src/ggml-backend-reg.cpp",
+        "ggml/src/ggml-backend.cpp",
+        "ggml/src/ggml-common.h",
+        "ggml/src/ggml-feats.h",
+        "ggml/src/ggml-impl.h",
+        "ggml/src/ggml-opt.cpp",
+        "ggml/src/ggml-quants.c",
+        "ggml/src/ggml-quants.h",
+        "ggml/src/ggml-threading.cpp",
+        "ggml/src/ggml-threading.h",
+        "ggml/src/ggml.c",
+        "ggml/src/ggml.cpp",
+        "ggml/src/gguf.cpp",
+        ":ggml_version_h",
+        # ggml-quants.c includes ggml-cpu/ggml-cpu-impl.h.
+    ] + glob(["ggml/src/ggml-cpu/*.h"]),
+    hdrs = glob(["ggml/include/*.h"]),
+    copts = COPTS,
+    cxxopts = CXXOPTS,
+    includes = [
+        "ggml/include",
+        "ggml/src",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lpthread",
+            "-lm",
+            "-ldl",
+        ],
+    }),
+    local_defines = PLATFORM_DEFINES + CUDA_DEFINES + ["GGML_USE_CPU"],
+)
+
+# ------------------------------------------------------------ ggml CPU backend
+
+cc_library(
+    name = "ggml_cpu",
+    srcs = [
+        "ggml/src/ggml-common.h",
+        "ggml/src/ggml-cpu/amx/amx.cpp",
+        "ggml/src/ggml-cpu/amx/amx.h",
+        "ggml/src/ggml-cpu/amx/common.h",
+        "ggml/src/ggml-cpu/amx/mmq.cpp",
+        "ggml/src/ggml-cpu/amx/mmq.h",
+        "ggml/src/ggml-cpu/arch-fallback.h",
+        "ggml/src/ggml-cpu/binary-ops.cpp",
+        "ggml/src/ggml-cpu/binary-ops.h",
+        "ggml/src/ggml-cpu/common.h",
+        "ggml/src/ggml-cpu/ggml-cpu-impl.h",
+        "ggml/src/ggml-cpu/ggml-cpu.c",
+        "ggml/src/ggml-cpu/ggml-cpu.cpp",
+        "ggml/src/ggml-cpu/hbm.cpp",
+        "ggml/src/ggml-cpu/hbm.h",
+        "ggml/src/ggml-cpu/iqp.cpp",
+        "ggml/src/ggml-cpu/iqp.h",
+        "ggml/src/ggml-cpu/ops.cpp",
+        "ggml/src/ggml-cpu/ops.h",
+        "ggml/src/ggml-cpu/quants.c",
+        "ggml/src/ggml-cpu/quants.h",
+        "ggml/src/ggml-cpu/repack.cpp",
+        "ggml/src/ggml-cpu/repack.h",
+        "ggml/src/ggml-cpu/simd-gemm.h",
+        "ggml/src/ggml-cpu/simd-mappings.h",
+        "ggml/src/ggml-cpu/traits.cpp",
+        "ggml/src/ggml-cpu/traits.h",
+        "ggml/src/ggml-cpu/unary-ops.cpp",
+        "ggml/src/ggml-cpu/unary-ops.h",
+        "ggml/src/ggml-cpu/vec.cpp",
+        "ggml/src/ggml-cpu/vec.h",
+        "ggml/src/ggml-impl.h",
+    ] + ARCH_SRCS,
+    copts = COPTS,
+    cxxopts = CXXOPTS,
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cpu",
+    ],
+    linkopts = select({
+        # ggml_backend_cpu_device_context() reads the CPU name from the registry.
+        "@platforms//os:windows": ["-DEFAULTLIB:advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = PLATFORM_DEFINES + ARCH_DEFINES + ["GGML_USE_CPU"],
+    # Keeps ggml_backend_cpu_reg() in the final link.
+    alwayslink = 1,
+    deps = [":ggml_base"],
+)
+
+cc_library(
+    name = "ggml",
+    deps = [
+        ":ggml_base",
+        ":ggml_cpu",
+    ] + select({
+        ":cuda_enabled": [":ggml_cuda"],
+        "//conditions:default": [],
+    }),
+)
+
+# ----------------------------------------------------------- ggml CUDA backend
+
+_FA_TYPES = [
+    "q4_0",
+    "q4_1",
+    "q5_0",
+    "q5_1",
+    "q8_0",
+    "bf16",
+    "f16",
+]
+
+# Upstream default of GGML_CUDA_FA_QUANTS. Compiling all 49 K-V combinations
+# multiplies the nvcc work for a marginal gain.
+_FA_COMBINATIONS = [
+    "q4_0-q4_0",
+    "q8_0-q8_0",
+    "f16-f16",
+    "bf16-bf16",
+]
+
+# The optional GGML_CUDA_FA_QUANTS string macro is left undefined: nvcc forwards
+# local_defines to the host compiler through -Xcompiler, which splits on commas.
+_FA_DEFINES = [
+    "GGML_CUDA_FA_%s_%s=%d" % (
+        type_k.upper(),
+        type_v.upper(),
+        1 if type_k + "-" + type_v in _FA_COMBINATIONS else 0,
+    )
+    for type_v in _FA_TYPES
+    for type_k in _FA_TYPES
+]
+
+cuda_library(
+    name = "ggml_cuda",
+    srcs = glob(
+        [
+            "ggml/src/ggml-cuda/*.cu",
+            "ggml/src/ggml-cuda/template-instances/*.cu",
+        ],
+        exclude = ["ggml/src/ggml-cuda/template-instances/fattn-vec-instance-*.cu"],
+    ) + [
+        "ggml/src/ggml-cuda/template-instances/fattn-vec-instance-%s.cu" % combination
+        for combination in _FA_COMBINATIONS
+    ],
+    hdrs = glob([
+        "ggml/include/*.h",
+        "ggml/src/*.h",
+        "ggml/src/ggml-cuda/*.cuh",
+        "ggml/src/ggml-cuda/vendors/*.h",
+    ]),
+    # CudaCompile actions do not see --cxxopt; cub requires C++17 or newer.
+    copts = ["-std=c++17"],
+    host_copts = select({
+        # CCCL refuses to compile with MSVC's traditional preprocessor.
+        "@platforms//os:windows": ["/Zc:preprocessor"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "ggml/include",
+        "ggml/src",
+        "ggml/src/ggml-cuda",
+    ],
+    local_defines = [
+        "GGML_USE_CUDA",
+        "GGML_CUDA_USE_GRAPHS",
+    ] + _FA_DEFINES,
+    target_compatible_with = requires_cuda(),
+    # Keeps ggml_backend_cuda_reg() in the final link.
+    alwayslink = 1,
+    deps = [
+        ":ggml_base",
+        "@cuda//:cub",
+        "@cuda//:cublas",
+        "@cuda//:cuda",  # driver API, used by ggml's VMM pool
+        "@cuda//:cuda_runtime",
+        "@cuda//:libcudacxx",
+        "@cuda//:thrust",
+    ],
+)
+
+# ------------------------------------------------------------------- libllama
+
+cc_library(
+    name = "llama",
+    srcs = glob([
+        "src/*.cpp",
+        "src/*.h",
+        "src/models/*.cpp",
+        "src/models/*.h",
+    ]) + [":llama_version_h"],
+    hdrs = [
+        "include/llama-cpp.h",
+        "include/llama.h",
+    ],
+    copts = COPTS,
+    cxxopts = CXXOPTS,
+    includes = [
+        "include",
+        "src",
+    ],
+    local_defines = PLATFORM_DEFINES,
+    deps = [":ggml"],
+)
