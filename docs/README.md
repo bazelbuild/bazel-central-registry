@@ -226,8 +226,6 @@ bcr_downstream_test:
   # use_bazel_version: 8.x
 ```
 
-A failing downstream task doesn't always mean the new version is at fault, since the dependent may already fail on that platform or Bazel version. Compare with the dependent's own presubmit results before drawing conclusions.
-
 See the [BCR Downstream Test documentation](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite/bazel-central-registry#bcr-downstream-test) for all options.
 
 ## Approval and submission
