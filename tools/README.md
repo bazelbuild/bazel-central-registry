@@ -111,7 +111,7 @@ This script calculates the importance of each module in the BCR based on their P
 The graph is constructed based on dependencies of the latest version of each module.
 
 ```
-usage: module_analyzer.py [-h] [--registry REGISTRY] [--top_n TOP_N] [--exclude-dev-deps] [--name-only]
+usage: module_analyzer.py [-h] [--registry REGISTRY] [--top_n TOP_N] [--exclude-dev-deps] [--name-only] [--dependents_of DEPENDENTS_OF]
 
 Select module versions matching given patterns.
 
@@ -121,12 +121,20 @@ optional arguments:
   --top_n TOP_N        Specify the top N important modules to print out (default: 50).
   --exclude-dev-deps   Exclude dev dependencies when constructing the dependency graph (default: False).
   --name-only          Only print the module names without the scores (default: False).
+  --dependents_of DEPENDENTS_OF
+                       Only print modules that directly depend on the specified module(s). Can be specified multiple times or comma-separated.
 ```
 
 You can also run with Bazel, for example:
 
 ```bash
 bazel run //tools:module_analyzer -- --top_n 10
+```
+
+To print the top 10 modules that directly depend on `protobuf`:
+
+```bash
+bazel run //tools:module_analyzer -- --top_n 10 --dependents_of protobuf
 ```
 
 ## setup_presubmit_repos.py
