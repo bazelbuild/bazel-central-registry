@@ -711,19 +711,7 @@ write_file(
     tags = ["manual"],
 )
 
-# Gnulib's wrapper headers (generated lib/stdio.h, lib/fcntl.h, ... plus
-# the checked-in lib/*-safer.h helpers) must shadow the libc headers: they
-# forward via #include_next and add gnulib decorations
-# (_GL_ATTRIBUTE_DEALLOC etc.) that lib/ and src/ sources rely on.
-# `includes = ["lib"]` emits -isystem, which loses against toolchains that
-# inject libc headers as earlier -isystem entries (e.g. the zero-sysroot
-# hermetic-llvm BCR toolchain). Plain -I outranks every -isystem (and a dir
-# listed as both -I and -isystem stays -isystem, so the -isystem form must
-# go entirely). This restores autotools' AM_CPPFLAGS = -I./lib ordering.
-BISON_COPTS = [
-    "-Iexternal/" + repo_name() + "/lib",
-    "-I$(BINDIR)/external/" + repo_name() + "/lib",
-] + select({
+BISON_COPTS = select({
     "@rules_cc//cc/compiler:clang": [
         "-w",
         "-std=c11",
@@ -807,9 +795,26 @@ autoconf_srcs(
     deps = [":configure_ac"],
 )
 
-# Shared headers for lib/ targets (mirrors autotools AM_CPPFLAGS = -I./lib)
+# Shared headers for lib/ targets (mirrors autotools AM_CPPFLAGS = -I./lib).
+#
+# Gnulib's wrapper headers (generated lib/stdio.h, lib/fcntl.h, ... plus
+# the checked-in lib/*-safer.h helpers) must shadow the libc headers: they
+# forward via #include_next and add gnulib decorations
+# (_GL_ATTRIBUTE_DEALLOC etc.) that lib/ and src/ sources rely on.
+# `includes = ["lib"]` emits -isystem, which loses against toolchains that
+# inject libc headers as earlier -isystem entries (e.g. the zero-sysroot
+# hermetic-llvm BCR toolchain). `strip_include_prefix` puts lib/ on a
+# virtual include dir passed with plain -I, which outranks every -isystem.
 cc_library(
     name = "headers",
+    deps = [
+        ":lib_headers",
+        ":src_scanners",
+    ],
+)
+
+cc_library(
+    name = "lib_headers",
     hdrs = ["lib/config.h"] + [
         ":{}".format(hdr)
         for hdr in GENERATED_SRCS.keys()
@@ -820,14 +825,22 @@ cc_library(
             "lib/configmake.h",
         ],
     ) + [
-        "src/scan-code.c",
-        "src/scan-gram.c",
-        "src/scan-skel.c",
         ":configmake_h_src",
     ],
+    strip_include_prefix = "lib",
     textual_hdrs = [
         "lib/timevar.def",
         "lib/printf-frexp.c",
+    ],
+)
+
+# Flex scanners #included by src/scan-*-c.c.
+cc_library(
+    name = "src_scanners",
+    hdrs = [
+        "src/scan-code.c",
+        "src/scan-gram.c",
+        "src/scan-skel.c",
     ],
 )
 
