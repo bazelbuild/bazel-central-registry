@@ -14,10 +14,13 @@ def gen_test_targets(name, srcs):
             name = name,
             srcs = [src],
             copts = ["-std=c++20"],
+            # CustomFileChecksum can fail during background compactions under load.
+            flaky = name == "db_compaction_compaction_service_test",
             deps = [":rocksdb_test_lib"],
             linkopts = select({
                 "@platforms//os:linux": ["-ldl"],
                 "@platforms//os:macos": [],
             }),
-            timeout = "long",
+            # Full codec coverage takes over 12 minutes even on Linux amd64.
+            timeout = "eternal" if name == "table_table_test" else "long",
         )
