@@ -72,6 +72,44 @@ config_setting(
     flag_values = {":with_liburing": "true"},
 )
 
+# Internal headers must use the same feature and OS macros in library and tests.
+_ROCKSDB_BUILD_DEFINES = [
+    "ROCKSDB_USE_RTTI",
+    "ROCKSDB_JEMALLOC",
+] + select({
+    ":with_bzip2_setting": ["BZIP2"],
+    "//conditions:default": [],
+}) + select({
+    ":with_liburing_linux_setting": ["ROCKSDB_IOURING_PRESENT"],
+    "//conditions:default": [],
+}) + select({
+    ":with_lz4_setting": ["LZ4"],
+    "//conditions:default": [],
+}) + select({
+    ":with_snappy_setting": ["SNAPPY"],
+    "//conditions:default": [],
+}) + select({
+    ":with_zlib_setting": ["ZLIB"],
+    "//conditions:default": [],
+}) + select({
+    ":with_zstd_setting": ["ZSTD"],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//os:linux": [
+        "OS_LINUX",
+        "ROCKSDB_FALLOCATE_PRESENT",
+        "ROCKSDB_RANGESYNC_PRESENT",
+        "ROCKSDB_PTHREAD_ADAPTIVE_MUTEX",
+        "ROCKSDB_MALLOC_USABLE_SIZE",
+        "ROCKSDB_SCHED_GETCPU_PRESENT",
+        "ROCKSDB_AUXV_GETAUXVAL_PRESENT",
+    ],
+    "@platforms//os:macos": [
+        "OS_MACOSX",
+        "HAVE_FULLFSYNC",
+    ],
+})
+
 expand_template(
     name = "build_version",
     out = "build_version.cc",
@@ -477,42 +515,7 @@ cc_library(
         "@platforms//os:macos": [],
     }),
     linkstatic = True,
-    local_defines = [
-        "ROCKSDB_USE_RTTI",
-        "ROCKSDB_JEMALLOC",
-    ] + select({
-        ":with_bzip2_setting": ["BZIP2"],
-        "//conditions:default": [],
-    }) + select({
-        ":with_liburing_linux_setting": ["ROCKSDB_IOURING_PRESENT"],
-        "//conditions:default": [],
-    }) + select({
-        ":with_lz4_setting": ["LZ4"],
-        "//conditions:default": [],
-    }) + select({
-        ":with_snappy_setting": ["SNAPPY"],
-        "//conditions:default": [],
-    }) + select({
-        ":with_zlib_setting": ["ZLIB"],
-        "//conditions:default": [],
-    }) + select({
-        ":with_zstd_setting": ["ZSTD"],
-        "//conditions:default": [],
-    }) + select({
-        "@platforms//os:linux": [
-            "OS_LINUX",
-            "ROCKSDB_FALLOCATE_PRESENT",
-            "ROCKSDB_RANGESYNC_PRESENT",
-            "ROCKSDB_PTHREAD_ADAPTIVE_MUTEX",
-            "ROCKSDB_MALLOC_USABLE_SIZE",
-            "ROCKSDB_SCHED_GETCPU_PRESENT",
-            "ROCKSDB_AUXV_GETAUXVAL_PRESENT",
-        ],
-        "@platforms//os:macos": [
-            "OS_MACOSX",
-            "HAVE_FULLFSYNC",
-        ],
-    }),
+    local_defines = _ROCKSDB_BUILD_DEFINES,
     target_compatible_with = select({
         "@platforms//os:linux": [],
         "@platforms//os:macos": [],
@@ -566,18 +569,7 @@ cc_library(
         "utilities/cassandra/test_utils.cc",
     ],
     copts = ["-std=c++20"],
-    defines = select({
-        "@platforms//os:linux": [
-            "OS_LINUX",
-            "ROCKSDB_PLATFORM_POSIX",
-            "ROCKSDB_LIB_IO_POSIX",
-        ],
-        "@platforms//os:macos": [
-            "OS_MACOSX",
-            "ROCKSDB_PLATFORM_POSIX",
-            "ROCKSDB_LIB_IO_POSIX",
-        ],
-    }),
+    defines = _ROCKSDB_BUILD_DEFINES,
     includes = ["."],
     deps = [
         ":rocksdb",
