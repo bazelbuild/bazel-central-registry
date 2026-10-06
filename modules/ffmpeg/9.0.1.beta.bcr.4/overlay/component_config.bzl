@@ -118,6 +118,7 @@ EXTERNAL_CODEC_LIBRARIES = {
     "libspeex": ["libspeex_decoder", "libspeex_encoder"],
     "libtwolame": ["libtwolame_encoder"],
     "libvorbis": ["libvorbis_decoder", "libvorbis_encoder"],
+    "libvpx": ["libvpx_vp8_decoder", "libvpx_vp8_encoder", "libvpx_vp9_decoder", "libvpx_vp9_encoder"],
     "libxvid": ["libxvid_encoder"],
 }
 
@@ -156,9 +157,10 @@ def _read_state(ctx):
                 state[child] = True
                 break
 
-    # Use the same conditions as the library deps, including platform limits.
-    state["libvpx"] = ctx.attr.libvpx
-    state["libxcb"] = ctx.attr.libxcb
+    # XCB capture and its dependency are Linux-only.
+    state["libxcb"] = state.get("xcbgrab_indev", False) and ctx.target_platform_has_constraint(
+        ctx.attr._linux[platform_common.ConstraintValueInfo],
+    )
     return state
 
 def _component_type_enabled(state, component_types):
@@ -206,9 +208,8 @@ def _gen_config_extra(state):
     )])
     for comp in ("cuda", "ffnvcodec", "nvenc"):
         lines.append("#define CONFIG_{} {}".format(comp.upper(), int(nvenc)))
-    for comp in ("libvpx", "libxcb", "libxcb_shape", "libxcb_shm", "libxcb_xfixes"):
-        enabled = state.get("libxcb" if comp.startswith("libxcb") else comp, False)
-        lines.append("#define CONFIG_{} {}".format(comp.upper(), int(enabled)))
+    for comp in ("libxcb", "libxcb_shape", "libxcb_shm", "libxcb_xfixes"):
+        lines.append("#define CONFIG_{} {}".format(comp.upper(), int(state.get("libxcb", False))))
     for comp in _LIBRARY_KEYS:
         if comp == "openssl":
             val = "1" if (state.get("openssl", False) or state.get("boringssl", False)) else "0"
@@ -325,8 +326,6 @@ ffmpeg_component_gen = rule(
           "Each output declared in outs becomes an individually addressable label.",
     implementation = _ffmpeg_component_gen_impl,
     attrs = {
-        "libvpx": attr.bool(doc = "Whether libavcodec links libvpx."),
-        "libxcb": attr.bool(doc = "Whether libavdevice links libxcb and its extensions."),
         "outs": attr.output_list(
             doc = "Output files to generate. Each must be a known file: " +
                   "config_components.h, config_extra.h, or one of the *_list.c files.",
@@ -343,5 +342,6 @@ ffmpeg_component_gen = rule(
             doc = "Library-level bool_flag targets mirrored into config_extra.h.",
             default = _LIBRARY_LABELS,
         ),
+        "_linux": attr.label(default = "@platforms//os:linux"),
     },
 )
