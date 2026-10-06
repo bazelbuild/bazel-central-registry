@@ -1,9 +1,52 @@
 matrix:
-  platform: [ubuntu2204, ubuntu2204_arm64, macos_arm64]
+  linux_platform: [ubuntu2204, ubuntu2404, ubuntu2204_arm64]
+  mac_platform: [macos, macos_arm64]
   bazel: ["8.x", "9.x"]
 tasks:
-  verify_targets:
-    name: Build RocksDB
-    platform: ${{ platform }}
+  verify_targets_linux:
+    name: Build and test RocksDB on Linux
+    platform: ${{ linux_platform }}
     bazel: ${{ bazel }}
     build_targets: ["@rocksdb//:rocksdb"]
+    # v11.8.1's Basic cases expect 2 MiB reads but observe adaptive 256 KiB reads.
+    # Keep the target and run its other 102 cases.
+    test_flags: ["--test_arg=--gtest_filter=-PrefetchTest/PrefetchTest.Basic/*"]
+    test_targets: ["@rocksdb//:all"]
+  verify_targets_linux_all_features:
+    name: Build and test RocksDB with Linux io_uring
+    platform: ${{ linux_platform }}
+    bazel: ${{ bazel }}
+    build_flags: ["--@rocksdb//:with_liburing"]
+    build_targets: ["@rocksdb//:rocksdb"]
+    test_flags:
+      - "--@rocksdb//:with_liburing"
+      - "--test_arg=--gtest_filter=-PrefetchTest/PrefetchTest.Basic/*"
+    test_targets: ["@rocksdb//:all"]
+  verify_targets_linux_without_compression:
+    name: Build and test RocksDB without optional compression
+    platform: ${{ linux_platform }}
+    bazel: ${{ bazel }}
+    build_flags:
+      - "--@rocksdb//:with_bzip2=false"
+      - "--@rocksdb//:with_lz4=false"
+      - "--@rocksdb//:with_snappy=false"
+      - "--@rocksdb//:with_zlib=false"
+      - "--@rocksdb//:with_zstd=false"
+    build_targets: ["@rocksdb//:rocksdb"]
+    test_flags:
+      - "--test_arg=--gtest_filter=-PrefetchTest/PrefetchTest.Basic/*"
+      - "--@rocksdb//:with_bzip2=false"
+      - "--@rocksdb//:with_lz4=false"
+      - "--@rocksdb//:with_snappy=false"
+      - "--@rocksdb//:with_zlib=false"
+      - "--@rocksdb//:with_zstd=false"
+    test_targets: ["@rocksdb//:all"]
+  verify_targets_mac:
+    name: Build and test RocksDB on macOS
+    platform: ${{ mac_platform }}
+    bazel: ${{ bazel }}
+    build_targets: ["@rocksdb//:rocksdb"]
+    test_targets:
+      - "@rocksdb//:all"
+      # Preserve the previous overlay's macOS prefetch-test exclusion.
+      - "-@rocksdb//:file_prefetch_test"
