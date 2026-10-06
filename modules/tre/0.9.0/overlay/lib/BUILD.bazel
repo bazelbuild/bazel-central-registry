@@ -1,0 +1,117 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# lib/Makefile.am. The two libraries below are upstream's libtre and the libxtre
+# tests/Makefile.am:35-54 builds from the same directory.
+
+cc_library(
+    name = "internal_hdrs",
+    # lib/Makefile.am:7-15's noinst_HEADERS. Nine of the eleven library sources include
+    # xmalloc.h (regcomp.c:18; all but regerror.c and tre-ast.c), so it belongs to the set even
+    # though xmalloc.c is compiled only into :xtre.
+    hdrs = [
+        "tre-ast.h",
+        "tre-compile.h",
+        "tre-internal.h",
+        "tre-match-utils.h",
+        "tre-mem.h",
+        "tre-parse.h",
+        "tre-stack.h",
+        "xmalloc.h",
+    ],
+    # tests/Makefile.am:63 gives the test programs -I$(top_srcdir)/lib for the "tre-internal.h"
+    # and "xmalloc.h" they include by bare name. The libraries below need no include path and
+    # list these as plain srcs instead, since includes propagates to every consumer.
+    #
+    # HAZARD: includes, never strip_include_prefix. The ../ hop in tre-internal.h:22 resolves
+    # against wherever that header physically sits, and a virtual include directory moves it.
+    includes = ["."],
+    visibility = ["//tests:__pkg__"],
+    # tre-internal.h:22 includes ../local_includes/tre.h, so nothing compiles against these
+    # headers without the public one staged beside them.
+    deps = ["//local_includes:tre_hdrs"],
+)
+
+cc_library(
+    name = "tre",
+    # libtre_la_SOURCES (lib/Makefile.am:17-27), and one conditional file beyond it:
+    # lib/Makefile.am:29-31 and tests/Makefile.am:48-50 append tre-match-approx.c under the
+    # same condition in both libraries.
+    srcs = [
+        "regcomp.c",
+        "regerror.c",
+        "regexec.c",
+        "tre-ast.c",
+        "tre-ast.h",
+        "tre-compile.c",
+        "tre-compile.h",
+        "tre-internal.h",
+        "tre-match-backtrack.c",
+        "tre-match-parallel.c",
+        "tre-match-utils.h",
+        "tre-mem.c",
+        "tre-mem.h",
+        "tre-parse.c",
+        "tre-parse.h",
+        "tre-stack.c",
+        "tre-stack.h",
+        "xmalloc.h",
+    ] + select({
+        "//:approx_on": ["tre-match-approx.c"],
+        "//conditions:default": [],
+    }),
+    implementation_deps = [
+        "//:config",
+        "//local_includes:tre_config_unprefixed",
+    ],
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = [
+        "//:__pkg__",
+        "//posix:__pkg__",
+        "//tests:__pkg__",
+    ],
+    deps = ["//local_includes:tre_hdrs"],
+)
+
+# Upstream's libxtre (tests/Makefile.am:35-54): outside the debugging configuration it does not
+# link retest against libtre at all, but against this second copy of the same sources plus
+# xmalloc.c under -DMALLOC_DEBUGGING. xmalloc.h:46-61 rewrites xmalloc/xfree onto a counting
+# allocator, which is what lets tests/retest.c:226-252 re-run every match with each successive
+# allocation forced to fail. That sweep is most of the suite.
+cc_library(
+    name = "xtre",
+    testonly = True,
+    srcs = [
+        "regcomp.c",
+        "regerror.c",
+        "regexec.c",
+        "tre-ast.c",
+        "tre-ast.h",
+        "tre-compile.c",
+        "tre-compile.h",
+        "tre-internal.h",
+        "tre-match-backtrack.c",
+        "tre-match-parallel.c",
+        "tre-match-utils.h",
+        "tre-mem.c",
+        "tre-mem.h",
+        "tre-parse.c",
+        "tre-parse.h",
+        "tre-stack.c",
+        "tre-stack.h",
+        "xmalloc.c",
+        "xmalloc.h",
+    ] + select({
+        "//:approx_on": ["tre-match-approx.c"],
+        "//conditions:default": [],
+    }),
+    implementation_deps = [
+        "//:config",
+        "//local_includes:tre_config_unprefixed",
+    ],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "MALLOC_DEBUGGING",
+    ],
+    visibility = ["//tests:__pkg__"],
+    deps = ["//local_includes:tre_hdrs"],
+)

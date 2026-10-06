@@ -1,0 +1,245 @@
+# Copyright 2025 Aurora Operations, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+module(
+    name = "au",
+    version = "0.6.0",
+)
+
+bazel_dep(name = "rules_cc", version = "0.0.4")
+
+# GoogleTest is required for our publically available `//au:testing` target.  We
+# specify the current version we use here so this will participate in any users
+# BCR resolution, but it won't actually be pulled down to the users workspace if
+# they don't actually depend on a target that depends on `googletest`.
+bazel_dep(
+    name = "googletest",
+    # NOTE: if updating this version, also update the version numbers in
+    # `CMakelists.txt`.
+    version = "1.12.1",
+)
+
+# Development dependencies are below.
+
+# Primary deps that we use directly.
+bazel_dep(name = "bazel_skylib", version = "1.8.1", dev_dependency = True)
+bazel_dep(name = "eigen", version = "5.0.0", dev_dependency = True)
+bazel_dep(name = "fmt", version = "11.0.2", dev_dependency = True)
+bazel_dep(name = "gcc_toolchain", version = "0.9.0", dev_dependency = True)
+bazel_dep(name = "platforms", version = "1.0.0", dev_dependency = True)
+bazel_dep(name = "rules_cuda", version = "0.3.0", dev_dependency = True)
+bazel_dep(name = "rules_python", version = "1.6.0", dev_dependency = True)
+bazel_dep(name = "toolchains_llvm", version = "1.5.0", dev_dependency = True)
+single_version_override(
+    module_name = "toolchains_llvm",
+    patch_strip = 1,
+    patches = [
+        # This is currently on main, should be available in the next release.
+        # https://github.com/bazel-contrib/toolchains_llvm/commit/1d0c58ff030fe232a8c6bb75dc8fb8fb4f2ddb00.patch
+        "//third_party/toolchains_llvm:0001-Support-extra-toolchain-flags-554.patch",
+    ],
+)
+
+# Configuration of above deps.
+
+# Configure and register the LLVM toolchain.
+
+# Extra flags we want to pass to the compilers.
+EXTRA_COPTS = [
+    "-Wextra",
+    "-pedantic",
+]
+
+llvm_11 = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+llvm_11.toolchain(
+    name = "llvm_11",
+    cxx_standard = {"": "c++14"},
+    extra_compile_flags = {"": EXTRA_COPTS},
+    llvm_version = "11.1.0",
+)
+llvm_11.extra_target_compatible_with(
+    name = "llvm_11",
+    constraints = ["@//build/compiler:clang_11"],
+)
+use_repo(llvm_11, "llvm_11")
+
+register_toolchains(
+    "@llvm_11//:all",
+    dev_dependency = True,
+)
+
+llvm_14 = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+llvm_14.toolchain(
+    name = "llvm_14",
+    cxx_standard = {"": "c++14"},
+    extra_compile_flags = {"": EXTRA_COPTS},
+    llvm_version = "14.0.0",
+)
+llvm_14.extra_target_compatible_with(
+    name = "llvm_14",
+    constraints = ["@//build/compiler:clang_14"],
+)
+use_repo(llvm_14, "llvm_14")
+
+register_toolchains(
+    "@llvm_14//:all",
+    dev_dependency = True,
+)
+
+llvm_17 = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+llvm_17.toolchain(
+    name = "llvm_17",
+    cxx_standard = {"": "c++14"},
+    extra_compile_flags = {"": EXTRA_COPTS},
+    llvm_version = "17.0.6",
+)
+llvm_17.extra_target_compatible_with(
+    name = "llvm_17",
+    constraints = ["@//build/compiler:clang_17"],
+)
+use_repo(llvm_17, "llvm_17")
+
+register_toolchains(
+    "@llvm_17//:all",
+    dev_dependency = True,
+)
+
+# Python configuration and pips
+# Configure and register the GCC toolrchain.
+
+single_version_override(
+    module_name = "gcc_toolchain",
+    patch_strip = 1,
+    patches = [
+        "//third_party/gcc_toolchain:0001-feat-Provide-extra_target_compatible_with.patch",
+    ],
+)
+
+gcc_12 = use_extension("@gcc_toolchain//toolchain:module_extensions.bzl", "gcc_toolchains", dev_dependency = True)
+gcc_12.toolchain(
+    name = "gcc_12",
+    extra_cflags = EXTRA_COPTS,
+    extra_cxxflags = EXTRA_COPTS,
+    extra_ldflags = ["-l:libstdc++.a"],
+    extra_target_compatible_with = ["@//build/compiler:gcc_12"],
+    gcc_version = "12.5.0",
+    target_arch = "x86_64",
+)
+use_repo(gcc_12, "gcc_12")
+
+register_toolchains(
+    "@gcc_12//:all",
+    dev_dependency = True,
+)
+
+gcc_15 = use_extension("@gcc_toolchain//toolchain:module_extensions.bzl", "gcc_toolchains", dev_dependency = True)
+gcc_15.toolchain(
+    name = "gcc_15",
+    extra_cflags = EXTRA_COPTS,
+    extra_cxxflags = EXTRA_COPTS,
+    extra_ldflags = ["-l:libstdc++.a"],
+    extra_target_compatible_with = ["@//build/compiler:gcc_15"],
+    gcc_version = "15.2.0",
+    target_arch = "x86_64",
+)
+use_repo(gcc_15, "gcc_15")
+
+register_toolchains(
+    "@gcc_15//:all",
+    dev_dependency = True,
+)
+
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.defaults(python_version = "3.10")
+python.toolchain(python_version = "3.10")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+pip.parse(
+    hub_name = "au_pip_deps",
+    python_version = "3.10",
+    requirements_lock = "//:requirements_lock.txt",
+)
+use_repo(pip, "au_pip_deps")
+
+# Dependencies that don't have BCR equivalents.
+
+# nholthaus_units
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "nholthaus_units",
+    add_prefix = "nholthaus_units",
+    build_file = "@//third_party/nholthaus_units:BUILD.bazel",
+    dev_dependency = True,
+    sha256 = "b1f3c1dd11afa2710a179563845ce79f13ebf0c8c090d6aa68465b18bd8bd5fc",
+    strip_prefix = "units-2.3.3/include/",
+    url = "https://github.com/nholthaus/units/archive/refs/tags/v2.3.3.tar.gz",
+)
+
+# buildifier
+
+bazel_dep(name = "rules_go", version = "0.58.2", dev_dependency = True, repo_name = "io_bazel_rules_go")
+bazel_dep(name = "gazelle", version = "0.45.0", dev_dependency = True)
+
+# The Go SDK has an issue with `-strict-prototypes` and newer versions of clang.
+# Patch it until the fix is upstream.
+go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk.download(
+    patch_strip = 0,
+    patches = ["//third_party/go_sdk:0001-Make-_cgo_yield-a-proper-prototype.patch"],
+    version = "1.25.0",
+)
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps", dev_dependency = True)
+go_deps.module(
+    path = "golang.org/x/tools",
+    sum = "h1:DVSRzp7FwePZW356yEAChSdNcQo6Nsp+fex1SUW09lE=",
+    version = "v0.37.0",
+)
+go_deps.module(
+    path = "github.com/golang/protobuf",
+    sum = "h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=",
+    version = "v1.5.4",
+)
+use_repo(
+    go_deps,
+    "com_github_golang_protobuf",
+    "org_golang_x_tools",
+)
+
+bazel_dep(name = "rules_proto", version = "7.1.0", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = True)
+
+# CUDA toolchain configuration.
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain", dev_dependency = True)
+cuda.toolkit(
+    name = "cuda",
+    toolkit_path = "",
+)
+use_repo(cuda, "cuda")
+
+http_archive(
+    name = "com_github_bazelbuild_buildtools",
+    dev_dependency = True,
+    sha256 = "53119397bbce1cd7e4c590e117dcda343c2086199de62932106c80733526c261",
+    strip_prefix = "buildtools-8.2.1",
+    urls = [
+        "https://github.com/bazelbuild/buildtools/archive/refs/tags/v8.2.1.tar.gz",
+    ],
+)
