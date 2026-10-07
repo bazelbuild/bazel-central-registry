@@ -1,4 +1,5 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 # The sequential solver library (core + simp), without the stand-alone
 # Main.cc drivers or the parallel solver.
@@ -10,19 +11,28 @@ cc_library(
         "simp/SimpSolver.cc",
         "utils/Options.cc",
         "utils/System.cc",
-        # Included only from the .cc files.
+        # Included only from the .cc files. core/Dimacs.h, used only by
+        # the drivers, is left out.
         "mtl/Sort.h",
+        "utils/System.h",
     ],
-    # Everything reachable from simp/SimpSolver.h, plus the DIMACS reader
-    # and the timing helpers the drivers use. mtl/VecThreads.h belongs to
-    # the parallel solver, which is not built.
+    # The public API: the solvers, the literal and value types, and vec<Lit>
+    # for clauses and assumptions.
     hdrs = [
+        "core/Solver.h",
+        "core/SolverTypes.h",
+        "mtl/Vec.h",
+        "simp/SimpSolver.h",
+    ],
+    copts = ["-Wno-parentheses"],
+    includes = ["."],
+    linkopts = ["-lpthread"],
+    # Included by the public headers, but not part of the API.
+    # mtl/VecThreads.h belongs to the parallel solver, which is not built.
+    textual_hdrs = [
         "core/BoundedQueue.h",
         "core/Constants.h",
-        "core/Dimacs.h",
-        "core/Solver.h",
         "core/SolverStats.h",
-        "core/SolverTypes.h",
         "mtl/Alg.h",
         "mtl/Alloc.h",
         "mtl/Clone.h",
@@ -30,16 +40,18 @@ cc_library(
         "mtl/IntTypes.h",
         "mtl/Map.h",
         "mtl/Queue.h",
-        "mtl/Vec.h",
         "mtl/XAlloc.h",
-        "simp/SimpSolver.h",
         "utils/Options.h",
         "utils/ParseUtils.h",
-        "utils/System.h",
     ],
-    copts = ["-Wno-parentheses"],
-    includes = ["."],
-    linkopts = ["-lpthread"],
     visibility = ["//visibility:public"],
     deps = ["@zlib"],
+)
+
+# Solves a satisfiable and an unsatisfiable instance through the public API.
+cc_test(
+    name = "solver_test",
+    size = "small",
+    srcs = ["solver_test.cc"],
+    deps = [":glucose"],
 )
