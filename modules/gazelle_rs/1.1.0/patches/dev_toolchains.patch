@@ -1,0 +1,112 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 4ba70da..bff79fb 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -22,7 +22,10 @@ bazel_dep(name = "llvm", version = "0.8.18")
+ # so APPLE_SDK_PLATFORM never reaches the action env on macOS, avoiding
+ # XcodeLocalEnvProvider's duplicate-SDKROOT crash with rules_rust's hermetic
+ # SDKROOT injection.
+-register_toolchains("@llvm//toolchain:all")
++register_toolchains(
++    "@llvm//toolchain:all",
++    dev_dependency = True,
++)
+ 
+ # rules_rust facade — exposes @rules_rust so .bazelrc's --config=opt and
+ # the with_cfg wrapper in //crates/import_extractor:opt.bzl can reference
+@@ -31,11 +34,13 @@ register_toolchains("@llvm//toolchain:all")
+ rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+ use_repo(rules_rust, "rules_rust")
+ 
+-# Rust toolchain — propagates to consumers because their gazelle_binary
+-# links our staticlib via cgo and needs to build the rust crate.
++# Toolchain selection belongs to the root module. These pins are only for
++# developing gazelle_rs; consumers register their own Rust, C++, Go, and
++# prost toolchains (see README.md and bcr_test/MODULE.bazel).
+ toolchains = use_extension(
+     "@rules_rs//rs/toolchains:module_extension.bzl",
+     "toolchains",
++    dev_dependency = True,
+ )
+ toolchains.toolchain(
+     edition = "2024",
+@@ -44,10 +49,13 @@ toolchains.toolchain(
+ use_repo(toolchains, "default_rust_toolchains")
+ 
+ # rules_rs declares compiler, formatter, and analyzer toolchains in subpackages.
+-register_toolchains("@default_rust_toolchains//...")
++register_toolchains(
++    "@default_rust_toolchains//...",
++    dev_dependency = True,
++)
+ 
+ # Crate resolution: rules_rs reads Cargo.toml/Cargo.lock directly (no
+-# repinning). Propagates to consumers along with the rust toolchain above.
++# repinning). These crates are required when consumers build the plugin.
+ #
+ # The hub name is namespaced (`gazelle_rs_crates` rather than the generic
+ # `crates`) so it doesn't collide with consumers' own crate.from_cargo
+@@ -78,10 +86,13 @@ use_repo(crate, "gazelle_rs_crates")
+ rules_rust_prost = use_extension("@rules_rs//rs:rules_rust_prost.bzl", "rules_rust_prost")
+ use_repo(rules_rust_prost, "rules_rust_prost")
+ 
+-register_toolchains("@rules_rust_prost//:default_prost_toolchain")
++register_toolchains(
++    "@rules_rust_prost//:default_prost_toolchain",
++    dev_dependency = True,
++)
+ 
+-# Go toolchain + module deps for the gazelle plugin.
+-go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
++# Go SDK selection is development-only; the plugin's Go dependencies are not.
++go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+ go_sdk.download(version = "1.24.12")
+ 
+ go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+diff --git a/bcr_test/MODULE.bazel b/bcr_test/MODULE.bazel
+index 4ef7db7..44ebf07 100644
+--- a/bcr_test/MODULE.bazel
++++ b/bcr_test/MODULE.bazel
+@@ -19,3 +19,42 @@ local_path_override(
+ # "No repository visible as '@llvm' from main repository". Keep the
+ # version aligned with gazelle_rs's own MODULE.bazel.
+ bazel_dep(name = "llvm", version = "0.8.18")
++bazel_dep(name = "rules_rs", version = "0.0.111")
++
++bazel_dep(name = "rules_go", version = "0.62.0", dev_dependency = True)
++
++# Root modules select the toolchains used to build the plugin.
++register_toolchains(
++    "@llvm//toolchain:all",
++    dev_dependency = True,
++)
++
++toolchains = use_extension(
++    "@rules_rs//rs/toolchains:module_extension.bzl",
++    "toolchains",
++    dev_dependency = True,
++)
++toolchains.toolchain(
++    edition = "2024",
++    version = "1.95.0",
++)
++use_repo(toolchains, "default_rust_toolchains")
++
++register_toolchains(
++    "@default_rust_toolchains//...",
++    dev_dependency = True,
++)
++
++rules_rust_prost = use_extension(
++    "@rules_rs//rs:rules_rust_prost.bzl",
++    "rules_rust_prost",
++)
++use_repo(rules_rust_prost, "rules_rust_prost")
++
++register_toolchains(
++    "@rules_rust_prost//:default_prost_toolchain",
++    dev_dependency = True,
++)
++
++go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
++go_sdk.download(version = "1.24.12")
