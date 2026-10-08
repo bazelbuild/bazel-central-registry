@@ -1,0 +1,141 @@
+"""Texlive's bundled, patched xpdf — the default backing for `//:xpdf`.
+
+Upstream texlive ships its own copy of xpdf 4.06 under
+`libs/xpdf/xpdf-src/` with `TLpatches/patch-bunched` already applied
+(21 files; notably a no-arg `GlobalParams()` ctor that pdftex calls).
+We build that copy here so libpdftex links out-of-the-box.
+
+This target is the default value of the `//:xpdf` label flag (see the
+root BUILD.bazel). Users who already vendor or wrap their own xpdf can
+override that flag instead of pulling in this duplicate compilation.
+"""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+
+# aconf.h generated from upstream's autoheader template. The HAVE_*
+# probes resolve against the root //:configure rule. Project-policy
+# defines that autoconf doesn't probe (USE_EXCEPTIONS, MULTITHREADED,
+# HAVE_STD_SORT) are set as local_defines on the xpdf cc_library
+# below.
+autoconf_hdr(
+    name = "aconf_h",
+    out = "xpdf-src/aconf.h",
+    template = "aconf.h.in",
+    deps = ["//:configure"],
+)
+
+# pdftex builds xpdf in "parser only" mode: just the PDF reading bits,
+# none of the output devices. The source list mirrors `xpdf_libxpdf_a_sources`
+# in upstream's `libs/xpdf/Makefile.am`.
+cc_library(
+    name = "xpdf",
+    srcs = [
+        # goo
+        "xpdf-src/goo/FixedPoint.cc",
+        "xpdf-src/goo/GHash.cc",
+        "xpdf-src/goo/GList.cc",
+        "xpdf-src/goo/GString.cc",
+        "xpdf-src/goo/Trace.cc",
+        "xpdf-src/goo/gfile.cc",
+        "xpdf-src/goo/gmem.cc",
+        "xpdf-src/goo/gmempp.cc",
+        # fofi
+        "xpdf-src/fofi/FoFiBase.cc",
+        "xpdf-src/fofi/FoFiEncodings.cc",
+        "xpdf-src/fofi/FoFiIdentifier.cc",
+        "xpdf-src/fofi/FoFiTrueType.cc",
+        "xpdf-src/fofi/FoFiType1.cc",
+        "xpdf-src/fofi/FoFiType1C.cc",
+        # xpdf core (parser only)
+        "xpdf-src/xpdf/AcroForm.cc",
+        "xpdf-src/xpdf/Annot.cc",
+        "xpdf-src/xpdf/Array.cc",
+        "xpdf-src/xpdf/BuiltinFont.cc",
+        "xpdf-src/xpdf/BuiltinFontTables.cc",
+        "xpdf-src/xpdf/CMap.cc",
+        "xpdf-src/xpdf/Catalog.cc",
+        "xpdf-src/xpdf/CharCodeToUnicode.cc",
+        "xpdf-src/xpdf/Decrypt.cc",
+        "xpdf-src/xpdf/Dict.cc",
+        "xpdf-src/xpdf/Error.cc",
+        "xpdf-src/xpdf/FontEncodingTables.cc",
+        "xpdf-src/xpdf/Function.cc",
+        "xpdf-src/xpdf/Gfx.cc",
+        "xpdf-src/xpdf/GfxFont.cc",
+        "xpdf-src/xpdf/GfxState.cc",
+        "xpdf-src/xpdf/GlobalParams.cc",
+        "xpdf-src/xpdf/JArithmeticDecoder.cc",
+        "xpdf-src/xpdf/JBIG2Stream.cc",
+        "xpdf-src/xpdf/JPXStream.cc",
+        "xpdf-src/xpdf/Lexer.cc",
+        "xpdf-src/xpdf/Link.cc",
+        "xpdf-src/xpdf/NameToCharCode.cc",
+        "xpdf-src/xpdf/Object.cc",
+        "xpdf-src/xpdf/OptionalContent.cc",
+        "xpdf-src/xpdf/Outline.cc",
+        "xpdf-src/xpdf/OutputDev.cc",
+        "xpdf-src/xpdf/PDF417Barcode.cc",
+        "xpdf-src/xpdf/PDFDoc.cc",
+        "xpdf-src/xpdf/PDFDocEncoding.cc",
+        "xpdf-src/xpdf/PSTokenizer.cc",
+        "xpdf-src/xpdf/Page.cc",
+        "xpdf-src/xpdf/Parser.cc",
+        "xpdf-src/xpdf/SecurityHandler.cc",
+        "xpdf-src/xpdf/Stream.cc",
+        "xpdf-src/xpdf/TextString.cc",
+        "xpdf-src/xpdf/UnicodeMap.cc",
+        "xpdf-src/xpdf/UnicodeRemapping.cc",
+        "xpdf-src/xpdf/UTF8.cc",
+        "xpdf-src/xpdf/XFAScanner.cc",
+        "xpdf-src/xpdf/XRef.cc",
+        "xpdf-src/xpdf/Zoox.cc",
+    ],
+    hdrs = glob([
+        "xpdf-src/goo/*.h",
+        "xpdf-src/fofi/*.h",
+        # PDFCore.h (and the chain from SecurityHandler.cc) pulls in
+        # `SplashTypes.h` for type signatures even in PDF_PARSER_ONLY
+        # mode — the splash headers must be on the include path even
+        # though the splash .cc sources are NOT compiled.
+        "xpdf-src/splash/*.h",
+        "xpdf-src/xpdf/*.h",
+    ]) + [":aconf_h"],
+    copts = ["-w"],
+    # Mirror upstream's AM_CPPFLAGS: each sub-dir surfaced on -I so bare
+    # quote-includes like "gmem.h", "GfxState.h" resolve without paths.
+    includes = [
+        "xpdf-src",
+        "xpdf-src/fofi",
+        "xpdf-src/goo",
+        "xpdf-src/splash",
+        "xpdf-src/xpdf",
+    ],
+    # PDF_PARSER_ONLY trims the xpdf surface to the bits pdftex needs.
+    # USE_EXCEPTIONS / MULTITHREADED / HAVE_STD_SORT are project-policy
+    # selectors that upstream's autoconf doesn't probe (CMake build sets
+    # them).
+    # HAVE_FSEEKI64 lights up gfile.cc's MSVC dispatch to _fseeki64;
+    # autoconf doesn't probe for it either (also CMake-only).
+    local_defines = [
+        "PDF_PARSER_ONLY",
+        "USE_EXCEPTIONS",
+        "MULTITHREADED",
+        "HAVE_STD_SORT",
+    ] + select({
+        # MSVC-only shims: MinGW ships POSIX fseeko/strcasecmp.
+        "@rules_cc//cc/compiler:clang-cl": [
+            "HAVE_FSEEKI64=1",
+            "strcasecmp=_stricmp",
+            "strncasecmp=_strnicmp",
+        ],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "HAVE_FSEEKI64=1",
+            "strcasecmp=_stricmp",
+            "strncasecmp=_strnicmp",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//:__subpackages__"],
+    deps = ["@zlib"],
+)

@@ -1,0 +1,30 @@
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+texk_program(
+    name = "chktex",
+    srcs = glob(["chktex-src/*.c"]),
+    hdrs = glob(["chktex-src/*.h"]),
+    copts = force_include_copts("texlive-c-auto.h"),
+    # Upstream pins the POSIX-ERE regex backend (HAVE_POSIX_ERE) and
+    # explicitly disables PCRE (HAVE_PCRE=0); without these FindErrs.c's
+    # backend selection is undefined.
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "TEX_LIVE",
+        "HAVE_POSIX_ERE",
+        "HAVE_PCRE=0",
+        "VERSION=\\\"1.7.9\\\"",
+        "PACKAGE_VERSION=\\\"1.7.9\\\"",
+        "CONFIG_H_NAME=\\\"texlive-c-auto.h\\\"",
+    ],
+    # FindErrs.c needs <regex.h> for POSIX ERE. MSVC ships neither
+    # <regex.h> nor PCRE; MinGW does provide regex via its CRT, so the
+    # gate is compiler-level, not OS-level. Bundling regex / PCRE
+    # would be a large dependency add for a single linter.
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = ["//:common_config"],
+)
