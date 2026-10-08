@@ -1,0 +1,83 @@
+diff --git a/test/fixture.cc b/test/fixture.cc
+--- a/test/fixture.cc
++++ b/test/fixture.cc
+@@ -38,6 +38,7 @@
+ #include <absl/synchronization/mutex.h>
+ #include <mujoco/mjmodel.h>
+ #include <mujoco/mujoco.h>
++#include "rules_cc/cc/runfiles/runfiles.h"
+ #include "src/xml/xml_global.h"
+ 
+ namespace mujoco {
+@@ -154,7 +155,22 @@
+ }
+ 
+ const std::string GetModelPath(std::string_view path) {  // NOLINT
+-  return absl::StrCat("../model/", path);
++  // Under Bazel, the model directory is in the runfiles of the mujoco
++  // repository, resolved through the runfiles library. The directory itself
++  // has no runfiles manifest entry, so locate it from a well-known file.
++  static const std::string model_dir = [] {
++    std::string error;
++    std::unique_ptr<rules_cc::cc::runfiles::Runfiles> runfiles(
++        rules_cc::cc::runfiles::Runfiles::CreateForTest(&error));
++    if (runfiles == nullptr) {
++      mju_error("Failed to create runfiles: %s", error.c_str());
++    }
++    constexpr std::string_view kSentinel = "/humanoid/humanoid.xml";
++    std::string sentinel =
++        runfiles->Rlocation(absl::StrCat("mujoco/model", kSentinel));
++    return sentinel.substr(0, sentinel.size() - kSentinel.size());
++  }();
++  return absl::StrCat(model_dir, "/", path);
+ }
+ 
+ MjModelPtr LoadModelFromString(std::string_view xml, char* error,
+diff --git a/test/xml/mjz/mjz_encoder_test.cc b/test/xml/mjz/mjz_encoder_test.cc
+--- a/test/xml/mjz/mjz_encoder_test.cc
++++ b/test/xml/mjz/mjz_encoder_test.cc
+@@ -146,7 +146,7 @@
+   ASSERT_THAT(model, testing::NotNull());
+ 
+   const std::string tmp_path =
+-      testing::TempDir() + "/mjz_encoder_roundtrip.mjz";
++      testing::TempDir() + "mjz_encoder_roundtrip.mjz";
+ 
+   char error[1024] = {0};
+   int nbytes = mj_encode(spec, model, tmp_path.c_str(), nullptr, nullptr, error,
+@@ -193,7 +193,7 @@
+   mjModel* model = mj_compile(spec, nullptr);
+   ASSERT_THAT(model, testing::NotNull());
+ 
+-  const std::string tmp_path = testing::TempDir() + "/xml_string.mjz";
++  const std::string tmp_path = testing::TempDir() + "xml_string.mjz";
+   int nbytes = mj_encode(spec, model, tmp_path.c_str(), nullptr, nullptr, error,
+                          sizeof(error));
+   ASSERT_GT(nbytes, 0) << error;
+@@ -242,7 +242,7 @@
+   mjModel* model = mj_compile(spec, nullptr);
+   ASSERT_THAT(model, testing::NotNull());
+ 
+-  const std::string tmp_path = testing::TempDir() + "/counts.mjz";
++  const std::string tmp_path = testing::TempDir() + "counts.mjz";
+   int nbytes = mj_encode(spec, model, tmp_path.c_str(), nullptr, nullptr, error,
+                          sizeof(error));
+   ASSERT_GT(nbytes, 0) << error;
+@@ -300,7 +300,7 @@
+   mjModel* model = mj_compile(spec, &vfs);
+   ASSERT_THAT(model, testing::NotNull()) << mjs_getError(spec);
+ 
+-  const std::string tmp_path = testing::TempDir() + "/vfs_mesh.mjz";
++  const std::string tmp_path = testing::TempDir() + "vfs_mesh.mjz";
+   int nbytes = mj_encode(spec, model, tmp_path.c_str(), nullptr, &vfs, error,
+                          sizeof(error));
+   ASSERT_GT(nbytes, 0) << error;
+@@ -874,7 +874,7 @@
+   mjModel* m = mj_compile(s, nullptr);
+   ASSERT_THAT(m, NotNull()) << mjs_getError(s);
+ 
+-  const std::string tmp_path = testing::TempDir() + "/mjz_roundtrip.mjz";
++  const std::string tmp_path = testing::TempDir() + "mjz_roundtrip.mjz";
+   int nbytes = mj_encode(s, m, tmp_path.c_str(), nullptr, nullptr, error.data(),
+                          error.size());
+   ASSERT_GT(nbytes, 0) << error.data();
