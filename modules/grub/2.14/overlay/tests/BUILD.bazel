@@ -1,0 +1,98 @@
+"""Tests for the programs this module builds."""
+
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# A lean copy of the root package's flags (HOST_CFLAGS/HOST_CPPFLAGS,
+# configure.ac:102-107): the unit tests are host programs like any other.
+COPTS = [
+    "-w",
+    "-std=gnu99",
+    "-fno-common",
+]
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "GRUB_UTIL=1",
+    "_FILE_OFFSET_BITS=64",
+    "GRUB_FILE=__FILE__",
+]
+
+UNIT_TEST_DEPS = [
+    "//:config",
+    "//:gnulib",
+    "//:headers",
+    "//:gcrypt_src_hdrs",
+    "//:grubgcry",
+    "//:grubkern",
+    "//:grubmods",
+]
+
+# Upstream's native check_PROGRAMS (Makefile.util.def): each is the test and
+# the unit-test driver.  Upstream also lists grub-core/kern/list.c and
+# kern/misc.c, which grubkern already carries; a second copy here is a
+# duplicate symbol under Apple's linker.
+[
+    cc_test(
+        name = name,
+        size = "small",
+        srcs = [
+            "{}_unit_test.c".format(stem),
+            "lib/unit_test.c",
+            "//:grub-core/tests/lib/test.c",
+        ],
+        copts = COPTS,
+        # As the programs are: the libraries are archives whose unused members
+        # reference symbols no utility defines, which a shared link rejects.
+        linkstatic = True,
+        local_defines = LOCAL_DEFINES,
+        deps = UNIT_TEST_DEPS,
+    )
+    for name, stem in {
+        "cmp_test": "cmp",
+        "date_test": "date",
+        "example_unit_test": "example",
+        "printf_test": "printf",
+    }.items()
+]
+
+# COND_HAVE_CXX: the one C++ test.  include/grub/misc.h spells `restrict`,
+# which C++ only accepts because configure's AC_C_RESTRICT defines it to
+# `__restrict__` in config-util.h; the packaged AC_C_RESTRICT defines nothing
+# for a compiler whose C keyword works, so the define is made here.
+cc_test(
+    name = "priority_queue_unit_test",
+    size = "small",
+    srcs = [
+        "lib/unit_test.c",
+        "priority_queue_unit_test.cc",
+        "//:grub-core/lib/priority_queue.c",
+        "//:grub-core/tests/lib/test.c",
+    ],
+    copts = ["-w"],
+    linkstatic = True,
+    local_defines = LOCAL_DEFINES + ["restrict=__restrict__"],
+    deps = UNIT_TEST_DEPS,
+)
+
+# The programs are in `data`, not `tools`, so they are built once in the
+# target configuration.  `$(rlocationpath)` rather than `$(rootpath)` so the
+# lookup also works off a runfiles manifest.
+cc_test(
+    name = "smoke_test",
+    size = "small",
+    srcs = ["smoke_test.cc"],
+    args = [
+        "$(rlocationpath //:grub-mkimage)",
+        "$(rlocationpath //:grub-editenv)",
+        "$(rlocationpath //:grub-script-check)",
+        "$(rlocationpath //:grub-menulst2cfg)",
+    ],
+    copts = ["-std=c++17"],
+    data = [
+        "//:grub-editenv",
+        "//:grub-menulst2cfg",
+        "//:grub-mkimage",
+        "//:grub-script-check",
+    ],
+    deps = ["@rules_cc//cc/runfiles"],
+)
