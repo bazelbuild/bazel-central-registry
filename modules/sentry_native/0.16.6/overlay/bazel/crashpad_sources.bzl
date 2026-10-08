@@ -1,0 +1,504 @@
+"""Exact source manifests for the sentry-native Crashpad fork.
+
+When updating the overlay, compare normalized path multisets with the upstream
+Crashpad targets so platform selections remain explicit.
+"""
+
+def crashpad_supported_platforms():
+    """Returns compatibility constraints for the currently supported matrix."""
+    return select({
+        "//config:linux_aarch64": [],
+        "//config:linux_x86_64": [],
+        "//config:macos_aarch64": [],
+        "//config:macos_x86_64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@rules_cc//cc/libc:glibc": [],
+        "@rules_cc//cc/libc:macosx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    })
+
+def crashpad_copts():
+    """Returns the fork's global C++ and Apple compile options."""
+    return ["-std=c++17"] + select({
+        "@platforms//os:macos": [
+            "-fobjc-arc",
+            "-fno-objc-arc-exceptions",
+            "-Wno-deprecated-declarations",
+        ],
+        "//conditions:default": [],
+    })
+
+def crashpad_compat_strip_prefix(platform_dir):
+    """Returns the compat header prefix for root and external-repo layouts."""
+    repository_prefix = "external/crashpad/" if native.repository_name() == "@" else ""
+    return repository_prefix + "compat/" + platform_dir
+
+MINI_CHROMIUM_COMMON_SRCS = [
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/debug/alias.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/file_path.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/file_util.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/scoped_file.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/logging.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/process/memory.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/rand_util.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/pattern.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/strcat.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/string_number_conversions.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/stringprintf.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/utf_string_conversion_utils.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/utf_string_conversions.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/synchronization/lock.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/third_party/icu/icu_utf.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/threading/thread_local_storage.cc",
+]
+
+MINI_CHROMIUM_COMMON_HDRS = [
+    "external/crashpad/third_party/mini_chromium/build/chromeos_buildflags.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/atomicops.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/atomicops_internals_atomicword_compat.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/atomicops_internals_portable.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/auto_reset.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/bit_cast.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/check.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/check_op.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/compiler_specific.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/containers/checked_iterators.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/containers/dynamic_extent.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/containers/heap_array.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/containers/span.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/containers/util.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/cxx17_backports.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/debug/alias.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/file_path.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/file_util.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/scoped_file.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/format_macros.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/immediate_crash.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/logging.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/memory/free_deleter.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/memory/page_size.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/memory/raw_ptr_exclusion.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/memory/scoped_policy.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/metrics/histogram_functions.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/metrics/histogram_macros.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/metrics/persistent_histogram_allocator.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/notreached.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/basic_ops_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/byte_conversions.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/checked_math.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/checked_math_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/clamped_math.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/clamped_math_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_conversions.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_conversions_arm_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_conversions_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_math.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_math_arm_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_math_clang_gcc_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/numerics/safe_math_shared_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/process/memory.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/rand_util.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/scoped_clear_last_error.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/scoped_generic.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/pattern.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/strcat.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/strcat_internal.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/string_number_conversions.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/string_util.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/stringprintf.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/sys_string_conversions.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/utf_string_conversion_utils.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/utf_string_conversions.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/synchronization/condition_variable.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/synchronization/lock.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/synchronization/lock_impl.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/sys_byteorder.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/template_util.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/third_party/icu/icu_utf.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/threading/thread_local_storage.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/types/cxx23_to_underlying.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/types/to_address.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/build/build_config.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/build/buildflag.h",
+]
+
+MINI_CHROMIUM_POSIX_SRCS = [
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/files/file_util_posix.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/memory/page_size_posix.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/posix/safe_strerror.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/synchronization/condition_variable_posix.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/synchronization/lock_impl_posix.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/threading/thread_local_storage_posix.cc",
+]
+
+MINI_CHROMIUM_POSIX_HDRS = [
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/posix/eintr_wrapper.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/posix/safe_strerror.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/string_util_posix.h",
+]
+
+MINI_CHROMIUM_MACOS_SRCS = [
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/mach_logging.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_mach_port.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_mach_vm.cc",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/mac/close_nocancel.cc",
+]
+
+MINI_CHROMIUM_MACOS_OBJC_SRCS = [
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/foundation_util.mm",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_nsautorelease_pool.mm",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/strings/sys_string_conversions_mac.mm",
+]
+
+MINI_CHROMIUM_MACOS_HDRS = [
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/bridging.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/foundation_util.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/mach_logging.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_cftyperef.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_mach_port.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_mach_vm.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_nsautorelease_pool.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/apple/scoped_typeref.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/mac/scoped_ioobject.h",
+    "external/crashpad/third_party/mini_chromium/mini_chromium/base/mac/scoped_launch_data.h",
+]
+
+CRASHPAD_COMPAT_COMMON_HDRS = [
+    "external/crashpad/compat/non_win/dbghelp.h",
+    "external/crashpad/compat/non_win/minwinbase.h",
+    "external/crashpad/compat/non_win/timezoneapi.h",
+    "external/crashpad/compat/non_win/verrsrc.h",
+    "external/crashpad/compat/non_win/windows.h",
+    "external/crashpad/compat/non_win/winnt.h",
+]
+
+CRASHPAD_COMPAT_LINUX_SHADOW_HDRS = [
+    "external/crashpad/compat/linux/signal.h",
+    "external/crashpad/compat/linux/sys/mman.h",
+    "external/crashpad/compat/linux/sys/ptrace.h",
+    "external/crashpad/compat/linux/sys/user.h",
+]
+
+CRASHPAD_COMPAT_MACOS_HDRS = [
+    "external/crashpad/compat/mac/Availability.h",
+    "external/crashpad/compat/mac/AvailabilityVersions.h",
+    "external/crashpad/compat/mac/kern/exc_resource.h",
+    "external/crashpad/compat/mac/mach-o/loader.h",
+    "external/crashpad/compat/mac/mach/i386/thread_state.h",
+    "external/crashpad/compat/mac/mach/mach.h",
+    "external/crashpad/compat/mac/sys/resource.h",
+]
+
+CRASHPAD_UTIL_COMMON_SRCS = [
+    "external/crashpad/util/file/delimited_file_reader.cc",
+    "external/crashpad/util/file/file_helper.cc",
+    "external/crashpad/util/file/file_io.cc",
+    "external/crashpad/util/file/file_reader.cc",
+    "external/crashpad/util/file/file_seeker.cc",
+    "external/crashpad/util/file/file_writer.cc",
+    "external/crashpad/util/file/output_stream_file_writer.cc",
+    "external/crashpad/util/file/scoped_remove_file.cc",
+    "external/crashpad/util/file/string_file.cc",
+    "external/crashpad/util/misc/initialization_state_dcheck.cc",
+    "external/crashpad/util/misc/lexing.cc",
+    "external/crashpad/util/misc/metrics.cc",
+    "external/crashpad/util/misc/pdb_structures.cc",
+    "external/crashpad/util/misc/random_string.cc",
+    "external/crashpad/util/misc/range_set.cc",
+    "external/crashpad/util/misc/reinterpret_bytes.cc",
+    "external/crashpad/util/misc/scoped_forbid_return.cc",
+    "external/crashpad/util/misc/time.cc",
+    "external/crashpad/util/misc/uuid.cc",
+    "external/crashpad/util/misc/zlib.cc",
+    "external/crashpad/util/net/http_body.cc",
+    "external/crashpad/util/net/http_body_gzip.cc",
+    "external/crashpad/util/net/http_multipart_builder.cc",
+    "external/crashpad/util/net/http_transport.cc",
+    "external/crashpad/util/net/url.cc",
+    "external/crashpad/util/numeric/checked_address_range.cc",
+    "external/crashpad/util/process/process_memory.cc",
+    "external/crashpad/util/process/process_memory_range.cc",
+    "external/crashpad/util/stdlib/aligned_allocator.cc",
+    "external/crashpad/util/stdlib/string_number_conversion.cc",
+    "external/crashpad/util/stdlib/strlcpy.cc",
+    "external/crashpad/util/stdlib/strnlen.cc",
+    "external/crashpad/util/stream/base94_output_stream.cc",
+    "external/crashpad/util/stream/file_encoder.cc",
+    "external/crashpad/util/stream/file_output_stream.cc",
+    "external/crashpad/util/stream/log_output_stream.cc",
+    "external/crashpad/util/stream/zlib_output_stream.cc",
+    "external/crashpad/util/string/split_string.cc",
+    "external/crashpad/util/thread/thread.cc",
+    "external/crashpad/util/thread/thread_log_messages.cc",
+    "external/crashpad/util/thread/worker_thread.cc",
+]
+
+CRASHPAD_UTIL_COMMON_HDRS = [
+    "external/crashpad/util/file/delimited_file_reader.h",
+    "external/crashpad/util/file/directory_reader.h",
+    "external/crashpad/util/file/file_helper.h",
+    "external/crashpad/util/file/file_io.h",
+    "external/crashpad/util/file/file_reader.h",
+    "external/crashpad/util/file/file_seeker.h",
+    "external/crashpad/util/file/file_writer.h",
+    "external/crashpad/util/file/filesystem.h",
+    "external/crashpad/util/file/output_stream_file_writer.h",
+    "external/crashpad/util/file/scoped_remove_file.h",
+    "external/crashpad/util/file/string_file.h",
+    "external/crashpad/util/misc/address_sanitizer.h",
+    "external/crashpad/util/misc/address_types.h",
+    "external/crashpad/util/misc/arraysize.h",
+    "external/crashpad/util/misc/as_underlying_type.h",
+    "external/crashpad/util/misc/capture_context.h",
+    "external/crashpad/util/misc/clock.h",
+    "external/crashpad/util/misc/elf_note_types.h",
+    "external/crashpad/util/misc/from_pointer_cast.h",
+    "external/crashpad/util/misc/implicit_cast.h",
+    "external/crashpad/util/misc/initialization_state.h",
+    "external/crashpad/util/misc/initialization_state_dcheck.h",
+    "external/crashpad/util/misc/lexing.h",
+    "external/crashpad/util/misc/memory_sanitizer.h",
+    "external/crashpad/util/misc/metrics.h",
+    "external/crashpad/util/misc/no_cfi_icall.h",
+    "external/crashpad/util/misc/paths.h",
+    "external/crashpad/util/misc/pdb_structures.h",
+    "external/crashpad/util/misc/random_string.h",
+    "external/crashpad/util/misc/range_set.h",
+    "external/crashpad/util/misc/reinterpret_bytes.h",
+    "external/crashpad/util/misc/scoped_forbid_return.h",
+    "external/crashpad/util/misc/symbolic_constants_common.h",
+    "external/crashpad/util/misc/time.h",
+    "external/crashpad/util/misc/tri_state.h",
+    "external/crashpad/util/misc/uuid.h",
+    "external/crashpad/util/misc/zlib.h",
+    "external/crashpad/util/net/http_body.h",
+    "external/crashpad/util/net/http_body_gzip.h",
+    "external/crashpad/util/net/http_headers.h",
+    "external/crashpad/util/net/http_multipart_builder.h",
+    "external/crashpad/util/net/http_transport.h",
+    "external/crashpad/util/net/url.h",
+    "external/crashpad/util/numeric/checked_address_range.h",
+    "external/crashpad/util/numeric/checked_range.h",
+    "external/crashpad/util/numeric/checked_vm_address_range.h",
+    "external/crashpad/util/numeric/in_range_cast.h",
+    "external/crashpad/util/numeric/int128.h",
+    "external/crashpad/util/numeric/safe_assignment.h",
+    "external/crashpad/util/process/process_id.h",
+    "external/crashpad/util/process/process_memory.h",
+    "external/crashpad/util/process/process_memory_native.h",
+    "external/crashpad/util/process/process_memory_range.h",
+    "external/crashpad/util/stdlib/aligned_allocator.h",
+    "external/crashpad/util/stdlib/map_insert.h",
+    "external/crashpad/util/stdlib/objc.h",
+    "external/crashpad/util/stdlib/string_number_conversion.h",
+    "external/crashpad/util/stdlib/strlcpy.h",
+    "external/crashpad/util/stdlib/strnlen.h",
+    "external/crashpad/util/stdlib/thread_safe_vector.h",
+    "external/crashpad/util/stream/base94_output_stream.h",
+    "external/crashpad/util/stream/file_encoder.h",
+    "external/crashpad/util/stream/file_output_stream.h",
+    "external/crashpad/util/stream/log_output_stream.h",
+    "external/crashpad/util/stream/output_stream_interface.h",
+    "external/crashpad/util/stream/zlib_output_stream.h",
+    "external/crashpad/util/string/split_string.h",
+    "external/crashpad/util/synchronization/scoped_spin_guard.h",
+    "external/crashpad/util/synchronization/semaphore.h",
+    "external/crashpad/util/thread/stoppable.h",
+    "external/crashpad/util/thread/thread.h",
+    "external/crashpad/util/thread/thread_log_messages.h",
+    "external/crashpad/util/thread/worker_thread.h",
+]
+
+CRASHPAD_UTIL_POSIX_SRCS = [
+    "external/crashpad/util/file/directory_reader_posix.cc",
+    "external/crashpad/util/file/file_io_posix.cc",
+    "external/crashpad/util/file/filesystem_posix.cc",
+    "external/crashpad/util/misc/clock_posix.cc",
+    "external/crashpad/util/posix/close_multiple.cc",
+    "external/crashpad/util/posix/close_stdio.cc",
+    "external/crashpad/util/posix/drop_privileges.cc",
+    "external/crashpad/util/posix/scoped_dir.cc",
+    "external/crashpad/util/posix/scoped_mmap.cc",
+    "external/crashpad/util/posix/signals.cc",
+    "external/crashpad/util/posix/spawn_subprocess.cc",
+    "external/crashpad/util/posix/symbolic_constants_posix.cc",
+    "external/crashpad/util/synchronization/semaphore_posix.cc",
+    "external/crashpad/util/thread/thread_posix.cc",
+]
+
+CRASHPAD_UTIL_POSIX_HDRS = [
+    "external/crashpad/util/posix/close_multiple.h",
+    "external/crashpad/util/posix/close_stdio.h",
+    "external/crashpad/util/posix/drop_privileges.h",
+    "external/crashpad/util/posix/process_info.h",
+    "external/crashpad/util/posix/scoped_dir.h",
+    "external/crashpad/util/posix/scoped_mmap.h",
+    "external/crashpad/util/posix/signals.h",
+    "external/crashpad/util/posix/spawn_subprocess.h",
+    "external/crashpad/util/posix/symbolic_constants_posix.h",
+]
+
+CRASHPAD_UTIL_LINUX_SRCS = [
+    "external/crashpad/util/linux/auxiliary_vector.cc",
+    "external/crashpad/util/linux/direct_ptrace_connection.cc",
+    "external/crashpad/util/linux/exception_handler_client.cc",
+    "external/crashpad/util/linux/exception_handler_protocol.cc",
+    "external/crashpad/util/linux/memory_map.cc",
+    "external/crashpad/util/linux/pac_helper.cc",
+    "external/crashpad/util/linux/proc_stat_reader.cc",
+    "external/crashpad/util/linux/proc_task_reader.cc",
+    "external/crashpad/util/linux/ptrace_broker.cc",
+    "external/crashpad/util/linux/ptrace_client.cc",
+    "external/crashpad/util/linux/ptracer.cc",
+    "external/crashpad/util/linux/scoped_pr_set_dumpable.cc",
+    "external/crashpad/util/linux/scoped_pr_set_ptracer.cc",
+    "external/crashpad/util/linux/scoped_ptrace_attach.cc",
+    "external/crashpad/util/linux/socket.cc",
+    "external/crashpad/util/linux/thread_info.cc",
+    "external/crashpad/util/misc/capture_context_linux.S",
+    "external/crashpad/util/misc/paths_linux.cc",
+    "external/crashpad/util/misc/time_linux.cc",
+    "external/crashpad/util/net/http_transport_libcurl.cc",
+    "external/crashpad/util/posix/process_info_linux.cc",
+    "external/crashpad/util/process/process_memory_linux.cc",
+    "external/crashpad/util/process/process_memory_sanitized.cc",
+]
+
+CRASHPAD_UTIL_LINUX_HDRS = [
+    "external/crashpad/util/linux/address_types.h",
+    "external/crashpad/util/linux/auxiliary_vector.h",
+    "external/crashpad/util/linux/checked_linux_address_range.h",
+    "external/crashpad/util/linux/direct_ptrace_connection.h",
+    "external/crashpad/util/linux/exception_handler_client.h",
+    "external/crashpad/util/linux/exception_handler_protocol.h",
+    "external/crashpad/util/linux/exception_information.h",
+    "external/crashpad/util/linux/memory_map.h",
+    "external/crashpad/util/linux/pac_helper.h",
+    "external/crashpad/util/linux/proc_stat_reader.h",
+    "external/crashpad/util/linux/proc_task_reader.h",
+    "external/crashpad/util/linux/ptrace_broker.h",
+    "external/crashpad/util/linux/ptrace_client.h",
+    "external/crashpad/util/linux/ptrace_connection.h",
+    "external/crashpad/util/linux/ptracer.h",
+    "external/crashpad/util/linux/scoped_pr_set_dumpable.h",
+    "external/crashpad/util/linux/scoped_pr_set_ptracer.h",
+    "external/crashpad/util/linux/scoped_ptrace_attach.h",
+    "external/crashpad/util/linux/socket.h",
+    "external/crashpad/util/linux/thread_info.h",
+    "external/crashpad/util/linux/traits.h",
+    "external/crashpad/util/process/process_memory_linux.h",
+    "external/crashpad/util/process/process_memory_sanitized.h",
+]
+
+CRASHPAD_UTIL_MACOS_SRCS = [
+    "external/crashpad/util/mac/mac_util.cc",
+    "external/crashpad/util/mac/service_management.cc",
+    "external/crashpad/util/mac/sysctl.cc",
+    "external/crashpad/util/mac/xattr.cc",
+    "external/crashpad/util/mach/bootstrap.cc",
+    "external/crashpad/util/mach/child_port_handshake.cc",
+    "external/crashpad/util/mach/child_port_server.cc",
+    "external/crashpad/util/mach/composite_mach_message_server.cc",
+    "external/crashpad/util/mach/exc_client_variants.cc",
+    "external/crashpad/util/mach/exc_server_variants.cc",
+    "external/crashpad/util/mach/exception_behaviors.cc",
+    "external/crashpad/util/mach/exception_handler_protocol.cc",
+    "external/crashpad/util/mach/exception_ports.cc",
+    "external/crashpad/util/mach/exception_types.cc",
+    "external/crashpad/util/mach/mach_extensions.cc",
+    "external/crashpad/util/mach/mach_message.cc",
+    "external/crashpad/util/mach/mach_message_server.cc",
+    "external/crashpad/util/mach/notify_server.cc",
+    "external/crashpad/util/mach/scoped_task_suspend.cc",
+    "external/crashpad/util/mach/symbolic_constants_mach.cc",
+    "external/crashpad/util/mach/task_for_pid.cc",
+    "external/crashpad/util/misc/capture_context_mac.S",
+    "external/crashpad/util/misc/clock_mac.cc",
+    "external/crashpad/util/misc/paths_mac.cc",
+    "external/crashpad/util/posix/process_info_mac.cc",
+    "external/crashpad/util/process/process_memory_mac.cc",
+    "external/crashpad/util/synchronization/semaphore_mac.cc",
+]
+
+CRASHPAD_UTIL_MACOS_OBJC_SRCS = [
+    "external/crashpad/util/mac/launchd.mm",
+    "external/crashpad/util/net/http_transport_mac.mm",
+]
+
+CRASHPAD_UTIL_MACOS_HDRS = [
+    "external/crashpad/util/mac/checked_mach_address_range.h",
+    "external/crashpad/util/mac/launchd.h",
+    "external/crashpad/util/mac/mac_util.h",
+    "external/crashpad/util/mac/service_management.h",
+    "external/crashpad/util/mac/sysctl.h",
+    "external/crashpad/util/mac/xattr.h",
+    "external/crashpad/util/mach/bootstrap.h",
+    "external/crashpad/util/mach/child_port_handshake.h",
+    "external/crashpad/util/mach/child_port_server.h",
+    "external/crashpad/util/mach/child_port_types.h",
+    "external/crashpad/util/mach/composite_mach_message_server.h",
+    "external/crashpad/util/mach/exc_client_variants.h",
+    "external/crashpad/util/mach/exc_server_variants.h",
+    "external/crashpad/util/mach/exception_behaviors.h",
+    "external/crashpad/util/mach/exception_handler_protocol.h",
+    "external/crashpad/util/mach/exception_ports.h",
+    "external/crashpad/util/mach/exception_types.h",
+    "external/crashpad/util/mach/mach_extensions.h",
+    "external/crashpad/util/mach/mach_message.h",
+    "external/crashpad/util/mach/mach_message_server.h",
+    "external/crashpad/util/mach/notify_server.h",
+    "external/crashpad/util/mach/scoped_task_suspend.h",
+    "external/crashpad/util/mach/symbolic_constants_mach.h",
+    "external/crashpad/util/mach/task_for_pid.h",
+    "external/crashpad/util/process/process_memory_mac.h",
+]
+
+CRASHPAD_CLIENT_COMMON_SRCS = [
+    "external/crashpad/client/annotation.cc",
+    "external/crashpad/client/annotation_list.cc",
+    "external/crashpad/client/crash_report_database.cc",
+    "external/crashpad/client/crashpad_info.cc",
+    "external/crashpad/client/prune_crash_reports.cc",
+    "external/crashpad/client/settings.cc",
+]
+
+CRASHPAD_CLIENT_COMMON_HDRS = [
+    "external/crashpad/client/annotation.h",
+    "external/crashpad/client/annotation_list.h",
+    "external/crashpad/client/crash_report_database.h",
+    "external/crashpad/client/crashpad_client.h",
+    "external/crashpad/client/crashpad_info.h",
+    "external/crashpad/client/length_delimited_ring_buffer.h",
+    "external/crashpad/client/prune_crash_reports.h",
+    "external/crashpad/client/ring_buffer_annotation.h",
+    "external/crashpad/client/settings.h",
+    "external/crashpad/client/simple_address_range_bag.h",
+    "external/crashpad/client/simple_string_dictionary.h",
+    "external/crashpad/client/simulate_crash.h",
+]
+
+CRASHPAD_CLIENT_LINUX_SRCS = [
+    "external/crashpad/client/client_argv_handling.cc",
+    "external/crashpad/client/crash_report_database_generic.cc",
+    "external/crashpad/client/crashpad_client_linux.cc",
+    "external/crashpad/client/crashpad_info_note.S",
+]
+
+CRASHPAD_CLIENT_LINUX_HDRS = [
+    "external/crashpad/client/client_argv_handling.h",
+    "external/crashpad/client/simulate_crash_linux.h",
+]
+
+CRASHPAD_CLIENT_MACOS_SRCS = [
+    "external/crashpad/client/crashpad_client_mac.cc",
+    "external/crashpad/client/simulate_crash_mac.cc",
+]
+
+CRASHPAD_CLIENT_MACOS_OBJC_SRCS = [
+    "external/crashpad/client/crash_report_database_mac.mm",
+]
+
+CRASHPAD_CLIENT_MACOS_HDRS = [
+    "external/crashpad/client/simulate_crash_mac.h",
+]
