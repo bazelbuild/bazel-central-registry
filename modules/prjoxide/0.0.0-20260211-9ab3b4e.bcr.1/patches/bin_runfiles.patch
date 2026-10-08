@@ -1,0 +1,67 @@
+--- libprjoxide/prjoxide/src/bin/prjoxide.rs
++++ libprjoxide/prjoxide/src/bin/prjoxide.rs
+@@ -16,9 +16,25 @@
+ use std::fs::File;
+ use std::io::*;
+ 
+-use include_dir::{include_dir, Dir};
+-
+-const DATABASE_DIR: Dir = include_dir!("../../database");
++// Bazel patch: load the database at runtime through Bazel runfiles instead
++// of baking the database directory into the executable via `include_dir!()`.
++// The directory containing one well-known file (`devices.json`) is computed
++// at compile time via `env!("PRJOXIDE_DB_RLOC")`, then resolved at runtime.
++// `PRJOXIDE_DB` (env var) takes precedence so the binary can be pointed at
++// any database directory on disk.
++fn __bazel_prjoxide_db_path() -> String {
++    if let Ok(p) = std::env::var("PRJOXIDE_DB") {
++        return p;
++    }
++    let r = runfiles::Runfiles::create()
++        .expect("failed to initialize Bazel runfiles");
++    let p = runfiles::rlocation!(r, env!("PRJOXIDE_DB_RLOC"))
++        .expect("failed to resolve PRJOXIDE_DB_RLOC via runfiles");
++    p.parent()
++        .expect("rlocation path has no parent directory")
++        .to_string_lossy()
++        .into_owned()
++}
+ 
+ #[derive(Parser)]
+ #[clap(version = "0.1", author = "gatecat <gatecat@ds0.me>")]
+@@ -60,7 +76,7 @@
+ 
+ impl Pack {
+     pub fn run(&self) -> Result<()> {
+-        let mut db = Database::new_builtin(DATABASE_DIR);
++        let mut db = Database::new(&__bazel_prjoxide_db_path());
+         let parsed_fasm = ParsedFasm::parse(&self.fasm).unwrap();
+ 
+         let mut chip = Chip::from_fasm(&mut db, &parsed_fasm, None);
+@@ -92,7 +108,7 @@
+ 
+ impl Unpack {
+     pub fn run(&self) -> Result<()> {
+-        let mut db = Database::new_builtin(DATABASE_DIR);
++        let mut db = Database::new(&__bazel_prjoxide_db_path());
+         let chip = BitstreamParser::parse_file(&mut db, &self.bitstream).unwrap();
+ 
+         let mut outfile = File::create(&self.fasm)?;
+@@ -143,7 +159,7 @@
+ 
+         let speed_grades = vec!["4", "5", "6", "10", "11", "12", "M"];
+         let devices = vec!["LIFCL-40", "LFD2NX-40", "LIFCL-17"];
+-        let mut db = Database::new_builtin(DATABASE_DIR);
++        let mut db = Database::new(&__bazel_prjoxide_db_path());
+ 
+         let tts = TileTypes::new(&mut db, &mut ids, "LIFCL", &devices);
+ 
+@@ -209,7 +225,7 @@
+ impl InterchangeExport {
+     pub fn run(&self) -> Result<()> {
+         let mut ids = IdStringDB::new();
+-        let mut db = Database::new_builtin(DATABASE_DIR);
++        let mut db = Database::new(&__bazel_prjoxide_db_path());
+         let c = Chip::from_name(&mut db, &self.device);
+         let g = prjoxide::interchange_gen::routing_graph::GraphBuilder::run(&mut ids, &c, &mut db);
+         prjoxide::interchange_gen::writer::write(&c, &mut db, &mut ids, &g, &self.interchange).unwrap();
