@@ -1,0 +1,117 @@
+"""libsframe - the SFrame stack trace format library (libsframe/Makefile.am)."""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([libsframe], [BFD_VERSION]) (configure.ac:21).  Unlike its
+# siblings this configure.ac does not m4_include ../bfd/version.m4, so the
+# version really is the string "BFD_VERSION", as an upstream build's
+# config.h shows.
+package_info(
+    name = "package",
+    package_name = "libsframe",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "libsframe",
+    package_url = "",
+    package_version = "BFD_VERSION",
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        # LT_INIT (configure.ac:36).
+        checks.AC_DEFINE(
+            "LT_OBJDIR",
+            value = '".libs/"',
+        ),
+    ] +
+    # autoconf 2.69's AC_INCLUDES_DEFAULT probes memory.h, LT_INIT dlfcn.h
+    # and AC_FUNC_MMAP sys/param.h and getpagesize; the template has slots
+    # for all of them.
+    macros.AC_CHECK_HEADERS([
+        "dlfcn.h",
+        "memory.h",
+        "sys/param.h",
+    ]) + macros.AC_CHECK_FUNCS(["getpagesize"]) + [
+        # GCC_AC_FUNC_MMAP (configure.ac:111): AC_FUNC_MMAP's run test, as
+        # the host answers it natively.
+        checks.AC_CHECK_HEADER(
+            "sys/mman.h",
+            define = "HAVE_SYS_MMAN_H",
+        ),
+        checks.AC_CHECK_FUNC(
+            "mmap",
+            define = "HAVE_MMAP",
+            requires = ["HAVE_SYS_MMAN_H"],
+        ),
+    ] +
+    # configure.ac:112-114.
+    macros.AC_CHECK_HEADERS([
+        "byteswap.h",
+        "endian.h",
+    ]) + macros.AC_CHECK_DECLS(
+        [
+            "bswap_16",
+            "bswap_32",
+            "bswap_64",
+        ],
+        includes = ["#include <byteswap.h>"],
+    ),
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+# libsframe.la.  Public as `make install` of a native build is
+# (AM_INSTALL_LIBBFD): the library with sframe.h and sframe-api.h.
+cc_library(
+    name = "sframe",
+    srcs = [
+        "sframe.c",
+        "sframe-dump.c",
+        "sframe-error.c",
+        "sframe-impl.h",
+    ],
+    copts = COPTS,
+    implementation_deps = [
+        ":config",
+        # `-I$(srcdir)/../libctf` for swap.h (Makefile.am:30).
+        "//libctf:swap",
+    ],
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//visibility:public"],
+    deps = ["//include"],
+)

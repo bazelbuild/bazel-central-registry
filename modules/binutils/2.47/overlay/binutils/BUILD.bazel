@@ -1,0 +1,674 @@
+"""The binutils proper: ar, nm, objdump, readelf and friends (binutils/Makefile.am)."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:platforms.bzl", "select_field", "select_flag_defines", "select_tool", "select_triple")
+load("//:rules.bzl", "install_dirs")
+load("//:targets.bzl", "PLATFORMS")
+load(":targets.bzl", "BINUTILS")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([binutils], [BFD_VERSION]) (configure.ac:22).
+package_info(
+    name = "package",
+    package_name = "binutils",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "binutils",
+    package_url = "",
+    package_version = "2.47",
+)
+
+DECL_INCLUDES = [
+    "#include <stdio.h>",
+    "#include <stdlib.h>",
+    "#include <string.h>",
+    "#include <strings.h>",
+    "#include <unistd.h>",
+]
+
+STAT_INCLUDES = [
+    "#include <sys/types.h>",
+    "#include <sys/stat.h>",
+]
+
+ICONV_PROGRAM = """\
+#include <stdlib.h>
+#include <iconv.h>
+int main(void) { iconv_t cd = iconv_open("",""); iconv(cd,NULL,NULL,NULL,NULL); iconv_close(cd); return 0; }
+"""
+
+# The yes/no options of configure.ac:42-114, each an AC_DEFINE_UNQUOTED of
+# 1 or 0.
+POLICIES = [
+    ("enable_deterministic_archives", "DEFAULT_AR_DETERMINISTIC"),
+    ("enable_default_strings_all", "DEFAULT_STRINGS_ALL"),
+    ("enable_f_for_ifunc_symbols", "DEFAULT_F_FOR_IFUNC_SYMBOLS"),
+    ("enable_follow_debug_links", "DEFAULT_FOR_FOLLOW_LINKS"),
+    ("enable_colored_disassembly", "DEFAULT_FOR_COLORED_DISASSEMBLY"),
+]
+
+autoconf(
+    name = "autoconf",
+    checks = [
+                 # LT_INIT (configure.ac:36).
+                 checks.AC_DEFINE(
+                     "LT_OBJDIR",
+                     value = '".libs/"',
+                 ),
+             ] +
+             # AC_PLUGINS, through ACX_LARGEFILE (configure.ac:37).
+             macros.AC_CHECK_HEADERS([
+                 "dlfcn.h",
+                 "windows.h",
+             ]) +
+             # --enable-checking (configure.ac:39-50).
+             select_flag_defines(
+                 [("enable_checking", "ENABLE_CHECKING")],
+                 if_false = None,
+             ) + select_flag_defines(POLICIES) +
+             # --enable-libctf (configure.ac:107-112).
+             select_flag_defines(
+                 [("enable_libctf", "ENABLE_LIBCTF")],
+                 if_false = None,
+             ) +
+    # AC_EXEEXT (configure.ac:138-144).
+    select({
+        "@platforms//os:windows": [
+            checks.AC_DEFINE("HAVE_EXECUTABLE_SUFFIX", "1"),
+            checks.AC_DEFINE(
+                "EXECUTABLE_SUFFIX",
+                value = '".exe"',
+            ),
+        ],
+        "//conditions:default": [
+            checks.AC_DEFINE(
+                "EXECUTABLE_SUFFIX",
+                value = '""',
+            ),
+        ],
+    }) +
+    # configure.ac:170-174.  memory.h and sys/param.h have slots from
+    # autoconf 2.69's AC_INCLUDES_DEFAULT and from AC_FUNC_MMAP.
+    macros.AC_CHECK_HEADERS([
+        "fcntl.h",
+        "memory.h",
+        "sys/file.h",
+        "sys/mman.h",
+        "sys/param.h",
+        "sys/time.h",
+    ]) + [
+        # AC_HEADER_SYS_WAIT (configure.ac:172).
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <sys/types.h>
+#include <sys/wait.h>
+#ifndef WEXITSTATUS
+# define WEXITSTATUS(stat_val) ((unsigned int) (stat_val) >> 8)
+#endif
+#ifndef WIFEXITED
+# define WIFEXITED(stat_val) (((stat_val) & 255) == 0)
+#endif
+int main(void) {
+  int s;
+  wait (&s);
+  s = WIFEXITED (s) ? WEXITSTATUS (s) : 1;
+  return s;
+}
+""",
+            define = "HAVE_SYS_WAIT_H",
+        ),
+        # GCC_AC_FUNC_MMAP (configure.ac:173): AC_FUNC_MMAP's run test, as
+        # the host answers it natively.
+        checks.AC_CHECK_FUNC(
+            "mmap",
+            define = "HAVE_MMAP",
+            requires = ["HAVE_SYS_MMAN_H"],
+        ),
+    ] + macros.AC_CHECK_FUNCS([
+        "getpagesize",
+        "fseeko",
+        "fseeko64",
+        "getc_unlocked",
+        "mkdtemp",
+        "mkstemp",
+        "utimensat",
+        "utimes",
+    ]) + [
+        # configure.ac:185-224, copied from gnulib's stat-time.m4: which
+        # member of struct stat carries nanoseconds, tried in order.
+        checks.AC_CHECK_MEMBER(
+            "struct stat.st_atim.tv_nsec",
+            define = "HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC",
+            includes = STAT_INCLUDES,
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <sys/types.h>
+#include <sys/stat.h>
+#if HAVE_SYS_TIME_H
+# include <sys/time.h>
+#endif
+#include <time.h>
+struct timespec ts;
+struct stat st;
+int main(void) { st.st_atim = ts; return 0; }
+""",
+            compile_defines = ["HAVE_SYS_TIME_H"],
+            define = "TYPEOF_STRUCT_STAT_ST_ATIM_IS_STRUCT_TIMESPEC",
+            requires = ["HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC"],
+        ),
+        checks.AC_CHECK_MEMBER(
+            "struct stat.st_atimespec.tv_nsec",
+            define = "HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC",
+            includes = STAT_INCLUDES,
+            requires = ["!HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC"],
+        ),
+        checks.AC_CHECK_MEMBER(
+            "struct stat.st_atimensec",
+            define = "HAVE_STRUCT_STAT_ST_ATIMENSEC",
+            includes = STAT_INCLUDES,
+            requires = [
+                "!HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC",
+                "!HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC",
+            ],
+        ),
+        checks.AC_CHECK_MEMBER(
+            "struct stat.st_atim.st__tim.tv_nsec",
+            define = "HAVE_STRUCT_STAT_ST_ATIM_ST__TIM_TV_NSEC",
+            includes = STAT_INCLUDES,
+            requires = [
+                "!HAVE_STRUCT_STAT_ST_ATIM_TV_NSEC",
+                "!HAVE_STRUCT_STAT_ST_ATIMESPEC_TV_NSEC",
+                "!HAVE_STRUCT_STAT_ST_ATIMENSEC",
+            ],
+        ),
+        # configure.ac:227.
+        checks.AC_SEARCH_LIBS(
+            "frexp",
+            ["m"],
+            subst = "LIB_FREXP",
+        ),
+        # AM_LC_MESSAGES (configure.ac:229).
+        checks.AC_TRY_LINK(
+            code = """\
+#include <locale.h>
+int main(void) { return LC_MESSAGES; }
+""",
+            define = "HAVE_LC_MESSAGES",
+        ),
+        # configure.ac:231-240.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <unistd.h>
+int main(void) { extern int getopt (int, char *const*, const char *); return 0; }
+""",
+            compile_defines = ["_GNU_SOURCE"],
+            define = "HAVE_DECL_GETOPT",
+        ),
+        # configure.ac:242-256: does <utime.h> define struct utimbuf.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <sys/types.h>
+#include <time.h>
+#include <utime.h>
+int main(void) { struct utimbuf s; return 0; }
+""",
+            define = "HAVE_GOOD_UTIME_H",
+        ),
+    ] +
+    # configure.ac:258.
+    macros.AC_CHECK_DECLS(
+        [
+            "environ",
+            "getc_unlocked",
+            "stpcpy",
+            "strnlen",
+        ],
+        compile_defines = ["_GNU_SOURCE"],
+        includes = DECL_INCLUDES,
+    ) +
+    # AC_ZSTD (configure.ac:264).
+    select_flag_defines(
+        [("with_zstd", "HAVE_ZSTD")],
+        if_false = None,
+    ) +
+    # BFD_BINARY_FOPEN (configure.ac:266).
+    select({
+        "@platforms//os:windows": [checks.AC_DEFINE("USE_BINARY_FOPEN", "1")],
+        "//conditions:default": [],
+    }) + [
+        # AM_ICONV (configure.ac:302), for windres and windmc: iconv from
+        # the C library or -liconv, and whether its input buffer is const.
+        # --with-msgpack=auto (configure.ac:269-285) finds no msgpack-c, the
+        # C library, so HAVE_MSGPACK stays undefined; AC_DEBUGINFOD
+        # (configure.ac:105) likewise finds no libdebuginfod.
+        checks.AC_SEARCH_LIBS(
+            "iconv_open",
+            ["iconv"],
+            subst = "LIB_ICONV",
+        ),
+        checks.AC_TRY_LINK(
+            name = "am_cv_func_iconv",
+            code = ICONV_PROGRAM,
+        ),
+        checks.AC_TRY_LINK(
+            name = "am_cv_lib_iconv",
+            code = ICONV_PROGRAM,
+            linkopts = ["-liconv"],
+            requires = ["!am_cv_func_iconv"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_ICONV",
+            condition = "am_cv_func_iconv || am_cv_lib_iconv",
+            if_false = None,
+            if_true = 1,
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "am_cv_proto_iconv_const",
+            code = """\
+#include <stdlib.h>
+#include <iconv.h>
+extern
+#ifdef __cplusplus
+"C"
+#endif
+#if defined(__STDC__) || defined(__cplusplus)
+size_t iconv (iconv_t cd, char * *inbuf, size_t *inbytesleft, char * *outbuf, size_t *outbytesleft);
+#else
+size_t iconv();
+#endif
+int main(void) { return 0; }
+""",
+            requires = ["HAVE_ICONV"],
+        ),
+        checks.AC_DEFINE(
+            "ICONV_CONST",
+            condition = "am_cv_proto_iconv_const",
+            if_false = "const",
+            if_true = "",
+            requires = ["HAVE_ICONV"],
+        ),
+    ],
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_TYPE_MBSTATE_T",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+autoconf_linkopts(
+    name = "linkopts",
+    vars = [
+        "LIB_FREXP",
+        "LIB_ICONV",
+    ],
+    deps = [":autoconf"],
+)
+
+# -DLOCALEDIR (Makefile.am:120).
+install_dirs(
+    name = "dirs",
+    defines = ["LOCALEDIR"],
+    triple = select_triple(),
+)
+
+# The defines configure.ac puts in config.h for the target (TARGET,
+# TARGET_PREPENDS_UNDERSCORE) and -Dbin_dummy_emulation (Makefile.am:121).
+TARGET_DEFINES = ["HAVE_CONFIG_H"] + select_field(
+    (BINUTILS,),
+    "defines",
+)
+
+# $(DLLTOOL_DEFS) (Makefile.am:481) and emul_$(EMULATION).c (configure.tgt).
+DLLTOOL_DEFS = select_field(
+    (BINUTILS,),
+    "dlltool_defs",
+)
+
+EMUL_SRCS = select_field(
+    (BINUTILS,),
+    "emul_srcs",
+)
+
+# The PE tools exist on Windows platforms only (configure.ac:395-468).
+PE_TOOLS = select_tool(PLATFORMS, "pe_tools")
+
+HDRS = glob(["*.h"])
+
+# BULIBS (Makefile.am:177), the code shared by all the binutils.
+BULIBS = [
+    "bucomm.c",
+    "version.c",
+    "filemode.c",
+]
+
+ELFLIBS = ["elfcomm.c"]
+
+DEBUG_SRCS = [
+    "rddbg.c",
+    "debug.c",
+    "stabs.c",
+    "rdcoff.c",
+]
+
+WRITE_DEBUG_SRCS = DEBUG_SRCS + ["wrstabs.c"]
+
+COMMON_DEPS = [
+    ":config",
+    ":dirs",
+    ":linkopts",
+    "//bfd",
+    "//include",
+    "//libiberty",
+]
+
+ZSTD = select({
+    "//:_with_zstd": ["@zstd"],
+    "//conditions:default": [],
+})
+
+LIBCTF = select({
+    "//:_enable_libctf": ["//libctf:ctf"],
+    "//conditions:default": [],
+})
+
+LIBCTF_NOBFD = select({
+    "//:_enable_libctf": ["//libctf:ctf_nobfd"],
+    "//conditions:default": [],
+})
+
+# ar.c and objcopy.c are included by the is-*/not-* flavour files.
+cc_library(
+    name = "textual",
+    copts = COPTS,
+    textual_hdrs = [
+        "ar.c",
+        "objcopy.c",
+    ],
+)
+
+# bin_PROGRAMS and the RENAMED_PROGS (Makefile.am:94-110), under their
+# installed names.  Each is `name_SOURCES` + LDADD from the Makefile.
+
+cc_binary(
+    name = "size",
+    srcs = ["size.c"] + BULIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+cc_binary(
+    name = "objdump",
+    srcs = [
+               "demanguse.c",
+               "dwarf.c",
+               "objdump.c",
+               "prdbg.c",
+           ] + DEBUG_SRCS + BULIBS + ELFLIBS + HDRS +
+           # $(OBJDUMP_PRIVATE_OFILES) (configure.ac:450-468).
+           select_field(
+               (BINUTILS,),
+               "od_srcs",
+           ),
+    copts = COPTS,
+    # $(OBJDUMP_DEFS), for objdump.c upstream (Makefile.am:285-295).
+    local_defines = TARGET_DEFINES + select_field(
+        (BINUTILS,),
+        "objdump_defs",
+    ),
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS + [
+        "//libsframe:sframe",
+        "//opcodes",
+    ] + LIBCTF,
+)
+
+# ar and ranlib are one program each, told apart by is-ranlib.c/not-ranlib.c.
+[
+    cc_binary(
+        name = name,
+        srcs = [
+            "arlex.c",
+            "arparse.c",
+            flavour,
+            "arsup.c",
+            "binemul.c",
+            "rename.c",
+        ] + BULIBS + HDRS + EMUL_SRCS,
+        copts = COPTS,
+        local_defines = TARGET_DEFINES,
+        visibility = ["//visibility:public"],
+        deps = COMMON_DEPS + [":textual"],
+    )
+    for name, flavour in [
+        ("ar", "not-ranlib.c"),
+        ("ranlib", "is-ranlib.c"),
+    ]
+]
+
+cc_binary(
+    name = "strings",
+    srcs = ["strings.c"] + BULIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+# objcopy and strip likewise, through is-strip.c/not-strip.c.
+[
+    cc_binary(
+        name = name,
+        srcs = [
+            flavour,
+            "rename.c",
+        ] + WRITE_DEBUG_SRCS + BULIBS + HDRS,
+        copts = COPTS,
+        local_defines = TARGET_DEFINES,
+        visibility = ["//visibility:public"],
+        deps = COMMON_DEPS + [":textual"],
+    )
+    for name, flavour in [
+        ("objcopy", "not-strip.c"),
+        ("strip", "is-strip.c"),
+    ]
+]
+
+cc_binary(
+    name = "addr2line",
+    srcs = ["addr2line.c"] + BULIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+# readelf does not use libbfd at all (readelf_LDADD, Makefile.am:273).
+cc_binary(
+    name = "readelf",
+    srcs = [
+        "demanguse.c",
+        "dwarf.c",
+        "readelf.c",
+        "unwind-ia64.c",
+        "version.c",
+    ] + ELFLIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":dirs",
+        ":linkopts",
+        # `-I../bfd`: sysdep.h wants bfdver.h even where libbfd is not linked.
+        "//bfd:headers",
+        "//include",
+        "//libiberty",
+        "//libsframe:sframe",
+        "@zlib",
+    ] + LIBCTF_NOBFD + ZSTD,
+)
+
+cc_binary(
+    name = "elfedit",
+    srcs = [
+        "elfedit.c",
+        "version.c",
+    ] + ELFLIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":dirs",
+        "//bfd:headers",
+        "//include",
+        "//libiberty",
+    ],
+)
+
+cc_binary(
+    name = "nm",
+    srcs = [
+        "demanguse.c",
+        "nm.c",
+    ] + BULIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+# cxxfilt, installed as c++filt (DEMANGLER_NAME, configure.ac:159-164).
+cc_binary(
+    name = "c++filt",
+    srcs = ["cxxfilt.c"] + BULIBS + HDRS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+# The PE tools, built only for the Windows family (BUILD_DLLTOOL and
+# friends, configure.ac:339-448): elsewhere their srcs have no matching
+# platform.
+cc_binary(
+    name = "dlltool",
+    srcs = [
+        "deflex.c",
+        "defparse.c",
+        "dlltool.c",
+    ] + BULIBS + HDRS + PE_TOOLS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES + DLLTOOL_DEFS,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+cc_binary(
+    name = "windres",
+    srcs = [
+        "rclex.c",
+        "rcparse.c",
+        "resbin.c",
+        "rescoff.c",
+        "resrc.c",
+        "resres.c",
+        "windres.c",
+        "winduni.c",
+    ] + BULIBS + HDRS + PE_TOOLS,
+    copts = COPTS,
+    # $(DLLTOOL_DEFS), for rescoff.c (Makefile.am:493).
+    local_defines = TARGET_DEFINES + DLLTOOL_DEFS,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+cc_binary(
+    name = "windmc",
+    srcs = [
+        "mclex.c",
+        "mcparse.c",
+        "windmc.c",
+        "winduni.c",
+    ] + BULIBS + HDRS + PE_TOOLS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = COMMON_DEPS,
+)
+
+cc_binary(
+    name = "dllwrap",
+    srcs = [
+        "dllwrap.c",
+        "version.c",
+    ] + HDRS + PE_TOOLS,
+    copts = COPTS,
+    local_defines = TARGET_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":dirs",
+        "//bfd:headers",
+        "//include",
+        "//libiberty",
+    ],
+)
+
+# bfdtest1 and bfdtest2, the check_PROGRAMS of the testsuite.
+[
+    cc_binary(
+        name = name,
+        testonly = True,
+        srcs = [name + ".c"],
+        copts = COPTS,
+        local_defines = TARGET_DEFINES,
+        deps = [
+            ":config",
+            "//bfd",
+            "//include",
+            "//libiberty",
+        ],
+    )
+    for name in [
+        "bfdtest1",
+        "bfdtest2",
+    ]
+]
