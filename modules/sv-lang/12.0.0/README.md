@@ -22,6 +22,5 @@ Because we include the Python bindings, we do not use `mimalloc` in the main sla
 
 Desirable future changes to this build include:
 
-- support multithreading in the C++ with `SLANG_USE_THREADS`
 - add `.pyi` stubs for the Pythonbindings
 - add a method to patch in CPPTRACE with `SLANG_USE_CPPTRACE`
