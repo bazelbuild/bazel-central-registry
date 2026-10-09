@@ -6,6 +6,7 @@ build therefore copies all headers into a single flat directory; `occt_headers`
 does the same with a symlink action per header.
 """
 
+load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 _HEADER_PATTERNS = [
@@ -28,6 +29,22 @@ _SOURCE_PATTERNS = [
 _EXCLUDES = ["**/GTests/**"]
 
 _INCLUDE_DIR = "inc"
+
+_MSVC_STYLE_COMPILERS = (
+    "@rules_cc//cc/compiler:clang-cl",
+    "@rules_cc//cc/compiler:msvc-cl",
+)
+
+_WINDOWS_SYSTEM_LIBS = [
+    "advapi32",
+    "user32",
+    "gdi32",
+    "shell32",
+    "ole32",
+    "oleaut32",
+    "ws2_32",
+    "psapi",
+]
 
 MSVC_COPTS = [
     "/EHsc",
@@ -115,26 +132,18 @@ def occt_library(name, toolkits, deps = [], visibility = None):
             exclude = _EXCLUDES,
             allow_empty = True,
         ),
-        copts = select({
-            "@platforms//os:windows": MSVC_COPTS,
+        copts = selects.with_or({
+            _MSVC_STYLE_COMPILERS: MSVC_COPTS,
             "//conditions:default": UNIX_COPTS,
         }),
-        cxxopts = select({
-            "@platforms//os:windows": MSVC_CXXOPTS,
+        cxxopts = selects.with_or({
+            _MSVC_STYLE_COMPILERS: MSVC_CXXOPTS,
             "//conditions:default": UNIX_CXXOPTS,
         }),
         defines = ["_USE_MATH_DEFINES"],
-        linkopts = select({
-            "@platforms//os:windows": [
-                "advapi32.lib",
-                "user32.lib",
-                "gdi32.lib",
-                "shell32.lib",
-                "ole32.lib",
-                "oleaut32.lib",
-                "ws2_32.lib",
-                "psapi.lib",
-            ],
+        linkopts = selects.with_or({
+            _MSVC_STYLE_COMPILERS: [lib + ".lib" for lib in _WINDOWS_SYSTEM_LIBS],
+            "@rules_cc//cc/compiler:mingw-gcc": ["-l" + lib for lib in _WINDOWS_SYSTEM_LIBS],
             "//conditions:default": [
                 "-lpthread",
                 "-ldl",
