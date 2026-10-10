@@ -1,0 +1,60 @@
+# Replaces upstream's BUILD.bazel, which runs bison/flex found on the
+# host PATH, with the hermetic bison/flex modules.
+
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# lalr1.cc with %defines also emits location.hh, which VerilogScanner.h
+# includes, so it is a declared output.
+bison(
+    name = "verilog_parser",
+    srcs = ["src/VerilogParser.yy"],
+    outs = [
+        "src/VerilogParser.cpp",
+        "src/VerilogParser.hpp",
+        "src/location.hh",
+    ],
+    args = [
+        "-d",
+        "-Wconflicts-sr",
+        "-Wconflicts-rr",
+        "--output=$(execpath src/VerilogParser.cpp)",
+        "--defines=$(execpath src/VerilogParser.hpp)",
+        "$(execpath src/VerilogParser.yy)",
+    ],
+)
+
+flex(
+    name = "verilog_scanner",
+    srcs = ["src/VerilogScanner.ll"],
+    outs = ["src/VerilogScanner.cpp"],
+    args = [
+        "--c++",
+        "--outfile=$(execpath src/VerilogScanner.cpp)",
+        "$(execpath src/VerilogScanner.ll)",
+    ],
+)
+
+cc_library(
+    name = "naja_verilog",
+    srcs = [
+        "src/VerilogConstructor.cpp",
+        "src/VerilogParser.cpp",
+        "src/VerilogPreprocessor.cpp",
+        "src/VerilogScanner.cpp",
+        "src/VerilogTypes.cpp",
+    ],
+    hdrs = [
+        "src/VerilogConstructor.h",
+        "src/VerilogException.h",
+        "src/VerilogParser.hpp",
+        "src/VerilogPreprocessor.h",
+        "src/VerilogScanner.h",
+        "src/VerilogTypes.h",
+        "src/location.hh",
+    ],
+    includes = ["src"],
+    visibility = ["//visibility:public"],
+    deps = ["@flex//:headers"],
+)
