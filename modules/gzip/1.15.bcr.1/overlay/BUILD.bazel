@@ -1,0 +1,1083 @@
+"""GNU gzip - https://www.gnu.org/software/gzip/"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load("@rules_cc_autoconf//autoconf:autoconf_package_info.bzl", "autoconf_package_info")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros", "utils")
+load("@rules_cc_autoconf//gnulib:conditional_hdrs.bzl", "cc_gnulib_conditional_hdrs")
+load("@rules_cc_autoconf//gnulib:macros.bzl", gl_macros = "macros")
+
+# Only what `make install` ships is public: bin_PROGRAMS, bin_SCRIPTS and the
+# configure options next to them.
+package(default_visibility = ["//visibility:private"])
+
+# configure.ac line 22: AC_INIT([gzip], <git-version-gen>, [bug-gzip@gnu.org]).
+# `PACKAGE`/`VERSION` get the same values as `PACKAGE_TARNAME`/
+# `PACKAGE_VERSION`.  The version comes from MODULE.bazel rather than a
+# literal so a `.bcr.N` bump has one place to edit; `strip_bcr_version` is
+# what keeps that suffix out of `gzip --version`.
+autoconf_package_info(
+    name = "package",
+    package_name = "gzip",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "bug-gzip@gnu.org",
+    package_tarname = "gzip",
+    strip_bcr_version = True,
+)
+
+# --enable-dfltcc (configure.ac lines 118-125).  Uses the DEFLATE
+# CONVERSION CALL instruction on IBM Z (s390x) for compression and
+# decompression; dfltcc.c only compiles for that CPU.
+bool_flag(
+    name = "dfltcc",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "dfltcc_enabled",
+    flag_values = {":dfltcc": "True"},
+)
+
+# --enable-largefile (gnulib's largefile module, AC_SYS_LARGEFILE).  Off makes
+# 32-bit hosts use a 32-bit off_t, which caps gzip at 2GiB files; on is
+# upstream's default.
+bool_flag(
+    name = "largefile",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "largefile_enabled",
+    flag_values = {":largefile": "True"},
+)
+
+autoconf(
+    name = "m4_dfltcc",
+    checks = select({
+        # configure.ac line 214: AC_DEFINE([IBM_Z_DFLTCC], , ...) -- an empty
+        # value; every consumer tests it with #ifdef.
+        ":dfltcc_enabled": [
+            checks.AC_DEFINE("IBM_Z_DFLTCC", 1),
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# AC_SYS_LARGEFILE, as expanded by gnulib's largefile module.
+autoconf(
+    name = "m4_largefile",
+    deps = select({
+        ":largefile_enabled": ["@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE"],
+        "//conditions:default": [],
+    }),
+)
+
+# gl_ENDIAN_H (m4/endian_h.m4), ported whole instead of taking
+# `@rules_cc_autoconf//gnulib/m4/endian_h`.  That target never decides
+# GL_GENERATE_ENDIAN_H, which lib/gnulib.mk line 407 keys both the endian.h
+# wrapper and endian.c on, and on macOS it answers HAVE_SYS_ENDIAN_H=1 from
+# the deployment target rather than a probe, although no macOS SDK ships
+# <sys/endian.h>: the generated wrapper then does `# include <sys/endian.h>`
+# and lib/crc.c fails to compile.  The names it emits cannot be overridden
+# beside it, so the whole macro moves.  glibc's <endian.h> has the byte-order
+# macros but does not pull in <stdint.h>, so upstream generates the wrapper
+# there too ("just missing stdint").
+#
+# TODO: drop once `@rules_cc_autoconf//gnulib/m4/endian_h` probes
+# <sys/endian.h> everywhere and models the two probes and
+# GL_GENERATE_ENDIAN_H.
+ENDIAN_H_BYTE_ORDER_PROBE = """\
+/* Big endian to host.  */
+int value16_1 = be16toh (0.0);
+int value32_1 = be32toh (0.0);
+int value64_1 = be64toh (0.0);
+/* Host to big endian.  */
+int value16_2 = htobe16 (0.0);
+int value32_2 = htobe32 (0.0);
+int value64_2 = htobe64 (0.0);
+/* Little endian to host.  */
+int value16_3 = le16toh (0.0);
+int value32_3 = le32toh (0.0);
+int value64_3 = le64toh (0.0);
+/* Host to little endian.  */
+int value16_4 = htole16 (0.0);
+int value32_4 = htole32 (0.0);
+int value64_4 = htole64 (0.0);
+/* Make sure the variables get used.  */
+return !(value16_1 + value32_1 + value64_1
+         + value16_2 + value32_2 + value64_2
+         + value16_3 + value32_3 + value64_3
+         + value16_4 + value32_4 + value64_4);
+"""
+
+autoconf(
+    name = "m4_endian_h",
+    checks = [
+        # Line 13: AC_CHECK_HEADERS_ONCE([endian.h]); lines 15-16, 132.
+        checks.AC_CHECK_HEADER(
+            "endian.h",
+            name = "ac_cv_header_endian_h",
+            define = "HAVE_ENDIAN_H",
+        ),
+        checks.AC_SUBST(
+            "HAVE_ENDIAN_H",
+            condition = "ac_cv_header_endian_h",
+            if_false = 0,
+            if_true = 1,
+        ),
+        # Lines 17-29.
+        checks.AC_TRY_COMPILE(
+            name = "gl_cv_header_endian_h_stdint_types",
+            code = utils.AC_LANG_PROGRAM(
+                ["#include <endian.h>"],
+                "uint16_t t1 = 0; uint32_t t2 = 0; uint64_t t3 = 0; return !(t1 + t2 + t3);",
+            ),
+            requires = ["ac_cv_header_endian_h"],
+        ),
+        # Lines 30-58.
+        checks.AC_TRY_LINK(
+            name = "gl_cv_header_working_endian_h",
+            code = utils.AC_LANG_PROGRAM(
+                ["#include <endian.h>"],
+                ENDIAN_H_BYTE_ORDER_PROBE,
+            ),
+            requires = ["ac_cv_header_endian_h"],
+        ),
+    ] + select({
+        # Line 60: AC_CHECK_HEADERS_ONCE([sys/endian.h]); lines 61, 95, 133.
+        # The two <sys/endian.h> probes that follow (lines 62-94) feed nothing
+        # ("We don't use the result of this test for now").
+        #
+        # Not probed on macOS: no Apple SDK ships <sys/endian.h> (the
+        # byte-order macros live in <machine/endian.h>), yet on the BCR
+        # x86_64 macOS runner the compile probe reports it present while
+        # the real, sandboxed compile of the generated wrapper cannot find
+        # it -- most likely a stray copy under /usr/local/include, which
+        # Apple clang searches by default on Intel Macs and Bazel's sandbox
+        # hides.  A probe that disagrees with the compiler it is probing for
+        # is worth less than the platform fact.
+        "@platforms//os:macos": [
+            checks.AC_SUBST("HAVE_SYS_ENDIAN_H", 0),
+        ],
+        "//conditions:default": [
+            checks.AC_CHECK_HEADER(
+                "sys/endian.h",
+                name = "ac_cv_header_sys_endian_h",
+                define = "HAVE_SYS_ENDIAN_H",
+            ),
+            checks.AC_SUBST(
+                "HAVE_SYS_ENDIAN_H",
+                condition = "ac_cv_header_sys_endian_h",
+                if_false = 0,
+                if_true = 1,
+            ),
+        ],
+    }) + [
+        # Lines 97-102.
+        checks.M4_VARIABLE(
+            "GL_GENERATE_ENDIAN_H",
+            condition = "ac_cv_header_endian_h && gl_cv_header_working_endian_h && gl_cv_header_endian_h_stdint_types",
+            if_false = "true",
+            if_true = "false",
+        ),
+        # Lines 104-112 (`test $GL_GENERATE_ENDIAN_H` is true for both
+        # "true" and "false", so only the working-header probe decides).
+        checks.AC_SUBST(
+            "ENDIAN_H_JUST_MISSING_STDINT",
+            condition = "gl_cv_header_working_endian_h",
+            if_false = 0,
+            if_true = 1,
+        ),
+        # Line 14: gl_CHECK_NEXT_HEADERS([endian.h]).
+    ] + gl_macros.GL_CHECK_NEXT_HEADERS(["endian.h"]),
+    deps = [
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        # Line 12: AC_REQUIRE([gl_BIGENDIAN]).
+        "@rules_cc_autoconf//gnulib/m4/gnulib-common:gl_BIGENDIAN",
+        "@rules_cc_autoconf//gnulib/m4/include_next",
+    ],
+)
+
+# AC_C_VARARRAYS (gl_INIT).  Ported here instead of taking
+# `@rules_cc_autoconf//gnulib/m4/vararrays`, which defines __STDC_NO_VLA__
+# on every non-macOS platform without probing; GCC and Clang do support
+# variable-length arrays, and a real configure run leaves the macro undefined.
+#
+# TODO: drop once `@rules_cc_autoconf//gnulib/m4/vararrays` probes.
+autoconf(
+    name = "m4_vararrays",
+    checks = [
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_c_vararrays",
+            code = """\
+#ifdef __STDC_NO_VLA__
+syntax error;
+#endif
+int main (void)
+{
+  static int x;
+  char a[++x];
+  a[sizeof a - 1] = 0;
+  return a[0];
+}
+""",
+        ),
+        checks.AC_DEFINE(
+            "HAVE_C_VARARRAYS",
+            requires = ["ac_cv_c_vararrays"],
+        ),
+        checks.AC_DEFINE(
+            "__STDC_NO_VLA__",
+            requires = ["!ac_cv_c_vararrays"],
+        ),
+    ],
+)
+
+# gl_STDINT_BITSIZEOF([wchar_t]) (m4/stdint.m4).  rules_cc_autoconf leaves
+# BITSIZEOF_WCHAR_T to its uchar_h module, which gzip's gnulib copy avoids
+# (`--avoid=uchar-h`, lib/gnulib.mk line 50), so the stdint.h wrapper would
+# otherwise keep a literal @BITSIZEOF_WCHAR_T@ in its wchar_t limits.
+#
+# TODO: drop once `@rules_cc_autoconf//gnulib/m4/stdint` computes it.
+autoconf(
+    name = "m4_stdint_bitsizeof_wchar_t",
+    checks = [
+        checks.AC_COMPUTE_INT(
+            "BITSIZEOF_WCHAR_T",
+            "(int) (sizeof (wchar_t) * CHAR_BIT)",
+            includes = [
+                "#include <limits.h>",
+                "#include <stddef.h>",
+            ],
+            subst = True,
+        ),
+    ],
+)
+
+# gl_CRC_SLICE_BY_8 (m4/crc.m4 lines 15-25): on unless the maintainer calls
+# gl_DISABLE_CRC_SLICE_BY_8, which gzip does not.  The rules_cc_autoconf crc
+# target carries no checks.
+autoconf(
+    name = "m4_crc",
+    checks = [checks.AC_DEFINE("GL_CRC_SLICE_BY_8", 1)],
+)
+
+# Gnulib m4 module deps (m4/gnulib-comp.m4 gl_INIT, one per file in m4/).
+GNULIB_M4_DEPS = [
+    "@rules_cc_autoconf//gnulib/m4/00gnulib",
+    "@rules_cc_autoconf//gnulib/m4/absolute-header",
+    "@rules_cc_autoconf//gnulib/m4/alloca",
+    "@rules_cc_autoconf//gnulib/m4/assert_h",
+    "@rules_cc_autoconf//gnulib/m4/build-cc",
+    "@rules_cc_autoconf//gnulib/m4/byteswap",
+    "@rules_cc_autoconf//gnulib/m4/c-bool",
+    "@rules_cc_autoconf//gnulib/m4/calloc",
+    "@rules_cc_autoconf//gnulib/m4/clock_time",
+    "@rules_cc_autoconf//gnulib/m4/close",
+    "@rules_cc_autoconf//gnulib/m4/closedir",
+    "@rules_cc_autoconf//gnulib/m4/crc",
+    "@rules_cc_autoconf//gnulib/m4/crc-x86_64",
+    "@rules_cc_autoconf//gnulib/m4/dirent_h",
+    "@rules_cc_autoconf//gnulib/m4/dirfd",
+    "@rules_cc_autoconf//gnulib/m4/double-slash-root",
+    "@rules_cc_autoconf//gnulib/m4/dup2",
+    "@rules_cc_autoconf//gnulib/m4/errno_h",
+    "@rules_cc_autoconf//gnulib/m4/error",
+    "@rules_cc_autoconf//gnulib/m4/error_h",
+    "@rules_cc_autoconf//gnulib/m4/extensions",
+    "@rules_cc_autoconf//gnulib/m4/extensions-aix",
+    "@rules_cc_autoconf//gnulib/m4/extern-inline",
+    "@rules_cc_autoconf//gnulib/m4/fclose",
+    "@rules_cc_autoconf//gnulib/m4/fcntl",
+    "@rules_cc_autoconf//gnulib/m4/fcntl-o",
+    "@rules_cc_autoconf//gnulib/m4/fcntl_h",
+    "@rules_cc_autoconf//gnulib/m4/fdatasync",
+    "@rules_cc_autoconf//gnulib/m4/fflush",
+    "@rules_cc_autoconf//gnulib/m4/fopen",
+    "@rules_cc_autoconf//gnulib/m4/fpurge",
+    "@rules_cc_autoconf//gnulib/m4/freading",
+    "@rules_cc_autoconf//gnulib/m4/free",
+    "@rules_cc_autoconf//gnulib/m4/fseek",
+    "@rules_cc_autoconf//gnulib/m4/fseeko",
+    "@rules_cc_autoconf//gnulib/m4/fseterr",
+    "@rules_cc_autoconf//gnulib/m4/fstat",
+    "@rules_cc_autoconf//gnulib/m4/fsync",
+    "@rules_cc_autoconf//gnulib/m4/ftell",
+    "@rules_cc_autoconf//gnulib/m4/ftello",
+    "@rules_cc_autoconf//gnulib/m4/getdtablesize",
+    "@rules_cc_autoconf//gnulib/m4/getopt",
+    "@rules_cc_autoconf//gnulib/m4/getprogname",
+    "@rules_cc_autoconf//gnulib/m4/gettext_h",
+    "@rules_cc_autoconf//gnulib/m4/gettime",
+    "@rules_cc_autoconf//gnulib/m4/gettimeofday",
+    "@rules_cc_autoconf//gnulib/m4/gnu-make",
+    "@rules_cc_autoconf//gnulib/m4/gnulib-common",
+    "@rules_cc_autoconf//gnulib/m4/include_next",
+    "@rules_cc_autoconf//gnulib/m4/inttypes",
+    "@rules_cc_autoconf//gnulib/m4/largefile",
+    "@rules_cc_autoconf//gnulib/m4/lib-ignore",
+    "@rules_cc_autoconf//gnulib/m4/limits-h",
+    "@rules_cc_autoconf//gnulib/m4/lseek",
+    "@rules_cc_autoconf//gnulib/m4/lstat",
+    "@rules_cc_autoconf//gnulib/m4/malloc",
+    "@rules_cc_autoconf//gnulib/m4/malloca",
+    "@rules_cc_autoconf//gnulib/m4/manywarnings",
+    "@rules_cc_autoconf//gnulib/m4/minmax",
+    "@rules_cc_autoconf//gnulib/m4/mode_t",
+    "@rules_cc_autoconf//gnulib/m4/msvc-inval",
+    "@rules_cc_autoconf//gnulib/m4/msvc-nothrow",
+    "@rules_cc_autoconf//gnulib/m4/multiarch",
+    "@rules_cc_autoconf//gnulib/m4/musl",
+    "@rules_cc_autoconf//gnulib/m4/nocrash",
+    "@rules_cc_autoconf//gnulib/m4/off64_t",
+    "@rules_cc_autoconf//gnulib/m4/off_t",
+    "@rules_cc_autoconf//gnulib/m4/open",
+    "@rules_cc_autoconf//gnulib/m4/open-cloexec",
+    "@rules_cc_autoconf//gnulib/m4/open-slash",
+    "@rules_cc_autoconf//gnulib/m4/opendir",
+    "@rules_cc_autoconf//gnulib/m4/pathmax",
+    "@rules_cc_autoconf//gnulib/m4/pthread_sigmask",
+    "@rules_cc_autoconf//gnulib/m4/qsort_r",
+    "@rules_cc_autoconf//gnulib/m4/quotearg",
+    "@rules_cc_autoconf//gnulib/m4/raise",
+    "@rules_cc_autoconf//gnulib/m4/readdir",
+    "@rules_cc_autoconf//gnulib/m4/readlink",
+    "@rules_cc_autoconf//gnulib/m4/realloc",
+    "@rules_cc_autoconf//gnulib/m4/reallocarray",
+    "@rules_cc_autoconf//gnulib/m4/savedir",
+    "@rules_cc_autoconf//gnulib/m4/sigaction",
+    "@rules_cc_autoconf//gnulib/m4/signal_h",
+    "@rules_cc_autoconf//gnulib/m4/signalblocking",
+    "@rules_cc_autoconf//gnulib/m4/ssize_t",
+    "@rules_cc_autoconf//gnulib/m4/stat",
+    "@rules_cc_autoconf//gnulib/m4/stat-time",
+    "@rules_cc_autoconf//gnulib/m4/stdalign",
+    "@rules_cc_autoconf//gnulib/m4/stdbit_h",
+    "@rules_cc_autoconf//gnulib/m4/stdckdint_h",
+    "@rules_cc_autoconf//gnulib/m4/stdcountof_h",
+    "@rules_cc_autoconf//gnulib/m4/stddef_h",
+    "@rules_cc_autoconf//gnulib/m4/stdint",
+    "@rules_cc_autoconf//gnulib/m4/stdio_h",
+    "@rules_cc_autoconf//gnulib/m4/stdlib_h",
+    "@rules_cc_autoconf//gnulib/m4/stpcpy",
+    "@rules_cc_autoconf//gnulib/m4/strerror",
+    "@rules_cc_autoconf//gnulib/m4/string_h",
+    # gl_FUNC_MEMEQ (m4/memeq.m4) and gl_FUNC_STREQ (m4/streq.m4).
+    "@rules_cc_autoconf//gnulib/m4/stringeq",
+    "@rules_cc_autoconf//gnulib/m4/sys_cdefs_h",
+    "@rules_cc_autoconf//gnulib/m4/sys_socket_h",
+    "@rules_cc_autoconf//gnulib/m4/sys_stat_h",
+    "@rules_cc_autoconf//gnulib/m4/sys_time_h",
+    "@rules_cc_autoconf//gnulib/m4/sys_types_h",
+    "@rules_cc_autoconf//gnulib/m4/time",
+    "@rules_cc_autoconf//gnulib/m4/time_h",
+    "@rules_cc_autoconf//gnulib/m4/timespec",
+    "@rules_cc_autoconf//gnulib/m4/ungetc",
+    "@rules_cc_autoconf//gnulib/m4/unistd_h",
+    "@rules_cc_autoconf//gnulib/m4/unlocked-io",
+    "@rules_cc_autoconf//gnulib/m4/utime",
+    "@rules_cc_autoconf//gnulib/m4/utime_h",
+    "@rules_cc_autoconf//gnulib/m4/utimens",
+    "@rules_cc_autoconf//gnulib/m4/utimes",
+    "@rules_cc_autoconf//gnulib/m4/warnings",
+    "@rules_cc_autoconf//gnulib/m4/xalloc",
+    "@rules_cc_autoconf//gnulib/m4/yesno",
+    "@rules_cc_autoconf//gnulib/m4/zzgnulib",
+]
+
+# gl_<HEADER>_MODULE_INDICATOR calls in gl_INIT: the Makefile variables
+# (GL_GNULIB_*) the .in.h templates read as @GNULIB_*@.  rules_cc_autoconf's
+# <header>_h defaults set them to 0, so the overrides use the plain names.
+# The GL_GNULIB_MDA_* indicators default to 1 in both gnulib and those
+# defaults, so they are not repeated here.
+GNULIB_MODULE_INDICATOR_SUBSTS = [
+    "GNULIB_CALLOC_GNU",
+    "GNULIB_CALLOC_POSIX",
+    "GNULIB_CLOSE",
+    "GNULIB_CLOSEDIR",
+    "GNULIB_DIRFD",
+    "GNULIB_DUP2",
+    "GNULIB_FCLOSE",
+    "GNULIB_FCNTL",
+    "GNULIB_FDATASYNC",
+    "GNULIB_FFLUSH",
+    "GNULIB_FGETC",
+    "GNULIB_FGETS",
+    "GNULIB_FOPEN",
+    "GNULIB_FPRINTF",
+    "GNULIB_FPURGE",
+    "GNULIB_FPUTC",
+    "GNULIB_FPUTS",
+    "GNULIB_FREAD",
+    "GNULIB_FREE_POSIX",
+    "GNULIB_FSCANF",
+    "GNULIB_FSEEK",
+    "GNULIB_FSEEKO",
+    "GNULIB_FSTAT",
+    "GNULIB_FSYNC",
+    "GNULIB_FTELL",
+    "GNULIB_FTELLO",
+    "GNULIB_FWRITE",
+    "GNULIB_GETC",
+    "GNULIB_GETCHAR",
+    "GNULIB_GETDTABLESIZE",
+    "GNULIB_GETOPT_POSIX",
+    "GNULIB_GETPROGNAME",
+    "GNULIB_GETTIMEOFDAY",
+    "GNULIB_LSEEK",
+    "GNULIB_LSTAT",
+    "GNULIB_MALLOC_GNU",
+    "GNULIB_MALLOC_POSIX",
+    "GNULIB_MEMEQ",
+    "GNULIB_OPEN",
+    "GNULIB_OPENDIR",
+    "GNULIB_PRINTF",
+    "GNULIB_PTHREAD_SIGMASK",
+    "GNULIB_PUTC",
+    "GNULIB_PUTCHAR",
+    "GNULIB_PUTS",
+    "GNULIB_QSORT_R",
+    "GNULIB_RAISE",
+    "GNULIB_READDIR",
+    "GNULIB_READLINK",
+    "GNULIB_REALLOCARRAY",
+    "GNULIB_REALLOC_POSIX",
+    "GNULIB_SCANF",
+    "GNULIB_SIGACTION",
+    "GNULIB_SIGPROCMASK",
+    "GNULIB_STAT",
+    "GNULIB_STDC_MEMREVERSE8U",
+    "GNULIB_STPCPY",
+    "GNULIB_STREQ",
+    "GNULIB_STRERROR",
+    "GNULIB_STRNUL",
+    "GNULIB_TIME",
+    "GNULIB_UTIME",
+    "GNULIB_VFPRINTF",
+    "GNULIB_VPRINTF",
+]
+
+# gl_MODULE_INDICATOR calls in gl_INIT: the config.h defines.
+GNULIB_MODULE_INDICATOR_DEFINES = [
+    "GNULIB_CLOSE",
+    "GNULIB_FFLUSH",
+    "GNULIB_FSCANF",
+    "GNULIB_FSTAT",
+    "GNULIB_ISSYMLINK",
+    "GNULIB_LSTAT",
+    "GNULIB_MSVC_NOTHROW",
+    "GNULIB_REALLOCARRAY",
+    "GNULIB_SCANF",
+    "GNULIB_STAT",
+    "GNULIB_STRERROR",
+    "GNULIB_XALLOC",
+    "GNULIB_XALLOC_DIE",
+]
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        checks.AC_SUBST("GUARD_PREFIX", "GL"),
+        # configure.ac line 38.
+        checks.AC_DEFINE("_QUOTEARG_AVOID_UCHAR_H", 1),
+        # configure.ac line 63: AC_PROG_GREP, substituted into zgrep.
+        checks.AC_SUBST("GREP", "grep"),
+        # configure.ac lines 82-86.
+        checks.AC_DEFINE("GNULIB_NO_VLA", 1),
+        checks.AC_DEFINE("GNULIB_SIGPROCMASK_SINGLE_THREAD", 1),
+        # gl_INIT (m4/gnulib-comp.m4): unlocked-io.
+        checks.AC_DEFINE("GNULIB_STDIO_SINGLE_THREAD", 1),
+        checks.AC_DEFINE("USE_UNLOCKED_IO", "GNULIB_STDIO_SINGLE_THREAD"),
+        # gl_INIT: only mingw links against msvcrt.
+        checks.AC_SUBST("USES_MSVCRT", "0"),
+        # lib/stdio.in.h line 2473 postdates the gnulib snapshot the
+        # rules_cc_autoconf stdio_h defaults were cut from; gzip does not
+        # request the module.
+        checks.AC_SUBST("GNULIB_VAPRINTF", 0),
+        # gl_FUNC_ERROR derives COMPILE_ERROR_C, which rules_cc_autoconf's
+        # error module does not surface (TODO: it should, and then this
+        # check can go).  glibc supplies both entry points unreplaced;
+        # everywhere else gnulib's lib/error.c has to be compiled in.
+        checks.AC_SUBST(
+            "COMPILE_ERROR_C",
+            condition = "HAVE_ERROR==1 && HAVE_ERROR_AT_LINE==1 && REPLACE_ERROR==0 && REPLACE_ERROR_AT_LINE==0",
+            if_false = "1",
+            if_true = "0",
+        ),
+    ] + macros.AC_CHECK_HEADERS([
+        # configure.ac line 254.
+        "sys/sdt.h",
+    ]) + macros.AC_CHECK_FUNCS([
+        # configure.ac line 255.  openat and opendir are left to the gnulib
+        # modules of the same name, which define HAVE_* themselves.
+        "chown",
+        "fchmod",
+        "fchown",
+        "fdopendir",
+        "unlinkat",
+        # gl_INIT.
+        "vasprintf",
+    ]) + [
+        checks.AC_SUBST(name, 1)
+        for name in GNULIB_MODULE_INDICATOR_SUBSTS
+    ] + [
+        checks.AC_DEFINE(name, 1)
+        for name in GNULIB_MODULE_INDICATOR_DEFINES
+    ],
+    deps = [
+        ":m4_crc",
+        ":m4_dfltcc",
+        ":m4_endian_h",
+        ":m4_largefile",
+        ":m4_stdint_bitsizeof_wchar_t",
+        ":m4_vararrays",
+        ":package",
+        # configure.ac line 256.
+        "@rules_cc_autoconf//autoconf/macros/AC_TYPE_OFF_T",
+    ] + GNULIB_M4_DEPS,
+)
+
+# configure.ac line 27: AC_CONFIG_HEADERS([lib/config.h:lib/config.hin]).
+autoconf_hdr(
+    name = "config",
+    out = "lib/config.h",
+    # AC_C_RESTRICT.  `@rules_cc_autoconf//autoconf/macros/AC_C_RESTRICT`
+    # models the pre-2.70 chain -- bare `restrict` first, "no define needed"
+    # -- whereas the Autoconf 2.72 that generated gzip's configure tries
+    # `__restrict__` first and defines the macro to it on GCC and Clang.
+    # Several gnulib modules pull the macro in, so a competing `restrict`
+    # define would be rejected as a duplicate; patch the rendered line
+    # instead.  The newlines pin the match to the whole template line.
+    #
+    # TODO: drop once `@rules_cc_autoconf//autoconf/macros/AC_C_RESTRICT`
+    # follows the 2.72 order.
+    substitutions = {
+        "\n#undef restrict\n": "\n#define restrict __restrict__\n",
+    },
+    template = "lib/config.hin",
+    # `tests/help-version` checks `gzip --version` against the VERSION the
+    # binary was built with, which the test runner reads from here.
+    visibility = ["//tests:__pkg__"],
+    deps = [":autoconf"],
+)
+
+# Snippet files gnulib's `make` splices into each generated header.
+GL_INLINES = {
+    "/* The definition of _GL_ARG_NONNULL is copied here.  */": "lib/arg-nonnull.h",
+    "/* The definition of _GL_WARN_ON_USE is copied here.  */": "lib/warn-on-use.h",
+    "/* The definition of _Noreturn is copied here.  */": "lib/_Noreturn.h",
+    "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": "lib/c++defs.h",
+}
+
+# lib/gnulib.mk BUILT_SOURCES: the wrapper headers generated unconditionally.
+LIBGZIP_GNULIB_GENERATED_HDRS = {
+    "lib/dirent.h": "lib/dirent.in.h",
+    "lib/error.h": "lib/error.in.h",
+    "lib/fcntl.h": "lib/fcntl.in.h",
+    "lib/inttypes.h": "lib/inttypes.in.h",
+    "lib/signal.h": "lib/signal.in.h",
+    "lib/stdio.h": "lib/stdio.in.h",
+    "lib/stdlib.h": "lib/stdlib.in.h",
+    "lib/string.h": "lib/string.in.h",
+    "lib/sys/stat.h": "lib/sys_stat.in.h",
+    "lib/sys/time.h": "lib/sys_time.in.h",
+    "lib/sys/types.h": "lib/sys_types.in.h",
+    "lib/time.h": "lib/time.in.h",
+    "lib/unistd.h": "lib/unistd.in.h",
+    "lib/utime.h": "lib/utime.in.h",
+}
+
+[
+    autoconf_hdr(
+        name = hdr.replace("/", "_").replace(".", "_"),
+        out = hdr,
+        defaults = True,
+        inlines = GL_INLINES,
+        mode = "subst",
+        template = template,
+        deps = [":autoconf"],
+    )
+    for hdr, template in LIBGZIP_GNULIB_GENERATED_HDRS.items()
+]
+
+# The wrapper headers generated only when the matching `GL_GENERATE_*_H` says
+# the system header is missing or unusable.  Each is processed
+# unconditionally into `_gnulib_cond/` -- not `lib/`, so they cannot collide
+# with the unconditional headers above -- and `cc_gnulib_conditional_hdrs`
+# picks the ones whose condition holds.
+GNULIB_COND_HDR_STEMS = [
+    "alloca",
+    "assert",
+    "byteswap",
+    "endian",
+    "errno",
+    "getopt-cdefs",
+    "getopt",
+    "limits",
+    "stdbit",
+    "stdckdint",
+    "stdcountof",
+    "stddef",
+    "stdint",
+]
+
+# assert.h is the one wrapper gnulib assembles from two files: assert.in.h,
+# then verify.h with its `verify`/`assume` half cut out and its identifiers
+# renamed (lib/gnulib.mk lines 157-169).  The appended half is what supplies
+# a `_Static_assert` that takes one argument on compilers predating C23.
+autoconf_hdr(
+    name = "lib_assert_h_static_assert_half",
+    out = "_gnulib_cond/verify-static_assert.h",
+    mode = "subst",
+    substitutions = {
+        # sed -e '/@assert.h omit start@/,/@assert.h omit end@/d', done by
+        # fencing the region off instead of deleting it.
+        "/* @assert.h omit end@  */": "#endif /* @assert.h omit end@ */",
+        "/* @assert.h omit start@  */": "#if 0 /* @assert.h omit start@ */",
+        # sed -e 's|_gl_verify|_gl_static_assert|g'
+        #     -e 's|_GL_VERIFY|_GL_STATIC_ASSERT|g'
+        "_GL_VERIFY": "_GL_STATIC_ASSERT",
+        "_gl_verify": "_gl_static_assert",
+    },
+    template = "lib/verify.h",
+    deps = [":autoconf"],
+)
+
+# Snippets spliced into one particular wrapper, on top of GL_INLINES.
+GNULIB_COND_HDR_INLINES = {
+    "assert": {
+        "/* The definition of static_assert is copied here.  */": ":lib_assert_h_static_assert_half",
+    },
+}
+
+[
+    autoconf_hdr(
+        name = "lib_{}_h_processed".format(stem.replace("-", "_")),
+        out = "_gnulib_cond/{}.h".format(stem),
+        defaults = True,
+        inlines = GL_INLINES | GNULIB_COND_HDR_INLINES.get(stem, {}),
+        mode = "subst",
+        template = "lib/{}.in.h".format(stem),
+        deps = [":autoconf"],
+    )
+    for stem in GNULIB_COND_HDR_STEMS
+]
+
+# Two headers whose rules_cc_autoconf port does not publish a
+# `GL_GENERATE_*_H` get the shell test from their m4 file instead:
+# m4/stdbit_h.m4 lines 15-25 (the replacement is wanted when there is no
+# <stdbit.h> or when the system one predates C2y's stdc_rotate_left_uc; the
+# stdc_memreverse8u.c source below shares the test) and m4/stdcountof_h.m4
+# line 48.
+STDBIT_H_CONDITION = "ac_cv_subst_HAVE_STDBIT_H==0 || ac_cv_define_HAVE_DECL_STDC_ROTATE_LEFT_UC==0"
+
+GNULIB_COND_HDR_CONDITIONS = {
+    "stdbit": STDBIT_H_CONDITION,
+    "stdcountof": "!(ac_cv_header_stdcountof_h && ac_cv_subst_CXX_HAVE_STDCOUNTOF_H==1)",
+}
+
+cc_gnulib_conditional_hdrs(
+    name = "lib/gzip_gnulib_conditional_hdrs",
+    hdrs = {
+        ":lib_{}_h_processed".format(stem.replace("-", "_")): GNULIB_COND_HDR_CONDITIONS.get(
+            stem,
+            "GL_GENERATE_{}_H".format(stem.upper().replace("-", "_")),
+        )
+        for stem in GNULIB_COND_HDR_STEMS
+    },
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "lib/gzip_private_headers",
+    hdrs = [":config"] + glob(
+        ["lib/**/*.h"],
+        # The templates are inputs of the autoconf_hdr targets, not headers.
+        exclude = ["lib/**/*.in.h"],
+    ) + LIBGZIP_GNULIB_GENERATED_HDRS.keys(),
+    includes = ["lib"],
+    deps = [":lib/gzip_gnulib_conditional_hdrs"],
+)
+
+# Conditions attached to each conditionally-compiled gnulib source.  Each
+# string is m4/gnulib-comp.m4's gl_CONDITIONAL test (or the `if` around an
+# AC_LIBOBJ) rewritten against the substitutions rules_cc_autoconf exports.
+SRC_CONDITIONS = {
+    # The AC_LIBOBJ([calloc]) / ([malloc]) `if`s.
+    "GL_COND_OBJ_CALLOC": "REPLACE_CALLOC_FOR_CALLOC_GNU || REPLACE_CALLOC_FOR_CALLOC_POSIX",
+    "GL_COND_OBJ_CLOSE": "REPLACE_CLOSE",
+    "GL_COND_OBJ_CLOSEDIR": "!_gl_have_closedir || REPLACE_CLOSEDIR",
+    "GL_COND_OBJ_DIRFD": "!ac_cv_func_dirfd || REPLACE_DIRFD",
+    "GL_COND_OBJ_DUP2": "REPLACE_DUP2",
+    "GL_COND_OBJ_ERROR": "COMPILE_ERROR_C==1",
+    "GL_COND_OBJ_FCLOSE": "REPLACE_FCLOSE",
+    "GL_COND_OBJ_FCNTL": "!ac_cv_func_fcntl || REPLACE_FCNTL",
+    # The fdatasync/fpurge/fsync/gettimeofday/qsort_r/raise/readdir/utime
+    # ports fill HAVE_* from the probe rather than a real AC_SUBST, so the
+    # subst spelling would land on the <hdr>_h defaults (always 1); test the
+    # probe itself, as gnulib-comp.m4 effectively does.
+    "GL_COND_OBJ_FDATASYNC": "!ac_cv_func_fdatasync || REPLACE_FDATASYNC",
+    "GL_COND_OBJ_FFLUSH": "REPLACE_FFLUSH",
+    # `if test $REPLACE_FOPEN = 1; then AC_LIBOBJ([fopen])`.
+    "GL_COND_OBJ_FOPEN": "REPLACE_FOPEN",
+    "GL_COND_OBJ_FPURGE": "!ac_cv_func_fpurge || REPLACE_FPURGE",
+    "GL_COND_OBJ_FREE": "REPLACE_FREE",
+    "GL_COND_OBJ_FSEEK": "REPLACE_FSEEK",
+    "GL_COND_OBJ_FSEEKO": "!gl_cv_func_fseeko || REPLACE_FSEEKO",
+    # `test $ac_cv_func___fseterr = no`; the port records the probe as a
+    # define, absent when it failed.
+    "GL_COND_OBJ_FSETERR": "!HAVE___FSETERR",
+    "GL_COND_OBJ_FSTAT": "REPLACE_FSTAT",
+    "GL_COND_OBJ_FSYNC": "!ac_cv_func_fsync",
+    "GL_COND_OBJ_FTELL": "REPLACE_FTELL",
+    "GL_COND_OBJ_FTELLO": "!gl_cv_func_ftello || REPLACE_FTELLO",
+    "GL_COND_OBJ_GETDTABLESIZE": "!ac_cv_func_getdtablesize || REPLACE_GETDTABLESIZE",
+    "GL_COND_OBJ_GETOPT": "REPLACE_GETOPT",
+    "GL_COND_OBJ_GETPROGNAME": "!ac_cv_func_getprogname || REPLACE_GETPROGNAME",
+    "GL_COND_OBJ_GETTIMEOFDAY": "!ac_cv_func_gettimeofday || REPLACE_GETTIMEOFDAY",
+    "GL_COND_OBJ_LSEEK": "REPLACE_LSEEK",
+    "GL_COND_OBJ_LSTAT": "REPLACE_LSTAT",
+    "GL_COND_OBJ_MALLOC": "REPLACE_MALLOC_FOR_MALLOC_GNU || REPLACE_MALLOC_FOR_MALLOC_POSIX",
+    "GL_COND_OBJ_MSVC_INVAL": "ac_cv_func__set_invalid_parameter_handler",
+    "GL_COND_OBJ_MSVC_NOTHROW": "ac_cv_func__set_invalid_parameter_handler",
+    "GL_COND_OBJ_OPEN": "REPLACE_OPEN",
+    "GL_COND_OBJ_OPENDIR": "!_gl_cv_func_opendir || REPLACE_OPENDIR",
+    "GL_COND_OBJ_PTHREAD_SIGMASK": "!ac_cv_func_pthread_sigmask || REPLACE_PTHREAD_SIGMASK",
+    # qsort.c when qsort_r is missing; qsort_r.c when it has the FreeBSD
+    # signature.
+    "GL_COND_OBJ_QSORT": "!ac_cv_func_qsort_r",
+    "GL_COND_OBJ_QSORT_R": "ac_cv_func_qsort_r && REPLACE_QSORT_R==1",
+    "GL_COND_OBJ_RAISE": "!ac_cv_func_raise || REPLACE_RAISE",
+    "GL_COND_OBJ_READDIR": "!ac_cv_func_readdir || REPLACE_READDIR",
+    "GL_COND_OBJ_READLINK": "!ac_cv_func_readlink || REPLACE_READLINK",
+    "GL_COND_OBJ_REALLOCARRAY": "!ac_cv_func_reallocarray || REPLACE_REALLOCARRAY",
+    # `!= 0`, and the port answers 2 on some platforms.
+    "GL_COND_OBJ_REALLOC_POSIX": "REPLACE_REALLOC_FOR_REALLOC_POSIX",
+    "GL_COND_OBJ_SIGACTION": "!ac_cv_func_sigaction",
+    "GL_COND_OBJ_SIGPROCMASK": "ac_cv_subst_HAVE_POSIX_SIGNALBLOCKING==0",
+    "GL_COND_OBJ_STAT": "REPLACE_STAT",
+    "GL_COND_OBJ_STDIO_CONSOLESAFE": "ac_cv_subst_USES_MSVCRT==1",
+    "GL_COND_OBJ_STDIO_READ": "REPLACE_STDIO_READ_FUNCS",
+    "GL_COND_OBJ_STDIO_WRITE": "REPLACE_STDIO_WRITE_FUNCS",
+    "GL_COND_OBJ_STPCPY": "!ac_cv_func_stpcpy || REPLACE_STPCPY",
+    "GL_COND_OBJ_STRERROR": "REPLACE_STRERROR",
+    "GL_COND_OBJ_STRERROR_OVERRIDE": "GL_GENERATE_ERRNO_H==true || !_gl_cv_func_strerror_0_works",
+    "GL_COND_OBJ_TIME": "REPLACE_TIME",
+    "GL_COND_OBJ_UTIME": "!ac_cv_func_utime || REPLACE_UTIME",
+    # The automake conditionals of lib/gnulib.mk lines 203, 311, 407, 1313.
+    "GL_CRC_X86_64_PCLMUL": "gl_cv_crc_pclmul",
+    "GL_GENERATE_BYTESWAP_H": "GL_GENERATE_BYTESWAP_H==true",
+    "GL_GENERATE_ENDIAN_H": "GL_GENERATE_ENDIAN_H==true",
+    "GL_GENERATE_STDBIT_H": STDBIT_H_CONDITION,
+}
+
+autoconf_srcs(
+    name = "lib/gzip_gnulib_conditional_srcs",
+    srcs = {
+        src: SRC_CONDITIONS[name]
+        for src, name in {
+            "lib/byteswap.c": "GL_GENERATE_BYTESWAP_H",
+            "lib/calloc.c": "GL_COND_OBJ_CALLOC",
+            "lib/close.c": "GL_COND_OBJ_CLOSE",
+            "lib/closedir.c": "GL_COND_OBJ_CLOSEDIR",
+            "lib/crc-x86_64-pclmul.c": "GL_CRC_X86_64_PCLMUL",
+            "lib/dirfd.c": "GL_COND_OBJ_DIRFD",
+            "lib/dup2.c": "GL_COND_OBJ_DUP2",
+            "lib/endian.c": "GL_GENERATE_ENDIAN_H",
+            "lib/error.c": "GL_COND_OBJ_ERROR",
+            "lib/fclose.c": "GL_COND_OBJ_FCLOSE",
+            "lib/fcntl.c": "GL_COND_OBJ_FCNTL",
+            "lib/fdatasync.c": "GL_COND_OBJ_FDATASYNC",
+            "lib/fflush.c": "GL_COND_OBJ_FFLUSH",
+            "lib/fopen.c": "GL_COND_OBJ_FOPEN",
+            "lib/fpurge.c": "GL_COND_OBJ_FPURGE",
+            "lib/free.c": "GL_COND_OBJ_FREE",
+            "lib/fseek.c": "GL_COND_OBJ_FSEEK",
+            "lib/fseeko.c": "GL_COND_OBJ_FSEEKO",
+            "lib/fseterr.c": "GL_COND_OBJ_FSETERR",
+            "lib/fstat.c": "GL_COND_OBJ_FSTAT",
+            "lib/fsync.c": "GL_COND_OBJ_FSYNC",
+            "lib/ftell.c": "GL_COND_OBJ_FTELL",
+            "lib/ftello.c": "GL_COND_OBJ_FTELLO",
+            "lib/getdtablesize.c": "GL_COND_OBJ_GETDTABLESIZE",
+            "lib/getopt.c": "GL_COND_OBJ_GETOPT",
+            "lib/getopt1.c": "GL_COND_OBJ_GETOPT",
+            "lib/getprogname.c": "GL_COND_OBJ_GETPROGNAME",
+            "lib/gettimeofday.c": "GL_COND_OBJ_GETTIMEOFDAY",
+            "lib/lseek.c": "GL_COND_OBJ_LSEEK",
+            "lib/lstat.c": "GL_COND_OBJ_LSTAT",
+            "lib/malloc.c": "GL_COND_OBJ_MALLOC",
+            "lib/msvc-inval.c": "GL_COND_OBJ_MSVC_INVAL",
+            "lib/msvc-nothrow.c": "GL_COND_OBJ_MSVC_NOTHROW",
+            "lib/open.c": "GL_COND_OBJ_OPEN",
+            "lib/opendir.c": "GL_COND_OBJ_OPENDIR",
+            "lib/pthread_sigmask.c": "GL_COND_OBJ_PTHREAD_SIGMASK",
+            "lib/qsort.c": "GL_COND_OBJ_QSORT",
+            "lib/qsort_r.c": "GL_COND_OBJ_QSORT_R",
+            "lib/raise.c": "GL_COND_OBJ_RAISE",
+            "lib/readdir.c": "GL_COND_OBJ_READDIR",
+            "lib/readlink.c": "GL_COND_OBJ_READLINK",
+            "lib/realloc.c": "GL_COND_OBJ_REALLOC_POSIX",
+            "lib/reallocarray.c": "GL_COND_OBJ_REALLOCARRAY",
+            "lib/sigaction.c": "GL_COND_OBJ_SIGACTION",
+            "lib/sigprocmask.c": "GL_COND_OBJ_SIGPROCMASK",
+            "lib/stat.c": "GL_COND_OBJ_STAT",
+            "lib/stdc_memreverse8u.c": "GL_GENERATE_STDBIT_H",
+            "lib/stdio-consolesafe.c": "GL_COND_OBJ_STDIO_CONSOLESAFE",
+            "lib/stdio-read.c": "GL_COND_OBJ_STDIO_READ",
+            "lib/stdio-write.c": "GL_COND_OBJ_STDIO_WRITE",
+            "lib/stpcpy.c": "GL_COND_OBJ_STPCPY",
+            "lib/strerror-override.c": "GL_COND_OBJ_STRERROR_OVERRIDE",
+            "lib/strerror.c": "GL_COND_OBJ_STRERROR",
+            "lib/time.c": "GL_COND_OBJ_TIME",
+            "lib/utime.c": "GL_COND_OBJ_UTIME",
+        }.items()
+    },
+    defaults = True,
+    naming = "per_target",
+    deps = [":autoconf"],
+)
+
+# lib/gnulib.mk's unconditional `libgzip_a_SOURCES`.
+LIBGZIP_GNULIB_SRCS = [
+    "lib/basename-lgpl.c",
+    "lib/c-ctype.c",
+    "lib/cloexec.c",
+    "lib/cpu-supports.c",
+    "lib/crc.c",
+    "lib/dirname-lgpl.c",
+    "lib/exitfail.c",
+    "lib/fd-hook.c",
+    "lib/freading.c",
+    "lib/gettime.c",
+    "lib/ialloc.c",
+    "lib/issymlink.c",
+    "lib/malloca.c",
+    "lib/memeq.c",
+    "lib/quotearg.c",
+    "lib/savedir.c",
+    "lib/sig-handler.c",
+    "lib/stat-time.c",
+    "lib/stdlib.c",
+    "lib/stdopen.c",
+    "lib/streq.c",
+    "lib/stripslash.c",
+    "lib/strnul.c",
+    "lib/timespec.c",
+    "lib/unistd.c",
+    "lib/utimens.c",
+    "lib/xalloc-die.c",
+    "lib/xmalloc.c",
+    "lib/yesno.c",
+]
+
+# `-w` silences every warning the port would otherwise inherit from
+# upstream's -Wall-heavy developer CFLAGS; --enable-gcc-warnings itself is
+# not modeled (see the skipped-macros note at the end of the file).
+COPTS = ["-w"]
+
+LOCAL_DEFINES = ["HAVE_CONFIG_H"]
+
+# Platform note.  Upstream builds on Windows only under mingw or cygwin
+# (tailor.h lines 99-113), and the registry's Windows toolchains are
+# MSVC-based, which gnulib's mingw branches do not compile under.  The one
+# source gnulib compiles only there, stat-w32.c (the mingw arm of
+# GL_COND_OBJ_FSTAT / GL_COND_OBJ_STAT), is therefore not carried, and the
+# presubmit matrix leaves Windows out for the same reason.
+#
+# lib/libgzip.a (lib/Makefile.am via lib/gnulib.mk).
+cc_library(
+    name = "lib/gzip",
+    srcs = LIBGZIP_GNULIB_SRCS + [
+        ":lib/gzip_gnulib_conditional_srcs",
+    ],
+    copts = COPTS,
+    implementation_deps = [":lib/gzip_private_headers"],
+    local_defines = LOCAL_DEFINES,
+)
+
+alias(
+    name = "libgzip",
+    actual = ":lib/gzip",
+)
+
+# Makefile.am line 65: gzip_LDADD += $(CLOCK_TIME_LIB) $(FDATASYNC_LIB).
+autoconf_linkopts(
+    name = "linkopts",
+    vars = [
+        "CLOCK_TIME_LIB",
+        "FDATASYNC_LIB",
+    ],
+    deps = [":autoconf"],
+)
+
+# Makefile.am lines 71-87: version.c and version.h, generated from
+# $(PACKAGE_VERSION).  The template is written here and rendered through the
+# same results as config.h, so `gzip --version` and `PACKAGE_VERSION` cannot
+# disagree; the substituted value is the quoted C literal.
+write_file(
+    name = "version_c_in",
+    out = "version.c.in",
+    content = [
+        "#include <config.h>",
+        "#include \"version.h\"",
+        "char const *Version = @PACKAGE_VERSION@;",
+        "",
+    ],
+    newline = "unix",
+)
+
+autoconf_hdr(
+    name = "version_c",
+    out = "version.c",
+    mode = "subst",
+    template = ":version_c_in",
+    deps = [":autoconf"],
+)
+
+write_file(
+    name = "version_h",
+    out = "version.h",
+    content = [
+        "extern char const *Version;",
+        "",
+    ],
+    newline = "unix",
+)
+
+# Makefile.am lines 55-69: bin_PROGRAMS = gzip.
+cc_binary(
+    name = "gzip",
+    srcs = [
+        "bits.c",
+        "deflate.c",
+        "deflate.h",
+        "gzip.c",
+        "gzip.h",
+        "inflate.c",
+        "lzw.h",
+        "revision.h",
+        "tailor.h",
+        "trees.c",
+        "unlzh.c",
+        "unlzw.c",
+        "unpack.c",
+        "unzip.c",
+        "util.c",
+        "zip.c",
+        ":version_c",
+        ":version_h",
+    ] + select({
+        ":dfltcc_enabled": ["dfltcc.c"],
+        "//conditions:default": [],
+    }),
+    copts = COPTS,
+    local_defines = LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lib/gzip_private_headers",
+        ":libgzip",
+        ":linkopts",
+    ],
+)
+
+# Makefile.am lines 56-57 and 89-102: bin_SCRIPTS, each a `.in` template
+# with @GREP@ and @VERSION@ filled in.  The `/bin/sh` -> $(SHELL) and
+# `'gzip'` -> $(GZIP_TRANSFORMED) edits are identities here: no
+# --program-transform-name, and every platform this builds on has /bin/sh.
+# zless and zmore are generated regardless of whether a pager is installed
+# on the build machine (configure's AC_CHECK_PROG([LESS]) / ([MORE])); they
+# look for it at run time anyway.
+#
+# The scripts exec `gzip`, `zdiff` and `zgrep` by bare name, so like the
+# installed copies they need this package's programs on PATH.
+#
+# Makefile.am line 96 substitutes the bare $(VERSION), but the VERSION result
+# here is the quoted C literal, `"1.15"`.  Each template mentions @VERSION@
+# exactly once, inside its `version=` string; wrapping the placeholder in the
+# quote character that string uses turns the literal's own quotes into shell
+# string concatenation (`"gunzip (gzip) ""1.15""..."`, `'zgrep (gzip) '"1.15"'...'`),
+# so the shell sees the same text a `make`-built script has.
+SCRIPTS = {
+    "gunzip": '"',
+    "gzexe": "'",
+    "zcat": '"',
+    "zcmp": '"',
+    "zdiff": '"',
+    "zegrep": None,
+    "zfgrep": None,
+    "zforce": '"',
+    "zgrep": "'",
+    "zless": '"',
+    "zmore": '"',
+    "znew": '"',
+}
+
+[
+    autoconf_hdr(
+        name = "{}_script".format(script),
+        out = "_scripts/{}".format(script),
+        mode = "subst",
+        substitutions = {"@VERSION@": quote + "@VERSION@" + quote} if quote else {},
+        template = "{}.in".format(script),
+        deps = [":autoconf"],
+    )
+    for script, quote in SCRIPTS.items()
+]
+
+[
+    copy_file(
+        name = script,
+        src = ":{}_script".format(script),
+        out = "bin/{}".format(script),
+        is_executable = True,
+        visibility = ["//visibility:public"],
+    )
+    for script in SCRIPTS
+]
+
+# Everything `make check` finds on PATH in the build tree, in
+# tests/Makefile.am's `built_programs` order; the test runner stages them.
+filegroup(
+    name = "programs",
+    srcs = [":gzip"] + [":{}".format(script) for script in SCRIPTS],
+    visibility = ["//tests:__pkg__"],
+)
+
+# Skipped macros (no Bazel equivalent needed):
+#
+# configure.ac:
+#   AC_ARG_ENABLE([gcc-warnings]) (lines 99-117, 127-206) - the port silences
+#     every warning via COPTS instead, so the -W flag battery, `lint` and
+#     GNULIB_PORTCHECK have no effect.
+#   AC_CHECK_PROG([LESS]) / ([MORE]) (lines 64-67) - only select which pager
+#     wrappers get installed; both are generated here.
+#   AC_CHECK_TOOL([NM]), gzip_cv_underline, ASCPPPOST/ASCPPFLAGS and the
+#     match.S assembler probe (lines 68, 217-252) - lib/match.c only carries
+#     i386 and m68k assembly, so on every platform this module builds for
+#     the probe fails, ASMV stays undefined and the C longest_match is used,
+#     exactly as a native configure run concludes.
+#   AC_PROG_LN_S, AC_PROG_SHELL, program_transform_name (lines 69-70,
+#     254-263) - installation details.
+#   gl_EARLY / gl_INIT (lines 72, 74) - expanded by GNULIB_M4_DEPS and the
+#     module indicators above.
+#   AC_CONFIG_FILES / AC_OUTPUT (lines 258-259) - the Makefile.in ->
+#     Makefile expansion has no analogue here.
+#
+# lib/gnulib.mk:
+#   The crc-sliceby8.h rule (lines 282-296) regenerates the table with a
+#     native `crc-generate-table`; the tarball ships the result and it is
+#     used as is.

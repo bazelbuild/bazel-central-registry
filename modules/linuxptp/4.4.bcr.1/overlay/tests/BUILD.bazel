@@ -1,0 +1,57 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+PRG = [
+    "ptp4l",
+    "nsm",
+    "pmc",
+    "phc2sys",
+    "hwstamp_ctl",
+    "phc_ctl",
+    "timemaster",
+    "ts2phc",
+    "tz2alt",
+]
+
+[
+    genrule(
+        name = bin + "_version",
+        outs = [bin + "_version.txt"],
+        cmd = "$(execpath //:" + bin + ") -v > $@",
+        tools = ["//:" + bin],
+    )
+    for bin in PRG
+]
+
+write_file(
+    name = "version_test_sh",
+    out = "version_test.sh",
+    content = """\
+#!/bin/sh
+set -e
+
+fail=0
+for f in "$@"; do
+    if [ ! -s "$f" ]; then
+        echo "FAIL: $f is empty"
+        fail=1
+    fi
+done
+
+if [ "$fail" -ne 0 ]; then
+    exit 1
+fi
+""".splitlines(),
+    is_executable = True,
+    newline = "unix",
+)
+
+[
+    sh_test(
+        name = bin + "_version_test",
+        srcs = ["version_test.sh"],
+        args = ["$(rootpath :" + bin + "_version)"],
+        data = [":" + bin + "_version"],
+    )
+    for bin in PRG
+]
