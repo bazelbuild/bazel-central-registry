@@ -1,0 +1,156 @@
+module(
+    name = "isaacsim",
+    version = "6.0.0",
+    # 9, not lower: the omni_physics interface headers only exist as a packman
+    # .7z, and native .7z extraction is a Bazel 9 feature (bazelbuild/bazel@93cd97e).
+    bazel_compatibility = [">=9.0.0"],
+    compatibility_level = 6,
+)
+
+# omni.kit.loop-isaac's run loop formats its setting paths with fmt, the same
+# library Kit's own packman dependencies pull in.
+bazel_dep(name = "fmt", version = "11.2.0.bcr.1")
+bazel_dep(name = "gsl", version = "4.0.0.bcr.1")
+bazel_dep(name = "package_metadata", version = "0.0.13")
+bazel_dep(name = "onetbb", version = "2022.2.0")
+bazel_dep(name = "openusd", version = "25.11.bcr.3")
+bazel_dep(name = "physx", version = "5.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# isaacsim.sensors.rtx parses its lidar configuration with RapidJSON, the same
+# library Isaac Sim's packman deps pull in.
+bazel_dep(name = "rapidjson", version = "1.1.0.bcr.20250205")
+
+# The pybind11 the Kit SDK builds against. Modules that disagree on this cannot
+# hand registered types to each other, and every other module in the process is
+# NVIDIA's, built against this one -- so the version is pinned, not merely
+# recent.
+bazel_dep(name = "pybind11_bazel", version = "2.11.1.bzl.3")
+bazel_dep(name = "rules_cc", version = "0.2.9")
+
+# The CUDA the native extensions compile against comes from rules_cuda, and
+# which one is the *root* module's decision: rules_cuda reads toolkit tags from
+# the root module only (cuda/extensions.bzl: "Toolchain configuration is only
+# allowed in the root module"), falling back to a local install. A consumer
+# wanting a hermetic one declares:
+#
+#     cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+#     cuda.redist_json(name = "cuda_redist", version = "13.1.1")
+#     cuda.toolkit(name = "cuda")
+#     use_repo(cuda, "cuda")
+#
+# Isaac Sim 6.0.0 itself is built against 12.8, and that works here too, but
+# 12.8 refuses a host gcc newer than 14 -- current distributions ship 15. The
+# CUDA runtime each plugin links is statically its own, so the version is the
+# consuming build's to pick.
+#
+# See //tests/MODULE.bazel, which does exactly that.
+bazel_dep(name = "rules_cuda", version = "0.3.0")
+bazel_dep(name = "rules_python", version = "2.2.0")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+# For the two scripts that regenerate the GENERATED files under //bazel. They
+# are the only Python this module runs itself -- what runs inside Kit is the
+# CPython 3.12 the kernel package bundles -- and they should not depend on
+# whatever `python3` the host happens to have.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.12")
+
+# Named explicitly so the overlay can refer to the concrete CPython 3.12 repo
+# when needed. Kit embeds CPython 3.12, and the local generators should stay
+# pinned to that minor version instead of following a root module default.
+use_repo(python, "python_3_12")
+
+# Isaac Sim is an application on top of NVIDIA Omniverse Kit, and Kit's kernel
+# and its `omni.*` extensions ship only as prebuilt binaries -- Isaac Sim's own
+# build downloads exactly the same packages. Both repositories are lazy:
+# building @isaacsim//:extensions, the Apache-2.0 half, fetches neither.
+cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+use_repo(cuda, "cuda")
+
+# @pybind11's Python comes from whichever toolchain the root module made
+# current, and Kit embeds CPython 3.12 and refuses a module built against any
+# other minor version. A root module consuming this one therefore has to make
+# 3.12 the default, the way //tests/MODULE.bazel does.
+pybind11 = use_extension("@pybind11_bazel//:internal_configure.bzl", "internal_configure_extension")
+use_repo(pybind11, "pybind11")
+
+kit = use_extension("//bazel:kit.bzl", "kit")
+
+# The kernel version Isaac Sim 6.0.0 pins in deps/kit-sdk.packman.xml.
+kit.kernel(version = "110.1.1+production")
+
+# The extension closure the stock app resolves to, pinned by sha256 so nothing
+# is fetched at run time. See //bazel/README.md for how to regenerate it.
+kit.extensions(lock = "//bazel:exts_lock.json")
+
+# The wheels isaacsim.asset.importer.urdf expects vendored in its own
+# pip_prebundle directory. Open source, from PyPI, pinned the same way.
+kit.prebundle(
+    name = "isaacsim_pip_urdf_usd",
+    lock = "//bazel:pip_urdf_usd_lock.json",
+)
+
+# The Newton physics stack isaacsim.pip.newton vendors: MuJoCo, Newton itself
+# and what they pull in. Open source, from PyPI, pinned the same way -- but
+# unlike the urdf bundle several of these publish per-platform wheels, so the
+# lock names the platform each one is for.
+kit.prebundle(
+    name = "isaacsim_pip_newton",
+    lock = "//bazel:pip_newton_lock.json",
+)
+
+# The physics interface headers the native extensions compile against. Headers
+# only -- omni.physx itself is one of the pinned prebuilts Kit loads.
+kit.sdk_headers(
+    name = "isaacsim_omni_physics",
+    package = "omni_physics",
+    sha256 = {
+        "manylinux_2_35_x86_64": "6a03a9f41f9f0833f016e15ddaeb63cb7b72570707fb3c768d8afc7ab37d8237",
+    },
+    version = "110.1.11-52655635-release_omni_110.1-943e727b-{abi}",
+)
+
+# The RTX sensor packages. Headers for the deprecated C++ extension, and a
+# Python payload that isaacsim.sensors.experimental.rtx vendors into itself --
+# NVIDIA-proprietary, with no public source anywhere, so they are pinned the
+# same way omni_physics is.
+kit.sdk_headers(
+    name = "isaacsim_generic_model_output",
+    archive = "zip",
+    package = "generic-model-output",
+    sha256 = {
+        "manylinux_2_35_x86_64": "4b94c006fb8d3a6bc044a3a009009e03d6953db35a4d838f8d7428e078dd5a85",
+    },
+    version = "110.1.1+production.305458.6312fa25.gl.{abi}.release",
+)
+kit.sdk_headers(
+    name = "isaacsim_sensor_checker",
+    archive = "zip",
+    package = "sensor-checker",
+    sha256 = {
+        "manylinux_2_35_x86_64": "5fbfcb17a3e429531b592979bda3d937f4b54763e6f5ea6dd9222b8717b0bce7",
+    },
+    version = "110.1.1+production.305458.6312fa25.gl.{abi}.release",
+)
+use_repo(
+    kit,
+    "isaacsim_generic_model_output",
+    "isaacsim_kit_exts",
+    # isaacsim.util.debug_draw is not in the source release, and it publishes
+    # both headers and a static archive that isaacsim.sensors.physx links.
+    "isaacsim_kit_exts_isaacsim_util_debug_draw",
+    # The prebuilt packages whose shared libraries the native extensions link
+    # against by name; everything else Kit loads without being named.
+    "isaacsim_kit_exts_omni_usd_core",
+    "isaacsim_kit_exts_omni_usd_libs",
+    # usdrt.scenegraph publishes interface headers the source of other
+    # extensions includes.
+    "isaacsim_kit_exts_omni_usd_schema_physx",
+    "isaacsim_kit_exts_usdrt_scenegraph",
+    "isaacsim_kit_kernel",
+    "isaacsim_omni_physics",
+    "isaacsim_pip_newton",
+    "isaacsim_pip_urdf_usd",
+    "isaacsim_sensor_checker",
+)

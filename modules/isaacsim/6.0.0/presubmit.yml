@@ -1,0 +1,78 @@
+# Isaac Sim runs on the closed Omniverse Kit runtime, which is published for
+# Linux with glibc >= 2.35 (manylinux_2_35) and needs an RTX GPU to render, so
+# the matrix is Ubuntu 22.04+ and the full headless launch test
+# (//:isaacsim_launch_test, ~8 GB of pinned prebuilts plus a GPU) is `manual`.
+# What CI covers is everything up to that: the Apache-2.0 extensions build, and
+# Kit itself starts on the kernel and reads every one of them.
+matrix:
+  platform:
+    - ubuntu2204
+    - ubuntu2404
+  bazel: [9.x, rolling]
+
+tasks:
+  verify_targets:
+    name: Build the source-built Isaac Sim extensions
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    # Two things this module cannot decide for itself, because both are read
+    # from the root module only -- and the root module here is the workspace
+    # this task synthesises, so they are written into it.
+    #
+    # CUDA: rules_cuda takes toolkit tags from the root module and otherwise
+    # falls back to a local install. The redistributables are downloaded and the
+    # runtime is linked statically, so no CUDA install and no driver is needed.
+    # 13.1 rather than the 12.8 Isaac Sim itself is built against: 12.8 refuses
+    # a host gcc newer than 14, which rules out current distributions, and the
+    # runtime each plugin links is its own.
+    #
+    # Python: Kit embeds CPython 3.12 and refuses to import a module built
+    # against another minor version, and @pybind11 follows whichever toolchain
+    # is current. Getting this wrong still compiles -- it fails at import time,
+    # inside Kit, which this task never reaches -- so it has to be pinned here
+    # rather than discovered.
+    shell_commands:
+      - |
+        cat >> MODULE.bazel <<'EOF'
+        bazel_dep(name = "rules_cuda", version = "0.3.0")
+        cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+        cuda.redist_json(name = "cuda_redist", version = "13.1.1")
+        cuda.toolkit(name = "cuda")
+        use_repo(cuda, "cuda")
+
+        bazel_dep(name = "rules_python", version = "2.2.0")
+        python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+        python.defaults(python_version = "3.12")
+        python.toolchain(python_version = "3.12")
+        EOF
+    # isaacsim.core.nodes has a CUDA translation unit, and rules_cuda only hands
+    # nvcc the CUDA headers as system includes with this on.
+    build_flags:
+      - "--features=external_include_paths"
+    build_targets:
+      - "@isaacsim//:extensions"
+
+bcr_test_module:
+  module_path: tests
+  matrix:
+    platform:
+      - ubuntu2204
+      - ubuntu2404
+    bazel: [9.x, rolling]
+  tasks:
+    run_test_module:
+      name: Run test module
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      # isaacsim.core.nodes has a CUDA translation unit, and rules_cuda only
+      # hands nvcc the CUDA headers as system includes with this on. Without it
+      # a host glibc new enough to declare the C23 rsqrt/cospi family collides
+      # with CUDA's own declarations of them.
+      build_flags:
+        - "--features=external_include_paths"
+      test_flags:
+        - "--features=external_include_paths"
+      build_targets:
+        - "//..."
+      test_targets:
+        - "//..."

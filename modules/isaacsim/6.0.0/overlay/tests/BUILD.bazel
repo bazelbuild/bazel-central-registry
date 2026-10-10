@@ -1,0 +1,60 @@
+# A downstream consumer of @isaacsim, which is what makes these tests worth
+# having in addition to the module's own: they exercise the public API from
+# another repository, where the labels inside //bazel:defs.bzl have to resolve
+# through this module's repo mapping rather than Isaac Sim's own.
+
+load("@isaacsim//bazel:defs.bzl", "executable_file", "isaacsim_kit_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# The Apache-2.0 half on its own: no Kit, no downloads, no GPU. Checks the
+# extensions were laid out the way premake lays them out, which is the part that
+# silently produces an extension Kit loads but cannot import.
+executable_file(
+    name = "extension_layout_test_script",
+    src = "extension_layout_test.sh",
+    out = "extension_layout_test_executable.sh",
+)
+
+sh_test(
+    name = "extension_layout_test",
+    size = "small",
+    srcs = [":extension_layout_test_script"],
+    args = ["$(rlocationpath @isaacsim//:extensions)"],
+    data = ["@isaacsim//:extensions"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)
+
+# Kit, on the kernel alone, reading the extensions built from source. Downloads
+# the ~80 MB kernel; still needs no GPU and none of the closed extension
+# closure.
+isaacsim_kit_test(
+    name = "kit_discovers_extensions_test",
+    size = "medium",
+    app = "@isaacsim//bazel:kernel_only.kit",
+    expect_output = "isaacsim.core.version",
+    kit_args = [
+        "--no-window",
+        "--list-exts",
+    ],
+    merge_configs = [],
+    prebuilts = False,
+    target_compatible_with = ["@platforms//os:linux"],
+)
+
+# Isaac Sim itself, headless. Needs an RTX GPU and the full ~8 GB closed
+# closure, so shared CI cannot run it -- but it is the test that answers "does
+# Isaac Sim start".
+#   bazel test //:isaacsim_launch_test
+isaacsim_kit_test(
+    name = "isaacsim_launch_test",
+    size = "enormous",
+    exec_script = "@isaacsim//bazel:launch_smoke.py",
+    expect_output = "ISAACSIM_LAUNCH_OK",
+    kit_args = ["--no-window"],
+    reject_output = "[Error]",
+    tags = [
+        "manual",
+        "requires-gpu",
+    ],
+    target_compatible_with = ["@platforms//os:linux"],
+)
