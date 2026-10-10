@@ -77,7 +77,7 @@ links `@sdl3` as a consumer links it.
    EOF search with `SDL_strnstr`, delete the patch as above.
 4. Set the new version in `MODULE.bazel` and in `overlay/MODULE.bazel`. Keep
    the two files identical, because `bcr_validation` compares them.
-5. Change the `release-3.4.16` links in `overlay/` to the new release tag.
+5. Change the `release-3.4.18` links in `overlay/` to the new release tag.
    Correct each line anchor that moved.
 6. Update the hashes with `bazel run //tools:update_integrity -- sdl3
    --version=<new>`. Then start the presubmit matrix.
