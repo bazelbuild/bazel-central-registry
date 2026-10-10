@@ -1,0 +1,439 @@
+"""gas - the GNU assembler (gas/Makefile.am)."""
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:platforms.bzl", "select_default", "select_field", "select_flag_defines", "select_gas_header", "select_triple")
+load("//:rules.bzl", "flag_defines", "install_dirs", "policy_defines")
+load(":targets.bzl", "GAS")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([gas], [BFD_VERSION]) (configure.ac:21).
+package_info(
+    name = "package",
+    package_name = "gas",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "gas",
+    package_url = "",
+    package_version = "2.47",
+)
+
+# The prologue GAS_CHECK_DECL_NEEDED compiles its probes after
+# (configure.ac:942-951), with HAVE_MEMORY_H and HAVE_UNISTD_H already
+# settled by then.
+GAS_TEST_HEADERS = """\
+#ifdef HAVE_MEMORY_H
+#include <memory.h>
+#endif
+#include <string.h>
+#include <stdlib.h>
+#ifdef HAVE_UNISTD_H
+#include <unistd.h>
+#endif
+"""
+
+autoconf(
+    name = "autoconf",
+    checks = [
+                 # LT_INIT (configure.ac:34).
+                 checks.AC_DEFINE(
+                     "LT_OBJDIR",
+                     value = '".libs/"',
+                 ),
+             ] +
+             # AC_PLUGINS, through ACX_LARGEFILE (configure.ac:35).
+             macros.AC_CHECK_HEADERS([
+                 "dlfcn.h",
+                 "windows.h",
+             ]) +
+             # --enable-checking (configure.ac:36-47).
+             select_flag_defines(
+                 [("enable_checking", "ENABLE_CHECKING")],
+                 if_false = None,
+             ) +
+             # --enable-leak-check (configure.ac:48-55).
+             select({
+                 "//:_enable_leak_check_no": [checks.AC_DEFINE("ENABLE_LEAK_CHECK", "0")],
+                 "//:_enable_leak_check_yes": [checks.AC_DEFINE("ENABLE_LEAK_CHECK", "1")],
+                 "//conditions:default": [checks.AC_DEFINE("ENABLE_LEAK_CHECK", "BFD_ASAN")],
+             }) +
+             # --enable-default-compressed-debug-sections-algorithm (configure.ac:69-75).
+             select({
+                 "//:_enable_default_compressed_debug_sections_algorithm_zstd": [checks.AC_DEFINE("DEFAULT_COMPRESSED_DEBUG_ALGORITHM", "COMPRESS_DEBUG_ZSTD")],
+                 "//conditions:default": [checks.AC_DEFINE("DEFAULT_COMPRESSED_DEBUG_ALGORITHM", "COMPRESS_DEBUG_GABI_ZLIB")],
+             }) +
+             # configure.ac:77-154 and :527-575, the yes/no assembler policies.
+             select_flag_defines([
+                 ("enable_x86_tls_check", "DEFAULT_X86_TLS_CHECK"),
+                 ("enable_elf_stt_common", "DEFAULT_GENERATE_ELF_STT_COMMON"),
+                 ("enable_default_sframe", "DEFAULT_SFRAME"),
+                 ("enable_generate_build_notes", "DEFAULT_GENERATE_BUILD_NOTES"),
+                 ("enable_mips_fix_loongson3_llsc", "DEFAULT_MIPS_FIX_LOONGSON3_LLSC"),
+                 ("enable_default_riscv_attribute", "DEFAULT_RISCV_ATTR"),
+             ]) +
+             # configure.ac:772.
+             macros.AC_CHECK_HEADERS([
+                 "memory.h",
+             ]) + macros.AC_CHECK_FUNCS(["strsignal"]) + [
+                 # AM_LC_MESSAGES (configure.ac:786).
+                 checks.AC_TRY_LINK(
+                     code = """\
+#include <locale.h>
+int main(void) { return LC_MESSAGES; }
+""",
+                     define = "HAVE_LC_MESSAGES",
+                 ),
+                 # GAS_WORKING_ASSERT (configure.ac:799).
+                 checks.AC_TRY_LINK(
+                     name = "gas_cv_assert_ok",
+                     code = """\
+#include <assert.h>
+#include <string.h>
+#include <stdio.h>
+int main(void) {
+/* check for requoting problems */
+static int a, b, c, d;
+static char *s;
+assert (!strcmp(s, "foo bar baz quux"));
+/* check for newline handling */
+assert (a == b
+        || c == d);
+  return 0;
+}
+""",
+                 ),
+                 checks.AC_DEFINE(
+                     "BROKEN_ASSERT",
+                     requires = ["!gas_cv_assert_ok"],
+                 ),
+                 # configure.ac:814-824.
+                 checks.AC_TRY_COMPILE(
+                     code = """\
+#include <unistd.h>
+int main(void) { extern int getopt (int, char *const*, const char *); return 0; }
+""",
+                     compile_defines = ["_GNU_SOURCE"],
+                     define = "HAVE_DECL_GETOPT",
+                 ),
+             ] + [
+                 # GAS_CHECK_DECL_NEEDED(environ) and (ffs) (configure.ac:826-827).
+                 check
+                 for symbol, typedef in [
+                     ("environ", "typedef char **f;"),
+                     ("ffs", "typedef int (*f)(int);"),
+                 ]
+                 for check in [
+                     checks.AC_TRY_LINK(
+                         name = "gas_cv_decl_needed_" + symbol,
+                         code = GAS_TEST_HEADERS + """\
+int main(void) {{
+{typedef}
+f x;
+x = (f) {symbol};
+  return x != 0;
+}}
+""".format(
+                             symbol = symbol,
+                             typedef = typedef,
+                         ),
+                         compile_defines = [
+                             "_GNU_SOURCE",
+                             "HAVE_MEMORY_H",
+                             "HAVE_UNISTD_H",
+                         ],
+                     ),
+                     checks.AC_DEFINE(
+                         "NEED_DECLARATION_" + symbol.upper(),
+                         requires = ["!gas_cv_decl_needed_" + symbol],
+                     ),
+                 ]
+             ] +
+             # configure.ac:829.
+             macros.AC_CHECK_DECLS(
+                 [
+                     "mempcpy",
+                     "stpcpy",
+                 ],
+                 compile_defines = ["_GNU_SOURCE"],
+                 includes = [
+                     "#include <stdio.h>",
+                     "#include <stdlib.h>",
+                     "#include <string.h>",
+                     "#include <strings.h>",
+                     "#include <unistd.h>",
+                 ],
+             ) +
+             # BFD_BINARY_FOPEN (configure.ac:831).
+             select({
+                 "@platforms//os:windows": [checks.AC_DEFINE("USE_BINARY_FOPEN", "1")],
+                 "//conditions:default": [],
+             }) +
+             # AC_ZSTD (configure.ac:835).
+             select_flag_defines(
+                 [("with_zstd", "HAVE_ZSTD")],
+                 if_false = None,
+             ) + [
+        # GAS_HAVE_SYS_STAT_TYPE_MEMBER (configure.ac:843-846).  The
+        # GAS_HAVE_TIME_TYPE_MEMBER(struct tm, tm_gmtoff) beside it is
+        # guarded by $ac_cv_header_time_h, which this configure.ac never
+        # sets, so upstream never runs it and HAVE_TM_GMTOFF stays undefined.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#define _BSD_SOURCE 1
+#include <sys/stat.h>
+int main(void) { struct stat avar; void* aref = (void*) &avar.st_mtim.tv_sec; return aref != 0; }
+""",
+            define = "HAVE_ST_MTIM_TV_SEC",
+        ),
+        checks.AC_TRY_COMPILE(
+            code = """\
+#define _BSD_SOURCE 1
+#include <sys/stat.h>
+int main(void) { struct stat avar; void* aref = (void*) &avar.st_mtim.tv_nsec; return aref != 0; }
+""",
+            define = "HAVE_ST_MTIM_TV_NSEC",
+        ),
+    ],
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+# The indirection headers config.status writes (configure.ac:1047-1057).
+[
+    write_file(
+        name = header.replace(".", "_").replace("-", "_"),
+        out = header,
+        content = select_gas_header(GAS, header),
+    )
+    for header in [
+        "targ-cpu.h",
+        "obj-format.h",
+        "targ-env.h",
+        "itbl-cpu.h",
+    ]
+]
+
+# -DLOCALEDIR (Makefile.am:358).
+install_dirs(
+    name = "dirs",
+    defines = ["LOCALEDIR"],
+    triple = select_triple(),
+)
+
+# --with-cpu (configure.ac:163-169) and the RISC-V --with-arch,
+# --with-isa-spec and --with-priv-spec (configure.ac:486-511): defined only
+# when given, the latter only for a RISC-V assembler.
+flag_defines(
+    name = "with_cpu",
+    flags = {"//:with_cpu": "TARGET_WITH_CPU"},
+)
+
+flag_defines(
+    name = "with_riscv",
+    enabled = select_field(
+        (GAS,),
+        "riscv",
+    ),
+    flags = {
+        "//:with_arch": "DEFAULT_RISCV_ARCH_WITH_EXT",
+        "//:with_isa_spec": "DEFAULT_RISCV_ISA_SPEC",
+        "//:with_priv_spec": "DEFAULT_RISCV_PRIV_SPEC",
+    },
+)
+
+# The defines whose default the target decides, under their flags:
+# --enable-x86-used-note (configure.ac:247-252, :548-553) and
+# --enable-compressed-debug-sections (configure.tgt:470-477, :566-568).
+# The yes/no/auto options whose default the target decides.
+# --enable-x86-used-note (configure.ac:132-142, :247-252).
+policy_defines(
+    name = "x86_used_note",
+    auto = ["auto"],
+    default = select_default(
+        (GAS,),
+        "x86_used_note",
+    ),
+    flag = "//:enable_x86_used_note",
+    values = {
+        "False": ["DEFAULT_X86_USED_NOTE=0"],
+        "True": ["DEFAULT_X86_USED_NOTE=1"],
+        "no": ["DEFAULT_X86_USED_NOTE=0"],
+        "yes": ["DEFAULT_X86_USED_NOTE=1"],
+    },
+)
+
+# --enable-compressed-debug-sections for gas (configure.ac:59-67, :788-790,
+# configure.tgt:470-477): "" and "ld" leave gas at its target default.
+policy_defines(
+    name = "compressed_debug",
+    auto = [
+        "",
+        "ld",
+    ],
+    default = select_default(
+        (GAS,),
+        "compress_debug",
+    ),
+    flag = "//:enable_compressed_debug_sections",
+    values = {
+        "False": [],
+        "True": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+        "all": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+        "gas": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+        "gas,ld": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+        "no": [],
+        "none": [],
+        "yes": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+    },
+)
+
+# GAS_CFILES (Makefile.am:52-89).
+GAS_SRCS = [
+    "app.c",
+    "as.c",
+    "atof-generic.c",
+    "codeview.c",
+    "compress-debug.c",
+    "cond.c",
+    "depend.c",
+    "dwarf2dbg.c",
+    "dw2gencfi.c",
+    "ecoff.c",
+    "ehopt.c",
+    "expr.c",
+    "flonum-copy.c",
+    "flonum-konst.c",
+    "flonum-mult.c",
+    "frags.c",
+    "gen-sframe.c",
+    "ginsn.c",
+    "hash.c",
+    "input-file.c",
+    "input-scrub.c",
+    "listing.c",
+    "literal.c",
+    "macro.c",
+    "messages.c",
+    "output-file.c",
+    "read.c",
+    "remap.c",
+    "sb.c",
+    "scfidw2gen.c",
+    "scfi.c",
+    "sframe-opt.c",
+    "stabs.c",
+    "subsegs.c",
+    "symbols.c",
+    "write.c",
+]
+
+# The textually included pieces, and the shipped yacc/lex outputs the
+# wrappers include.
+cc_library(
+    name = "textual",
+    copts = COPTS,
+    textual_hdrs = [
+        "config/atof-vax.c",
+        "config/bfin-lex.c",
+        "config/loongarch-lex.c",
+        "config/obj-coff-seh.c",
+        "config/obj-coff-seh-shared.c",
+        "config/obj-elf.c",
+        "config/tc-aarch64-ginsn.c",
+        "config/tc-i386-ginsn.c",
+        "config/tc-i386-intel.c",
+        "config/tc-score7.c",
+        "itbl-lex.c",
+    ],
+)
+
+# as-new, installed as `as`.  AM_CPPFLAGS (Makefile.am:356-358) is
+# `-I. -I$(srcdir) -I../bfd -I$(srcdir)/config -I$(INCDIR) -I$(srcdir)/..
+# -I$(BFDDIR)`: the generated headers and config/ through `includes`, the
+# tree root (for "opcodes/i386-init.h") through Bazel's own repository
+# include.
+cc_binary(
+    name = "as",
+    srcs = GAS_SRCS + glob([
+        "*.h",
+        "config/*.h",
+    ]) + [
+        "itbl-cpu.h",
+        "obj-format.h",
+        "targ-cpu.h",
+        "targ-env.h",
+    ] +
+    # $(TARG_CPU_O) $(OBJ_FORMAT_O) $(ATOF_TARG_O) $(extra_objects)
+    # (Makefile.am:364-366).
+    select_field(
+        (GAS,),
+        "srcs",
+    ),
+    copts = COPTS,
+    includes = [
+        ".",
+        "config",
+    ],
+    # The target defines configure.ac puts in config.h (TARGET_*,
+    # DEFAULT_ARCH, EMULATIONS, ...), the two policy defaults, and the
+    # --with-cpu family (configure.ac:163-169 and :486-511).
+    local_defines = ["HAVE_CONFIG_H"] + select_field(
+        (GAS,),
+        "defines",
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":compressed_debug",
+        ":x86_used_note",
+        ":config",
+        ":dirs",
+        ":textual",
+        ":with_cpu",
+        ":with_riscv",
+        "//bfd",
+        "//include",
+        "//libiberty",
+        # $(OPCODES_LIB): only the targets whose assembler uses the
+        # disassembler tables link it; Bazel drops the archive when unused.
+        "//opcodes",
+        "@zlib",
+    ] + select({
+        "//:_with_zstd": ["@zstd"],
+        "//conditions:default": [],
+    }),
+)

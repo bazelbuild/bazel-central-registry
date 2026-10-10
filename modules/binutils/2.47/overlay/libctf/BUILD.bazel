@@ -1,0 +1,265 @@
+"""libctf - the Compact Type Format library (libctf/Makefile.am)."""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:platforms.bzl", "select_bfd_elf", "select_flag_defines")
+load("//bfd:targets.bzl", "BFD")
+
+package(default_visibility = ["//:__subpackages__"])
+
+# libctf/configure.ac:84-101: whether libbfd carries the ELF backend.
+HAVE_BFD_ELF = select_bfd_elf(BFD)
+
+# AM_CFLAGS (Makefile.am:44) asks for -std=gnu99 on top of the warnings.
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": [
+        "-w",
+        "-std=gnu99",
+    ],
+})
+
+# AC_INIT([libctf], [1.2.0]) (configure.ac:21).
+package_info(
+    name = "package",
+    package_name = "libctf",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "libctf",
+    package_url = "",
+    package_version = "1.2.0",
+)
+
+QSORT_R_GNU = """\
+#undef qsort_r
+#include <stdlib.h>
+void qsort_r (void *, size_t, size_t,
+              int (*) (void const *, void const *, void *), void *);
+void (*p) (void *, size_t, size_t,
+           int (*) (void const *, void const *, void *), void *) = qsort_r;
+int main(void) { return p != 0; }
+"""
+
+QSORT_R_BSD = """\
+#undef qsort_r
+#include <stdlib.h>
+void qsort_r (void *, size_t, size_t, void *,
+              int (*) (void *, void const *, void const *));
+void (*p) (void *, size_t, size_t, void *,
+           int (*) (void *, void const *, void const *)) = qsort_r;
+int main(void) { return p != 0; }
+"""
+
+autoconf(
+    name = "autoconf",
+    checks = [
+             ] + macros.AC_CHECK_HEADERS([
+                 "dlfcn.h",
+                 "memory.h",
+                 "sys/param.h",
+             ]) + [
+                 # LT_INIT (configure.ac:39).
+                 checks.AC_DEFINE(
+                     "LT_OBJDIR",
+                     value = '".libs/"',
+                 ),
+                 # GCC_AC_FUNC_MMAP (configure.ac:59): AC_FUNC_MMAP's run test, as the
+                 # host answers it natively (Solaris 11.4, where configure forces it
+                 # off, is not a host here).
+                 checks.AC_CHECK_HEADER(
+                     "sys/mman.h",
+                     define = "HAVE_SYS_MMAN_H",
+                 ),
+                 checks.AC_CHECK_FUNC(
+                     "mmap",
+                     define = "HAVE_MMAP",
+                     requires = ["HAVE_SYS_MMAN_H"],
+                 ),
+             ] + macros.AC_CHECK_FUNCS(["getpagesize"]) +
+             # --enable-libctf-hash-debugging (configure.ac:64-68).
+             select_flag_defines(
+                 [("enable_libctf_hash_debugging", "ENABLE_LIBCTF_HASH_DEBUGGING")],
+                 if_false = None,
+             ) +
+    # configure.ac:104-110.
+    macros.AC_CHECK_HEADERS([
+        "byteswap.h",
+        "endian.h",
+        "valgrind/valgrind.h",
+    ]) + macros.AC_CHECK_FUNCS(["pread"]) + macros.AC_CHECK_DECLS(
+        [
+            "bswap_16",
+            "bswap_32",
+            "bswap_64",
+        ],
+        includes = ["#include <byteswap.h>"],
+    ) + macros.AC_CHECK_DECLS(
+        [
+            "asprintf",
+            "vasprintf",
+            "stpcpy",
+        ],
+        compile_defines = ["_GNU_SOURCE"],
+        includes = [
+            "#include <stdio.h>",
+            "#include <stdlib.h>",
+            "#include <string.h>",
+            "#include <strings.h>",
+            "#include <unistd.h>",
+        ],
+    ) +
+    # configure.ac:112-150, qsort_r and which argument order it takes.
+    macros.AC_CHECK_FUNCS([
+        "qsort_r",
+    ]) + [
+        checks.AC_TRY_LINK(
+            name = "ac_cv_libctf_qsort_r_gnu",
+            code = QSORT_R_GNU,
+            compile_defines = ["_GNU_SOURCE"],
+            requires = ["ac_cv_func_qsort_r"],
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_libctf_qsort_r_bsd",
+            code = QSORT_R_BSD,
+            compile_defines = ["_GNU_SOURCE"],
+            requires = [
+                "ac_cv_func_qsort_r",
+                "!ac_cv_libctf_qsort_r_gnu",
+            ],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_QSORT_R_ARG_LAST",
+            requires = ["ac_cv_libctf_qsort_r_gnu"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_QSORT_R_COMPAR_LAST",
+            requires = ["ac_cv_libctf_qsort_r_bsd"],
+        ),
+        # configure.ac:154-168.
+        checks.AC_TRY_LINK(
+            code = """\
+#include <fcntl.h>
+#ifndef O_CLOEXEC
+  choke me;
+#endif
+int main(void) { return O_CLOEXEC; }
+""",
+            compile_defines = ["_GNU_SOURCE"],
+            define = "HAVE_O_CLOEXEC",
+        ),
+    ],
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.h.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+# swap.h is also what libsframe reaches with `-I$(srcdir)/../libctf`.
+cc_library(
+    name = "swap",
+    hdrs = ["swap.h"],
+    copts = COPTS,
+    includes = ["."],
+)
+
+# NEED_CTF_QSORT_R (Makefile.am:57-59): the fallback when neither qsort_r
+# signature is available.
+autoconf_srcs(
+    name = "qsort_r_srcs",
+    srcs = {"ctf-qsort_r.c": "!ac_cv_libctf_qsort_r_gnu && !ac_cv_libctf_qsort_r_bsd"},
+    defaults = True,
+    naming = "per_target",
+    deps = [":autoconf"],
+)
+
+NOBFD_SRCS = [
+    "ctf-archive.c",
+    "ctf-dump.c",
+    "ctf-create.c",
+    "ctf-decl.c",
+    "ctf-error.c",
+    "ctf-hash.c",
+    "ctf-labels.c",
+    "ctf-dedup.c",
+    "ctf-link.c",
+    "ctf-lookup.c",
+    "ctf-open.c",
+    "ctf-serialize.c",
+    "ctf-sha1.c",
+    "ctf-string.c",
+    "ctf-subr.c",
+    "ctf-types.c",
+    "ctf-util.c",
+    ":qsort_r_srcs",
+] + glob(["*.h"])
+
+# libctf-nobfd.la: everything but the BFD-backed opener, -DNOBFD=1.
+cc_library(
+    name = "ctf_nobfd",
+    srcs = NOBFD_SRCS,
+    copts = COPTS,
+    implementation_deps = [":config"],
+    # `-I$(srcdir)`: the sources include their own headers as <ctf-impl.h>.
+    includes = ["."],
+    # HAVE_BFD_ELF: whether libbfd carries the ELF backend (configure.ac:84-101).
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "_GNU_SOURCE",
+        "NOBFD=1",
+    ] + HAVE_BFD_ELF,
+    visibility = ["//visibility:public"],
+    deps = [
+        # ctf-impl.h includes bfd.h whether or not the opener is linked.
+        "//bfd:headers",
+        "//include",
+        "//libiberty",
+        "@zlib",
+    ],
+)
+
+# libctf.la: the same sources again with -DNOBFD=0, plus ctf-open-bfd.c.
+cc_library(
+    name = "ctf",
+    srcs = NOBFD_SRCS + ["ctf-open-bfd.c"],
+    copts = COPTS,
+    implementation_deps = [":config"],
+    includes = ["."],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "_GNU_SOURCE",
+        "NOBFD=0",
+    ] + HAVE_BFD_ELF,
+    visibility = ["//visibility:public"],
+    deps = [
+        "//bfd",
+        "//include",
+        "//libiberty",
+        "@zlib",
+    ],
+)

@@ -1,0 +1,156 @@
+"""gprof - the GNU profiler (gprof/Makefile.am)."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:platforms.bzl", "select_tool", "select_triple")
+load("//:rules.bzl", "install_dirs")
+load("//:targets.bzl", "PLATFORMS")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([gprof], [BFD_VERSION]) (configure.ac:21).
+package_info(
+    name = "package",
+    package_name = "gprof",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "gprof",
+    package_url = "",
+    package_version = "2.47",
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+        # LT_INIT (configure.ac:34).
+        checks.AC_DEFINE(
+            "LT_OBJDIR",
+            value = '".libs/"',
+        ),
+    ] +
+    # AC_PLUGINS, through ACX_LARGEFILE (configure.ac:35), and
+    # configure.ac:38-39 and :47.
+    macros.AC_CHECK_HEADERS([
+        "dlfcn.h",
+        "windows.h",
+        "memory.h",
+        "sys/time.h",
+        "sys/gmon_out.h",
+    ]) + macros.AC_CHECK_FUNCS(["setitimer"]) + [
+        # configure.ac:49-58.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <unistd.h>
+int main(void) { extern int getopt (int, char *const*, const char *); return 0; }
+""",
+            compile_defines = ["_GNU_SOURCE"],
+            define = "HAVE_DECL_GETOPT",
+        ),
+        # configure.ac:61.
+        checks.AC_SEARCH_LIBS(
+            "fabs",
+            ["m"],
+            subst = "LIB_FABS",
+        ),
+    ],
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "gconfig_h",
+    out = "config/gconfig.h",
+    template = "gconfig.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":gconfig_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+autoconf_linkopts(
+    name = "linkopts",
+    vars = ["LIB_FABS"],
+    deps = [":autoconf"],
+)
+
+# -DLOCALEDIR (Makefile.am:31).
+install_dirs(
+    name = "dirs",
+    defines = ["LOCALEDIR"],
+    triple = select_triple(),
+)
+
+# gprof_SOURCES (Makefile.am:44-48).  The *_bl.c files are the awk output of
+# the .m blurbs, which the tarball ships.  AM_CPPFLAGS carries -DDEBUG.
+cc_binary(
+    name = "gprof",
+    srcs = [
+               "aarch64.c",
+               "alpha.c",
+               "basic_blocks.c",
+               "bsd_callg_bl.c",
+               "call_graph.c",
+               "cg_arcs.c",
+               "cg_dfn.c",
+               "cg_print.c",
+               "corefile.c",
+               "flat_bl.c",
+               "fsf_callg_bl.c",
+               "gmon_io.c",
+               "gprof.c",
+               "hertz.c",
+               "hist.c",
+               "i386.c",
+               "mips.c",
+               "search_list.c",
+               "source.c",
+               "sparc.c",
+               "sym_ids.c",
+               "symtab.c",
+               "utils.c",
+               "vax.c",
+           ] + glob(["*.h"]) +
+           # Not configured for Darwin and a few other targets (top-level
+           # configure.ac:1103-1402): no matching platform there.
+           select_tool(PLATFORMS, "gprof"),
+    copts = COPTS,
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "DEBUG",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":dirs",
+        ":linkopts",
+        "//bfd",
+        # gprof.h includes bfd's sysdep.h, which reads bfd's own config.h
+        # through gprof's `-I../bfd`.
+        "//bfd:config",
+        "//include",
+        "//libiberty",
+    ],
+)

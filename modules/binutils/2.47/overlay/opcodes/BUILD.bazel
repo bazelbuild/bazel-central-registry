@@ -1,0 +1,155 @@
+"""libopcodes - the disassemblers and assembler tables (opcodes/Makefile.am)."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load("//:platforms.bzl", "select_field", "select_flag_defines")
+load("//:rules.bzl", "tool_output")
+load(":targets.bzl", "OPCODES")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([opcodes], [BFD_VERSION]) (configure.ac:21).
+package_info(
+    name = "package",
+    package_name = "opcodes",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "opcodes",
+    package_url = "",
+    package_version = "2.47",
+)
+
+autoconf(
+    name = "autoconf",
+    checks = [
+    ] + macros.AC_CHECK_HEADERS([
+        "dlfcn.h",
+        "memory.h",
+    ]) + [
+        # LT_INIT (configure.ac:19).
+        checks.AC_DEFINE(
+            "LT_OBJDIR",
+            value = '".libs/"',
+        ),
+    ] +
+    # --enable-checking (configure.ac:27-38).
+    select_flag_defines(
+        [("enable_checking", "ENABLE_CHECKING")],
+        if_false = None,
+    ) +
+    # configure.ac:75.
+    macros.AC_CHECK_DECLS(
+        [
+            "basename",
+            "stpcpy",
+        ],
+        compile_defines = ["_GNU_SOURCE"],
+        includes = [
+            "#include <stdio.h>",
+            "#include <stdlib.h>",
+            "#include <string.h>",
+            "#include <strings.h>",
+            "#include <unistd.h>",
+        ],
+    ) + [
+        # configure.ac:77-86: sigsetjmp may be a macro, so it is compiled
+        # rather than looked up.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <setjmp.h>
+int main(void) { sigjmp_buf env; while (! sigsetjmp (env, 1)) siglongjmp (env, 1); return 0; }
+""",
+            define = "HAVE_SIGSETJMP",
+        ),
+    ],
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+# s390-opc.tab (Makefile.am:1004-1012): built by a host program from
+# s390-opc.txt.  Only s390-opc.c includes it, so it is generated whenever
+# that architecture is configured and otherwise never built.  The program
+# reads stdin and writes stdout upstream; patches/s390-mkopc-file-arguments
+# lets it take the two paths as arguments so no shell redirection is needed.
+cc_binary(
+    name = "s390-mkopc",
+    srcs = ["s390-mkopc.c"],
+    copts = COPTS,
+    deps = ["//include"],
+)
+
+tool_output(
+    name = "s390_opc_tab",
+    src = "s390-opc.txt",
+    out = "s390-opc.tab",
+    tool = ":s390-mkopc",
+)
+
+cc_library(
+    name = "opcodes",
+    srcs = [
+               "dis-buf.c",
+               "dis-init.c",
+               "disassemble.c",
+           ] + glob(["*.h"]) +
+           # @BFD_MACHINES@ (configure.ac:260-396).
+           select_field(
+               (OPCODES,),
+               "machines",
+           ),
+    copts = COPTS,
+    implementation_deps = [":config"],
+    includes = ["."],
+    # @archdefs@ (for disassemble.c and sh-dis.c upstream) and the MIPS_DEFS
+    # of Makefile.am:1035.
+    local_defines = ["HAVE_CONFIG_H"] + select_field(
+        (OPCODES,),
+        "defines",
+    ),
+    # ia64-opc.c includes the ia64-opc-*.c tables and the generated
+    # ia64-asmtab.c; s390-opc.c includes the generated table.
+    textual_hdrs = glob([
+        "ia64-opc-*.c",
+        "*.def",
+    ]) + [
+        "ia64-asmtab.c",
+        ":s390_opc_tab",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//bfd",
+        "//include",
+        "//libiberty",
+    ],
+)
