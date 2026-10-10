@@ -1,0 +1,148 @@
+diff -ruN a/lib/backupfile.c b/lib/backupfile.c
+--- a/lib/backupfile.c	2026-03-27 15:38:11
++++ b/lib/backupfile.c	2026-03-27 15:39:04
+@@ -214,9 +214,18 @@
+   idx_t versionlenmax = 1;
+   idx_t baselen = filelen - base_offset;
+ 
++#ifdef _WIN32
+   if (dirp)
++    {
++      closedir (dirp);
++      dirp = NULL;
++      *dirpp = NULL;
++    }
++#else
++  if (dirp)
+     rewinddir (dirp);
+   else
++#endif
+     {
+       /* Temporarily modify the buffer into its parent directory name,
+          open the directory, and then restore the buffer.  */
+diff -ruN a/src/pch.c b/src/pch.c
+--- a/src/pch.c	2026-03-27 15:38:11
++++ b/src/pch.c	2026-03-27 15:38:15
+@@ -352,7 +352,9 @@
+       uses zero to indicate unknown or missing file types, S_IFLNK and
+       S_IFREG must be nonzero.  This is true on all known platforms
+       although POSIX does not require it; check here to be sure.  */
++#ifdef S_IFLNK
+    static_assert (S_IFLNK);
++#endif
+    static_assert (S_IFREG);
+ 
+    mode_t m = file_type | (mode & S_IRWXUGO);
+diff -ruN a/src/safe.c b/src/safe.c
+--- a/src/safe.c	2026-03-27 15:38:11
++++ b/src/safe.c	2026-03-27 15:38:31
+@@ -21,7 +21,13 @@
+ #include <config.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#ifdef _WIN32
++# include <limits.h>
++typedef unsigned long int rlim_t;
++# define RLIM_INFINITY ULONG_MAX
++#else
+ #include <sys/resource.h>
++#endif
+ #include <sys/time.h>
+ #include <fcntl.h>
+ #include <stdio.h>
+@@ -103,6 +109,7 @@
+ 
+ static void init_dirfd_cache (void)
+ {
++#ifndef _WIN32
+   struct rlimit nofile;
+ 
+   if (getrlimit (RLIMIT_NOFILE, &nofile) == 0)
+@@ -113,6 +120,7 @@
+ 	max_cached_fds = MAX (nofile.rlim_cur / 4, min_cached_fds);
+     }
+   else
++#endif
+     max_cached_fds = min_cached_fds;
+ 
+   cached_dirfds = hash_initialize (min_cached_fds, nullptr,
+@@ -686,6 +694,7 @@
+   return fchmodat (dirfd, pathname, mode, 0);
+ }
+ 
++#ifndef _WIN32
+ /* Replacement for lchown() */
+ int
+ safe_lchown (char *pathname, uid_t owner, gid_t group)
+@@ -695,6 +704,7 @@
+     return -1;
+   return fchownat (dirfd, pathname, owner, group, AT_SYMLINK_NOFOLLOW);
+ }
++#endif
+ 
+ /* Replacement for lutimens() */
+ int
+diff -ruN a/src/safe.h b/src/safe.h
+--- a/src/safe.h	2026-03-27 15:38:11
++++ b/src/safe.h	2026-03-27 15:38:16
+@@ -36,7 +36,9 @@
+ int safe_unlink (char *pathname);
+ int safe_symlink (const char *target, char *linkpath);
+ int safe_chmod (char *pathname, mode_t mode);
++#ifndef _WIN32
+ int safe_lchown (char *pathname, uid_t owner, gid_t group);
++#endif
+ int safe_lutimens (char *pathname, struct timespec const times[2]);
+ ssize_t safe_readlink(char *pathname, char *buf, size_t bufsiz);
+ int safe_access(char *pathname, int mode);
+diff -ruN a/src/util.c b/src/util.c
+--- a/src/util.c	2026-03-27 15:38:11
++++ b/src/util.c	2026-03-27 15:38:56
+@@ -315,6 +315,7 @@
+ 	pfatal ("Failed to set the timestamps of %s %s",
+ 		S_ISLNK (mode) ? "symbolic link" : "file",
+ 		quotearg (to));
++#ifndef _WIN32
+     }
+   if (attr & FA_IDS)
+     {
+@@ -350,6 +351,7 @@
+ 		uid == uid_1 ? "owner" : "owning group",
+ 		S_ISLNK (mode) ? "symbolic link" : "file",
+ 		quotearg (to));
++#endif
+     }
+   if (attr & FA_XATTRS)
+     if (copy_attr (from, fromfd, to, tofd) < 0
+@@ -362,7 +364,11 @@
+ 	 symlinks, so don't try to set symlink file permissions even on
+ 	 systems where we could.  */
+       if (! S_ISLNK (mode)
++#ifdef _WIN32
++	  && safe_chmod (to, mode) < 0)
++#else
+ 	  && (tofd < 0 ? safe_chmod (to, mode) : fchmod (tofd, mode)) < 0)
++#endif
+ 	pfatal ("Failed to set the permissions of %s %s",
+ 		S_ISLNK (mode) ? "symbolic link" : "file",
+ 		quotearg (to));
+@@ -1228,7 +1234,9 @@
+ {
+   static int const sigs[] =
+     {
++#ifdef SIGHUP
+       SIGHUP,
++#endif
+       SIGINT,
+ #ifdef SIGPIPE
+       SIGPIPE,
+@@ -1246,7 +1254,9 @@
+   enum { NUM_SIGS = sizeof sigs / sizeof *sigs };
+ 
+   /* System V fork+wait does not work if SIGCHLD is ignored.  */
++#ifdef SIGCHLD
+   signal (SIGCHLD, SIG_DFL);
++#endif
+ 
+ #if HAVE_SIGACTION && HAVE_SIGFILLSET
+   struct sigaction fatal_act = { .sa_handler = handle_signal };
