@@ -1,0 +1,90 @@
+# Hand-written replacement for OCCT's CMake build. Only the FoundationClasses,
+# ModelingData and ModelingAlgorithms modules are built; Visualization,
+# ApplicationFramework, DataExchange and Draw are not. See occt.bzl for how the
+# src/<Module>/<Toolkit>/<Package>/ layout is mapped onto cc_library targets.
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//:occt.bzl", "occt_headers", "occt_library")
+
+ALL_TOOLKITS = {
+    "FoundationClasses": [
+        "TKernel",
+        "TKMath",
+    ],
+    "ModelingData": [
+        "TKG2d",
+        "TKG3d",
+        "TKGeomBase",
+        "TKBRep",
+    ],
+    "ModelingAlgorithms": [
+        "TKGeomAlgo",
+        "TKTopAlgo",
+        "TKPrim",
+        "TKBO",
+        "TKBool",
+        "TKHLR",
+        "TKFillet",
+        "TKOffset",
+        "TKFeat",
+        "TKMesh",
+        "TKShHealing",
+    ],
+}
+
+# Standard_Version.hxx is the only header the upstream build generates.
+expand_template(
+    name = "standard_version",
+    out = "generated/Standard_Version.hxx",
+    substitutions = {
+        "@OCCT_VERSION_DATE@": "2025",
+        "@OCC_VERSION_MAJOR@": "8",
+        "@OCC_VERSION_MINOR@": "0",
+        "@OCC_VERSION_MAINTENANCE@": "1",
+        "@SET_OCC_VERSION_DEVELOPMENT@": "",
+    },
+    template = "adm/templates/Standard_Version.hxx.in",
+)
+
+occt_headers(
+    name = "headers",
+    generated_hdrs = [":standard_version"],
+    toolkits = ALL_TOOLKITS,
+)
+
+occt_library(
+    name = "foundation_classes",
+    toolkits = {"FoundationClasses": ALL_TOOLKITS["FoundationClasses"]},
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+occt_library(
+    name = "modeling_data",
+    toolkits = {"ModelingData": ALL_TOOLKITS["ModelingData"]},
+    visibility = ["//visibility:public"],
+    deps = [
+        ":foundation_classes",
+        ":headers",
+    ],
+)
+
+occt_library(
+    name = "modeling_algorithms",
+    toolkits = {"ModelingAlgorithms": ALL_TOOLKITS["ModelingAlgorithms"]},
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":modeling_data",
+    ],
+)
+
+cc_library(
+    name = "occt",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":modeling_algorithms",
+    ],
+)
