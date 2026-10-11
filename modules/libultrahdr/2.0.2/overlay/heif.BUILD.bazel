@@ -1,0 +1,83 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+write_file(
+    name = "heif_version_h",
+    out = "libheif/heif_version.h",
+    content = [
+        "#ifndef LIBHEIF_HEIF_VERSION_H",
+        "#define LIBHEIF_HEIF_VERSION_H",
+        "#define LIBHEIF_NUMERIC_VERSION ((1<<24) | (21<<16) | (2<<8))",
+        '#define LIBHEIF_VERSION "1.21.2"',
+        '#define LIBHEIF_PLUGIN_DIRECTORY ""',
+        "#endif",
+    ],
+)
+
+cc_library(
+    name = "heif",
+    srcs = glob(
+        [
+            "libheif/*.cc",
+            "libheif/*.h",
+            "libheif/api/libheif/*.cc",
+            "libheif/codecs/**/*.cc",
+            "libheif/codecs/**/*.h",
+            "libheif/image-items/*.cc",
+            "libheif/image-items/*.h",
+            "libheif/color-conversion/*.cc",
+            "libheif/color-conversion/*.h",
+            "libheif/sequences/*.cc",
+            "libheif/sequences/*.h",
+        ],
+        exclude = [
+            "libheif/plugins_unix.cc",
+            "libheif/plugins_windows.cc",
+        ],
+    ) + [
+        "libheif/plugins/decoder_aom.cc",
+        "libheif/plugins/decoder_libde265.cc",
+        "libheif/plugins/decoder_uncompressed.cc",
+        "libheif/plugins/encoder_aom.cc",
+        "libheif/plugins/encoder_mask.cc",
+        "libheif/plugins/encoder_uncompressed.cc",
+        "libheif/plugins/encoder_x265.cc",
+        "libheif/plugins/nalu_utils.cc",
+    ] + glob(["libheif/plugins/*.h"]),
+    hdrs = glob(["libheif/api/libheif/*.h"]) + [":heif_version_h"],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++20"],
+        "//conditions:default": ["-std=c++20"],
+    }),
+    defines = [
+        "LIBHEIF_STATIC_BUILD",
+        "WITH_EXPERIMENTAL_GAIN_MAP=1",
+        "WITH_UNCOMPRESSED_CODEC=1",
+    ],
+    includes = [
+        ".",
+        "libheif",
+        "libheif/api",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "LIBHEIF_EXPORTS",
+        "HAVE_AOM_DECODER=1",
+        "HAVE_AOM_ENCODER=1",
+        "HAVE_LIBDE265=1",
+        "HAVE_X265=1",
+        "HAVE_BIT",
+        "IS_BIG_ENDIAN=0",
+        "ENABLE_MULTITHREADING_SUPPORT=1",
+        "ENABLE_PARALLEL_TILE_DECODING=1",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@aom",
+        "@libde265",
+        "@x265",
+    ],
+)
