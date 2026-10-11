@@ -11,6 +11,13 @@ _SLOW_TESTS = [
     "utilities_transactions_write_unprepared_transaction_test",
 ]
 
+# The database-heavy parameter matrices exceed an hour on macOS ARM64 CI.
+# GoogleTest distributes every case across shards without filtering coverage.
+_MACOS_TEST_SHARDS = {
+    "db_db_wal_test": 4,
+    "table_table_test": 16,
+}
+
 def gen_test_targets(name, srcs):
     """Generates a cc_test target for each source file.
 
@@ -27,6 +34,10 @@ def gen_test_targets(name, srcs):
             copts = ["-std=c++20"],
             # CustomFileChecksum can fail during background compactions under load.
             flaky = name == "db_compaction_compaction_service_test",
+            shard_count = select({
+                "@platforms//os:macos": _MACOS_TEST_SHARDS.get(name, 0),
+                "//conditions:default": 0,
+            }),
             deps = [":rocksdb_test_lib"],
             linkopts = select({
                 "@platforms//os:linux": ["-ldl"],
