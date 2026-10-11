@@ -7,15 +7,17 @@ _SLOW_TESTS = [
     "db_db_wal_test",
     "table_block_based_block_based_table_reader_test",
     "table_table_test",
+    "util_compression_test",
     "utilities_transactions_write_committed_transaction_ts_test",
     "utilities_transactions_write_unprepared_transaction_test",
 ]
 
-# The database-heavy parameter matrices exceed an hour on macOS ARM64 CI.
+# The database-heavy parameter matrices exceed their timeout on macOS ARM64 CI.
 # GoogleTest distributes every case across shards without filtering coverage.
 _MACOS_TEST_SHARDS = {
     "db_db_wal_test": 4,
     "table_table_test": 16,
+    "util_compression_test": 4,
 }
 
 def gen_test_targets(name, srcs):
