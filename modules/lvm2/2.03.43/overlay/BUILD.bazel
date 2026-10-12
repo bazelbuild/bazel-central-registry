@@ -1,0 +1,201 @@
+"""LVM2's device-mapper userspace library - https://sourceware.org/lvm2/"""
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+
+# ---------------------------------------------------------------------------
+# configure
+# ---------------------------------------------------------------------------
+
+autoconf(
+    name = "autoconf",
+    checks = macros.AC_CHECK_HEADERS([
+        # configure.ac:98-105, the ones libdm and dmsetup test.
+        "getopt.h",
+        "linux/fiemap.h",
+        "linux/magic.h",
+        "sys/ioctl.h",
+        "sys/statvfs.h",
+        "sys/timerfd.h",
+        "sys/vfs.h",
+        "termios.h",
+    ]) + [
+        # configure.ac:1603.
+        checks.AC_DEFINE(
+            "HAVE_GETOPTLONG",
+            1,
+            requires = ["ac_cv_header_getopt_h"],
+        ),
+    ] + macros.AC_CHECK_FUNCS([
+        # configure.ac:146-150.
+        "canonicalize_file_name",
+        "ffs",
+        "getline",
+        "mallinfo2",
+        "prlimit",
+        "renameat2",
+        "versionsort",
+    ]) + [
+        # AX_GCC_BUILTIN (configure.ac:134-136).
+        checks.AC_TRY_LINK(
+            name = "ax_cv_have_{}".format(builtin),
+            code = """\
+int main(void) {{
+    return ({builtin}(1) != 0) ? 0 : 1;
+}}
+""".format(builtin = builtin),
+            define = "HAVE_{}".format(builtin.upper()),
+        )
+        for builtin in [
+            "__builtin_clz",
+            "__builtin_clzll",
+            "__builtin_ffs",
+        ]
+    ] + [
+        # configure.ac:1577: clock_gettime, in libc since glibc 2.17.
+        checks.AC_CHECK_FUNC(
+            "clock_gettime",
+            define = "HAVE_REALTIME",
+        ),
+        checks.AC_DEFINE("_GNU_SOURCE", 1),
+        checks.AC_DEFINE("_REENTRANT", 1),
+        checks.AC_DEFINE("DEVMAPPER_SUPPORT", 1),
+        checks.AC_DEFINE("DM_IOCTLS", 1),
+        checks.AC_DEFINE("DM_DEVICE_UID", 0),
+        checks.AC_DEFINE("DM_DEVICE_GID", 0),
+        checks.AC_DEFINE("DM_DEVICE_MODE", "0600"),
+        checks.AC_DEFINE("DEFAULT_DM_ADD_NODE", "DM_ADD_NODE_ON_RESUME"),
+        checks.AC_DEFINE("DEFAULT_DM_NAME_MANGLING", "DM_STRING_MANGLING_AUTO"),
+        checks.AC_DEFINE("DEFAULT_DM_RUN_DIR", '"/run"'),
+        # configure.ac:1928, from VERSION_DM.
+        checks.AC_DEFINE("DM_LIB_VERSION", '"1.02.217 (2026-09-30)"'),
+    ],
+)
+
+# AC_CONFIG_HEADERS([include/configure.h]) (configure.ac:19).
+autoconf_hdr(
+    name = "configure_h",
+    out = "config/configure.h",
+    defaults = True,
+    template = "include/configure.h.in",
+    deps = [":autoconf"],
+)
+
+# ---------------------------------------------------------------------------
+# libdevmapper (libdm/Makefile.in)
+# ---------------------------------------------------------------------------
+
+# libdm/make.tmpl.in: `-I$(srcdir) -I$(top_srcdir) -I$(top_builddir)/include
+# -include configure.h`, DEFS -DHAVE_CONFIG_H -D_FILE_OFFSET_BITS=64, and the
+# interface directory.  The warning sets are upstream's own CI gate and are
+# replaced by `-w`, as is usual for registry modules.
+COPTS = [
+    "-w",
+    "-include",
+    "configure.h",
+]
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "_FILE_OFFSET_BITS=64",
+]
+
+cc_library(
+    name = "devmapper",
+    srcs = [
+        "libdm/datastruct/bitset.c",
+        "libdm/datastruct/hash.c",
+        "libdm/datastruct/list.c",
+        "libdm/ioctl/libdm-iface.c",
+        "libdm/libdm-common.c",
+        "libdm/libdm-config.c",
+        "libdm/libdm-deptree.c",
+        "libdm/libdm-file.c",
+        "libdm/libdm-report.c",
+        "libdm/libdm-stats.c",
+        "libdm/libdm-string.c",
+        "libdm/libdm-targets.c",
+        "libdm/libdm-timestamp.c",
+        "libdm/mm/dbg_malloc.c",
+        "libdm/mm/pool.c",
+        "libdm/raid/raid_parser.c",
+        "libdm/regex/matcher.c",
+        "libdm/regex/parse_rx.c",
+        "libdm/regex/ttree.c",
+        "libdm/vdo/vdo_parse.c",
+        "libdm/vdo/vdo_reader.c",
+        "libdm/vdo/vdo_stats.c",
+        "libdm/vdo/vdo_status.c",
+        "libdm/vdo/vdo_target.c",
+        ":configure_h",
+    ] + glob([
+        "libdm/*.h",
+        "libdm/ioctl/*.h",
+        "libdm/misc/*.h",
+        "libdm/regex/*.h",
+        "libdm/vdo/*.h",
+    ]) + [
+        # dmlib.h, which every libdm source includes first, reaches into the
+        # tools directory and two lib/ and base/ headers.
+        "base/memory/zalloc.h",
+        "lib/log/log.h",
+        "lib/mm/xlate.h",
+        "libdm/dm-tools/util.h",
+    ],
+    hdrs = ["libdm/libdevmapper.h"],
+    copts = COPTS,
+    includes = [
+        ".",
+        "config",
+        "libdm",
+        "libdm/ioctl",
+    ],
+    # LIBS (libdm/make.tmpl.in:56): PTHREAD_LIBS and M_LIBS.
+    linkopts = [
+        "-lm",
+        "-lpthread",
+    ],
+    # libdevmapper.a; see --with-symvers above for why not the .so.
+    linkstatic = True,
+    local_defines = LOCAL_DEFINES,
+    # mm/pool.c includes one of these two implementations.
+    textual_hdrs = [
+        "libdm/mm/pool-debug.c",
+        "libdm/mm/pool-fast.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# dmsetup (libdm/dm-tools/Makefile.in)
+# ---------------------------------------------------------------------------
+
+cc_binary(
+    name = "dmsetup",
+    srcs = [
+        "libdm/dm-tools/dmsetup.c",
+        "libdm/dm-tools/dmvdostats.c",
+        "libdm/dm-tools/dmvdostats.h",
+        "libdm/dm-tools/util.h",
+        ":configure_h",
+    ],
+    copts = COPTS,
+    includes = ["config"],
+    local_defines = LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":devmapper"],
+)
+
+# `install_dmsetup_dynamic` links dmstats to dmsetup; the program checks which
+# name it was invoked by.
+copy_file(
+    name = "dmstats",
+    src = ":dmsetup",
+    out = "dmstats",
+    is_executable = True,
+    visibility = ["//visibility:public"],
+)
