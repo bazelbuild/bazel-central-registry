@@ -1,0 +1,141 @@
+Temporary patch adding meshopt_simplifyCustom with a per-collapse validation callback.
+Can be dropped once https://github.com/zeux/meshoptimizer/issues/1105 is resolved upstream.
+
+diff -u a/src/meshoptimizer.h b/src/meshoptimizer.h
+--- a/src/meshoptimizer.h
++++ b/src/meshoptimizer.h
+@@ -541,6 +541,15 @@
+ MESHOPTIMIZER_API size_t meshopt_simplifyWithAttributes(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* result_error);
+ 
+ /**
++ * Experimental: Mesh simplifier with custom collapse callback
++ * Temporary local patch. Can be dropped once https://github.com/zeux/meshoptimizer/issues/1105 is resolved upstream.
++ * Similar to meshopt_simplify, but invokes callback(context, v0, v1, triangles, triangle_count) before committing each edge collapse v0 -> v1.
++ * triangles contains triangle_count * 3 vertex indices for the post-collapse 1-ring triangles around v1.
++ * callback can be NULL; otherwise, it should return 1 to allow the collapse and 0 to reject it.
++ */
++MESHOPTIMIZER_EXPERIMENTAL size_t meshopt_simplifyCustom(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, size_t target_index_count, float target_error, unsigned int options, float* result_error, int (*callback)(void* context, unsigned int v0, unsigned int v1, const unsigned int* triangles, size_t triangle_count), void* context);
++
++/**
+  * Mesh simplifier with position/attribute update
+  * Reduces the number of triangles in the mesh, attempting to preserve mesh appearance as much as possible.
+  * Similar to meshopt_simplifyWithAttributes, but destructively updates positions and attribute values for optimal appearance.
+@@ -1124,6 +1133,8 @@
+ inline size_t meshopt_simplify(T* destination, const T* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, size_t target_index_count, float target_error, unsigned int options = 0, float* result_error = NULL);
+ template <typename T>
+ inline size_t meshopt_simplifyWithAttributes(T* destination, const T* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options = 0, float* result_error = NULL);
++template <typename T, typename F>
++inline size_t meshopt_simplifyCustom(T* destination, const T* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, size_t target_index_count, float target_error, unsigned int options, float* result_error, F callback);
+ template <typename T>
+ inline size_t meshopt_simplifyWithUpdate(T* indices, size_t index_count, float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, float* vertex_attributes, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options = 0, float* result_error = NULL);
+ template <typename T>
+@@ -1531,6 +1542,23 @@
+ 	return meshopt_simplifyWithAttributes(out.data, in.data, index_count, vertex_positions, vertex_count, vertex_positions_stride, vertex_attributes, vertex_attributes_stride, attribute_weights, attribute_count, vertex_lock, target_index_count, target_error, options, result_error);
+ }
+ 
++template <typename T, typename F>
++inline size_t meshopt_simplifyCustom(T* destination, const T* indices, size_t index_count, const float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, size_t target_index_count, float target_error, unsigned int options, float* result_error, F callback)
++{
++	struct Call
++	{
++		static int accept(void* context, unsigned int v0, unsigned int v1, const unsigned int* triangles, size_t triangle_count)
++		{
++			return (*static_cast<F*>(context))(v0, v1, triangles, triangle_count) ? 1 : 0;
++		}
++	};
++
++	meshopt_IndexAdapter<T> in(NULL, indices, index_count);
++	meshopt_IndexAdapter<T> out(destination, NULL, index_count);
++
++	return meshopt_simplifyCustom(out.data, in.data, index_count, vertex_positions, vertex_count, vertex_positions_stride, target_index_count, target_error, options, result_error, &Call::accept, &callback);
++}
++
+ template <typename T>
+ inline size_t meshopt_simplifyWithUpdate(T* indices, size_t index_count, float* vertex_positions, size_t vertex_count, size_t vertex_positions_stride, float* vertex_attributes, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* result_error)
+ {
+diff -u a/src/simplifier.cpp b/src/simplifier.cpp
+--- a/src/simplifier.cpp
++++ b/src/simplifier.cpp
+@@ -1524,7 +1524,40 @@
+ 	}
+ }
+ 
+-static size_t performEdgeCollapses(unsigned int* collapse_remap, unsigned char* collapse_locked, const Collapse* collapses, size_t collapse_count, const unsigned int* collapse_order, const unsigned int* remap, const unsigned int* wedge, const unsigned char* vertex_kind, const unsigned int* loop, const unsigned int* loopback, const Vector3* vertex_positions, const EdgeAdjacency& adjacency, size_t triangle_collapse_goal, float error_limit, float& result_error)
++static bool canCollapse(const EdgeAdjacency& adjacency, const unsigned int* remap, const unsigned int* collapse_remap, unsigned int i0, unsigned int i1, int (*callback)(void*, unsigned int, unsigned int, const unsigned int*, size_t), void* context)
++{
++	constexpr size_t kMaxRingTriangles = 1024;
++	unsigned int triangles[kMaxRingTriangles * 3];
++	size_t count = 0;
++
++	for (int k = 0; k < 2; ++k)
++	{
++		unsigned int r = k == 0 ? i0 : i1;
++		const EdgeAdjacency::Edge* edges = &adjacency.data[adjacency.offsets[r]];
++		size_t edge_count = adjacency.offsets[r + 1] - adjacency.offsets[r];
++
++		for (size_t i = 0; i < edge_count; ++i)
++		{
++			unsigned int a = remap[collapse_remap[edges[i].next]];
++			unsigned int b = remap[collapse_remap[edges[i].prev]];
++
++			if (a == i0 || b == i0 || a == i1 || b == i1 || a == b)
++				continue;
++
++			if (count >= kMaxRingTriangles)
++				return false;
++
++			triangles[count * 3 + 0] = i1;
++			triangles[count * 3 + 1] = a;
++			triangles[count * 3 + 2] = b;
++			count++;
++		}
++	}
++
++	return callback(context, i0, i1, triangles, count) != 0;
++}
++
++static size_t performEdgeCollapses(unsigned int* collapse_remap, unsigned char* collapse_locked, const Collapse* collapses, size_t collapse_count, const unsigned int* collapse_order, const unsigned int* remap, const unsigned int* wedge, const unsigned char* vertex_kind, const unsigned int* loop, const unsigned int* loopback, const Vector3* vertex_positions, const EdgeAdjacency& adjacency, size_t triangle_collapse_goal, float error_limit, float& result_error, int (*callback)(void*, unsigned int, unsigned int, const unsigned int*, size_t) = NULL, void* context = NULL)
+ {
+ 	size_t edge_collapses = 0;
+ 	size_t triangle_collapses = 0;
+@@ -1584,7 +1617,7 @@
+ 			continue;
+ 		}
+ 
+-		if (hasTriangleFlips(adjacency, vertex_positions, collapse_remap, r0, r1))
++		if (hasTriangleFlips(adjacency, vertex_positions, collapse_remap, r0, r1) || (callback && !canCollapse(adjacency, remap, collapse_remap, r0, r1, callback, context)))
+ 		{
+ 			// adjust collapse goal since this collapse is invalid and shouldn't factor into error goal
+ 			edge_collapse_goal++;
+@@ -2337,7 +2370,7 @@
+ 	meshopt_SimplifyInternalDebug = 1 << 30
+ };
+ 
+-size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* out_result_error)
++size_t meshopt_simplifyEdge(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, const float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* out_result_error, int (*callback)(void*, unsigned int, unsigned int, const unsigned int*, size_t) = NULL, void* context = NULL)
+ {
+ 	using namespace meshopt;
+ 
+@@ -2516,7 +2549,7 @@
+ 
+ 		memset(collapse_locked, 0, vertex_count);
+ 
+-		size_t collapses = performEdgeCollapses(collapse_remap, collapse_locked, edge_collapses, edge_collapse_count, collapse_order, remap, wedge, vertex_kind, loop, loopback, vertex_positions, adjacency, triangle_collapse_goal, error_limit, result_error);
++		size_t collapses = performEdgeCollapses(collapse_remap, collapse_locked, edge_collapses, edge_collapse_count, collapse_order, remap, wedge, vertex_kind, loop, loopback, vertex_positions, adjacency, triangle_collapse_goal, error_limit, result_error, callback, context);
+ 
+ 		// no edges can be collapsed any more due to hitting the error limit or triangle collapse limit
+ 		if (collapses == 0)
+@@ -2638,6 +2671,13 @@
+ 	return meshopt_simplifyEdge(destination, indices, index_count, vertex_positions_data, vertex_count, vertex_positions_stride, vertex_attributes_data, vertex_attributes_stride, attribute_weights, attribute_count, vertex_lock, target_index_count, target_error, options, out_result_error);
+ }
+ 
++size_t meshopt_simplifyCustom(unsigned int* destination, const unsigned int* indices, size_t index_count, const float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, size_t target_index_count, float target_error, unsigned int options, float* out_result_error, int (*callback)(void* context, unsigned int v0, unsigned int v1, const unsigned int* triangles, size_t triangle_count), void* context)
++{
++	assert((options & (meshopt_SimplifyInternalSolve | meshopt_SimplifyPrune | meshopt_SimplifySparse)) == 0);
++
++	return meshopt_simplifyEdge(destination, indices, index_count, vertex_positions_data, vertex_count, vertex_positions_stride, NULL, 0, NULL, 0, NULL, target_index_count, target_error, options, out_result_error, callback, context);
++}
++
+ size_t meshopt_simplifyWithUpdate(unsigned int* indices, size_t index_count, float* vertex_positions_data, size_t vertex_count, size_t vertex_positions_stride, float* vertex_attributes_data, size_t vertex_attributes_stride, const float* attribute_weights, size_t attribute_count, const unsigned char* vertex_lock, size_t target_index_count, float target_error, unsigned int options, float* out_result_error)
+ {
+ 	return meshopt_simplifyEdge(indices, indices, index_count, vertex_positions_data, vertex_count, vertex_positions_stride, vertex_attributes_data, vertex_attributes_stride, attribute_weights, attribute_count, vertex_lock, target_index_count, target_error, options | meshopt_SimplifyInternalSolve, out_result_error);
