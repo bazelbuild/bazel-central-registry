@@ -1,10 +1,39 @@
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("//bazel:metal.bzl", "metal_jit_source", "metal_library")
 
-package(default_visibility = ["//visibility:public"])
+package(default_package_metadata = [":package_metadata"])
 
-exports_files(["LICENSE"] + glob(["tests/*.cpp"]))
+exports_files(
+    ["LICENSE"],
+    visibility = ["//visibility:private"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# Upstream tests, used by the BCR test module.
+exports_files(
+    glob(["tests/*.cpp"]),
+    visibility = ["//visibility:public"],
+)
 
 MLX_VERSION = "0.32.2"
 
@@ -92,6 +121,7 @@ string_flag(
         "15.0",
         "26.0",
     ],
+    visibility = ["//visibility:public"],
 )
 
 config_setting(
@@ -102,7 +132,6 @@ config_setting(
 filegroup(
     name = "metal_kernel_headers",
     srcs = glob(["mlx/backend/metal/kernels/**/*.h"]),
-    visibility = ["//visibility:private"],
 )
 
 metal_library(
@@ -126,7 +155,6 @@ metal_library(
         macos_version_min = ":metal_macos_version_min",
         script = "mlx/backend/metal/make_compiled_preamble.sh",
         target_compatible_with = ["@platforms//os:macos"],
-        visibility = ["//visibility:private"],
     )
     for src in _METAL_JIT_SOURCES
 ]
@@ -145,7 +173,6 @@ genrule(
 } > $@
 """,
     target_compatible_with = ["@platforms//os:macos"],
-    visibility = ["//visibility:private"],
 )
 
 # The preamble is only preprocessed, so on macOS use the Xcode clang directly
@@ -191,7 +218,6 @@ genrule(
         ),
     }),
     toolchains = ["@rules_cc//cc:current_cc_toolchain"],
-    visibility = ["//visibility:private"],
 )
 
 cc_library(
@@ -203,7 +229,6 @@ cc_library(
     ],
     defines = ["MLX_STATIC"],
     local_defines = ['MLX_VERSION=\\"{}\\"'.format(MLX_VERSION)],
-    visibility = ["//visibility:private"],
 )
 
 _CORE_SRCS = [
@@ -385,6 +410,7 @@ cc_library(
         "//conditions:default": [],
     }),
     textual_hdrs = glob(["mlx/backend/metal/kernels/**/*.h"]),
+    visibility = ["//visibility:public"],
     deps = [
         ":version",
         "@fmt",
