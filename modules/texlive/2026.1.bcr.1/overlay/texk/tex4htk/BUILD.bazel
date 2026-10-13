@@ -1,0 +1,33 @@
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+# tex4ht references `struct direct` from BSD dirent, needs _DEFAULT_SOURCE
+# on glibc. _GNU_SOURCE comes from the common config.
+texk_program(
+    name = "t4ht",
+    srcs = ["t4ht.c"],
+    hdrs = [],
+    copts = force_include_copts("dirent.h"),
+    local_defines = ["_DEFAULT_SOURCE"],
+    # MSVC has no <dirent.h>; MinGW does (via its CRT headers), so the
+    # gate is compiler-level, not OS-level. A portable shim would need
+    # to be vendored to support MSVC — not worth it for this niche
+    # utility.
+    target_compatible_with = select({
+        "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+        "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+)
+
+# tex4ht.c references `struct direct` (BSD-only, removed from modern glibc),
+# uses old K&R-style declarations, and embeds a long .tex source via
+# `tex4ht-c.tex` that hits multiple parser errors on modern compilers.
+# Tagged manual until an upstream patch lands.
+texk_program(
+    name = "tex4ht",
+    srcs = ["tex4ht.c"],
+    hdrs = [],
+    copts = force_include_copts("dirent.h"),
+    local_defines = ["_DEFAULT_SOURCE"],
+    tags = ["manual"],
+)
