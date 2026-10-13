@@ -1,0 +1,400 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:metal.bzl", "metal_jit_source", "metal_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["LICENSE"] + glob(["tests/*.cpp"]))
+
+MLX_VERSION = "0.32.2"
+
+# Kernels that are always compiled ahead of time into mlx.metallib. All the
+# other kernels are compiled at runtime from the JIT sources below
+# (MLX_METAL_JIT=ON), which keeps the metallib small enough to be embedded in
+# the binary.
+_METAL_KERNELS = [
+    "arg_reduce",
+    "conv",
+    "dot",
+    "layer_norm",
+    "random",
+    "rms_norm",
+    "rope",
+    "scaled_dot_product_attention",
+]
+
+# Metal headers whose preprocessed contents are made available as strings via
+# mlx/backend/metal/jit/includes.h.
+_METAL_JIT_SOURCES = [
+    "utils",
+    "unary_ops",
+    "binary_ops",
+    "ternary_ops",
+    "reduce_utils",
+    "indexing/scatter",
+    "indexing/masked_scatter",
+    "indexing/gather",
+    "indexing/gather_front",
+    "indexing/gather_axis",
+    "indexing/scatter_axis",
+    "hadamard",
+    "arange",
+    "copy",
+    "unary",
+    "binary",
+    "binary_two",
+    "fft",
+    "logsumexp",
+    "ternary",
+    "softmax",
+    "scan",
+    "sort",
+    "searchsorted",
+    "reduce",
+    "steel/gemm/gemm",
+    "steel/gemm/kernels/steel_gemm_fused",
+    "steel/gemm/kernels/steel_gemm_masked",
+    "steel/gemm/kernels/steel_gemm_gather",
+    "steel/gemm/kernels/steel_gemm_splitk",
+    "steel/gemm/kernels/steel_gemm_segmented",
+    "steel/conv/conv",
+    "steel/conv/kernels/steel_conv",
+    "steel/conv/kernels/steel_conv_3d",
+    "steel/conv/kernels/steel_conv_general",
+    "quantized_utils",
+    "quantized",
+    "fp_quantized",
+    "gemv",
+    "gemv_masked",
+    "steel/attn/kernels/steel_attention",
+]
+
+config_setting(
+    name = "macos",
+    constraint_values = ["@platforms//os:macos"],
+)
+
+config_setting(
+    name = "macos_arm64",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:macos",
+    ],
+)
+
+# Minimum macOS version the Metal kernels are compiled for. The fence kernel
+# (used for MLX_METAL_FAST_SYNCH) needs Metal 3.2 and is only built for >= 15.0.
+string_flag(
+    name = "metal_macos_version_min",
+    build_setting_default = "14.0",
+    values = [
+        "14.0",
+        "15.0",
+        "26.0",
+    ],
+)
+
+config_setting(
+    name = "metal_macos_14",
+    flag_values = {":metal_macos_version_min": "14.0"},
+)
+
+filegroup(
+    name = "metal_kernel_headers",
+    srcs = glob(["mlx/backend/metal/kernels/**/*.h"]),
+    visibility = ["//visibility:private"],
+)
+
+metal_library(
+    name = "mlx_metallib",
+    srcs = ["mlx/backend/metal/kernels/{}.metal".format(k) for k in _METAL_KERNELS] + select({
+        ":metal_macos_14": [],
+        "//conditions:default": ["mlx/backend/metal/kernels/fence.metal"],
+    }),
+    out = "mlx.metallib",
+    hdrs = [":metal_kernel_headers"],
+    macos_version_min = ":metal_macos_version_min",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+[
+    metal_jit_source(
+        name = "metal_jit_" + src.replace("/", "_"),
+        src = "mlx/backend/metal/kernels/{}.h".format(src),
+        out = "mlx/backend/metal/jit/{}.cpp".format(src.split("/")[-1]),
+        hdrs = [":metal_kernel_headers"],
+        macos_version_min = ":metal_macos_version_min",
+        script = "mlx/backend/metal/make_compiled_preamble.sh",
+        target_compatible_with = ["@platforms//os:macos"],
+        visibility = ["//visibility:private"],
+    )
+    for src in _METAL_JIT_SOURCES
+]
+
+genrule(
+    name = "mlx_metallib_embed",
+    srcs = [":mlx_metallib"],
+    outs = ["mlx_metallib_embed.c"],
+    cmd = """
+{
+  echo '#include <stddef.h>'
+  echo 'const unsigned char mlx_embedded_metallib[] = {'
+  od -An -v -tx1 $< | sed -e 's/  */ /g' -e 's/^ //' -e '/^$$/d' -e 's/\\([0-9a-f][0-9a-f]\\)/0x\\1,/g'
+  echo '};'
+  echo 'const size_t mlx_embedded_metallib_size = sizeof(mlx_embedded_metallib);'
+} > $@
+""",
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:private"],
+)
+
+# The preamble is only preprocessed, so on macOS use the Xcode clang directly
+# (the Bazel cc wrapper needs Xcode env vars that genrules do not get).
+_CPU_PREAMBLE_CMD = """
+SRCDIR=$$(dirname $(location mlx/backend/cpu/compiled_preamble.h))/../../..
+bash $(location mlx/backend/cpu/make_compiled_preamble.sh) $@ {cc} $$SRCDIR {clang} {arch} "{flags}"
+grep -q 'struct Abs' $@ || {{ echo "Failed to preprocess the CPU compiled preamble" >&2; exit 1; }}
+"""
+
+genrule(
+    name = "cpu_compiled_preamble",
+    srcs = [
+        "mlx/backend/cpu/compiled_preamble.h",
+        "mlx/backend/cpu/make_compiled_preamble.sh",
+    ] + glob(
+        [
+            "mlx/types/*.h",
+            "mlx/backend/cpu/*.h",
+            "mlx/backend/cpu/simd/*.h",
+        ],
+        exclude = ["mlx/backend/cpu/compiled_preamble.h"],
+    ),
+    outs = ["mlx/backend/cpu/compiled_preamble.cpp"],
+    cmd = select({
+        ":macos_arm64": _CPU_PREAMBLE_CMD.format(
+            arch = "arm64",
+            cc = "/usr/bin/clang",
+            clang = "TRUE",
+            flags = "",
+        ),
+        ":macos": _CPU_PREAMBLE_CMD.format(
+            arch = "x86_64",
+            cc = "/usr/bin/clang",
+            clang = "TRUE",
+            flags = "",
+        ),
+        "//conditions:default": _CPU_PREAMBLE_CMD.format(
+            arch = "$(TARGET_CPU)",
+            cc = "$(CC)",
+            clang = "FALSE",
+            flags = "-x c++",
+        ),
+    }),
+    toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "version",
+    srcs = ["mlx/version.cpp"],
+    hdrs = [
+        "mlx/api.h",
+        "mlx/version.h",
+    ],
+    defines = ["MLX_STATIC"],
+    local_defines = ['MLX_VERSION=\\"{}\\"'.format(MLX_VERSION)],
+    visibility = ["//visibility:private"],
+)
+
+_CORE_SRCS = [
+    "mlx/array.cpp",
+    "mlx/compile.cpp",
+    "mlx/device.cpp",
+    "mlx/dtype.cpp",
+    "mlx/dtype_utils.cpp",
+    "mlx/export.cpp",
+    "mlx/einsum.cpp",
+    "mlx/fast.cpp",
+    "mlx/fft.cpp",
+    "mlx/ops.cpp",
+    "mlx/graph_utils.cpp",
+    "mlx/primitives.cpp",
+    "mlx/random.cpp",
+    "mlx/scheduler.cpp",
+    "mlx/stream.cpp",
+    "mlx/transforms.cpp",
+    "mlx/utils.cpp",
+    "mlx/linalg.cpp",
+    # backend/common
+    "mlx/backend/common/broadcasting.cpp",
+    "mlx/backend/common/compiled.cpp",
+    "mlx/backend/common/common.cpp",
+    "mlx/backend/common/load.cpp",
+    "mlx/backend/common/metal_kernel.cpp",
+    "mlx/backend/common/reduce.cpp",
+    "mlx/backend/common/slicing.cpp",
+    "mlx/backend/common/utils.cpp",
+    # backend/cpu
+    "mlx/backend/cpu/device_info.cpp",
+    "mlx/backend/cpu/arg_reduce.cpp",
+    "mlx/backend/cpu/binary.cpp",
+    "mlx/backend/cpu/conv.cpp",
+    "mlx/backend/cpu/copy.cpp",
+    "mlx/backend/cpu/distributed.cpp",
+    "mlx/backend/cpu/eig.cpp",
+    "mlx/backend/cpu/eigh.cpp",
+    "mlx/backend/cpu/encoder.cpp",
+    "mlx/backend/cpu/fft.cpp",
+    "mlx/backend/cpu/hadamard.cpp",
+    "mlx/backend/cpu/matmul.cpp",
+    "mlx/backend/cpu/gemms/cblas.cpp",
+    "mlx/backend/cpu/masked_mm.cpp",
+    "mlx/backend/cpu/primitives.cpp",
+    "mlx/backend/cpu/quantized.cpp",
+    "mlx/backend/cpu/reduce.cpp",
+    "mlx/backend/cpu/scan.cpp",
+    "mlx/backend/cpu/select.cpp",
+    "mlx/backend/cpu/softmax.cpp",
+    "mlx/backend/cpu/logsumexp.cpp",
+    "mlx/backend/cpu/sort.cpp",
+    "mlx/backend/cpu/threefry.cpp",
+    "mlx/backend/cpu/indexing.cpp",
+    "mlx/backend/cpu/luf.cpp",
+    "mlx/backend/cpu/qrf.cpp",
+    "mlx/backend/cpu/svd.cpp",
+    "mlx/backend/cpu/inverse.cpp",
+    "mlx/backend/cpu/cholesky.cpp",
+    "mlx/backend/cpu/unary.cpp",
+    "mlx/backend/cpu/eval.cpp",
+    "mlx/backend/cpu/compiled.cpp",
+    "mlx/backend/cpu/jit_compiler.cpp",
+    ":cpu_compiled_preamble",
+    # distributed
+    "mlx/distributed/primitives.cpp",
+    "mlx/distributed/ops.cpp",
+    "mlx/distributed/distributed.cpp",
+    "mlx/distributed/utils.cpp",
+    "mlx/distributed/mpi/mpi.cpp",
+    "mlx/distributed/ring/ring.cpp",
+    "mlx/distributed/nccl/no_nccl.cpp",
+    "mlx/distributed/jaccl/no_jaccl.cpp",
+    # io
+    "mlx/io/load.cpp",
+    "mlx/io/safetensors.cpp",
+    "mlx/io/gguf.cpp",
+    "mlx/io/gguf_quants.cpp",
+    # cuda
+    "mlx/backend/cuda/no_cuda.cpp",
+]
+
+_METAL_SRCS = [
+    "mlx/backend/metal/allocator.cpp",
+    "mlx/backend/metal/binary.cpp",
+    "mlx/backend/metal/device_info.cpp",
+    "mlx/backend/metal/compiled.cpp",
+    "mlx/backend/metal/conv.cpp",
+    "mlx/backend/metal/copy.cpp",
+    "mlx/backend/metal/custom_kernel.cpp",
+    "mlx/backend/metal/distributed.cpp",
+    "mlx/backend/metal/device.cpp",
+    "mlx/backend/metal/event.cpp",
+    "mlx/backend/metal/eval.cpp",
+    "mlx/backend/metal/fence.cpp",
+    "mlx/backend/metal/fft.cpp",
+    "mlx/backend/metal/hadamard.cpp",
+    "mlx/backend/metal/indexing.cpp",
+    "mlx/backend/metal/logsumexp.cpp",
+    "mlx/backend/metal/matmul.cpp",
+    "mlx/backend/metal/scaled_dot_product_attention.cpp",
+    "mlx/backend/metal/metal.cpp",
+    "mlx/backend/metal/primitives.cpp",
+    "mlx/backend/metal/quantized.cpp",
+    "mlx/backend/metal/normalization.cpp",
+    "mlx/backend/metal/rope.cpp",
+    "mlx/backend/metal/scan.cpp",
+    "mlx/backend/metal/slicing.cpp",
+    "mlx/backend/metal/softmax.cpp",
+    "mlx/backend/metal/sort.cpp",
+    "mlx/backend/metal/reduce.cpp",
+    "mlx/backend/metal/ternary.cpp",
+    "mlx/backend/metal/unary.cpp",
+    "mlx/backend/metal/resident.cpp",
+    "mlx/backend/metal/utils.cpp",
+    "mlx/backend/metal/jit_kernels.cpp",
+    "mlx/backend/gpu/copy.cpp",
+    "mlx/backend/gpu/primitives.cpp",
+    "mlx/backend/gpu/slicing.cpp",
+    ":mlx_metallib_embed",
+] + [":metal_jit_" + src.replace("/", "_") for src in _METAL_JIT_SOURCES]
+
+_NO_METAL_SRCS = [
+    "mlx/backend/metal/no_metal.cpp",
+    "mlx/backend/no_gpu/allocator.cpp",
+    "mlx/backend/no_gpu/device_info.cpp",
+    "mlx/backend/no_gpu/event.cpp",
+    "mlx/backend/no_gpu/fence.cpp",
+    "mlx/backend/no_gpu/eval.cpp",
+    "mlx/backend/no_gpu/primitives.cpp",
+]
+
+cc_library(
+    name = "mlx",
+    srcs = _CORE_SRCS + select({
+        ":macos_arm64": _METAL_SRCS,
+        "//conditions:default": _NO_METAL_SRCS,
+    }) + select({
+        ":macos": ["mlx/backend/cpu/gemms/bnns.cpp"],
+        "//conditions:default": [
+            "mlx/backend/cpu/gemms/simd_bf16.cpp",
+            "mlx/backend/cpu/gemms/simd_fp16.cpp",
+        ],
+    }),
+    hdrs = glob(
+        ["mlx/**/*.h"],
+        exclude = [
+            "mlx/backend/cuda/**",
+            "mlx/backend/metal/kernels/**",
+            "mlx/distributed/jaccl/lib/**",
+        ],
+    ) + ["mlx/backend/cuda/cuda.h"],
+    copts = select({
+        "@rules_cc//cc/compiler:gcc": ["-Wno-psabi"],
+        "//conditions:default": [],
+    }),
+    cxxopts = ["-std=c++20"],
+    defines = ["MLX_STATIC"],
+    linkopts = select({
+        ":macos": ["-framework Accelerate"],
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        'METAL_PATH=\\"\\"',
+        "MLX_METAL_NO_NAX",
+    ] + select({
+        ":macos_arm64": ["MLX_METAL_EMBEDDED_METALLIB"],
+        "//conditions:default": [],
+    }) + select({
+        ":macos": [
+            "ACCELERATE_NEW_LAPACK",
+            "MLX_USE_ACCELERATE",
+        ],
+        "//conditions:default": [],
+    }),
+    textual_hdrs = glob(["mlx/backend/metal/kernels/**/*.h"]),
+    deps = [
+        ":version",
+        "@fmt",
+        "@gguf-tools//:gguflib",
+        "@nlohmann_json//:json",
+    ] + select({
+        ":macos_arm64": ["@metal-cpp"],
+        "//conditions:default": [],
+    }) + select({
+        ":macos": [],
+        "//conditions:default": ["@openblas"],
+    }),
+)
