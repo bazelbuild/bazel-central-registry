@@ -1,11 +1,52 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-package(default_visibility = ["//visibility:public"])
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
 
 exports_files([
     "README.md",
     "VERSION.txt",
+    "webgpu/src/LICENSE",
+    "webgpu_cpp/LICENSE",
 ])
+
+# Dawn / webgpu-native headers and C++ bindings.
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:BSD-3-Clause",
+    text = "webgpu_cpp/LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+# Emscripten-derived sources are "MIT OR NCSA"; dual licensing is not modelled
+# by @package_metadata yet, so MIT (as used in the SPDX headers) is declared.
+license(
+    name = "license_emscripten",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "webgpu/src/LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata_emscripten",
+    attributes = [":license_emscripten"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
 
 # <webgpu/webgpu.h> (Dawn flavour, includes the Emscripten/Dawn extensions).
 cc_library(
@@ -33,11 +74,13 @@ _JS_LIBRARIES = [
 filegroup(
     name = "js_libraries",
     srcs = _JS_LIBRARIES,
+    package_metadata = [":package_metadata_emscripten"],
 )
 
 filegroup(
     name = "closure_externs",
     srcs = ["webgpu/src/webgpu-externs.js"],
+    package_metadata = [":package_metadata_emscripten"],
 )
 
 # Bazel-native equivalent of `emcc --use-port=emdawnwebgpu`: compiles webgpu.cpp
@@ -58,6 +101,7 @@ cc_library(
             "$(execpath {})".format(js),
         ]
     ],
+    package_metadata = [":package_metadata_emscripten"],
     target_compatible_with = ["@platforms//os:emscripten"],
     deps = [
         ":webgpu_cpp",
