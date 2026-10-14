@@ -1,0 +1,66 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "README.md",
+    "VERSION.txt",
+])
+
+# <webgpu/webgpu.h> (Dawn flavour, includes the Emscripten/Dawn extensions).
+cc_library(
+    name = "webgpu_headers",
+    hdrs = ["webgpu/include/webgpu/webgpu.h"],
+    strip_include_prefix = "webgpu/include",
+)
+
+# Dawn-style C++ bindings: <webgpu/webgpu_cpp.h>.
+cc_library(
+    name = "webgpu_cpp",
+    hdrs = glob(["webgpu_cpp/include/**/*.h"]),
+    strip_include_prefix = "webgpu_cpp/include",
+    deps = [":webgpu_headers"],
+)
+
+# Order matters: library_webgpu.js depends on the generated tables.
+_JS_LIBRARIES = [
+    "webgpu/src/library_webgpu_enum_tables.js",
+    "webgpu/src/library_webgpu_generated_struct_info.js",
+    "webgpu/src/library_webgpu_generated_sig_info.js",
+    "webgpu/src/library_webgpu.js",
+]
+
+filegroup(
+    name = "js_libraries",
+    srcs = _JS_LIBRARIES,
+)
+
+filegroup(
+    name = "closure_externs",
+    srcs = ["webgpu/src/webgpu-externs.js"],
+)
+
+# Bazel-native equivalent of `emcc --use-port=emdawnwebgpu`: compiles webgpu.cpp
+# and passes the JS bindings via --js-library. Do not combine with --use-port.
+cc_library(
+    name = "emdawnwebgpu",
+    srcs = ["webgpu/src/webgpu.cpp"],
+    additional_linker_inputs = _JS_LIBRARIES,
+    copts = [
+        "-std=c++20",
+        "-fno-exceptions",
+    ],
+    linkopts = [
+        opt
+        for js in _JS_LIBRARIES
+        for opt in [
+            "--js-library",
+            "$(execpath {})".format(js),
+        ]
+    ],
+    target_compatible_with = ["@platforms//os:emscripten"],
+    deps = [
+        ":webgpu_cpp",
+        ":webgpu_headers",
+    ],
+)
