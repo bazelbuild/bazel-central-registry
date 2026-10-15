@@ -198,6 +198,36 @@ For an overview result of testing top BCR modules with incompatible flags, you c
 
 Before adding a flag in [incompatible_flag.yml](/incompatible_flags.yml), please make sure the most commonly used modules are fixed, otherwise migration for other modules will be blocked without any workaround.
 
+### Downstream test
+
+The [BCR Downstream Test](https://buildkite.com/bazel/bcr-downstream-test) checks whether a new module version breaks the modules that directly depend on it. It's optional and doesn't block merging, but it's useful for widely used modules.
+
+To run it, add the `run-downstream-test` label to the PR (ask a BCR maintainer if you can't add labels). A build tests only one module version. If a PR changes several module versions, a BCR maintainer can trigger a build manually with `TARGET_MODULE` set to the one to test (e.g. `protobuf@36.2`).
+
+The test:
+
+- Selects the latest versions of the top 50 direct dependents of the module, ranked by [PageRank](/tools/README.md#module_analyzerpy).
+- Runs the [anonymous module](#anonymous-module-test) and [test module](#test-module) tasks from each dependent's `presubmit.yml`, with the new module version overridden via `--override_module`.
+- Skips dependent tasks that use a Bazel major version the new module version isn't tested with in its own `presubmit.yml`.
+
+You can configure the test in the `presubmit.yml` file of the new module version under a top-level `bcr_downstream_test` field:
+
+```yaml
+bcr_downstream_test:
+  # Number of top direct dependents to test (default: 50).
+  select_top_bcr_modules: 20
+  # Ignore dev dependencies when selecting direct dependents (default: false).
+  exclude_dev_deps: true
+  # Test these module versions instead of the top direct dependents.
+  # module_selections: ["grpc@latest", "rules_go@latest"]
+  # Only test a random percentage of the selected modules.
+  # smoke_test_percentage: 50
+  # Run all tasks with this Bazel version instead of their own.
+  # use_bazel_version: 8.x
+```
+
+See the [BCR Downstream Test documentation](https://github.com/bazelbuild/continuous-integration/tree/master/buildkite/bazel-central-registry#bcr-downstream-test) for all options.
+
 ## Approval and submission
 
 To be submitted, a PR needs to:
@@ -208,6 +238,10 @@ To be submitted, a PR needs to:
 - Pass [presubmit](#presubmit) checks
   - If you see your presubmit check stuck on "blocked", a BCR maintainer needs to explicitly unblock the presubmit run or apply the `presubmit-auto-run` label to your PR. This is to avoid abuse of our CI system. Feel free to ping `@bazelbuild/bcr-maintainers` if you're blocked on this.
 - Pass certain other checks, especially for first-time contributors, such as CLA signing or GitHub workflows that require approval from BCR maintainers.
+
+The `bazel-io` bot regularly reviews open PRs and merges those that meet the requirements above, but these scheduled runs can be delayed by a few hours.
+To have a PR reviewed right away, anyone can comment `@bazel-io review` on the PR thread.
+The bot then merges the PR if all modified modules are approved by their maintainers and all checks pass, or replies with what is still missing.
 
 In case a release is broken, the PR to publish it may never be merged.
 Module maintainers can ask the `bazel-io` bot to close a PR by commenting `@bazel-io abandon` on the PR thread.

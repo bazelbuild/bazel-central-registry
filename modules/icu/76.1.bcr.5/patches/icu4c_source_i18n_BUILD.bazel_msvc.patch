@@ -1,0 +1,53 @@
+BCR adjustments to icu4c/source/i18n/BUILD.bazel for building with cl.exe / clang-cl
+(static library build, MSVC CRT). Applied after the base patch for this file.
+
+* /utf-8 copts: these targets compile sources holding UTF-8 char literals
+  (currency symbols in static_unicode_sets.h, fullwidth letters in
+  uchar.cpp, case-mapping tables in ustrcase.cpp, Greek letters in
+  alphaindex.cpp). Without /utf-8 cl.exe reads the file as the ANSI code
+  page and rejects the literals with C2015 "too many characters in
+  constant". GCC/clang/MinGW read UTF-8 by default and are unaffected.
+
+* U_STATIC_IMPLEMENTATION in `defines` on :headers: propagated to every
+  consumer so icu's public headers stop emitting __declspec(dllimport)
+  references that a static link cannot satisfy (LNK4217 / LNK1120).
+
+* :platform linkopts: putil.cpp's uprv_detectWindowsTimeZone reads the
+  registry (RegOpenKeyExW and friends, advapi32.lib), which the MSVC
+  toolchain does not link by default. Mirrors the -ldl entry for Linux.
+
+* :platform deps: the base patch globs udata.cpp into :platform, and
+  udata.cpp references the data entry point (icudt<NN>_dat) that
+  //icu4c/source/stubdata defines. Upstream's :udata target carries that
+  dep; :platform must too now that it owns the source, otherwise binaries
+  that link :platform without :udata (gennorm2, genprops) fail with
+  LNK2001 on MSVC, whose linker pulls udata.obj in for other symbols.
+
+Targets touched: :headers, :collation.
+
+--- a/icu4c/source/i18n/BUILD.bazel
++++ b/icu4c/source/i18n/BUILD.bazel
+@@ -22,6 +22,11 @@
+ 
+ cc_library(
+     name = "headers",
++    defines = select({
++        "@rules_cc//cc/compiler:clang-cl": ["U_STATIC_IMPLEMENTATION"],
++        "@rules_cc//cc/compiler:msvc-cl": ["U_STATIC_IMPLEMENTATION"],
++        "//conditions:default": [],
++    }),
+     hdrs = glob([
+         "unicode/*.h", # public
+         "*.h",         # internal
+@@ -38,6 +43,11 @@
+ 
+ cc_library(
+     name = "collation",
++    copts = select({
++        "@rules_cc//cc/compiler:clang-cl": ["/utf-8"],
++        "@rules_cc//cc/compiler:msvc-cl": ["/utf-8"],
++        "//conditions:default": [],
++    }),
+     srcs = glob([
+         "*.h",
+         "*.cpp",

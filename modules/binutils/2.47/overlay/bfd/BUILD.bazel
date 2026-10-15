@@ -1,0 +1,668 @@
+"""libbfd - the Binary File Descriptor library (bfd/Makefile.am)."""
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load("@rules_cc_autoconf//autoconf:autoconf_package_info.bzl", "autoconf_package_info")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("//:platforms.bzl", "select_bfd_substs", "select_default", "select_field", "select_flag_defines", "select_tdefaults_wrapper", "select_triple")
+load("//:rules.bzl", "bugurl", "install_dirs", "policy_defines")
+load(":targets.bzl", "BFD", "BFD_64")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([bfd], [BFD_VERSION]) (configure.ac:21) and AM_INIT_AUTOMAKE.
+autoconf_package_info(
+    name = "package",
+    package_name = "bfd",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "bfd",
+    package_url = "",
+    package_version = "2.47",
+)
+
+# AX_TLS (ax_tls.m4:49-71) tries thread_local, _Thread_local, __thread and
+# __declspec(thread) in turn and defines TLS to the first that compiles.
+# A define can only be written once here, so the ladder is folded to the two
+# spellings every compiler able to build bfd has: _Thread_local (C11; the C23
+# `thread_local` upstream would pick first in a C23-mode compiler names the
+# same storage class) and GCC's `__thread` as the fallback.
+TLS_CHECKS = [
+    checks.AC_TRY_COMPILE(
+        name = "ax_cv_tls__Thread_local",
+        code = """\
+#include <stdlib.h>
+int main(void) { static _Thread_local int bar; return bar; }
+""",
+    ),
+    checks.AC_TRY_COMPILE(
+        name = "ax_cv_tls___thread",
+        code = """\
+#include <stdlib.h>
+int main(void) { static __thread int bar; return bar; }
+""",
+    ),
+    checks.AC_DEFINE(
+        "TLS",
+        condition = "ax_cv_tls__Thread_local",
+        if_false = "__thread",
+        if_true = "_Thread_local",
+        requires = ["ax_cv_tls___thread"],
+    ),
+]
+
+# BFD_HAVE_SYS_PROCFS_TYPE and _MEMBER (bfd.m4:21-57), native builds only
+# (configure.ac:975-996).  The define is the upper-cased type, and the
+# upper-cased type and member joined with an underscore.
+PROCFS_TYPES = [
+    "prstatus_t",
+    "prstatus32_t",
+    "pstatus_t",
+    "pxstatus_t",
+    "pstatus32_t",
+    "prpsinfo_t",
+    "prpsinfo32_t",
+    "psinfo_t",
+    "psinfo32_t",
+    "lwpstatus_t",
+    "lwpxstatus_t",
+    "win32_pstatus_t",
+]
+
+PROCFS_MEMBERS = [
+    ("prstatus_t", "pr_who"),
+    ("prstatus32_t", "pr_who"),
+    ("prpsinfo_t", "pr_pid"),
+    ("prpsinfo32_t", "pr_pid"),
+    ("psinfo_t", "pr_pid"),
+    ("psinfo32_t", "pr_pid"),
+    ("lwpstatus_t", "pr_context"),
+    ("lwpstatus_t", "pr_reg"),
+    ("lwpstatus_t", "pr_fpreg"),
+]
+
+PROCFS_PROLOGUE = [
+    "#define _SYSCALL32",
+    "/* Needed for new procfs interface on sparc-solaris.  */",
+    "#define _STRUCTURED_PROC 1",
+    "#include <sys/procfs.h>",
+]
+
+PROCFS_CHECKS = [
+    checks.AC_CHECK_TYPE(
+        t,
+        define = "HAVE_" + t.upper(),
+        includes = PROCFS_PROLOGUE,
+        requires = ["HAVE_SYS_PROCFS_H"],
+    )
+    for t in PROCFS_TYPES
+] + [
+    checks.AC_CHECK_MEMBER(
+        t + "." + m,
+        define = "HAVE_{}_{}".format(
+            t.upper(),
+            m.upper(),
+        ),
+        includes = PROCFS_PROLOGUE,
+        requires = ["HAVE_SYS_PROCFS_H"],
+    )
+    for t, m in PROCFS_MEMBERS
+]
+
+autoconf(
+    name = "autoconf",
+    build_settings = [
+        # bfdver.h: PKGVERSION and REPORT_BUGS_TO (Makefile.am:812-838).
+        checks.AC_BUILD_SETTING(
+            name = "bfd_cv_version_package",
+            subst = "bfd_version_package",
+            target = "//:with_pkgversion",
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "bfd_cv_report_bugs_to",
+            subst = "report_bugs_to",
+            target = ":report_bugs_to",
+        ),
+    ],
+    # In configure.ac order.  AC_USE_SYSTEM_EXTENSIONS, ACX_LARGEFILE,
+    # AC_C_BIGENDIAN and the AC_INCLUDES_DEFAULT headers come from the shared
+    # macros under deps.
+    checks = [
+                 # AM_INIT_AUTOMAKE's mirror of AC_INIT (configure.ac:26).
+             ] +
+             # AC_PLUGINS (config/plugins.m4): the two headers dlopen may live behind
+             # and the library it needs.  memory.h and sys/param.h have slots in
+             # config.in from autoconf 2.69's AC_INCLUDES_DEFAULT and AC_FUNC_MMAP.
+             macros.AC_CHECK_HEADERS([
+                 "dlfcn.h",
+                 "windows.h",
+                 "memory.h",
+                 "sys/param.h",
+             ]) + [
+                 # LT_INIT (configure.ac:41).
+                 checks.AC_DEFINE(
+                     "LT_OBJDIR",
+                     value = '".libs/"',
+                 ),
+                 checks.AC_SEARCH_LIBS(
+                     "dlsym",
+                     ["dl"],
+                     subst = "LIB_DLSYM",
+                 ),
+             ] +
+             # --enable-checking (configure.ac:60-71).
+             select_flag_defines(
+                 [("enable_checking", "ENABLE_CHECKING")],
+                 if_false = None,
+             ) +
+             # --enable-secureplt (configure.ac:113-123).
+             select_flag_defines(
+                 [("enable_secureplt", "USE_SECUREPLT")],
+                 if_false = None,
+             ) +
+             # --enable-leading-mingw64-underscores (configure.ac:140-146).
+             select_flag_defines(
+                 [("enable_leading_mingw64_underscores", "USE_MINGW64_LEADING_UNDERSCORES")],
+                 if_false = None,
+             ) +
+             # configure.ac:208-211.
+             [
+                 checks.AC_CHECK_SIZEOF(
+                     "long long",
+                     define = "SIZEOF_LONG_LONG",
+                 ),
+                 checks.AC_CHECK_SIZEOF(
+                     "void *",
+                     define = "SIZEOF_VOID_P",
+                 ),
+                 checks.AC_CHECK_SIZEOF(
+                     "long",
+                     define = "SIZEOF_LONG",
+                 ),
+                 checks.AC_CHECK_SIZEOF(
+                     "int",
+                     define = "SIZEOF_INT",
+                 ),
+             ] +
+             # configure.ac:219-220.
+             macros.AC_CHECK_HEADERS([
+                 "fcntl.h",
+                 "sys/file.h",
+                 "sys/resource.h",
+             ]) + macros.AC_CHECK_FUNCS([
+                 "fcntl",
+                 "fdopen",
+                 "fileno",
+                 "fls",
+                 "getgid",
+                 "getpagesize",
+                 "getrlimit",
+                 "getuid",
+                 "sysconf",
+             ]) +
+             # configure.ac:225-226.
+             macros.AC_CHECK_DECLS(
+                 [
+                     "basename",
+                     "ffs",
+                     "stpcpy",
+                     "asprintf",
+                     "vasprintf",
+                     "strnlen",
+                     "strtoull",
+                 ],
+                 compile_defines = ["_GNU_SOURCE"],
+                 includes = [
+                     "#include <stdio.h>",
+                     "#include <stdlib.h>",
+                     "#include <string.h>",
+                     "#include <strings.h>",
+                     "#include <unistd.h>",
+                 ],
+             ) + macros.AC_CHECK_DECLS(
+                 ["___lc_codepage_func"],
+                 includes = ["#include <locale.h>"],
+             ) +
+             # BFD_BINARY_FOPEN (acinclude.m4:4-11): the b modifier on Windows hosts.
+             select({
+                 "@platforms//os:windows": [checks.AC_DEFINE("USE_BINARY_FOPEN", "1")],
+                 "//conditions:default": [],
+             }) +
+             # AX_TLS (configure.ac:230).
+             TLS_CHECKS +
+             # AC_ZSTD (config/zstd.m4), --with-zstd.
+             select_flag_defines(
+                 [("with_zstd", "HAVE_ZSTD")],
+                 if_false = None,
+             ) + [
+        # configure.ac:237-250, hidden visibility, compiled with -Werror.
+        checks.AC_TRY_COMPILE(
+            code = """\
+const char hw[] __attribute__ ((__visibility__ ("hidden"))) = "Hello, World\\n";
+extern void print (const char *) __attribute__ ((__visibility__ ("hidden")));
+int main(void) { print (hw); return 0; }
+""",
+            copts = ["-Werror"],
+            define = "HAVE_HIDDEN",
+        ),
+        # --enable-64-bit-archive (configure.ac:759-763).
+    ] + select_flag_defines(
+        [("enable_64_bit_archive", "USE_64_BIT_ARCHIVE")],
+        if_false = None,
+    ) +
+    # BFD_SYS_PROCFS_H (configure.ac:975): <sys/procfs.h> and what it
+    # declares.  Every build here is native, which is when configure runs
+    # these.
+    [
+        checks.AC_DEFINE(
+            "_STRUCTURED_PROC",
+            "1",
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/procfs.h",
+            define = "HAVE_SYS_PROCFS_H",
+        ),
+    ] + PROCFS_CHECKS +
+    # configure.ac:1023-1038, the file_ptr type: int64_t with ftello64 and
+    # fseeko64, or with a 64-bit off_t, else long.  SIZEOF_OFF_T is only
+    # checked upstream once ftello and fseeko are both present; every host
+    # here has them, so the requirement is written out rather than chained.
+    macros.AC_CHECK_FUNCS([
+        "ftello",
+        "ftello64",
+        "fseeko",
+        "fseeko64",
+        "fopen64",
+    ]) + macros.AC_CHECK_DECLS(
+        [
+            "ftello",
+            "ftello64",
+            "fseeko",
+            "fseeko64",
+            "fopen64",
+        ],
+        compile_defines = ["_GNU_SOURCE"],
+        includes = ["#include <stdio.h>"],
+    ) + [
+        checks.AC_CHECK_SIZEOF(
+            "off_t",
+            define = "SIZEOF_OFF_T",
+            includes = ["#include <sys/types.h>"],
+            requires = [
+                "ac_cv_func_ftello",
+                "ac_cv_func_fseeko",
+            ],
+        ),
+        checks.AC_SUBST(
+            "bfd_file_ptr",
+            condition = "(ac_cv_func_ftello64 && ac_cv_func_fseeko64) || ac_cv_sizeof_off_t==8",
+            if_false = "long",
+            if_true = "int64_t",
+        ),
+        checks.AC_SUBST(
+            "bfd_ufile_ptr",
+            condition = "(ac_cv_func_ftello64 && ac_cv_func_fseeko64) || ac_cv_sizeof_off_t==8",
+            if_false = "unsigned long",
+            if_true = "uint64_t",
+        ),
+        # GCC_AC_FUNC_MMAP (configure.ac:1040) is AC_FUNC_MMAP, an AC_TRY_RUN
+        # that every supported host passes natively; see libiberty.
+        checks.AC_CHECK_FUNC(
+            "mmap",
+            define = "HAVE_MMAP",
+            requires = ["HAVE_SYS_MMAN_H"],
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/mman.h",
+            define = "HAVE_SYS_MMAN_H",
+        ),
+    ] + macros.AC_CHECK_FUNCS([
+        "madvise",
+        "mprotect",
+    ]) +
+    # configure.ac:1042-1044, --with-mmap.
+    select({
+        "//:_with_mmap": [
+            checks.AC_DEFINE(
+                "USE_MMAP",
+                "1",
+                requires = ["HAVE_MMAP"],
+            ),
+        ],
+        "//conditions:default": [],
+    }) + [
+        # bfdver.h (Makefile.am:812-838).  development.sh says `development=true`
+        # for this release, so the version string carries BFD_VERSION_DATE
+        # from version.h, as `ld --version` of an upstream build shows.
+        checks.AC_SUBST(
+            "bfd_version",
+            value = 247000000,
+        ),
+        checks.AC_SUBST(
+            "bfd_version_string",
+            value = '"2.47.20260726"',
+        ),
+    ] +
+    # bfd-in2.h's placeholders: BFD_SUPPORTS_PLUGINS from --enable-plugins
+    # (configure.ac:1010-1015), the word size and the default target size
+    # from the platform (configure.ac:790-803).
+    select({
+        "//:_enable_plugins_no": [checks.AC_SUBST("supports_plugins", 0)],
+        "//conditions:default": [checks.AC_SUBST("supports_plugins", 1)],
+    }) + select_bfd_substs((BFD, BFD_64)),
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+# ACX_BUGURL (config/acx.m4) wraps the URL in angle brackets for --help.
+bugurl(
+    name = "report_bugs_to",
+    url = "//:with_bugurl",
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+# bfd.h is bfd-in2.h with the five configure-time values filled in
+# (AC_CONFIG_FILES bfd-in3.h:bfd-in2.h, configure.ac:1046, then copied).
+autoconf_hdr(
+    name = "bfd_h",
+    out = "bfd.h",
+    mode = "subst",
+    template = "bfd-in2.h",
+    deps = [":autoconf"],
+)
+
+autoconf_hdr(
+    name = "bfdver_h",
+    out = "bfdver.h",
+    mode = "subst",
+    template = "version.h",
+    deps = [":autoconf"],
+)
+
+# The -ldl AC_SEARCH_LIBS found for plugin.c's dlopen.
+autoconf_linkopts(
+    name = "linkopts",
+    vars = ["LIB_DLSYM"],
+    deps = [":autoconf"],
+)
+
+# Makefile.am:723-776: the NN and XX templates, `$(SED) -e s/NN/32/g` done as
+# a literal substitution (the Makefile also prepends `#line 1 "<template>"`,
+# which only changes the file name in diagnostics).  targmatch.h
+# (Makefile.am:717-720, `sed -f targmatch.sed < config.bfd`) is a pure
+# function of two tarball files and is generated into the overlay by
+# generate_targets.py.
+[
+    expand_template(
+        name = out.replace(".", "_").replace("-", "_"),
+        out = out,
+        substitutions = {pattern: value},
+        template = src,
+    )
+    for src, pattern, outs in [
+        (
+            "elfxx-target.h",
+            "NN",
+            {
+                "elf32-target.h": "32",
+                "elf64-target.h": "64",
+            },
+        ),
+        (
+            "elfnn-aarch64.c",
+            "NN",
+            {
+                "elf32-aarch64.c": "32",
+                "elf64-aarch64.c": "64",
+            },
+        ),
+        (
+            "elfnn-ia64.c",
+            "NN",
+            {
+                "elf32-ia64.c": "32",
+                "elf64-ia64.c": "64",
+            },
+        ),
+        (
+            "elfnn-kvx.c",
+            "NN",
+            {
+                "elf32-kvx.c": "32",
+                "elf64-kvx.c": "64",
+            },
+        ),
+        (
+            "elfnn-loongarch.c",
+            "NN",
+            {
+                "elf32-loongarch.c": "32",
+                "elf64-loongarch.c": "64",
+            },
+        ),
+        (
+            "elfnn-riscv.c",
+            "NN",
+            {
+                "elf32-riscv.c": "32",
+                "elf64-riscv.c": "64",
+            },
+        ),
+        (
+            "peXXigen.c",
+            "XX",
+            {
+                "pe-aarch64igen.c": "peAArch64",
+                "pe-loongarch64igen.c": "peLoongArch64",
+                "pe-riscv64igen.c": "peRiscV64",
+                "peigen.c": "pe",
+                "pepigen.c": "pep",
+                "pex64igen.c": "pex64",
+            },
+        ),
+    ]
+    for out, value in outs.items()
+]
+
+# Sources that other sources #include rather than compile on their own
+# (coff-i386.c is both: compiled for i386_coff_vec and included by the PE
+# backends), the NN/XX templates, and the two files the TDEFAULTS wrappers
+# from :sources include.
+TEXTUAL_SRCS = [
+    "aout32.c",
+    "archures.c",
+    "coff-aarch64.c",
+    "coff-arm.c",
+    "coff-i386.c",
+    "coff-ia64.c",
+    "coff-loongarch64.c",
+    "coff-mcore.c",
+    "coff-riscv64.c",
+    "coff-sh.c",
+    "coff-x86_64.c",
+    "cpu-ia64-opc.c",
+    "elf-m10300.c",
+    "elf-s390-common.c",
+    "mach-o-target.c",
+    "pe-arm.c",
+    "pei-arm.c",
+    "targets.c",
+] + glob(["elfnn-*.c"]) + ["peXXigen.c"]
+
+# BFD32_LIBS_CFILES (Makefile.am:81-86), less targets.c and archures.c,
+# which :sources wraps with $(TDEFAULTS).
+LIB_SRCS = [
+    "archive.c",
+    "bfd.c",
+    "bfdio.c",
+    "cache.c",
+    "coff-bfd.c",
+    "compress.c",
+    "corefile.c",
+    "format.c",
+    "hash.c",
+    "libbfd.c",
+    "linker.c",
+    "merge.c",
+    "opncls.c",
+    "reloc.c",
+    "section.c",
+    "simple.c",
+    "stab-syms.c",
+    "stabs.c",
+    "syms.c",
+    "binary.c",
+    "ihex.c",
+    "srec.c",
+    "tekhex.c",
+    "verilog.c",
+]
+
+# targets.c and archures.c are compiled with $(TDEFAULTS) and nothing else
+# is (Makefile.am:782-806): two wrappers define them and include the file.
+[
+    write_file(
+        name = source[:-len(".c")] + "_tdefaults_c",
+        out = source[:-len(".c")] + "-tdefaults.c",
+        content = select_tdefaults_wrapper(
+            (BFD, BFD_64),
+            source,
+        ),
+    )
+    for source in [
+        "targets.c",
+        "archures.c",
+    ]
+]
+
+# AM_CPPFLAGS (Makefile.am:63) and dwarf2.c (Makefile.am:797).
+install_dirs(
+    name = "dirs",
+    defines = [
+        "BINDIR",
+        "LIBDIR",
+        "DEBUGDIR",
+    ],
+    triple = select_triple(),
+)
+
+# Public visibility matches `make install` for a native build
+# (AM_INSTALL_LIBBFD): libbfd.a, bfd.h and its includes.  The private
+# headers (libbfd.h, elf-bfd.h, ...) travel with it because ld and
+# libctf are built against them, as they are in the upstream tree.
+cc_library(
+    name = "headers",
+    hdrs = glob(
+        [
+            "*.def",
+            "*.h",
+            "hosts/*.h",
+        ],
+        exclude = [
+            "bfd-in.h",
+            "bfd-in2.h",
+            "libbfd-in.h",
+            "libcoff-in.h",
+            "version.h",
+        ],
+    ) + [
+        "elf32-target.h",
+        "elf64-target.h",
+        ":bfd_h",
+        ":bfdver_h",
+    ],
+    copts = COPTS,
+    includes = ["."],
+    deps = ["//include"],
+)
+
+# -z separate-code's default (configure.ac:119-131) under --enable-separate-code.
+policy_defines(
+    name = "separate_code",
+    auto = ["auto"],
+    default = select_default(
+        (BFD, BFD_64),
+        "separate_code",
+    ),
+    flag = "//:enable_separate_code",
+    values = {
+        "False": ["DEFAULT_LD_Z_SEPARATE_CODE=0"],
+        "True": ["DEFAULT_LD_Z_SEPARATE_CODE=1"],
+        "no": ["DEFAULT_LD_Z_SEPARATE_CODE=0"],
+        "yes": ["DEFAULT_LD_Z_SEPARATE_CODE=1"],
+    },
+)
+
+cc_library(
+    name = "bfd",
+    srcs = LIB_SRCS + [
+        "archures-tdefaults.c",
+        "targets-tdefaults.c",
+    ] +
+    # @bfd_backends@ @bfd_machines@ @COREFILE@ @bfd64_libs@ (Makefile.am:674).
+    select_field(
+        (BFD, BFD_64),
+        "srcs",
+    ) +
+    # plugin.lo (configure.ac:690-692), --enable-plugins.
+    select({
+        "//:_enable_plugins_no": [],
+        "//conditions:default": ["plugin.c"],
+    }),
+    copts = COPTS,
+    implementation_deps = [
+        ":config",
+        ":dirs",
+        ":separate_code",
+    ],
+    # @TDEFINES@ @COREFLAG@ $(HAVEVECS) and the core header defines
+    # (Makefile.am:598, configure.ac:1001-1008).
+    local_defines = ["HAVE_CONFIG_H"] + select_field(
+        (BFD, BFD_64),
+        "defines",
+    ),
+    textual_hdrs = TEXTUAL_SRCS,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":linkopts",
+        "//libiberty",
+        "//libsframe:sframe",
+        "@zlib",
+    ] + select({
+        "//:_with_zstd": ["@zstd"],
+        "//conditions:default": [],
+    }),
+)

@@ -1,0 +1,1118 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//:gawk_tool.bzl", "gawk_tool")
+load(":awk_test.bzl", "awk_test", "incompat_if")
+
+# ---------------------------------------------------------------------------
+# Shell wrapper for the .awk test suite.
+#
+# Generated via `write_file` (not a checked-in `.sh`) so the BCR overlay
+# mechanism — which strips +x bits from raw overlay files — still produces
+# an executable wrapper. Each `awk_test(...)` declaration runs this wrapper
+# via `sh_test`; it sources `runfiles.bash` (rlocation), runs gawk with
+# absolute paths, then sed-normalizes the output so error messages
+# (which include the .awk path) match the basenames baked into the
+# upstream `.ok` files.
+#
+# Absolute paths (not `cp` + `cd` + relative basename) because on Windows
+# MSYS bash's `cd` doesn't always propagate to the Windows CWD that
+# native `gawk.exe` inherits when bash spawns it — leading to gawk
+# reporting "cannot open source file `aadelete1.awk'" even after `cp`
+# placed the file in bash's CWD. The sed normalization happens on all
+# platforms (a no-op on outputs that contain no path).
+# ---------------------------------------------------------------------------
+
+write_file(
+    name = "run_awk_test",
+    out = "run_awk_test.sh",
+    content = """\
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# --- begin runfiles.bash initialization v3 ---
+# Copy-pasted from the Bazel Bash runfiles library v3.
+set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
+# shellcheck disable=SC1090
+source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \\
+  source "$(grep -sm1 "^$f " "${RUNFILES_MANIFEST_FILE:-/dev/null}" | cut -f2- -d' ')" 2>/dev/null || \\
+  source "$0.runfiles/$f" 2>/dev/null || \\
+  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \\
+  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \\
+  { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=; set -e
+# --- end runfiles.bash initialization v3 ---
+
+GAWK=$(rlocation "$1"); shift
+OK=$(rlocation "$1"); shift
+AWK_FILE=$(rlocation "$1"); shift
+IN_FILE=
+if [ "$1" != "__no_input__" ]; then
+  IN_FILE=$(rlocation "$1")
+fi
+shift
+
+# `TEST_UNDECLARED_OUTPUTS_DIR` is set by Bazel for every test and is
+# captured as `outputs.zip` on failure — using it as scratch space lets
+# you inspect `_out` (and `_out_raw`, pre-normalization) from a flaky
+# run without re-running the test.
+cd "${TEST_UNDECLARED_OUTPUTS_DIR:?required by the bazel test environment}"
+BASE=$(basename "$AWK_FILE" .awk)
+set +e
+if [ -n "$IN_FILE" ]; then
+  "$GAWK" "$@" -f "$AWK_FILE" < "$IN_FILE" > _out_raw 2>&1
+else
+  "$GAWK" "$@" -f "$AWK_FILE" > _out_raw 2>&1
+fi
+
+RC=$?
+
+set -e
+# Strip the absolute-path prefix gawk echoes in its error messages so
+#   gawk: /abs/path/aadelete1.awk:3: fatal: ...
+# normalizes to
+#   gawk: aadelete1.awk:3: fatal: ...
+# matching the basenames baked into the upstream `.ok` files.
+#
+# Two-pass substitution — one for the POSIX form of AWK_FILE and one
+# for the Windows-backslash variant — because gawk's error output may
+# legitimately contain other backslashes (regex-escape descriptions
+# like backslash-8) that a blanket translation would mangle. Match
+# only the AWK_FILE path itself in each form.
+#
+# The `cat ; printf x` + `%x` sentinel preserves trailing newlines
+# that `$(...)` would otherwise strip. Unquoted vars in the patterns
+# are required for bash 3.2 (macOS), which takes quotes inside
+# `${var//"$pat"/...}` literally; safe here because paths contain no
+# glob metachars (`*`/`?`/`[`). The backslash variant pattern uses
+# four backslashes per separator so bash's glob engine sees two
+# (which matches a single literal backslash).
+out=$(cat _out_raw; printf x); out="${out%x}"
+# On Windows, gawk's stdio runs in text mode and translates LF to
+# CRLF on output. The upstream `.ok` files end every line with LF
+# only, so without this `diff` reports every line as different even
+# when the visible content matches. Replace CRLF only (not lone
+# CRs) so any legitimate CR inside a record is preserved.
+out="${out//$'\\r\\n'/$'\\n'}"
+out="${out//$AWK_FILE/$BASE.awk}"
+AWK_FILE_BS="${AWK_FILE//\\//\\\\\\\\}"
+out="${out//$AWK_FILE_BS/$BASE.awk}"
+# Same normalization for the gawk binary path itself — on Windows
+# `argv[0]` is the absolute path used to launch it (e.g.
+# C:\\...\\gawk.exe) and shows up at the start of error messages;
+# upstream `.ok` files bake in just `gawk`. `basename ... .exe`
+# strips the suffix when present (no-op on POSIX).
+GAWK_NAME=$(basename "$GAWK" .exe)
+out="${out//$GAWK/$GAWK_NAME}"
+GAWK_BS="${GAWK//\\//\\\\\\\\}"
+out="${out//$GAWK_BS/$GAWK_NAME}"
+printf '%s' "$out" > _out
+
+if [ "$RC" != "0" ]; then
+  echo "EXIT CODE: $RC" >> _out
+fi
+
+diff -u "$OK" _out
+""".splitlines(),
+    is_executable = True,
+)
+
+# ---------------------------------------------------------------------------
+# Upstream test categories (verbatim from test/Makefile.am).
+# ---------------------------------------------------------------------------
+
+BASIC_TESTS = [
+    "addcomma",
+    "anchgsub",
+    "anchor",
+    "argarray",
+    "argcasfile",
+    "arrayind1",
+    "arrayind2",
+    "arrayind3",
+    "arrayparm",
+    "arrayprm2",
+    "arrayprm3",
+    "arrayref",
+    "arrymem1",
+    "arryref2",
+    "arryref3",
+    "arryref4",
+    "arryref5",
+    "arynasty",
+    "arynocls",
+    "aryprm1",
+    "aryprm2",
+    "aryprm3",
+    "aryprm4",
+    "aryprm5",
+    "aryprm6",
+    "aryprm7",
+    "aryprm8",
+    "aryprm9",
+    "arysubnm",
+    "aryunasgn",
+    "asgext",
+    "assignnumfield",
+    "assignnumfield2",
+    "back89",
+    "backgsub",
+    "badassign1",
+    "badbuild",
+    "callparam",
+    "childin",
+    "clobber",
+    "close_status",
+    "closebad",
+    "clsflnam",
+    "compare",
+    "compare2",
+    "concat1",
+    "concat2",
+    "concat3",
+    "concat5",
+    "convfmt",
+    "datanonl",
+    "defref",
+    "delargv",
+    "delarpm2",
+    "delarprm",
+    "delfunc",
+    "dfacheck2",
+    "dfastress",
+    "divzero",
+    "divzero2",
+    "dynlj",
+    "elemnew5",
+    "elemnew6",
+    "eofsplit",
+    "eofsrc1",
+    "escapebrace",
+    "exit2",
+    "exitval1",
+    "exitval2",
+    "exitval3",
+    "fcall_exit",
+    "fcall_exit2",
+    "fieldassign",
+    "fldchg",
+    "fldchgnf",
+    "fldterm",
+    "fnamedat",
+    "fnarray",
+    "fnarray2",
+    "fnaryscl",
+    "fnasgnm",
+    "fnmisc",
+    "fordel",
+    "forref",
+    "forsimp",
+    "fsbs",
+    "fscaret",
+    "fsnul1",
+    "fsrs",
+    "fsspcoln",
+    "fstabplus",
+    "funsemnl",
+    "funsmnam",
+    "funstack",
+    "getline",
+    "getline2",
+    "getline3",
+    "getline4",
+    "getline5",
+    "getlnbuf",
+    "getlnfa",
+    "getnr2tb",
+    "getnr2tm",
+    "gsubasgn",
+    "gsubnulli18n",
+    "gsubtest",
+    "gsubtst2",
+    "gsubtst4",
+    "gsubtst5",
+    "gsubtst6",
+    "gsubtst7",
+    "gsubtst8",
+    "hex",
+    "hex2",
+    "hex3",
+    "hsprint",
+    "inpref",
+    "inputred",
+    "intest",
+    "intprec",
+    "iobug1",
+    "leaddig",
+    "leadnl",
+    "longsub",
+    "longwrds",
+    "manglprm",
+    "match4",
+    "match5",
+    "matchbadarg1",
+    "matchbadarg2",
+    "matchuninitialized",
+    "math",
+    "membug1",
+    "memleak",
+    "messages",
+    "minusstr",
+    "mmap8k",
+    "nasty",
+    "nasty2",
+    "negexp",
+    "negrange",
+    "nested",
+    "nfldstr",
+    "nfloop",
+    "nfneg",
+    "nfset",
+    "nlfldsep",
+    "nlinstr",
+    "nlstrina",
+    "noeffect",
+    "nofile",
+    "nofmtch",
+    "noloop1",
+    "noloop2",
+    "nonl",
+    "noparms",
+    "nors",
+    "nulinsrc",
+    "nulrsend",
+    "numindex",
+    "numrange",
+    "numstr1",
+    "numsubstr",
+    "octsub",
+    "ofmt",
+    "ofmta",
+    "ofmtbig",
+    "ofmtfidl",
+    "ofmts",
+    "ofmtstrnum",
+    "ofs1",
+    "onlynl",
+    "opasnidx",
+    "opasnslf",
+    "paramdup",
+    "paramres",
+    "paramtyp",
+    "paramuninitglobal",
+    "parse1",
+    "parsefld",
+    "parseme",
+    "pcntplus",
+    "prdupval",
+    "prec",
+    "printf-corners",
+    "printf1",
+    "printfchar",
+    "prmarscl",
+    "prmreuse",
+    "prt1eval",
+    "prtoeval",
+    "rand",
+    "range1",
+    "readbuf",
+    "rebrackloc",
+    "rebt8b1",
+    "rebuild",
+    "redfilnm",
+    "regeq",
+    "regex3minus",
+    "regexpbad",
+    "regexpbrack",
+    "regexpbrack2",
+    "regexprange",
+    "regexpuparrow",
+    "regrange",
+    "reindops",
+    "reparse",
+    "resplit",
+    "rs",
+    "rsnul1nl",
+    "rsnulbig",
+    "rsnulbig2",
+    "rsnullre",
+    "rsnulw",
+    "rstest1",
+    "rstest2",
+    "rstest3",
+    "rstest4",
+    "rstest5",
+    "rswhite",
+    "scalar",
+    "sclforin",
+    "sclifin",
+    "setrec0",
+    "setrec1",
+    "shortest-match",
+    "sigpipe1",
+    "sortempty",
+    "sortglos",
+    "spacere",
+    "splitargv",
+    "splitarr",
+    "splitdef",
+    "splitvar",
+    "splitwht",
+    "splitwht2",
+    "status-close",
+    "strcat1",
+    "strfieldnum",
+    "strnum1",
+    "strnum2",
+    "strsubscript",
+    "strtod",
+    "subamp",
+    "subback",
+    "subi18n",
+    "subsepnm",
+    "subslash",
+    "substr",
+    "swaplns",
+    "synerr1",
+    "synerr2",
+    "synerr3",
+    "tailrecurse",
+    "trailbs",
+    "tweakfld",
+    "uninit2",
+    "uninit3",
+    "uninit4",
+    "uninit5",
+    "uninitialized",
+    "unterm",
+    "uparrfs",
+    "uplus",
+    "wjposer1",
+    "zero2",
+    "zeroe0",
+    "zeroflag",
+]
+
+GAWK_EXT_TESTS = [
+    "aadelete1",
+    "aarray1",
+    "aasort",
+    "aasorti",
+    "ar2fn_fmod",
+    "ar2fn_unxptyp_aref",
+    "ar2fn_unxptyp_val",
+    "argtest",
+    "arraysort",
+    "arraysort2",
+    "arraytype",
+    "asortbool",
+    "asortsymtab",
+    "backw",
+    "badargs",
+    "beginfile1",
+    "binmode1",
+    "charasbytes",
+    "clos1way",
+    "clos1way2",
+    "clos1way3",
+    "clos1way4",
+    "clos1way5",
+    "colonwarn",
+    "crlf",
+    "dbugarray1",
+    "dbugarray2",
+    "dbugarray3",
+    "dbugarray4",
+    "dbugeval",
+    "delmessy",
+    "delsub",
+    "devfd",
+    "devfd1",
+    "devfd2",
+    "dfacheck1",
+    "dumpvars",
+    "elemnew1",
+    "elemnew2",
+    "elemnew3",
+    "elemnew4",
+    "equiv",
+    "errno",
+    "fieldwdth",
+    "fpat1",
+    "fpat2",
+    "fpat3",
+    "fpat4",
+    "fpat5",
+    "fpat6",
+    "fpat7",
+    "fpat8",
+    "fpat9",
+    "fpatnull",
+    "fsfwfs",
+    "functab1",
+    "functab2",
+    "functab3",
+    "functab6",
+    "funlen",
+    "fwtest",
+    "fwtest2",
+    "fwtest3",
+    "fwtest4",
+    "fwtest5",
+    "fwtest6",
+    "fwtest7",
+    "fwtest8",
+    "genpot",
+    "gensub",
+    "gensub2",
+    "gensub3",
+    "gensub4",
+    "getlndir",
+    "gnuops2",
+    "gnuops3",
+    "gnureops",
+    "gsubind",
+    "hexfloat",
+    "icasefs",
+    "icasers",
+    "id",
+    "igncdym",
+    "igncfs",
+    "ignrcas2",
+    "ignrcas4",
+    "ignrcase",
+    "incdupe",
+    "incdupe2",
+    "incdupe3",
+    "incdupe4",
+    "incdupe5",
+    "incdupe6",
+    "incdupe7",
+    "include",
+    "include2",
+    "indirectbuiltin",
+    "indirectbuiltin3",
+    "indirectbuiltin4",
+    "indirectbuiltin5",
+    "indirectbuiltin6",
+    "indirectcall",
+    "indirectcall2",
+    "indirectcall3",
+    "iolint",
+    "isarrayunset",
+    "lint",
+    "lintexp",
+    "lintindex",
+    "lintint",
+    "lintlength",
+    "lintplus",
+    "lintplus3",
+    "lintset",
+    "lintsubarray",
+    "linttypeof",
+    "lintwarn",
+    "manyfiles",
+    "match1",
+    "match2",
+    "match3",
+    "mdim1",
+    "mdim2",
+    "mdim3",
+    "mdim4",
+    "mdim5",
+    "mdim6",
+    "mdim7",
+    "mdim8",
+    "memleak2",
+    "memleak3",
+    "mixed1",
+    "mktime",
+    "muldimposix",
+    "nastyparm",
+    "negtime",
+    "nondec",
+    "nonfatal1",
+    "nonfatal2",
+    "nonfatal3",
+    "nsawk1a",
+    "nsawk1b",
+    "nsawk1c",
+    "nsawk2a",
+    "nsawk2b",
+    "nsbad",
+    "nsbad2",
+    "nsbad3",
+    "nsbad_cmd",
+    "nsforloop",
+    "nsfuncrecurse",
+    "nsidentifier",
+    "nsindirect1",
+    "nsindirect2",
+    "octdec",
+    "patsplit",
+    "posix",
+    "printfbad1",
+    "printfbad2",
+    "printfbad3",
+    "printfbad4",
+    "printhuge",
+    "procinfs",
+    "profile0",
+    "profile1",
+    "profile2",
+    "profile3",
+    "profile6",
+    "profile7",
+    "profile12",
+    "pty1",
+    "re_test",
+    "rebuf",
+    "regexsub",
+    "reginttrad",
+    "regnul1",
+    "regnul2",
+    "regx8bit",
+    "rsgetline",
+    "rsglstdin",
+    "rsstart1",
+    "rsstart2",
+    "rsstart3",
+    "rstest6",
+    "shadow",
+    "shadowbuiltin",
+    "sortfor",
+    "sortfor2",
+    "sortu",
+    "sourcesplit",
+    "split_after_fpat",
+    "splitarg4",
+    "strftfld",
+    "strftime",
+    "strtonum",
+    "strtonum1",
+    "stupid1",
+    "stupid2",
+    "stupid3",
+    "stupid4",
+    "stupid5",
+    "switch2",
+    "symtab1",
+    "symtab2",
+    "symtab3",
+    "symtab4",
+    "symtab5",
+    "symtab6",
+    "symtab7",
+    "symtab9",
+    "symtab10",
+    "symtab12",
+    "typedregex1",
+    "typedregex2",
+    "typedregex3",
+    "typedregex4",
+    "typedregex5",
+    "typedregex6",
+    "typeof1",
+    "typeof2",
+    "typeof3",
+    "typeof4",
+    "typeof5",
+    "typeof6",
+    "typeof7",
+    "typeof8",
+    "typeof9",
+    "watchpoint1",
+]
+
+MACHINE_TESTS = [
+    "double1",
+    "double2",
+    "inf-nan-torture",
+    "intformat",
+]
+
+# Per-flag categories — gawk runs with the named extra arg.
+FLAG_CATEGORIES = {
+    "--csv": ["csv2"],
+    "--lint": [
+        "defref",
+        "lintexp",
+        "lintindex",
+        "lintint",
+        "lintlength",
+        "lintplus",
+        "lintplus3",
+        "lintwarn",
+        "noeffect",
+        "nofmtch",
+        "nonl",
+        "shadow",
+        "uninit2",
+        "lintsubarray",
+        "linttypeof",
+        "uninit3",
+        "uninit4",
+        "uninit5",
+        "uninitialized",
+    ],
+    "--lint-old": ["lintold"],
+    "--non-decimal-data": [
+        "nondec2",
+        "intarray",
+        "forcenum",
+    ],
+    "--posix": [
+        "escapebrace",
+        "printf0",
+        "posix2008sub",
+        "paramasfunc1",
+        "paramasfunc2",
+        "muldimposix",
+        "posix_compare",
+        "rscompat",
+    ],
+    # `--pretty-print` writes its output to `awkprof.out` rather than stdout;
+    # the sandbox can't capture that as the test diff. Skipped for now.
+    # "--pretty-print": [...],
+    "--re-interval": [
+        "gsubtst3",
+        "reint",
+    ],
+    "--sandbox": ["sandbox1"],
+    "--traditional": [
+        "litoct",
+        "tradanch",
+    ],
+}
+
+# Shell-driven upstream tests (the corresponding .sh script wraps gawk).
+# `wrapper_sh` cd's into a runfiles `test/` directory before exec'ing them.
+RUN_SHELL = [
+    "exit",
+    "fflush",
+    "localenl",
+    "modifiers",
+    "next",
+    "randtest",
+    "rtlen",
+    "rtlen01",
+]
+
+# Tests skipped because of unavailable infrastructure:
+# - INET_TESTS (inetdayu, inetdayt, inetechu, inetecht): need a daytime/echo
+#   service on localhost.
+# - LOCALE_CHARSET_TESTS / NEED_LOCALE_*: need en_US.UTF-8, fr_FR.UTF-8,
+#   ru_RU.UTF-8, ja_JP.UTF-8 locales installed.
+# - NEED_MPFR: gawk built without MPFR (see :enable_mpfr flag).
+# - NEED_PMA: needs the `makepmafile` helper compiled and run.
+# - NEED_DEBUG: needs the `--debug` driver which writes interactively.
+# - SHLIB_TESTS: each needs the matching extension loaded via gawk_tool.
+#   Handled below for the subset that works without per-test bespoke setup.
+
+# ---------------------------------------------------------------------------
+# Tests skipped because they need infrastructure the bazel sandbox doesn't
+# provide (special devices, external tools, network, locales, MPFR, etc.).
+# Each entry is a short note explaining why; remove from the list once the
+# corresponding infrastructure is wired in.
+# ---------------------------------------------------------------------------
+
+SKIPPED = {
+    # Needs argv[0] introspection that the wrapper destroys
+    "argarray": "wrapper rewrites argv",
+    "argcasfile": "argv reshape via wrapper differs from upstream",
+    "argtest": "wrapper rewrites argv",
+    # arynocls writes/reads test files in cwd via specific path
+    "arynocls": "needs reproducible cwd files",
+    "beginfile1": "needs stat of `..` outside sandbox",
+    # Needs `od` external tool to produce hex dump
+    "charasbytes": "needs `od` external tool",
+    # colonwarn upstream runs gawk twice with two different inputs; our
+    # wrapper only invokes once.
+    "colonwarn": "upstream runs gawk twice with different inputs",
+    # Compare tests need locale-sorted output
+    "compare": "locale-dependent sort",
+    "compare2": "locale-dependent sort",
+    # Watchpoint / dbug tests need an interactive driver via --debug
+    "dbugarray1": "needs --debug interactive driver",
+    "dbugarray2": "needs --debug interactive driver",
+    "dbugarray3": "needs --debug interactive driver",
+    "dbugarray4": "needs --debug interactive driver",
+    # /dev/fd not visible in sandbox
+    "devfd1": "/dev/fd not visible in sandbox",
+    # Needs network / external services / specific FDs
+    "errno": "platform-specific error strings",
+    # exitval1 tests `exit` from a piped sub-shell
+    "exitval1": "needs sub-shell behavior",
+    "fsspcoln": "needs custom -F handling",
+    # Genpot needs xgettext present
+    "genpot": "needs xgettext",
+    # Tests that depend on unprintable byte sequences in stdin
+    "getline2": "needs raw input pipeline",
+    "gsubnulli18n": "needs en_US.UTF-8 locale",
+    "incdupe": "needs sibling .awk includes not in runfiles",
+    "incdupe2": "needs sibling .awk includes not in runfiles",
+    "incdupe3": "needs sibling .awk includes not in runfiles",
+    "incdupe4": "needs sibling .awk includes not in runfiles",
+    "incdupe5": "needs sibling .awk includes not in runfiles",
+    "incdupe6": "needs sibling .awk includes not in runfiles",
+    "incdupe7": "needs sibling .awk includes not in runfiles",
+    # `include` searches the test directory for siblings
+    "include": "needs sibling .awk includes not in runfiles",
+    "include2": "needs sibling .awk includes not in runfiles",
+    # iolint depends on a controlled-output environment
+    "iolint": "platform-dependent io errors",
+    "manyfiles": "creates many files, sandbox latency variable",
+    "muldimposix": "needs --posix; included as `posix_muldimposix_test`",
+    "negtime": "uses local TZ",
+    "nofmtch": "lint warning needs --lint",
+    # Needs DNS to resolve a fake hostname for an error-path test
+    "nonfatal1": "depends on DNS resolution behavior",
+    "nonl": "lint warning needs --lint",
+    "octsub": "needs specific gawk -v invocation",
+    # Upstream runs gawk with `.in` as a positional argv (FILENAME=printfbad2.in),
+    # but our wrapper always pipes stdin (FILENAME=`-`).
+    "printfbad2": "needs .in as positional argv, not stdin",
+    # Profile tests write to `awkprof.out` not stdout
+    "profile0": "writes awkprof.out, not stdout",
+    # Profile tests write to /tmp/awkprof.out which the sandbox blocks
+    "profile1": "writes /tmp/awkprof.out",
+    "profile12": "writes /tmp/awkprof.out",
+    "profile2": "writes /tmp/awkprof.out",
+    "profile3": "writes /tmp/awkprof.out",
+    "profile6": "writes /tmp/awkprof.out",
+    "profile7": "writes /tmp/awkprof.out",
+    # Tests that need extension or specific .awk file resolution
+    "redfilnm": "needs upstream test dir resolution",
+    # Tests with FAIL_CODE handling that differ from upstream
+    "rstest4": "shell-driven, listed separately as RUN_SHELL upstream",
+    "rstest5": "shell-driven, listed separately as RUN_SHELL upstream",
+    "shadow": "lint shadow warning needs --lint",
+    # Output ordering differs without specific sort locale
+    "sortglos": "sort order depends on locale",
+    "sourcesplit": "needs multi-file -f sequencing",
+    # Needs a specific iconv / locale config we don't carry
+    "subi18n": "needs en_US.UTF-8 locale",
+    # Needs `@/regex/` typed-regex syntax via `-v` invocation
+    "typedregex4": "needs special -v typed-regex invocation",
+    "watchpoint1": "needs --debug interactive driver",
+}
+
+# Tests already handled with a flag — don't also instantiate the unflagged
+# version (which would diff-fail).
+_TESTS_WITH_FLAGS = {t: flag for flag, tests in FLAG_CATEGORIES.items() for t in tests}
+
+# Tests that come with a `.in` stdin file. Discovered once at BUILD-load time
+# rather than re-globbing per test; the macro itself takes explicit `input=`.
+_INPUT_FILES = {f[:-len(".in")]: f for f in glob(
+    ["*.in"],
+    allow_empty = True,
+)}
+
+# Tests that come with a `.awk` driver. Some upstream test names ship only a
+# `.ok` (driven by special `-v` invocations or shell scripts we don't model
+# here) — those are filtered out below.
+_AWK_FILES = {f[:-len(".awk")]: f for f in glob(
+    ["*.awk"],
+    allow_empty = True,
+)}
+
+# Set of test names that ship a `.ok` golden output. Built once at BUILD-load
+# time rather than re-globbing per test.
+_OK_TESTS = {f[:-len(".ok")]: True for f in glob(
+    ["*.ok"],
+    allow_empty = True,
+)}
+
+# ---------------------------------------------------------------------------
+# Generate tests via the awk_test macro (defined in awk_test.bzl).
+# ---------------------------------------------------------------------------
+
+# Per-test overrides for `target_compatible_with`. Each entry maps a test
+# name to the `config_setting` that, when matched, marks the test
+# incompatible (so it skips cleanly under that flag config rather than
+# diff-failing against a baseline that no longer applies).
+_PER_TEST_INCOMPAT = {
+    # These tests enumerate gawk's built-in functions via `SYMTAB`,
+    # `FUNCTAB`, or `--dump-variables`. `--//:builtin_intdiv0=true` adds
+    # `intdiv0` to the built-in set via `SUPPLY_INTDIV=1`, shifting the
+    # listing and breaking the baseline.
+    "asortsymtab": "//:_builtin_intdiv0_setting",
+    "functab5": "//:_builtin_intdiv0_setting",
+    "id": "//:_builtin_intdiv0_setting",
+    # Built-in lint warnings (e.g. "function `foo' called but never
+    # defined") fire without `--lint` because gawk's underlying check
+    # isn't gated on the option — but `--//:disable_lint=true` strips the
+    # whole lint code path via `NO_LINT=1`, so those warnings vanish too.
+    "lint": "//:_disable_lint_setting",
+    "lintset": "//:_disable_lint_setting",
+    "nsidentifier": "//:_builtin_intdiv0_setting",
+}
+
+# Tests that pipe to/from Unix-only commands (`cat`, `sort`, `true`,
+# `false`) via `"cmd" | getline` / `print | "cmd"`. Windows's `cmd.exe`
+# doesn't have these built in, so gawk's `_spawnl` fails with
+# "command not found" (exit 127) and the diff fails. Skip on Windows
+# rather than maintain Windows-specific `.ok` baselines.
+_WINDOWS_INCOMPAT = [
+    "childin",  # cat
+    "clos1way",  # sort
+    "elemnew2",  # true / false
+    "exitval2",  # `read` (bash builtin, no cmd.exe equivalent)
+    "funstack",  # date
+    "getline",  # echo via subprocess; Bazel sandbox strips ComSpec
+    "id",  # sort
+    "iobug1",  # cat, true
+    "regexprange",  # true / false
+    "sortu",  # cat
+    "spacere",  # sort
+    "symtab12",  # sort
+    "tweakfld",  # date
+]
+
+# MSVC support is best-effort (gawk's upstream doesn't ship MSVC code
+# paths; we route through MinGW-gated source via patches). To keep
+# CI green and verification focused, run only a curated core set on
+# MSVC — enough to verify the awk language fundamentals work, not the
+# full ~450-test suite. Anything not on this list gets
+# `target_compatible_with` incompatible on MSVC.
+_MSVC_CORE_TESTS = [
+    # Arithmetic / numeric conversion
+    "math",
+    "hex",
+    "intprec",
+    "divzero",
+    "negexp",
+    "convfmt",
+    "ofmt",
+    # String operations
+    "substr",
+    "strcat1",
+    "gsubtest",
+    "gsubasgn",
+    "subback",
+    # Regex
+    "anchor",
+    "anchgsub",
+    "match4",
+    "regeq",
+    # Arrays
+    "arrayparm",
+    "arrayref",
+    "arryref2",
+    "fordel",
+    # printf / print
+    "printf1",
+    "printfchar",
+    "hsprint",
+    # getline (only the subprocess-free ones; `getline` itself pipes
+    # from `echo` which needs `cmd.exe` reachable from gawk's
+    # `_spawnl`, and Bazel's test sandbox strips `ComSpec`)
+    "getline2",
+    "getline5",
+    "inputred",
+    # Field splitting / record handling
+    "fldchg",
+    "nfldstr",
+    "fsbs",
+    "parsefld",
+    "rs",
+    "rstest1",
+    # Control flow
+    "forsimp",
+    "exitval3",
+    "exit2",
+    # Functions
+    "callparam",
+    "fnmisc",
+    "paramdup",
+    "fcall_exit",
+    # Misc fundamentals
+    "nasty",
+    "escapebrace",
+    "defref",
+]
+
+[
+    awk_test(
+        name = t,
+        awk = _AWK_FILES[t],
+        input = _INPUT_FILES.get(t),
+        ok = t + ".ok",
+        target_compatible_with = (
+            (incompat_if(_PER_TEST_INCOMPAT[t]) if t in _PER_TEST_INCOMPAT else []) +
+            (incompat_if("@platforms//os:windows") if t in _WINDOWS_INCOMPAT else []) +
+            ([] if t in _MSVC_CORE_TESTS else incompat_if("@rules_cc//cc/compiler:msvc-cl"))
+        ),
+    )
+    for t in BASIC_TESTS + GAWK_EXT_TESTS + MACHINE_TESTS
+    if t not in _TESTS_WITH_FLAGS and t not in SKIPPED and t in _AWK_FILES and t in _OK_TESTS
+]
+
+# Tests whose category depends on a feature that can itself be flagged
+# off. Skip those tests when their feature is disabled instead of letting
+# them diff-fail with the wrong baseline.
+_FLAG_INCOMPATIBILITIES = {
+    # `--lint` / `--lint-old` become no-ops when gawk is built with
+    # `NO_LINT=1` (i.e. `--//:disable_lint=true`), so the expected lint
+    # warnings never appear and the .ok diff fails.
+    "--lint": "//:_disable_lint_setting",
+    "--lint-old": "//:_disable_lint_setting",
+}
+
+[
+    awk_test(
+        name = t,
+        awk = _AWK_FILES[t],
+        category = flag.lstrip("-").replace("-", "_"),
+        extra_args = flag,
+        input = _INPUT_FILES.get(t),
+        ok = t + ".ok",
+        # Flag-category tests aren't in the MSVC core set; skip them
+        # all on MSVC for the same reason as `_MSVC_CORE_TESTS` above.
+        target_compatible_with = (
+            (incompat_if(_FLAG_INCOMPATIBILITIES[flag]) if flag in _FLAG_INCOMPATIBILITIES else []) +
+            incompat_if("@rules_cc//cc/compiler:msvc-cl")
+        ),
+    )
+    for flag, tests in FLAG_CATEGORIES.items()
+    for t in tests
+    if t not in SKIPPED and t in _AWK_FILES and t in _OK_TESTS
+]
+
+# ---------------------------------------------------------------------------
+# Shell-driven tests (gawk's RUN_SHELL set).
+#
+# The wrapper builds a per-test tmp directory, symlinks every sibling
+# (`.sh`, `.awk`, `.in`, `.ok`) into it, sets `GAWK`/`AWK` to absolute paths,
+# `chdir`s into the tmp dir, and exec's the upstream script. Putting the
+# script in a writable directory rather than the read-only runfiles tree
+# lets upstream tests create scratch files alongside their inputs.
+# ---------------------------------------------------------------------------
+
+write_file(
+    name = "wrapper",
+    out = "wrapper.sh",
+    content = """\
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# --- begin runfiles.bash initialization v3 ---
+# Copy-pasted from the Bazel Bash runfiles library v3.
+set -uo pipefail; set +e; f=bazel_tools/tools/bash/runfiles/runfiles.bash
+# shellcheck disable=SC1090
+source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null || \\
+  source "$(grep -sm1 "^$f " "${RUNFILES_MANIFEST_FILE:-/dev/null}" | cut -f2- -d' ')" 2>/dev/null || \\
+  source "$0.runfiles/$f" 2>/dev/null || \\
+  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \\
+  source "$(grep -sm1 "^$f " "$0.exe.runfiles_manifest" | cut -f2- -d' ')" 2>/dev/null || \\
+  { echo>&2 "ERROR: cannot find $f"; exit 1; }; f=; set -e
+# --- end runfiles.bash initialization v3 ---
+
+SCRIPT=$(rlocation "$1"); shift
+export GAWK=$(rlocation "$1"); shift
+export AWK="$GAWK"
+
+# `TEST_UNDECLARED_OUTPUTS_DIR` is set by Bazel for every test and is
+# captured as `outputs.zip` on failure — using it instead of a tmp dir
+# lets you inspect any scratch files the upstream script left behind.
+cd "${TEST_UNDECLARED_OUTPUTS_DIR:?required by the bazel test environment}"
+
+# Copy (not symlink) every sibling of the script into the cwd so the
+# script can reach its .awk / .in / .ok inputs via plain basename. We
+# can't symlink because Bazel validates `TEST_UNDECLARED_OUTPUTS_DIR`
+# after the test exits and rejects symlinks pointing at runfile-tree
+# paths that don't survive the sandbox teardown (they end up "dangling").
+for f in "$@"; do
+  abs=$(rlocation "$f") || true
+  [ -n "$abs" ] && [ -f "$abs" ] && cp "$abs" "$(basename "$abs")"
+done
+
+exec "$SCRIPT"
+""".splitlines(),
+    is_executable = True,
+)
+
+# Reuse the precomputed `_AWK_FILES` / `_INPUT_FILES` / `_OK_TESTS`
+# dicts (built once above via `glob()`) for membership tests rather
+# than re-globbing per test × per extension.
+_RUN_SHELL_SIBLINGS = {
+    t: [
+        f
+        for f in [
+            _AWK_FILES.get(t),
+            _INPUT_FILES.get(t),
+            (t + ".ok") if t in _OK_TESTS else None,
+        ]
+        if f
+    ]
+    for t in RUN_SHELL
+}
+
+[
+    sh_test(
+        name = t,
+        srcs = ["wrapper.sh"],
+        args = [
+            "$(rlocationpath {}.sh)".format(t),
+            "$(rlocationpath //:gawk)",
+        ] + [
+            "$(rlocationpath {})".format(f)
+            for f in _RUN_SHELL_SIBLINGS[t]
+        ],
+        data = [
+            "{}.sh".format(t),
+            "//:gawk",
+            "@rules_shell//shell/runfiles",
+        ] + _RUN_SHELL_SIBLINGS[t],
+        # RUN_SHELL tests are upstream gawk `.sh` driver scripts that
+        # call Unix tools (`cat`, `tr`, `sort`, etc.) absent from
+        # Windows `cmd.exe`. Skip on MSVC; they're outside the core
+        # MSVC support surface.
+        target_compatible_with = incompat_if("@rules_cc//cc/compiler:msvc-cl"),
+    )
+    for t in RUN_SHELL
+]
+
+# ---------------------------------------------------------------------------
+# Extension-dependent tests (subset of upstream SHLIB_TESTS).
+#
+# Each needs a gawk binary bundled with the right extension(s) on AWKLIBPATH;
+# the gawk_tool rule handles that wiring. Only tests that work without extra
+# input files or sandbox-incompatible operations are included here.
+# ---------------------------------------------------------------------------
+
+gawk_tool(
+    name = "gawk_filefuncs",
+    extensions = ["//extension:filefuncs"],
+)
+
+FILEFUNCS_TESTS = [
+    # apiterm uses gawk's filefuncs extension to inspect APIs.
+    "apiterm",
+    # fts walks a fixture directory tree (works in sandbox).
+    "fts",
+    # functab4/5 print bytes that include extension function names.
+    "functab4",
+    "functab5",
+]
+
+[
+    awk_test(
+        name = t,
+        awk = _AWK_FILES[t],
+        gawk = ":gawk_filefuncs",
+        input = _INPUT_FILES.get(t),
+        ok = t + ".ok",
+        # When extensions are compiled out (`--//:disable_extensions=true`),
+        # gawk's `dlopen()` path isn't wired in and these tests print
+        # "dynamic loading of libraries is not supported" instead of the
+        # expected output. Skip them cleanly rather than diff-fail. Some
+        # filefuncs tests (e.g. `functab5`) also enumerate built-ins, so
+        # they pick up `_PER_TEST_INCOMPAT` entries on top.
+        target_compatible_with = incompat_if("//:_disable_extensions_setting") + (
+            incompat_if(_PER_TEST_INCOMPAT[t]) if t in _PER_TEST_INCOMPAT else []
+        ),
+    )
+    for t in FILEFUNCS_TESTS
+    if t in _AWK_FILES and t in _OK_TESTS
+]

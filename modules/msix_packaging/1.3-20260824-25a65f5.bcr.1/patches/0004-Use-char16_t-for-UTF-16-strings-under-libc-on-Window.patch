@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mikhail Zinchenko <m1d3ry@proton.me>
+Date: Tue, 13 Oct 2026 12:00:00 +0200
+Subject: [PATCH] Use char16_t for UTF-16 strings under libc++ on Windows
+
+On Windows the SDK spells UTF-16 as `unsigned short`. That works around a Visual Studio 2015 link error
+on `std::codecvt<char16_t, char, mbstate_t>::id` in the Microsoft STL. The workaround relies on the
+generic `std::char_traits` primary template, which only the Microsoft STL supplies. libc++ specializes
+`char_traits` for the standard character types alone, so `std::basic_string<unsigned short>` and
+`std::codecvt_utf8_utf16<unsigned short>` fail to compile. clang-cl with libc++ hits this.
+
+libc++ has no export bug for `char16_t`, so use the portable spelling there. The check keys on
+`_LIBCPP_VERSION`, which `<string>` defines before the aliases. Builds with the Microsoft STL are
+unchanged.
+
+The change stays local. `StringType` and `StringConvert` appear only in `UnicodeConversion.cpp`, and
+`utf8_to_u16string` copies the result into a `std::u16string` either way.
+---
+ src/inc/internal/UnicodeConversion.hpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/src/inc/internal/UnicodeConversion.hpp b/src/inc/internal/UnicodeConversion.hpp
+index 48cd9a30..e437457e 100644
+--- a/src/inc/internal/UnicodeConversion.hpp
++++ b/src/inc/internal/UnicodeConversion.hpp
+@@ -24,7 +24,10 @@ namespace MSIX {
+         There is also a similar error to this one with 'char16_t' that can be worked around using 'unsigned short'.
+         <snip>
+     */
+-    #ifdef WIN32
++    // The workaround above is for the Microsoft STL only. libc++ defines std::char_traits for the standard
++    // character types alone, so std::basic_string<unsigned short> does not compile there, and libc++ has no
++    // codecvt<char16_t> export bug. _LIBCPP_VERSION comes from <string> above.
++    #if defined(WIN32) && !defined(_LIBCPP_VERSION)
+     using StringType = std::basic_string<unsigned short>;
+     using StringConvert = std::wstring_convert<std::codecvt_utf8_utf16<unsigned short>, unsigned short>;
+     #else

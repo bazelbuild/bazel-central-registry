@@ -1,0 +1,85 @@
+--- a/libavformat/tls_openssl.c
++++ b/libavformat/tls_openssl.c
+@@ -46,7 +46,7 @@
+ static int pkey_to_pem_string(EVP_PKEY *pkey, char *out, size_t out_sz)
+ {
+     BIO *mem = NULL;
+-    size_t read_bytes = 0;
++    int read_bytes = 0;
+ 
+     if (!pkey || !out || !out_sz)
+         goto done;
+@@ -57,8 +57,9 @@
+     if (!PEM_write_bio_PrivateKey(mem, pkey, NULL, NULL, 0, NULL, NULL))
+         goto done;
+ 
+-    if (!BIO_read_ex(mem, out, out_sz - 1, &read_bytes))
+-        goto done;
++    read_bytes = BIO_read(mem, out, FFMIN(out_sz - 1, INT_MAX));
++    if (read_bytes < 0)
++        read_bytes = 0;
+ 
+ done:
+     BIO_free(mem);
+@@ -73,7 +74,7 @@
+ static int cert_to_pem_string(X509 *cert, char *out, size_t out_sz)
+ {
+     BIO *mem = NULL;
+-    size_t read_bytes = 0;
++    int read_bytes = 0;
+ 
+     if (!cert || !out || !out_sz)
+         goto done;
+@@ -84,8 +85,9 @@
+     if (!PEM_write_bio_X509(mem, cert))
+         goto done;
+ 
+-    if (!BIO_read_ex(mem, out, out_sz - 1, &read_bytes))
+-        goto done;
++    read_bytes = BIO_read(mem, out, FFMIN(out_sz - 1, INT_MAX));
++    if (read_bytes < 0)
++        read_bytes = 0;
+ 
+ done:
+     BIO_free(mem);
+@@ -681,7 +683,7 @@
+         }
+     }
+     /* Check whether the handshake is completed. */
+-    if (SSL_is_init_finished(c->ssl) != TLS_ST_OK)
++    if (!SSL_is_init_finished(c->ssl))
+         goto end;
+ 
+     ret = 0;
+@@ -846,8 +848,16 @@
+         if (s->mtu <= 0)
+             s->mtu = 1096;
+         SSL_set_options(c->ssl, SSL_OP_NO_QUERY_MTU);
++#ifdef OPENSSL_IS_BORINGSSL
++        if (!SSL_set_mtu(c->ssl, s->mtu)) {
++            av_log(h, AV_LOG_ERROR, "Invalid DTLS MTU: %d\n", s->mtu);
++            ret = AVERROR(EINVAL);
++            goto fail;
++        }
++#else
+         SSL_set_mtu(c->ssl, s->mtu);
+         DTLS_set_link_mtu(c->ssl, s->mtu);
++#endif
+     }
+ 
+     init_bio_method(h);
+@@ -961,7 +971,14 @@
+     uc->flags |= h->flags & AVIO_FLAG_NONBLOCK;
+ 
+     if (s->is_dtls) {
++#ifdef OPENSSL_IS_BORINGSSL
++        const size_t overhead = SSL_max_seal_overhead(c->ssl);
++        if (s->mtu <= 0 || (size_t)s->mtu <= overhead)
++            return AVERROR(EINVAL);
++        const size_t mtu_size = s->mtu - overhead;
++#else
+         const size_t mtu_size = DTLS_get_data_mtu(c->ssl);
++#endif
+         size = FFMIN(size, mtu_size);
+     }
+ 
