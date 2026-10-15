@@ -1,0 +1,327 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+
+# configure.ac probes each codec's header (:126-143) and its library (:215-232) and defines
+# <X>SUPPORT only when both answered yes (:253-279). Off is what a ./configure on a machine
+# with none of the four installed concludes, so it is the default.
+bool_flag(
+    name = "with_bzip2",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_xz",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_zlib",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "with_zstd",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "magic",
+    actual = "//src:libmagic",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libmagic",
+    actual = ":magic",
+    visibility = ["//visibility:public"],
+)
+
+# 5.47's label for this library.
+alias(
+    name = "lib",
+    actual = ":magic",
+    visibility = ["//visibility:public"],
+)
+
+cc_shared_library(
+    name = "magic_shared",
+    # 5.47's @libmagic built libmagic.so; a consumer moving its dynamic_deps here should
+    # not also have to rename the file it loads.
+    shared_lib_name = select({
+        "@platforms//os:osx": "libmagic.dylib",
+        "@platforms//os:windows": "libmagic.dll",
+        "//conditions:default": "libmagic.so",
+    }),
+    # -Wl,--no-undefined is a GNU ld option, so it is not passed elsewhere.
+    user_link_flags = select({
+        "@platforms//os:linux": ["-Wl,--no-undefined"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["//src:libmagic"],
+)
+
+alias(
+    name = "file",
+    actual = "//src:file",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "magic.mgc",
+    actual = "//magic:database",
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "bzip2_enabled",
+    flag_values = {":with_bzip2": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "xz_enabled",
+    flag_values = {":with_xz": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "zlib_enabled",
+    flag_values = {":with_zlib": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "zstd_enabled",
+    flag_values = {":with_zstd": "true"},
+    visibility = ["//:__subpackages__"],
+)
+
+package_info(
+    name = "package_info",
+    # AC_INIT (configure.ac:2) names the package `file'. The attribute doc calls this and
+    # module_bazel mutually exclusive; the implementation forwards it as --force-name over
+    # the parsed name, and without it PACKAGE_NAME, PACKAGE_TARNAME and PACKAGE_STRING
+    # read `libmagic'. Undocumented, so a later rules_cc_autoconf may reject the pairing.
+    package_name = "file",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "christos@astron.com",
+    strip_bcr_version = True,
+)
+
+# AC_USE_SYSTEM_EXTENSIONS (configure.ac:112) runs before every check; passing these to every
+# probe below keeps the probe's libc and the sources' libc the same one, since struct
+# tm.tm_gmtoff and strcasestr are visible only under them on glibc. The rest of that macro's
+# block names platforms outside this stage or is one of the eight __STDC_WANT_* ISO TS
+# opt-ins, which glibc 2.35 either never references or already implies under _GNU_SOURCE.
+_EXTENSIONS = [
+    "_DARWIN_C_SOURCE",
+    "_GNU_SOURCE",
+]
+
+autoconf(
+    name = "configure_ac",
+    checks = [
+        checks.AC_DEFINE("_DARWIN_C_SOURCE"),
+        checks.AC_DEFINE("_GNU_SOURCE"),
+
+        # configure.ac:20 and :34, the arms a ./configure with no --disable takes.
+        checks.AC_DEFINE("BUILTIN_ELF"),
+        checks.AC_DEFINE("ELFCORE"),
+
+        # gl_VISIBILITY (configure.ac:118) compiles a __visibility__ attribute under the
+        # -fvisibility=hidden the targets pass unconditionally. Asserted, not probed: were it
+        # undefined, file_public (src/file.h:110) would expand to nothing and export nothing.
+        checks.AC_DEFINE("HAVE_VISIBILITY"),
+        # AC_FUNC_MMAP (configure.ac:180) sets this from a run test, which cannot run here.
+        # Asserted rather than link-probed: its one reader, src/file.h:723, also requires
+        # HAVE_SYS_MMAN_H, so the header probe decides whether mmap is used.
+        checks.AC_DEFINE("HAVE_MMAP"),
+    ] + macros.AC_CHECK_HEADERS(
+        # configure.ac:122-125. xlocale.h is load-bearing on Apple libc: src/file.h:92-93
+        # includes it under HAVE_XLOCALE_H, and without it src/file.h:529's c_lc_ctype has
+        # no locale_t.
+        [
+            "stdint.h",
+            "fcntl.h",
+            "inttypes.h",
+            "unistd.h",
+            "byteswap.h",
+            "spawn.h",
+            "utime.h",
+            "wchar.h",
+            "wctype.h",
+            "limits.h",
+            "getopt.h",
+            "err.h",
+            "xlocale.h",
+            "sys/bswap.h",
+            "sys/mman.h",
+            "sys/stat.h",
+            "sys/types.h",
+            "sys/utime.h",
+            "sys/time.h",
+            "sys/sysmacros.h",
+            "sys/ioctl.h",
+            # AC_HEADER_SYS_WAIT (configure.ac:121), whose extra WIFEXITED fallbacks decide
+            # nothing this module reads.
+            "sys/wait.h",
+            # configure.ac:237-239, under --disable-landlock's default of auto.
+            "linux/landlock.h",
+        ],
+        compile_defines = _EXTENSIONS,
+    ) + macros.AC_CHECK_FUNCS(
+        # configure.ac:209, then :212's AC_REPLACE_FUNCS.
+        [
+            "strndup",
+            "mkstemp",
+            "mkostemp",
+            "utimes",
+            "utime",
+            "wcwidth",
+            "strtof",
+            "newlocale",
+            "uselocale",
+            "freelocale",
+            "memmem",
+            "pipe2",
+            "posix_spawnp",
+            "getopt_long",
+            "asprintf",
+            "vasprintf",
+            "strlcpy",
+            "strlcat",
+            "getline",
+            "ctime_r",
+            "asctime_r",
+            "localtime_r",
+            "gmtime_r",
+            "pread",
+            "strcasestr",
+            "fmtcheck",
+            "dprintf",
+            # AC_FUNC_FORK (configure.ac:181) runs this same link check; its run tests feed
+            # nothing under src/.
+            "fork",
+        ],
+        compile_defines = _EXTENSIONS,
+    ) + macros.AC_CHECK_MEMBERS(
+        ["struct stat.st_rdev"],  # configure.ac:149
+        compile_defines = _EXTENSIONS,
+        includes = ["#include <sys/stat.h>"],
+    ) + macros.AC_CHECK_MEMBERS(
+        # configure.ac:151, and tm_zone from AC_STRUCT_TIMEZONE at :152.
+        [
+            "struct tm.tm_gmtoff",
+            "struct tm.tm_zone",
+        ],
+        compile_defines = _EXTENSIONS,
+        includes = ["#include <time.h>"],
+    ) + [
+        checks.AC_CHECK_TYPE(
+            "sig_t",  # configure.ac:144
+            compile_defines = _EXTENSIONS,
+            define = "HAVE_SIG_T",
+            includes = ["#include <signal.h>"],
+        ),
+
+        # AC_HEADER_MAJOR (configure.ac:120), whose whole content in autoconf 2.72 is this
+        # preference order.
+        checks.AC_CHECK_HEADER(
+            "sys/mkdev.h",
+            compile_defines = _EXTENSIONS,
+            define = "HAVE_SYS_MKDEV_H",
+        ),
+        checks.AC_DEFINE(
+            "MAJOR_IN_MKDEV",
+            requires = ["HAVE_SYS_MKDEV_H"],
+        ),
+        checks.AC_DEFINE(
+            "MAJOR_IN_SYSMACROS",
+            requires = [
+                "!HAVE_SYS_MKDEV_H",
+                "HAVE_SYS_SYSMACROS_H",
+            ],
+        ),
+
+        # AC_STRUCT_OPTION_GETOPT_H (configure.ac:158). src/file.c:70 pairs it with
+        # HAVE_GETOPT_H before declaring getopt_long itself, so a getopt.h without the
+        # struct must answer no.
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_struct_option_getopt_h",
+            code = "#include <getopt.h>\nint main(void) { struct option op; return sizeof op.name == 0; }\n",
+            compile_defines = _EXTENSIONS,
+            define = "HAVE_STRUCT_OPTION",
+        ),
+
+        # AC_FUNC_MBRTOWC (configure.ac:182): declared in <wchar.h> together with mbstate_t,
+        # which is more than the plain link test above would establish.
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_mbrtowc",
+            code = "#include <wchar.h>\nint main(void) { wchar_t wc; char const s[] = \"\"; size_t n = 1; mbstate_t state; return !(sizeof state && (mbrtowc)(&wc, s, n, &state)); }\n",
+            compile_defines = _EXTENSIONS,
+            define = "HAVE_MBRTOWC",
+            if_false = None,
+        ),
+    ] + select({
+        ":bzip2_enabled": [checks.AC_DEFINE(n) for n in [
+            "HAVE_BZLIB_H",
+            "HAVE_LIBBZ2",
+            "BZLIBSUPPORT",
+        ]],
+        "//conditions:default": [],
+    }) + select({
+        ":xz_enabled": [checks.AC_DEFINE(n) for n in [
+            "HAVE_LZMA_H",
+            "HAVE_LIBLZMA",
+            "XZLIBSUPPORT",
+        ]],
+        "//conditions:default": [],
+    }) + select({
+        ":zlib_enabled": [checks.AC_DEFINE(n) for n in [
+            "HAVE_ZLIB_H",
+            "HAVE_LIBZ",
+            "ZLIBSUPPORT",
+        ]],
+        "//conditions:default": [],
+    }) + select({
+        ":zstd_enabled": [checks.AC_DEFINE(n) for n in [
+            "HAVE_ZSTD_H",
+            "HAVE_ZSTD_ERRORS_H",
+            "HAVE_LIBZSTD",
+            "ZSTDLIBSUPPORT",
+        ]],
+        "//conditions:default": [],
+    }),
+    visibility = ["//src:__pkg__"],
+    deps = [":package_info"],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "private/config.h",
+    template = "config.h.in",
+    deps = [":configure_ac"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    # Not includes: a dependency may export a config.h of its own, and a
+    # virtual include directory holds only the headers declared here.
+    strip_include_prefix = "private",
+    visibility = ["//src:__pkg__"],
+)

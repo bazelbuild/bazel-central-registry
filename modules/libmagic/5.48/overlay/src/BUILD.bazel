@@ -1,0 +1,153 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+
+# src/Makefile.am:30-31
+autoconf_hdr(
+    name = "magic_h",
+    out = "magic.h",
+    # The recipe is `sed s/X.YY/$(echo @VERSION@ | tr -d .)/'. package_info carries the
+    # version but not that derivation, and substitutions takes a literal string, so the
+    # value comes from the module instead.
+    substitutions = {"X.YY": module_version().partition(".bcr")[0].replace(".", "")},
+    template = "magic.h.in",
+)
+
+# src/Makefile.am:10-14
+cc_library(
+    name = "libmagic",
+    srcs = [
+        # libmagic_la_SOURCES
+        "buffer.c",
+        "magic.c",
+        "apprentice.c",
+        "softmagic.c",
+        "ascmagic.c",
+        "encoding.c",
+        "compress.c",
+        "is_csv.c",
+        "is_json.c",
+        "is_simh.c",
+        "is_tar.c",
+        "readelf.c",
+        "print.c",
+        "fsmagic.c",
+        "funcs.c",
+        "apptype.c",
+        "der.c",
+        "cdf.c",
+        "cdf_time.c",
+        "readcdf.c",
+        "swap.c",
+        ":replacements",
+    ],
+    hdrs = [":magic_h"],
+    copts = ["-fvisibility=hidden"],
+    implementation_deps = [
+        ":headers",
+        "//:config",
+    ] + select({
+        "//:bzip2_enabled": ["@bzip2//:bz2"],
+        "//conditions:default": [],
+    }) + select({
+        "//:xz_enabled": ["@xz//:lzma"],
+        "//conditions:default": [],
+    }) + select({
+        "//:zlib_enabled": ["@zlib"],
+        "//conditions:default": [],
+    }) + select({
+        "//:zstd_enabled": ["@zstd"],
+        "//conditions:default": [],
+    }),
+    # src/magic.c:136 and :141 call PathRemoveFileSpecA; upstream links shlwapi on MinGW
+    # (src/Makefile.am:17).
+    linkopts = select({
+        "@platforms//os:windows": ["-lshlwapi"],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "HAVE_CONFIG_H",
+        # The default path a stock ./configure && make compiles in: src/Makefile.am:1,7
+        # passes -DMAGIC=$(pkgdatadir)/magic, configure.ac:104 sets pkgdatadir to
+        # $(datadir)/misc, and the default prefix is /usr/local. Nothing installs a
+        # database there, so magic_load(ms, NULL) finds one only through $MAGIC or
+        # $HOME/.magic*; callers pass @libmagic//:magic.mgc instead.
+        "MAGIC=\\\"/usr/local/share/misc/magic\\\"",
+    ],
+    strip_include_prefix = ".",
+    visibility = ["//:__pkg__"],
+)
+
+# src/Makefile.am:23
+cc_binary(
+    name = "file",
+    srcs = [
+        # file_SOURCES
+        "file.c",
+        "seccomp.c",
+        "landlock.c",
+    ],
+    copts = ["-fvisibility=hidden"],
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = [
+        "//:__pkg__",
+        "//magic:__pkg__",
+    ],
+    deps = [
+        ":headers",
+        ":libmagic",
+        "//:config",
+    ],
+)
+
+# src/Makefile.am:10-14
+cc_library(
+    name = "headers",
+    hdrs = [
+        # libmagic_la_SOURCES
+        "file.h",
+        "readelf.h",
+        "tar.h",
+        "der.h",
+        "file_opts.h",
+        "elfclass.h",
+        "mygetopt.h",
+        "cdf.h",
+        "swap.h",
+    ],
+    # :replacements compiles its copies from bazel-out, where the quoted #include "file.h"
+    # each of them opens with no longer finds the header beside it.
+    strip_include_prefix = ".",
+    # Windows has no <regex.h>. Upstream's MinGW build links libgnurx (src/Makefile.am:17),
+    # glibc 2.5's regex, unmaintained since 2007; like vcpkg and MSYS2, this uses TRE instead.
+    # It sits on :headers because src/file.h:82 includes <regex.h> in every translation unit
+    # and :192 shares regex_t across them, so all of src/ has to agree on its layout.
+    deps = select({
+        "@platforms//os:windows": ["@tre//:posix"],
+        "//conditions:default": [],
+    }),
+)
+
+# configure.ac:212, AC_REPLACE_FUNCS. With src/Makefile.am:10-14 and :23 these fourteen
+# account for every src/*.c but memtest.c, only in EXTRA_DIST (src/Makefile.am:26).
+autoconf_srcs(
+    name = "replacements",
+    srcs = {
+        "getopt_long.c": "!HAVE_GETOPT_LONG",
+        "asprintf.c": "!HAVE_ASPRINTF",
+        "vasprintf.c": "!HAVE_VASPRINTF",
+        "strlcpy.c": "!HAVE_STRLCPY",
+        "strlcat.c": "!HAVE_STRLCAT",
+        "getline.c": "!HAVE_GETLINE",
+        "ctime_r.c": "!HAVE_CTIME_R",
+        "asctime_r.c": "!HAVE_ASCTIME_R",
+        "localtime_r.c": "!HAVE_LOCALTIME_R",
+        "gmtime_r.c": "!HAVE_GMTIME_R",
+        "pread.c": "!HAVE_PREAD",
+        "strcasestr.c": "!HAVE_STRCASESTR",
+        "fmtcheck.c": "!HAVE_FMTCHECK",
+        "dprintf.c": "!HAVE_DPRINTF",
+    },
+    deps = ["//:configure_ac"],
+)
