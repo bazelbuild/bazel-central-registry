@@ -24,7 +24,8 @@ Validations performed are:
   - Verify the source archive URL is stable
   - Verify if the presubmit.yml file matches the previous version
     - If not, we should require BCR maintainer review.
-  - Verify the checked in MODULE.bazel file matches the one in the extracted and patched source tree.
+  - Verify the checked in MODULE.bazel file matches the one in the extracted and patched source tree
+    after formatting both and setting their module version to the version of the module.
   - Verify attestations (SLSA provenance / VSA) referenced by attestations.json (if it exists).
 """
 
@@ -50,6 +51,7 @@ from urllib.parse import urlparse
 import attestations as attestations_lib
 import slsa
 
+from runfiles import Runfiles
 from registry import RegistryClient
 from registry import UpstreamRegistry
 from registry import Version
@@ -139,6 +141,32 @@ def apply_patch(work_dir, patch_strip, patch_file):
 
 def fix_line_endings(lines):
     return [line.rstrip() + "\n" for line in lines]
+
+
+def get_buildozer_path():
+    runfiles = Runfiles.Create()
+    if runfiles:
+        # The ".exe" suffix is *not* a typo. It is present on all platforms.
+        path = runfiles.Rlocation("buildozer_binary/buildozer.exe")
+        if path and os.path.exists(path):
+            return path
+    # Fallback to use buildozer in PATH.
+    return "buildozer"
+
+
+def set_module_version(module_dot_bazel, version):
+    """Returns the lines of the MODULE.bazel file formatted by buildozer with the module version set.
+
+    Returns the unmodified lines if buildozer fails, e.g. because the file can't be parsed.
+    """
+    result = subprocess.run(
+        [get_buildozer_path(), "-stdout", f'set version "{version}"', f"{module_dot_bazel}:%module"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout:
+        return fix_line_endings(result.stdout.splitlines())
+    return fix_line_endings(open(module_dot_bazel, "r").readlines())
 
 
 def extract_reference(repo_path, path):
@@ -643,7 +671,11 @@ class BcrValidator:
                 )
             )
 
-            if diff:
+            # The version in the checked in MODULE.bazel is verified below, so the sources don't need to be
+            # patched if they omit it or use a placeholder such as "0.0.0".
+            if diff and set_module_version(source_module_dot_bazel, version) != set_module_version(
+                bcr_module_dot_bazel, version
+            ):
                 self.report(
                     BcrValidationResult.FAILED,
                     "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"

@@ -36,3 +36,4 @@ bazel run //tools:update_integrity -- {module_name} --version={version}
 ### 4. Consistency Check
 - If the source archive doesn't contain a MODULE.bazel, `modules/{module_name}/{version}/MODULE.bazel` should not exist.
 - Otherwise, ensure that `modules/{module_name}/{version}/MODULE.bazel` matches the source archive's version exactly. Use an overlay or patch if they differ.
+  - The only exception is the `version` attribute of `module()`: it must be set to `{version}` in `modules/{module_name}/{version}/MODULE.bazel`, but the source archive may omit it or use a placeholder such as `0.0.0`. Don't add a patch just to fix the version.

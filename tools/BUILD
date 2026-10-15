@@ -53,12 +53,16 @@ py_binary(
 py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
+    data = [
+        "@buildozer_binary//:buildozer.exe",
+    ],
     legacy_create_init = 0,
     deps = [
         ":attestations",
         ":registry",
         ":slsa",
         ":verify_stable_archives",
+        requirement("bazel-runfiles"),
         requirement("requests"),
         requirement("zstandard"),
     ],
