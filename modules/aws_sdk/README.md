@@ -2,6 +2,7 @@
 
 The BUILD overlays translate the SDK and bundled CRT libraries' CMake targets.
 The module extension selectively extracts the SDK sources needed by those targets.
+The bundled libraries support Linux x86-64 and AArch64 targets.
 
 ## Hardware checksums
 
