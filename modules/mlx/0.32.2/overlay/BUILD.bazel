@@ -3,6 +3,7 @@ load("@package_metadata//licenses/rules:license.bzl", "license")
 load("@package_metadata//purl:purl.bzl", "purl")
 load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:cpu.bzl", "cpu_compiled_preamble")
 load("//bazel:metal.bzl", "metal_jit_source", "metal_library")
 
 package(default_package_metadata = [":package_metadata"])
@@ -175,49 +176,22 @@ genrule(
     target_compatible_with = ["@platforms//os:macos"],
 )
 
-# The preamble is only preprocessed, so on macOS use the Xcode clang directly
-# (the Bazel cc wrapper needs Xcode env vars that genrules do not get).
-_CPU_PREAMBLE_CMD = """
-SRCDIR=$$(dirname $(location mlx/backend/cpu/compiled_preamble.h))/../../..
-bash $(location mlx/backend/cpu/make_compiled_preamble.sh) $@ {cc} $$SRCDIR {clang} {arch} "{flags}"
-grep -q 'struct Abs' $@ || {{ echo "Failed to preprocess the CPU compiled preamble" >&2; exit 1; }}
-"""
-
-genrule(
+cpu_compiled_preamble(
     name = "cpu_compiled_preamble",
-    srcs = [
-        "mlx/backend/cpu/compiled_preamble.h",
-        "mlx/backend/cpu/make_compiled_preamble.sh",
-    ] + glob(
+    out = "mlx/backend/cpu/compiled_preamble.cpp",
+    hdrs = glob(
         [
             "mlx/types/*.h",
             "mlx/backend/cpu/*.h",
             "mlx/backend/cpu/simd/*.h",
         ],
-        exclude = ["mlx/backend/cpu/compiled_preamble.h"],
     ),
-    outs = ["mlx/backend/cpu/compiled_preamble.cpp"],
-    cmd = select({
-        ":macos_arm64": _CPU_PREAMBLE_CMD.format(
-            arch = "arm64",
-            cc = "/usr/bin/clang",
-            clang = "TRUE",
-            flags = "",
-        ),
-        ":macos": _CPU_PREAMBLE_CMD.format(
-            arch = "x86_64",
-            cc = "/usr/bin/clang",
-            clang = "TRUE",
-            flags = "",
-        ),
-        "//conditions:default": _CPU_PREAMBLE_CMD.format(
-            arch = "$(TARGET_CPU)",
-            cc = "$(CC)",
-            clang = "FALSE",
-            flags = "-x c++",
-        ),
+    arch = select({
+        ":macos_arm64": "arm64",
+        ":macos": "x86_64",
+        "//conditions:default": "",
     }),
-    toolchains = ["@rules_cc//cc:current_cc_toolchain"],
+    script = "mlx/backend/cpu/make_compiled_preamble.sh",
 )
 
 cc_library(
