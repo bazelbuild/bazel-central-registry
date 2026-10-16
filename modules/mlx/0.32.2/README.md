@@ -21,6 +21,9 @@ The overlay enables the CPU backend on macOS and Linux and the Metal backend on
 macOS arm64. It uses `MLX_METAL_JIT=ON`, `MLX_BUILD_CUDA=OFF`, and defines
 `MLX_METAL_NO_NAX`. macOS uses Accelerate; Linux uses BCR OpenBLAS.
 
+Metal compilation, linking, and JIT source generation use Bazel's selected
+Xcode configuration through `apple_support.run`.
+
 MPI is loaded at runtime. NCCL and JACCL use the upstream `no_*` implementations.
 The small ahead-of-time metallib is embedded in the library so consumers need
 no separately installed file.

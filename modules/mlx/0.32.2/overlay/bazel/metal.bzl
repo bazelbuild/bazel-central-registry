@@ -1,11 +1,7 @@
 """Rules for building the MLX Metal kernels with the Xcode Metal toolchain."""
 
+load("@apple_support//lib:apple_support.bzl", "apple_support")
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
-
-_EXECUTION_REQUIREMENTS = {
-    "requires-darwin": "",
-    "supports-xcode-requirements-set": "",
-}
 
 _METAL_FLAGS = [
     "-x",
@@ -22,6 +18,8 @@ def _source_root(f):
     return f.owner.workspace_root or "."
 
 def _metal_library_impl(ctx):
+    apple_platform_info = apple_support.platform_info_from_rule_ctx(ctx)
+    xcode_config = ctx.attr._xcode_config[apple_common.XcodeVersionConfig]
     version_min = "-mmacosx-version-min=" + ctx.attr.macos_version_min[BuildSettingInfo].value
     hdrs = depset(transitive = [h.files for h in ctx.attr.hdrs])
     airs = []
@@ -34,15 +32,16 @@ def _metal_library_impl(ctx):
         args.add("-I" + _source_root(src))
         args.add("-c", src)
         args.add("-o", air)
-        ctx.actions.run(
+        apple_support.run(
+            actions = ctx.actions,
+            apple_platform_info = apple_platform_info,
+            xcode_config = xcode_config,
             executable = "/usr/bin/xcrun",
             arguments = [args],
             inputs = depset([src], transitive = [hdrs]),
             outputs = [air],
             mnemonic = "MetalCompile",
             progress_message = "Compiling Metal kernel %{input}",
-            execution_requirements = _EXECUTION_REQUIREMENTS,
-            use_default_shell_env = True,
         )
         airs.append(air)
 
@@ -51,15 +50,16 @@ def _metal_library_impl(ctx):
     args.add(version_min)
     args.add_all(airs)
     args.add("-o", ctx.outputs.out)
-    ctx.actions.run(
+    apple_support.run(
+        actions = ctx.actions,
+        apple_platform_info = apple_platform_info,
+        xcode_config = xcode_config,
         executable = "/usr/bin/xcrun",
         arguments = [args],
         inputs = airs,
         outputs = [ctx.outputs.out],
         mnemonic = "MetalLink",
         progress_message = "Linking %{output}",
-        execution_requirements = _EXECUTION_REQUIREMENTS,
-        use_default_shell_env = True,
     )
     return [DefaultInfo(files = depset([ctx.outputs.out]))]
 
@@ -71,7 +71,8 @@ metal_library = rule(
         "macos_version_min": attr.label(mandatory = True, providers = [BuildSettingInfo]),
         "out": attr.output(mandatory = True),
         "srcs": attr.label_list(allow_files = [".metal"], mandatory = True),
-    },
+    } | apple_support.action_required_attrs() | apple_support.platform_constraint_attrs(),
+    fragments = ["apple"],
 )
 
 def _metal_jit_source_impl(ctx):
@@ -86,7 +87,10 @@ def _metal_jit_source_impl(ctx):
         fail("out must be named {}.cpp".format(kernel.split("/")[-1]))
 
     hdrs = depset(transitive = [h.files for h in ctx.attr.hdrs])
-    ctx.actions.run(
+    apple_support.run(
+        actions = ctx.actions,
+        apple_platform_info = apple_support.platform_info_from_rule_ctx(ctx),
+        xcode_config = ctx.attr._xcode_config[apple_common.XcodeVersionConfig],
         executable = "/bin/bash",
         arguments = [
             ctx.file.script.path,
@@ -100,8 +104,6 @@ def _metal_jit_source_impl(ctx):
         outputs = [ctx.outputs.out],
         mnemonic = "MetalJitSource",
         progress_message = "Generating Metal JIT source %{output}",
-        execution_requirements = _EXECUTION_REQUIREMENTS,
-        use_default_shell_env = True,
     )
     return [DefaultInfo(files = depset([ctx.outputs.out]))]
 
@@ -114,5 +116,6 @@ metal_jit_source = rule(
         "out": attr.output(mandatory = True),
         "script": attr.label(allow_single_file = True, mandatory = True),
         "src": attr.label(allow_single_file = [".h"], mandatory = True),
-    },
+    } | apple_support.action_required_attrs() | apple_support.platform_constraint_attrs(),
+    fragments = ["apple"],
 )
