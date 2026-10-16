@@ -44,6 +44,23 @@ license_kind(
     identifier = "EPL-2.0 OR Apache-2.0",
 )
 
+config_setting(
+    name = "windows_msvc",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+)
+
+config_setting(
+    name = "windows_clang_cl",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang-cl"},
+)
+
+config_setting(
+    name = "large_fragment_tests",
+    define_values = {"zenoh_pico_large_fragment_tests": "1"},
+)
+
 cmake_configure_file(
     name = "config_h",
     src = "include/zenoh-pico/config.h.in",
@@ -51,7 +68,6 @@ cmake_configure_file(
     defines = [
         "BATCH_MULTICAST_SIZE=2048",  # Use this to override the maximum multicast batch size
         "BATCH_UNICAST_SIZE=2048",  # Use this to override the maximum unicast batch size
-        "FRAG_MAX_SIZE=4096",  # Use this to override the maximum size for fragmented messages
         "Z_CONFIG_SOCKET_TIMEOUT=100",  # Default socket timeout in milliseconds
         "Z_FEATURE_ADVANCED_PUBLICATION=1",  # Toggle advanced publication feature
         "Z_FEATURE_ADVANCED_SUBSCRIPTION=1",  # Toggle advanced subscription feature
@@ -66,7 +82,6 @@ cmake_configure_file(
         "Z_FEATURE_LINK_SERIAL_USB=0",  # Toggle Serial USB links
         "Z_FEATURE_LINK_SERIAL=0",  # Toggle Serial links
         "Z_FEATURE_LINK_TCP=1",  # Toggle TCP links
-        "Z_FEATURE_LINK_TLS=1",  # Toggle TLS links
         "Z_FEATURE_LINK_UDP_MULTICAST=1",  # Toggle UDP multicast links
         "Z_FEATURE_LINK_UDP_UNICAST=1",  # Toggle UDP unicast links
         "Z_FEATURE_LINK_WS=0",  # Toggle WebSocket links
@@ -93,7 +108,15 @@ cmake_configure_file(
         "Z_TRANSPORT_LEASE_EXPIRE_FACTOR=3",  # Default session lease expire factor.
         "Z_TRANSPORT_LEASE=10000",  # Link lease duration in milliseconds to announce to other zenoh nodes
         "ZP_PERIODIC_SCHEDULER_MAX_TASKS=64",  # Maximum number of tasks in the periodic scheduler
-    ],
+    ] + select({
+        # Upstream 1.7.2 provides its TLS backend only under src/system/unix.
+        "@platforms//os:windows": ["Z_FEATURE_LINK_TLS=0"],
+        "//conditions:default": ["Z_FEATURE_LINK_TLS=1"],
+    }) + select({
+        # z_client_test sends 100 KB messages and verifies reassembly.
+        ":large_fragment_tests": ["FRAG_MAX_SIZE=131072"],
+        "//conditions:default": ["FRAG_MAX_SIZE=4096"],
+    }),
 )
 
 cc_library(
@@ -116,10 +139,11 @@ cc_library(
         exclude = ["include/zenoh-pico/config.h"],
     ) + [":config_h"],
     copts = select({
-        "@platforms//os:windows": [
+        "@rules_cc//cc/compiler:msvc-cl": [
             "/experimental:c11atomics",
             "/std:c11",
         ],
+        "@rules_cc//cc/compiler:clang-cl": ["/std:c11"],
         "//conditions:default": [
             "-Wno-unused-but-set-variable",
             "-Wno-unused-variable",
@@ -137,12 +161,24 @@ cc_library(
         "@platforms//os:windows": ["system_include_paths"],
         "//conditions:default": [],
     }),
-    includes = ["include"],
+    # Expose only declared headers so the archive's default config.h cannot
+    # shadow the configuration generated above.
+    strip_include_prefix = "include",
     linkopts = select({
-        "@platforms//os:windows": [
+        ":windows_msvc": [
             "-defaultlib:advapi32.lib",
             "-defaultlib:iphlpapi.lib",
             "-defaultlib:ws2_32.lib",
+        ],
+        ":windows_clang_cl": [
+            "-defaultlib:advapi32.lib",
+            "-defaultlib:iphlpapi.lib",
+            "-defaultlib:ws2_32.lib",
+        ],
+        "@platforms//os:windows": [
+            "-ladvapi32",
+            "-liphlpapi",
+            "-lws2_32",
         ],
         "@platforms//os:linux": [
             "-lpthread",
