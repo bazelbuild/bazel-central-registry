@@ -23,6 +23,10 @@ macOS arm64. It uses `MLX_METAL_JIT=ON`, `MLX_BUILD_CUDA=OFF`, and defines
 
 Metal compilation, linking, and JIT source generation use Bazel's selected
 Xcode configuration through `apple_support.run`.
+The selected Xcode must have the Metal Toolchain installed. With Xcode 26,
+install this optional component using `xcodebuild -downloadComponent MetalToolchain`.
+The macOS presubmit jobs check the compiler and install the component if needed
+before running Bazel.
 
 MPI is loaded at runtime. NCCL and JACCL use the upstream `no_*` implementations.
 The small ahead-of-time metallib is embedded in the library so consumers need
