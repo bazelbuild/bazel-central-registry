@@ -22,6 +22,13 @@ common_copts = [
     "-Wno-cast-qual",
 ]
 
+# Keep the bundled build limited to Linux x86-64 and AArch64.
+_SUPPORTED_PLATFORM_CONSTRAINTS = ["@platforms//os:linux"] + select({
+    "@platforms//cpu:x86_64": [],
+    "@platforms//cpu:aarch64": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
 config_setting(
     name = "use_boringssl",
     flag_values = {"@curl//:ssl_lib": "boringssl"},
@@ -279,12 +286,6 @@ cc_library(
             ],
             allow_empty = True,
         ),
-        "@platforms//cpu:armv7": glob(
-            [
-                "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/auxv/*.c",
-            ],
-            allow_empty = True,
-        ),
         # See the paths in crt/aws-crt-cpp/crt/aws-c-common/CMakeLists.txt for the appropriate globs for each architecture.
         "@platforms//cpu:x86_64": glob(
             include = [
@@ -323,7 +324,8 @@ cc_library(
         "-ldl",
         "-pthread",
     ],
-    target_compatible_with = ["@platforms//os:linux"],
+    # All bundled CRT libraries depend on this target.
+    target_compatible_with = _SUPPORTED_PLATFORM_CONSTRAINTS,
     textual_hdrs = glob(["crt/aws-crt-cpp/crt/aws-c-common/include/**/*.inl"]),
     visibility = ["//visibility:public"],
 )
@@ -332,10 +334,6 @@ cc_library(
     name = "aws-c-event-stream",
     srcs = glob(["crt/aws-crt-cpp/crt/aws-c-event-stream/source/*.c"]) + select({
         "@platforms//cpu:aarch64": glob(
-            ["crt/aws-crt-cpp/crt/aws-c-event-stream/source/arm/*.c"],
-            allow_empty = True,
-        ),
-        "@platforms//cpu:armv7": glob(
             ["crt/aws-crt-cpp/crt/aws-c-event-stream/source/arm/*.c"],
             allow_empty = True,
         ),
@@ -425,7 +423,7 @@ cc_library(
 # the ARM -march must not override the toolchain architecture for the dispatcher
 # or for any other bundled library. AWS still checks CPU features at runtime.
 cc_library(
-    name = "aws-checksums-x86",
+    name = "aws-checksums-x86_64",
     srcs = [
         "crt/aws-crt-cpp/crt/aws-checksums/source/intel/asm/crc32c_sse42_asm.c",
         "crt/aws-crt-cpp/crt/aws-checksums/source/intel/intrin/crc32c_sse42_avx512.c",
@@ -462,7 +460,7 @@ cc_library(
 )
 
 cc_library(
-    name = "aws-checksums-arm",
+    name = "aws-checksums-aarch64",
     srcs = [
         "crt/aws-crt-cpp/crt/aws-checksums/source/arm/crc32c_arm.c",
         "crt/aws-crt-cpp/crt/aws-checksums/source/arm/crc64_arm.c",
@@ -481,14 +479,14 @@ cc_library(
     srcs = glob(["crt/aws-crt-cpp/crt/aws-checksums/source/*.c"]),
     copts = _CHECKSUMS_COPTS,
     local_defines = _CHECKSUMS_DEFINES,
-    target_compatible_with = ["@platforms//os:linux"],
+    target_compatible_with = _SUPPORTED_PLATFORM_CONSTRAINTS,
     visibility = ["//visibility:public"],
     deps = [
         ":aws-c-common",
         ":aws-checksums-headers",
     ] + select({
-        ":checksums_x86_sse42": [":aws-checksums-x86"],
-        "@platforms//cpu:aarch64": [":aws-checksums-arm"],
+        ":checksums_x86_sse42": [":aws-checksums-x86_64"],
+        "@platforms//cpu:aarch64": [":aws-checksums-aarch64"],
         "//conditions:default": [],
     }),
 )
