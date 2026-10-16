@@ -1,0 +1,680 @@
+"""libiberty - the GNU support library every binutils program links (libiberty/Makefile.in)."""
+
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("//:platforms.bzl", "platform_setting")
+load("//:targets.bzl", "PLATFORMS")
+
+package(default_visibility = ["//:__subpackages__"])
+
+# AM_BINUTILS_WARNINGS turns -Werror on for this development snapshot;
+# building a release-grade library with a fixed warning set that another
+# compiler may not share is not useful here, so warnings are off.
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+}) + select({
+    # GCC_CET_HOST_FLAGS (config/cet.m4): `-fcf-protection` for the host
+    # libraries on Linux/x86 whenever the compiler and assembler accept it,
+    # which every toolchain able to build this release does.
+    ":_linux_x86": ["-fcf-protection"],
+    "//conditions:default": [],
+})
+
+# cet.m4's `i[34567]86-*-linux* | x86_64-*-linux*`, over the platform table.
+selects.config_setting_group(
+    name = "_linux_x86",
+    match_any = [
+        platform_setting(key)
+        for key, data in PLATFORMS.items()
+        if "-linux" in data["triple"] and data["triple"].split("-")[0] in ("i686", "x86_64")
+    ],
+)
+
+# The functions libiberty supplies when the C library lacks them
+# (libiberty/configure.ac:378-432, `funcs`).  Each is AC_REPLACE_FUNCS'd:
+# HAVE_<F> in config.h when present, <f>.c compiled in when not.
+REPLACE_FUNCS = [
+    "asprintf",
+    "atexit",
+    "basename",
+    "bcmp",
+    "bcopy",
+    "bsearch",
+    "bzero",
+    "calloc",
+    "clock",
+    "ffs",
+    "getcwd",
+    "getpagesize",
+    "gettimeofday",
+    "index",
+    "insque",
+    "memchr",
+    "memrchr",
+    "memcmp",
+    "memcpy",
+    "memmem",
+    "memmove",
+    "mempcpy",
+    "memset",
+    "mkstemps",
+    "putenv",
+    "random",
+    "rename",
+    "rindex",
+    "setenv",
+    "snprintf",
+    "sigsetmask",
+    "stpcpy",
+    "stpncpy",
+    "strcasecmp",
+    "strchr",
+    "strdup",
+    "strncasecmp",
+    "strndup",
+    "strnlen",
+    "strrchr",
+    "strstr",
+    "strtod",
+    "strtol",
+    "strtoul",
+    "strtoll",
+    "strtoull",
+    "strverscmp",
+    "tmpnam",
+    "vasprintf",
+    "vfprintf",
+    "vprintf",
+    "vsnprintf",
+    "vsprintf",
+    "waitpid",
+    "setproctitle",
+]
+
+# libiberty/configure.ac:437-442, `checkfuncs`: only probed, never replaced.
+CHECK_FUNCS = [
+    "__fsetlocking",
+    "canonicalize_file_name",
+    "dup3",
+    "getrlimit",
+    "getrusage",
+    "getsysinfo",
+    "gettimeofday",
+    "on_exit",
+    "pipe2",
+    "posix_spawn",
+    "posix_spawnp",
+    "psignal",
+    "pstat_getdynamic",
+    "pstat_getstatic",
+    "realpath",
+    "setrlimit",
+    "spawnve",
+    "spawnvpe",
+    "strerror",
+    "strsignal",
+    "sysconf",
+    "sysctl",
+    "sysmp",
+    "table",
+    "times",
+    "wait3",
+    "wait4",
+]
+
+# libiberty/configure.ac:536-558: on mingw the set of missing functions is
+# known in advance and the probes are skipped (`setobjs=yes`).  These are
+# the AC_LIBOBJs of that arm; every other name in REPLACE_FUNCS gets HAVE_*.
+MINGW_LIBOBJS = [
+    "asprintf",
+    "basename",
+    "bcmp",
+    "bcopy",
+    "bzero",
+    "clock",
+    "ffs",
+    "getpagesize",
+    "index",
+    "insque",
+    "mempcpy",
+    "mkstemps",
+    "random",
+    "rindex",
+    "sigsetmask",
+    "stpcpy",
+    "stpncpy",
+    "strndup",
+    "strnlen",
+    "strverscmp",
+    "vasprintf",
+    "waitpid",
+]
+
+# Headers the probes include so a declaration is seen when the C library has
+# it: AC_INCLUDES_DEFAULT plus what the macro in question adds.  configure
+# compiles every probe after confdefs.h, which by then holds the
+# AC_USE_SYSTEM_EXTENSIONS defines; `_GNU_SOURCE` is the one glibc gates
+# declarations on, so it is replayed into each declaration probe.
+DECL_INCLUDES = [
+    "#include <stdio.h>",
+    "#include <stdlib.h>",
+    "#include <string.h>",
+    "#include <strings.h>",
+    "#include <unistd.h>",
+]
+
+# The probes libiberty/configure.ac runs on every host, in its order.
+# AC_C_CONST and AC_C_INLINE (configure.ac:210-211) leave `const` and
+# `inline` alone on every compiler that can build this, so they have no
+# counterpart here.
+HOST_CHECKS = (
+    # AC_INIT with no arguments (configure.ac:21): every PACKAGE_* is empty.
+    [
+        checks.AC_DEFINE(name, '""')
+        for name in [
+            "PACKAGE_BUGREPORT",
+            "PACKAGE_NAME",
+            "PACKAGE_STRING",
+            "PACKAGE_TARNAME",
+            "PACKAGE_URL",
+            "PACKAGE_VERSION",
+        ]
+    ] +
+    # AC_PROG_CC_C_O (configure.ac:201-207).
+    [
+        checks.AC_PROG_CC_C_O(),
+    ] +
+    # AC_CHECK_HEADERS (configure.ac:305), plus memory.h: the configure
+    # scripts of this release are autoconf 2.69 output, whose
+    # AC_INCLUDES_DEFAULT still probes it, and config.in has the slot.
+    macros.AC_CHECK_HEADERS([
+        "memory.h",
+        "sys/file.h",
+        "sys/param.h",
+        "limits.h",
+        "stdlib.h",
+        "malloc.h",
+        "string.h",
+        "unistd.h",
+        "strings.h",
+        "sys/time.h",
+        "time.h",
+        "sys/resource.h",
+        "sys/stat.h",
+        "sys/mman.h",
+        "fcntl.h",
+        "alloca.h",
+        "sys/pstat.h",
+        "sys/sysmp.h",
+        "sys/sysinfo.h",
+        "machine/hal_sysinfo.h",
+        "sys/table.h",
+        "sys/sysctl.h",
+        "sys/systemcfg.h",
+        "stdint.h",
+        "stdio_ext.h",
+        "process.h",
+        "sys/prctl.h",
+        "spawn.h",
+        "libgen.h",
+    ]) + [
+        # AC_HEADER_SYS_WAIT (configure.ac:306): <sys/wait.h> is POSIX.1
+        # compatible when the W* macros work.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <sys/types.h>
+#include <sys/wait.h>
+#ifndef WEXITSTATUS
+# define WEXITSTATUS(stat_val) ((unsigned int) (stat_val) >> 8)
+#endif
+#ifndef WIFEXITED
+# define WIFEXITED(stat_val) (((stat_val) & 255) == 0)
+#endif
+int main(void) {
+  int s;
+  wait (&s);
+  s = WIFEXITED (s) ? WEXITSTATUS (s) : 1;
+  return s;
+}
+""",
+            define = "HAVE_SYS_WAIT_H",
+        ),
+        # AC_HEADER_TIME (configure.ac:307).
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <sys/types.h>
+#include <sys/time.h>
+#include <time.h>
+int main(void) {
+  if ((struct tm *) 0)
+    return 0;
+  return 0;
+}
+""",
+            define = "TIME_WITH_SYS_TIME",
+        ),
+        # libiberty_AC_DECLARE_ERRNO (acinclude.m4:84-94).
+        checks.AC_TRY_COMPILE(
+            name = "libiberty_cv_declare_errno",
+            code = """\
+#include <errno.h>
+int main(void) { int x = errno; return x; }
+""",
+        ),
+        checks.AC_DEFINE(
+            "NEED_DECLARATION_ERRNO",
+            requires = ["!libiberty_cv_declare_errno"],
+        ),
+        # configure.ac:312-320.
+        checks.AC_CHECK_SIZEOF(
+            "int",
+            define = "SIZEOF_INT",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "long",
+            define = "SIZEOF_LONG",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "size_t",
+            define = "SIZEOF_SIZE_T",
+            includes = ["#include <stddef.h>"],
+        ),
+        checks.AC_CHECK_TYPE(
+            "long long",
+            define = "HAVE_LONG_LONG",
+        ),
+        checks.AC_CHECK_SIZEOF(
+            "long long",
+            define = "SIZEOF_LONG_LONG",
+            requires = ["HAVE_LONG_LONG"],
+        ),
+        # configure.ac:323-350, the 64-bit type.  The first candidate,
+        # uint64_t from <stdint.h>, is tried here; the `unsigned long` and
+        # `unsigned long long` fallbacks are only reached on a host without
+        # <stdint.h>, which none of the supported ones is.
+        checks.AC_TRY_COMPILE(
+            name = "liberty_cv_uint64",
+            code = """\
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
+extern uint64_t foo;
+int main(void) { return 0; }
+""",
+            compile_defines = ["HAVE_STDINT_H"],
+            requires = ["HAVE_STDINT_H"],
+        ),
+        checks.AC_DEFINE(
+            "UNSIGNED_64BIT_TYPE",
+            condition = "liberty_cv_uint64",
+            if_false = None,
+            if_true = "uint64_t",
+        ),
+        # AC_TYPE_INTPTR_T, AC_TYPE_UINTPTR_T, AC_TYPE_SSIZE_T
+        # (configure.ac:352-354).  Autoconf substitutes an integer type of the
+        # right width when the typedef is missing; it is never missing on the
+        # hosts this module supports, so only the HAVE_ half is written.
+        checks.AC_CHECK_TYPE(
+            "intptr_t",
+            define = "HAVE_INTPTR_T",
+            includes = ["#include <stdint.h>"],
+        ),
+        checks.AC_CHECK_TYPE(
+            "uintptr_t",
+            includes = ["#include <stdint.h>"],
+        ),
+        checks.AC_CHECK_TYPE(
+            "ssize_t",
+            includes = ["#include <sys/types.h>"],
+        ),
+        checks.AC_DEFINE(
+            "ssize_t",
+            "int",
+            requires = ["!ac_cv_type_ssize_t"],
+        ),
+        # configure.ac:359.
+        checks.AC_DEFINE("HAVE_UINTPTR_T", "1"),
+    ]
+)
+
+# The probes of the generic arm (configure.ac:599-659), skipped on mingw.
+PROBED_CHECKS = (
+    macros.AC_CHECK_FUNCS(REPLACE_FUNCS) +
+    # libiberty_AC_FUNC_C_ALLOCA (acinclude.m4:125-182).  No Cray hooks, and
+    # STACK_DIRECTION is an AC_TRY_RUN whose cross-compilation answer is 0
+    # ("deduce at run time"); alloca.c only matters with a compiler that has
+    # no __builtin_alloca, which is none of those able to build this module.
+    [
+        checks.AC_DEFINE("STACK_DIRECTION", "0"),
+    ] +
+    # AC_FUNC_FORK (configure.ac:603).  The "works" halves are AC_TRY_RUNs;
+    # cross-compiling they fall back to "yes when the function exists" on
+    # every host but amigaos and djgpp, which is also the native answer here.
+    macros.AC_CHECK_FUNCS([
+        "fork",
+        "vfork",
+    ]) + macros.AC_CHECK_HEADERS(["vfork.h"]) + [
+        checks.AC_DEFINE(
+            "HAVE_WORKING_FORK",
+            requires = ["HAVE_FORK"],
+        ),
+        checks.AC_DEFINE(
+            "HAVE_WORKING_VFORK",
+            requires = ["HAVE_VFORK"],
+        ),
+        checks.AC_DEFINE(
+            "vfork",
+            "fork",
+            requires = ["!HAVE_VFORK"],
+        ),
+        # configure.ac:608-614: _doprnt is only needed to implement v*printf.
+        checks.AC_CHECK_FUNC(
+            "_doprnt",
+            define = "HAVE__DOPRNT",
+        ),
+    ] +
+    # configure.ac:616-628, the three variables.
+    [
+        check
+        for var in [
+            "sys_errlist",
+            "sys_nerr",
+            "sys_siglist",
+        ]
+        for check in [
+            checks.AC_TRY_LINK(
+                name = "libiberty_cv_var_" + var,
+                code = """\
+extern int {var} [];
+int main(void) {{ if ({var} [0]) return 1; return 0; }}
+""".format(var = var),
+            ),
+            checks.AC_DEFINE(
+                "HAVE_" + var.upper(),
+                requires = ["libiberty_cv_var_" + var],
+            ),
+        ]
+    ] + [
+        # configure.ac:632-639.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <sys/systemcfg.h>
+int main(void) { double x = _system_configuration.physmem; return (int) x; }
+""",
+            define = "HAVE__SYSTEM_CONFIGURATION",
+        ),
+    ] + macros.AC_CHECK_FUNCS(CHECK_FUNCS) +
+    # configure.ac:642-657.
+    macros.AC_CHECK_DECLS(
+        ["basename"],
+        compile_defines = [
+            "_GNU_SOURCE",
+            "HAVE_LIBGEN_H",
+        ],
+        includes = DECL_INCLUDES + [
+            # This comment prevents this list from being reordered
+            "#ifdef HAVE_LIBGEN_H",
+            "# include <libgen.h>",
+            "#endif",
+        ],
+    ) + macros.AC_CHECK_DECLS(
+        [
+            "ffs",
+            "asprintf",
+            "vasprintf",
+            "snprintf",
+            "vsnprintf",
+            "calloc",
+            "getenv",
+            "getopt",
+            "malloc",
+            "realloc",
+            "strtol",
+            "strtoul",
+            "strtoll",
+            "strtoull",
+            "strverscmp",
+            "strnlen",
+        ],
+        compile_defines = ["_GNU_SOURCE"],
+        includes = DECL_INCLUDES,
+    ) + [
+        # libiberty_NEED_DECLARATION(canonicalize_file_name) (acinclude.m4:96-123).
+        checks.AC_TRY_COMPILE(
+            name = "libiberty_cv_decl_needed_canonicalize_file_name",
+            code = """\
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+int main(void) { char *(*pfn) = (char *(*)) canonicalize_file_name; return pfn != 0; }
+""",
+            compile_defines = ["_GNU_SOURCE"],
+        ),
+        checks.AC_DEFINE(
+            "NEED_DECLARATION_CANONICALIZE_FILE_NAME",
+            requires = ["!libiberty_cv_decl_needed_canonicalize_file_name"],
+        ),
+    ]
+)
+
+# configure.ac:536-558 and :567-572, the mingw arm written out.
+MINGW_CHECKS = [
+    checks.AC_DEFINE("HAVE_" + func.upper())
+    for func in REPLACE_FUNCS
+    if func not in MINGW_LIBOBJS
+] + [
+    checks.AC_DEFINE("HAVE_STRERROR"),
+    checks.AC_DEFINE("HAVE_SYS_ERRLIST"),
+    checks.AC_DEFINE("HAVE_SYS_NERR"),
+]
+
+autoconf(
+    name = "autoconf",
+    checks = HOST_CHECKS + select({
+        "@platforms//os:windows": MINGW_CHECKS,
+        "//conditions:default": PROBED_CHECKS,
+    }) + select({
+        # configure.ac:434-436 and :650-653: sbrk is deprecated on Darwin and
+        # so not probed; mingw skips the probes altogether.
+        "@platforms//os:macos": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": macros.AC_CHECK_FUNCS(["sbrk"]) +
+                                macros.AC_CHECK_DECLS(
+                                    ["sbrk"],
+                                    compile_defines = ["_GNU_SOURCE"],
+                                    includes = DECL_INCLUDES,
+                                ),
+    }) + [
+        # configure.ac:668-702: SHA1 hardware acceleration, x86 only in fact
+        # but probed everywhere as upstream does.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <x86intrin.h>
+#include <cpuid.h>
+
+__attribute__((__target__ ("sse4.1,sha")))
+void foo (__m128i *buf, unsigned int e, __m128i msg0, __m128i msg1)
+{
+  __m128i abcd = _mm_loadu_si128 ((const __m128i *) buf);
+  __m128i e0 = _mm_set_epi32 (e, 0, 0, 0);
+  abcd = _mm_shuffle_epi32 (abcd, 0x1b);
+  const __m128i shuf_mask = _mm_set_epi64x (0x0001020304050607ULL, 0x08090a0b0c0d0e0fULL);
+  abcd = _mm_shuffle_epi8 (abcd, shuf_mask);
+  e0 = _mm_sha1nexte_epu32 (e0, msg1);
+  abcd = _mm_sha1rnds4_epu32 (abcd, e0, 0);
+  msg0 = _mm_sha1msg1_epu32 (msg0, msg1);
+  msg0 = _mm_sha1msg2_epu32 (msg0, msg1);
+  msg0 = _mm_xor_si128 (msg0, msg1);
+  e0 = _mm_add_epi32 (e0, msg0);
+  e0 = abcd;
+  _mm_storeu_si128 (buf, abcd);
+  e = _mm_extract_epi32 (e0, 3);
+}
+
+int bar (void)
+{
+  unsigned int eax, ebx, ecx, edx;
+  (void) __get_cpuid;
+  (void) __get_cpuid_count;
+  if (__get_cpuid_count (7, 0, &eax, &ebx, &ecx, &edx)
+      && (ebx & bit_SHA) != 0
+      && __get_cpuid (1, &eax, &ebx, &ecx, &edx)
+      && (ecx & bit_SSE4_1) != 0)
+    return 1;
+  return 0;
+}
+int main(void) { bar (); return 0; }
+""",
+            define = "HAVE_X86_SHA1_HW_SUPPORT",
+        ),
+        # GCC_AC_FUNC_MMAP is AC_FUNC_MMAP, an AC_TRY_RUN that cross-compiling
+        # answers "no" and every native host here answers "yes".  The native
+        # answer is kept: it needs mmap and <sys/mman.h>, which is what the
+        # run test's own prologue requires.
+        checks.AC_CHECK_FUNC(
+            "mmap",
+            define = "HAVE_MMAP",
+            requires = ["HAVE_SYS_MMAN_H"],
+        ),
+    ],
+    deps = [
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_TYPE_PID_T",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+# $(LIBOBJS): one file per function the host lacks.
+autoconf_srcs(
+    name = "libobjs",
+    srcs = dict(
+        [(
+            func + ".c",
+            "ac_cv_func_{}==0".format(func),
+        ) for func in REPLACE_FUNCS] + [
+            ("_doprnt.c", "ac_cv_func__doprnt==0 && (ac_cv_func_vprintf==0 || ac_cv_func_vfprintf==0 || ac_cv_func_vsprintf==0)"),
+            ("vfork.c", "ac_cv_func_vfork==0"),
+        ],
+    ),
+    defaults = True,
+    naming = "per_target",
+    deps = [":autoconf"],
+)
+
+# REQUIRED_OFILES (Makefile.in:148-176) less `@pexecute@`, which is picked by
+# host (configure.ac:661-667).
+REQUIRED_SRCS = [
+    "regex.c",
+    "cplus-dem.c",
+    "cp-demangle.c",
+    "md5.c",
+    "sha1.c",
+    "alloca.c",
+    "argv.c",
+    "bsearch_r.c",
+    "choose-temp.c",
+    "concat.c",
+    "cp-demint.c",
+    "crc32.c",
+    "d-demangle.c",
+    "dwarfnames.c",
+    "dyn-string.c",
+    "fdmatch.c",
+    "fibheap.c",
+    "filedescriptor.c",
+    "filename_cmp.c",
+    "floatformat.c",
+    "fnmatch.c",
+    "fopen_unlocked.c",
+    "getopt.c",
+    "getopt1.c",
+    "getpwd.c",
+    "getruntime.c",
+    "hashtab.c",
+    "hex.c",
+    "lbasename.c",
+    "ldirname.c",
+    "lrealpath.c",
+    "make-relative-prefix.c",
+    "make-temp-file.c",
+    "objalloc.c",
+    "obstack.c",
+    "partition.c",
+    "pexecute.c",
+    "physmem.c",
+    "pex-common.c",
+    "pex-one.c",
+    "vprintf-support.c",
+    "rust-demangle.c",
+    "safe-ctype.c",
+    "simple-object.c",
+    "simple-object-coff.c",
+    "simple-object-elf.c",
+    "simple-object-mach-o.c",
+    "simple-object-xcoff.c",
+    "sort.c",
+    "spaces.c",
+    "splay-tree.c",
+    "stack-limit.c",
+    "strerror.c",
+    "strsignal.c",
+    "timeval-utils.c",
+    "unlink-if-ordinary.c",
+    "xasprintf.c",
+    "xatexit.c",
+    "xexit.c",
+    "xmalloc.c",
+    "xmemdup.c",
+    "xstrdup.c",
+    "xstrerror.c",
+    "xstrndup.c",
+    "xvasprintf.c",
+]
+
+cc_library(
+    name = "libiberty",
+    srcs = REQUIRED_SRCS + glob([
+        "*.h",
+    ]) + select({
+        "@platforms//os:windows": [
+            "pex-win32.c",
+        ] + [func + ".c" for func in MINGW_LIBOBJS],
+        "//conditions:default": [
+            "pex-unix.c",
+            ":libobjs",
+        ],
+    }),
+    copts = COPTS,
+    implementation_deps = [":config"],
+    # COMPILE.c (Makefile.in:124-126).
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "_GNU_SOURCE",
+    ],
+    # xregex.h resolves to libiberty's own regex.c textually.
+    textual_hdrs = ["regex.c"],
+    deps = ["//include"],
+)
