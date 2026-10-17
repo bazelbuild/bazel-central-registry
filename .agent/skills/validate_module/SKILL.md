@@ -33,7 +33,5 @@ bazel run //tools:update_integrity -- {module_name} --version={version}
 - **README.md**: Add a README.md if the purpose of overlay or patch files are
   not obvious.
 
-### 4. Consistency Check
-- If the source archive doesn't contain a MODULE.bazel, `modules/{module_name}/{version}/MODULE.bazel` should not exist.
-- Otherwise, ensure that `modules/{module_name}/{version}/MODULE.bazel` matches the source archive's version exactly. Use an overlay or patch if they differ.
-  - The only exception is the `version` attribute of `module()`: it must be set to `{version}` in `modules/{module_name}/{version}/MODULE.bazel`, but the source archive may omit it or use a placeholder such as `0.0.0`. Don't add a patch just to fix the version.
+### 4. MODULE.bazel
+- Bazel always uses `modules/{module_name}/{version}/MODULE.bazel`, so it doesn't need to match the source archive's `MODULE.bazel`. Don't patch the source archive's `MODULE.bazel` just to make them match, e.g. to set the version.

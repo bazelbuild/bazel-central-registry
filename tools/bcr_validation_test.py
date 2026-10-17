@@ -14,11 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pathlib
-import tempfile
 import unittest
 from registry import RegistryClient
-from tools.bcr_validation import BcrValidator, BcrValidationException, is_ref_in_original_repo, set_module_version
+from tools.bcr_validation import BcrValidator, BcrValidationException, is_ref_in_original_repo
 
 from unittest.mock import MagicMock
 
@@ -66,29 +64,6 @@ class TestBcrValidation(unittest.TestCase):
             "pull/1234/merge",
         ):
             self.assertFalse(is_ref_in_original_repo("fake/repo", ref), ref)
-
-    def test_set_module_version(self):
-        def set_version(content):
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                module_dot_bazel = pathlib.Path(tmp_dir, "MODULE.bazel")
-                module_dot_bazel.write_text(content)
-                return "".join(set_module_version(module_dot_bazel, "1.2.3"))
-
-        registry = 'module(\n    name = "foo",\n    version = "1.2.3",\n)\n\nbazel_dep(name = "bar", version = "2.0")\n'
-        self.assertEqual(set_version(registry), registry)
-        for source in [
-            'module(\n    name = "foo",\n    version = "0.0.0",\n)\n\nbazel_dep(name = "bar", version = "2.0")\n',
-            'module(name = "foo")\n\nbazel_dep(name = "bar", version = "2.0")\n',
-        ]:
-            self.assertEqual(set_version(source), registry, source)
-        for source in [
-            'module(name = "foo")\n\nbazel_dep(name = "bar", version = "1.0")\n',
-            'module(name = "baz")\n\nbazel_dep(name = "bar", version = "2.0")\n',
-        ]:
-            self.assertNotEqual(set_version(source), registry, source)
-
-        unparsable = 'module(\n    name = "foo",\n'
-        self.assertEqual(set_version(unparsable), unparsable)
 
 
 if __name__ == "__main__":

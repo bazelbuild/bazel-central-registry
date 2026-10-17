@@ -24,8 +24,7 @@ Validations performed are:
   - Verify the source archive URL is stable
   - Verify if the presubmit.yml file matches the previous version
     - If not, we should require BCR maintainer review.
-  - Verify the checked in MODULE.bazel file matches the one in the extracted and patched source tree
-    after formatting both and setting their module version to the version of the module.
+  - Verify the patches and overlay files apply to the source archive.
   - Verify attestations (SLSA provenance / VSA) referenced by attestations.json (if it exists).
 """
 
@@ -51,7 +50,6 @@ from urllib.parse import urlparse
 import attestations as attestations_lib
 import slsa
 
-from runfiles import Runfiles
 from registry import RegistryClient
 from registry import UpstreamRegistry
 from registry import Version
@@ -137,36 +135,6 @@ def apply_patch(work_dir, patch_strip, patch_file):
         env=os.environ,
         cwd=work_dir,
     )
-
-
-def fix_line_endings(lines):
-    return [line.rstrip() + "\n" for line in lines]
-
-
-def get_buildozer_path():
-    runfiles = Runfiles.Create()
-    if runfiles:
-        # The ".exe" suffix is *not* a typo. It is present on all platforms.
-        path = runfiles.Rlocation("buildozer_binary/buildozer.exe")
-        if path and os.path.exists(path):
-            return path
-    # Fallback to use buildozer in PATH.
-    return "buildozer"
-
-
-def set_module_version(module_dot_bazel, version):
-    """Returns the lines of the MODULE.bazel file formatted by buildozer with the module version set.
-
-    Returns the unmodified lines if buildozer fails, e.g. because the file can't be parsed.
-    """
-    result = subprocess.run(
-        [get_buildozer_path(), "-stdout", f'set version "{version}"', f"{module_dot_bazel}:%module"],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode == 0 and result.stdout:
-        return fix_line_endings(result.stdout.splitlines())
-    return fix_line_endings(open(module_dot_bazel, "r").readlines())
 
 
 def extract_reference(repo_path, path):
@@ -493,19 +461,6 @@ class BcrValidator:
             "should be reviewed by a BCR maintainer.\n    " + "    ".join(diff),
         )
 
-    def add_module_dot_bazel_patch(self, diff, module_name, version):
-        """Adding a patch file for MODULE.bazel according to the diff result."""
-        source = self.registry.get_source(module_name, version)
-        patch_file = self.registry.get_patch_file_path(module_name, version, "module_dot_bazel.patch")
-        patch_file.parent.mkdir(parents=True, exist_ok=True)
-        open(patch_file, "w").writelines(diff)
-        source["patch_strip"] = int(source.get("patch_strip", 0))
-        patches = source.get("patches", {})
-        patches["module_dot_bazel.patch"] = integrity(read(patch_file))
-        source["patches"] = patches
-        source_json_content = json.dumps(source, indent=4) + "\n"
-        self.registry.get_source_json_path(module_name, version).write_text(source_json_content)
-
     def _download_source_archive(self, source, output_dir):
         source_url = source["url"]
         tmp_dir = Path(tempfile.mkdtemp())
@@ -654,41 +609,9 @@ class BcrValidator:
                 overlay_dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(overlay_src, overlay_dst)
 
+        # The source archive's MODULE.bazel doesn't need to match the checked in one: Bazel resolves the module
+        # with the latter and, as of 7.7.0 and 8.4.0, also replaces the former with it when fetching the module.
         bcr_module_dot_bazel = self.registry.get_module_dot_bazel_path(module_name, version)
-        source_module_dot_bazel = source_root.joinpath("MODULE.bazel")
-        if source_module_dot_bazel.exists():
-            source_module_dot_bazel_content = open(source_module_dot_bazel, "r").readlines()
-            bcr_module_dot_bazel_content = open(bcr_module_dot_bazel, "r").readlines()
-            source_module_dot_bazel_content = fix_line_endings(source_module_dot_bazel_content)
-            bcr_module_dot_bazel_content = fix_line_endings(bcr_module_dot_bazel_content)
-            file_name = "a/" * int(source.get("patch_strip", 0)) + "MODULE.bazel"
-            diff = list(
-                unified_diff(
-                    source_module_dot_bazel_content,
-                    bcr_module_dot_bazel_content,
-                    fromfile=file_name,
-                    tofile=file_name,
-                )
-            )
-
-            # The version in the checked in MODULE.bazel is verified below, so the sources don't need to be
-            # patched if they omit it or use a placeholder such as "0.0.0".
-            if diff and set_module_version(source_module_dot_bazel, version) != set_module_version(
-                bcr_module_dot_bazel, version
-            ):
-                self.report(
-                    BcrValidationResult.FAILED,
-                    "Checked in MODULE.bazel file doesn't match the one in the extracted and patched sources.\n"
-                    + f"Please fix the MODULE.bazel file or you can add the following patch to {module_name}@{version}:\n"
-                    + "    "
-                    + "    ".join(diff),
-                )
-                if self.should_fix:
-                    self.add_module_dot_bazel_patch(diff, module_name, version)
-            else:
-                self.report(BcrValidationResult.GOOD, "Checked in MODULE.bazel matches the sources.")
-        else:
-            self.report(BcrValidationResult.GOOD, "No MODULE.bazel in the source archive.")
 
         # Check the version in MODULE.bazel matches the version in directory name
         version_in_module_dot_bazel = BcrValidator.extract_attribute_from_module(bcr_module_dot_bazel, "version")
