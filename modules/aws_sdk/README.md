@@ -2,7 +2,6 @@
 
 The BUILD overlays translate the SDK and bundled CRT libraries' CMake targets.
 The module extension selectively extracts the SDK sources needed by those targets.
-The bundled libraries support Linux x86-64 and AArch64 targets.
 
 ## Hardware checksums
 
@@ -44,3 +43,6 @@ On Linux AArch64, CRC and PMULL implementations are built separately from the
 dispatcher with their required ISA flags. `platforms_contrib` does not yet
 provide ARM feature constraints. AWS checks CPU capabilities at runtime and
 falls back to software when an implementation's required features are absent.
+
+ARMv7 retains its existing source selection and software checksum implementations.
+Hardware checksum acceleration is enabled only for x86-64 and AArch64 targets.
