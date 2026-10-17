@@ -22,13 +22,6 @@ common_copts = [
     "-Wno-cast-qual",
 ]
 
-# Keep the bundled build limited to Linux x86-64 and AArch64.
-_SUPPORTED_PLATFORM_CONSTRAINTS = ["@platforms//os:linux"] + select({
-    "@platforms//cpu:x86_64": [],
-    "@platforms//cpu:aarch64": [],
-    "//conditions:default": ["@platforms//:incompatible"],
-})
-
 config_setting(
     name = "use_boringssl",
     flag_values = {"@curl//:ssl_lib": "boringssl"},
@@ -286,6 +279,12 @@ cc_library(
             ],
             allow_empty = True,
         ),
+        "@platforms//cpu:armv7": glob(
+            [
+                "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/auxv/*.c",
+            ],
+            allow_empty = True,
+        ),
         # See the paths in crt/aws-crt-cpp/crt/aws-c-common/CMakeLists.txt for the appropriate globs for each architecture.
         "@platforms//cpu:x86_64": glob(
             include = [
@@ -324,8 +323,7 @@ cc_library(
         "-ldl",
         "-pthread",
     ],
-    # All bundled CRT libraries depend on this target.
-    target_compatible_with = _SUPPORTED_PLATFORM_CONSTRAINTS,
+    target_compatible_with = ["@platforms//os:linux"],
     textual_hdrs = glob(["crt/aws-crt-cpp/crt/aws-c-common/include/**/*.inl"]),
     visibility = ["//visibility:public"],
 )
@@ -334,6 +332,10 @@ cc_library(
     name = "aws-c-event-stream",
     srcs = glob(["crt/aws-crt-cpp/crt/aws-c-event-stream/source/*.c"]) + select({
         "@platforms//cpu:aarch64": glob(
+            ["crt/aws-crt-cpp/crt/aws-c-event-stream/source/arm/*.c"],
+            allow_empty = True,
+        ),
+        "@platforms//cpu:armv7": glob(
             ["crt/aws-crt-cpp/crt/aws-c-event-stream/source/arm/*.c"],
             allow_empty = True,
         ),
@@ -479,7 +481,7 @@ cc_library(
     srcs = glob(["crt/aws-crt-cpp/crt/aws-checksums/source/*.c"]),
     copts = _CHECKSUMS_COPTS,
     local_defines = _CHECKSUMS_DEFINES,
-    target_compatible_with = _SUPPORTED_PLATFORM_CONSTRAINTS,
+    target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
     deps = [
         ":aws-c-common",
