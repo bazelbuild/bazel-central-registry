@@ -32,6 +32,3 @@ bazel run //tools:update_integrity -- {module_name} --version={version}
 - **patches/**: Modify existing upstream source files using `.patch` files.
 - **README.md**: Add a README.md if the purpose of overlay or patch files are
   not obvious.
-
-### 4. MODULE.bazel
-- Bazel always uses `modules/{module_name}/{version}/MODULE.bazel`, so it doesn't need to match the source archive's `MODULE.bazel`. Don't patch the source archive's `MODULE.bazel` just to make them match, e.g. to set the version.
