@@ -1,0 +1,368 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+cc_library(
+    name = "fast_float",
+    hdrs = ["deps/fast_float/ffc.h"],
+    includes = ["deps/fast_float"],
+)
+
+cc_library(
+    name = "fpconv",
+    srcs = ["deps/fpconv/fpconv_dtoa.c"],
+    hdrs = [
+        "deps/fpconv/fpconv_dtoa.h",
+        "deps/fpconv/fpconv_powers.h",
+    ],
+    conlyopts = ["-std=gnu11"],
+    includes = ["deps/fpconv"],
+)
+
+cc_library(
+    name = "hdr_histogram",
+    srcs = ["deps/hdr_histogram/hdr_histogram.c"],
+    hdrs = glob(["deps/hdr_histogram/*.h"]),
+    conlyopts = ["-std=gnu11"],
+    includes = ["deps/hdr_histogram"],
+    local_defines = ['HDR_MALLOC_INCLUDE=\\"hdr_redis_malloc.h\\"'],
+)
+
+cc_library(
+    name = "lua",
+    srcs = glob(
+        ["deps/lua/src/*.c"],
+        exclude = ["deps/lua/src/luac.c"],
+    ),
+    hdrs = ["src/solarisfixes.h"] + glob(["deps/lua/src/*.h"]),
+    conlyopts = ["-std=gnu11"],
+    includes = ["deps/lua/src"],
+    local_defines = [
+        "ENABLE_CJSON_GLOBAL",
+        "LUA_USE_MKSTEMP",
+    ],
+)
+
+# Match the upstream static Lua module build and retain its registration.
+cc_library(
+    name = "lua_engine",
+    srcs = [
+        "src/modules/lua/debug_lua.c",
+        "src/modules/lua/engine_lua.c",
+        "src/modules/lua/function_lua.c",
+        "src/modules/lua/list.c",
+        "src/modules/lua/script_lua.c",
+    ],
+    hdrs = [
+        "src/fmacros.h",
+        "src/monotonic.h",
+        "src/rand.h",
+        "src/sha1.h",
+        "src/valkeymodule.h",
+    ] + glob(["src/modules/lua/*.h"]),
+    conlyopts = ["-std=c99"],
+    local_defines = [
+        "_GNU_SOURCE",
+        "STATIC_LUA=1",
+    ],
+    deps = [
+        ":fpconv",
+        ":lua",
+    ],
+    alwayslink = True,
+)
+
+# Match the bundled libvalkey CMake build: use the server's sds and dict.
+cc_library(
+    name = "libvalkey",
+    srcs = [
+        "deps/libvalkey/src/adlist.c",
+        "deps/libvalkey/src/alloc.c",
+        "deps/libvalkey/src/async.c",
+        "deps/libvalkey/src/cluster.c",
+        "deps/libvalkey/src/command.c",
+        "deps/libvalkey/src/conn.c",
+        "deps/libvalkey/src/crc16.c",
+        "deps/libvalkey/src/net.c",
+        "deps/libvalkey/src/read.c",
+        "deps/libvalkey/src/sockcompat.c",
+        "deps/libvalkey/src/valkey.c",
+        "deps/libvalkey/src/vkutil.c",
+    ],
+    hdrs = [
+        "src/dict.h",
+        "src/mt19937-64.h",
+        "src/sds.h",
+    ] + glob([
+        "deps/libvalkey/include/valkey/*.h",
+        "deps/libvalkey/src/*.h",
+    ]),
+    conlyopts = ["-std=c99"],
+    includes = [
+        "deps/libvalkey/include",
+        "deps/libvalkey/include/valkey",
+        "src",
+    ],
+)
+
+# Upstream's release script reads Git, the clock, and the host name. Pin this
+# build identity so identical source and toolchains agree.
+write_file(
+    name = "release_header",
+    out = "release.h",
+    content = [
+        '#define REDIS_GIT_SHA1 "00000000"',
+        '#define REDIS_GIT_DIRTY "0"',
+        '#define REDIS_BUILD_ID "0"',
+        '#include "version.h"',
+        "#define REDIS_BUILD_ID_RAW SERVER_NAME VALKEY_VERSION REDIS_BUILD_ID REDIS_GIT_DIRTY REDIS_GIT_SHA1",
+    ],
+)
+
+# Server source list follows the pinned Valkey 9.1.2 SourceFiles.cmake. The
+# command and formatting tables are included in the release archive.
+cc_library(
+    name = "valkey_lib",
+    srcs = [
+        "src/acl.c",
+        "src/adlist.c",
+        "src/ae.c",
+        "src/allocator_defrag.c",
+        "src/anet.c",
+        "src/aof.c",
+        "src/bio.c",
+        "src/bitops.c",
+        "src/blocked.c",
+        "src/call_reply.c",
+        "src/childinfo.c",
+        "src/cluster.c",
+        "src/cluster_legacy.c",
+        "src/cluster_migrateslots.c",
+        "src/cluster_slot_stats.c",
+        "src/commandlog.c",
+        "src/commands.c",
+        "src/config.c",
+        "src/connection.c",
+        "src/crc16.c",
+        "src/crc16_slottable.c",
+        "src/crc64.c",
+        "src/crccombine.c",
+        "src/crcspeed.c",
+        "src/db.c",
+        "src/debug.c",
+        "src/defrag.c",
+        "src/dict.c",
+        "src/entry.c",
+        "src/eval.c",
+        "src/evict.c",
+        "src/expire.c",
+        "src/fifo.c",
+        "src/functions.c",
+        "src/geo.c",
+        "src/geohash.c",
+        "src/geohash_helper.c",
+        "src/hashtable.c",
+        "src/hyperloglog.c",
+        "src/intset.c",
+        "src/io_threads.c",
+        "src/kvstore.c",
+        "src/latency.c",
+        "src/lazyfree.c",
+        "src/listpack.c",
+        "src/localtime.c",
+        "src/logreqres.c",
+        "src/lolwut.c",
+        "src/lolwut5.c",
+        "src/lolwut6.c",
+        "src/lolwut9.c",
+        "src/lrulfu.c",
+        "src/lzf_c.c",
+        "src/lzf_d.c",
+        "src/memory_prefetch.c",
+        "src/memtest.c",
+        "src/module.c",
+        "src/monotonic.c",
+        "src/mt19937-64.c",
+        "src/multi.c",
+        "src/mutexqueue.c",
+        "src/networking.c",
+        "src/notify.c",
+        "src/object.c",
+        "src/pqsort.c",
+        "src/pubsub.c",
+        "src/queues.c",
+        "src/quicklist.c",
+        "src/rand.c",
+        "src/rax.c",
+        "src/rdb.c",
+        "src/rdma.c",
+        "src/release.c",
+        "src/replication.c",
+        "src/resp_parser.c",
+        "src/rio.c",
+        "src/script.c",
+        "src/scripting_engine.c",
+        "src/sds.c",
+        "src/sentinel.c",
+        "src/server.c",
+        "src/setcpuaffinity.c",
+        "src/setproctitle.c",
+        "src/sha1.c",
+        "src/sha256.c",
+        "src/siphash.c",
+        "src/socket.c",
+        "src/sort.c",
+        "src/sparkline.c",
+        "src/strl.c",
+        "src/syncio.c",
+        "src/syscheck.c",
+        "src/t_hash.c",
+        "src/t_list.c",
+        "src/t_set.c",
+        "src/t_stream.c",
+        "src/t_string.c",
+        "src/t_zset.c",
+        "src/threads_mngr.c",
+        "src/timeout.c",
+        "src/tls.c",
+        "src/trace/trace.c",
+        "src/trace/trace_aof.c",
+        "src/trace/trace_cluster.c",
+        "src/trace/trace_commands.c",
+        "src/trace/trace_db.c",
+        "src/trace/trace_rdb.c",
+        "src/trace/trace_server.c",
+        "src/tracking.c",
+        "src/unix.c",
+        "src/util.c",
+        "src/valkey-check-aof.c",
+        "src/valkey-check-rdb.c",
+        "src/valkey_strtod.c",
+        "src/vector.c",
+        "src/vset.c",
+        "src/ziplist.c",
+        "src/zipmap.c",
+        "src/zmalloc.c",
+    ],
+    hdrs = [":release.h"] + glob([
+        "src/*.h",
+        "src/trace/*.h",
+    ]),
+    conlyopts = ["-std=gnu11"],
+    includes = [
+        ".",
+        "src",
+    ],
+    local_defines = [
+        "LUA_ENABLED",
+        "STATIC_LUA=1",
+    ],
+    textual_hdrs = [
+        "src/ae_epoll.c",
+        "src/ae_kqueue.c",
+        "src/ae_select.c",
+        "src/ae_evport.c",
+        "src/commands.def",
+    ],
+    deps = [
+        ":fast_float",
+        ":fpconv",
+        ":hdr_histogram",
+        ":libvalkey",
+        ":lua_engine",
+    ],
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "valkey-server",
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-rdynamic",
+            "-pthread",
+            "-ldl",
+            "-lm",
+        ],
+        "@platforms//os:osx": ["-lm"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":valkey_lib"],
+)
+
+cc_library(
+    name = "linenoise",
+    srcs = glob(["deps/linenoise/*.c"]),
+    hdrs = glob(["deps/linenoise/*.h"]),
+    includes = ["deps/linenoise"],
+)
+
+cc_library(
+    name = "valkey_cli_lib",
+    srcs = [
+        "src/adlist.c",
+        "src/ae.c",
+        "src/anet.c",
+        "src/cli_commands.c",
+        "src/cli_common.c",
+        "src/crc16.c",
+        "src/crc64.c",
+        "src/crccombine.c",
+        "src/crcspeed.c",
+        "src/dict.c",
+        "src/monotonic.c",
+        "src/mt19937-64.c",
+        "src/release.c",
+        "src/sds.c",
+        "src/serverassert.c",
+        "src/sha256.c",
+        "src/siphash.c",
+        "src/strl.c",
+        "src/util.c",
+        "src/valkey-cli.c",
+        "src/valkey_strtod.c",
+        "src/zmalloc.c",
+    ],
+    hdrs = [":release.h"] + glob([
+        "src/*.h",
+        "src/trace/*.h",
+    ]),
+    conlyopts = ["-std=gnu11"],
+    includes = [
+        ".",
+        "src",
+    ],
+    textual_hdrs = [
+        "src/ae_epoll.c",
+        "src/ae_kqueue.c",
+        "src/ae_select.c",
+        "src/ae_evport.c",
+        "src/commands.def",
+    ],
+    deps = [
+        ":fast_float",
+        ":fpconv",
+        ":libvalkey",
+        ":linenoise",
+    ],
+)
+
+cc_binary(
+    name = "valkey-cli",
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-pthread",
+            "-lm",
+        ],
+        "@platforms//os:osx": ["-lm"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":valkey_cli_lib"],
+)
+
+filegroup(
+    name = "valkey",
+    srcs = [
+        ":valkey-cli",
+        ":valkey-server",
+    ],
+    visibility = ["//visibility:public"],
+)
