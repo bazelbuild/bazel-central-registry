@@ -1,0 +1,2005 @@
+"""GNU GRUB - https://www.gnu.org/software/grub/"""
+
+load("@bazel_skylib//lib:paths.bzl", "paths")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_package_info.bzl", "autoconf_package_info")
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("@rules_cc_autoconf//gnulib:conditional_hdrs.bzl", "cc_gnulib_conditional_hdrs")
+load(":geninit.bzl", "geninit")
+load(":install_dirs.bzl", "configure_script", "install_dirs")
+
+# AC_INIT([GRUB],[2.06],[bug-grub@gnu.org]) (configure.ac:37).  PACKAGE and
+# VERSION follow the tarname and version as AM_INIT_AUTOMAKE makes them.  The
+# version comes from MODULE.bazel so a `.bcr.N` bump has one place to edit;
+# `strip_bcr_version` keeps that suffix out of `--version`.
+autoconf_package_info(
+    name = "package",
+    package_name = "GRUB",
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "bug-grub@gnu.org",
+    package_tarname = "grub",
+    strip_bcr_version = True,
+)
+
+# The version for the shell script templates, where autoconf_package_info's
+# substitutions would arrive as quoted C literals.
+_VERSION = "2.06"
+
+# ---------------------------------------------------------------------------
+# configure options
+# ---------------------------------------------------------------------------
+
+# --with-bootdir and --with-grubdir (configure.ac:288 and :308).
+string_flag(
+    name = "bootdir",
+    build_setting_default = "boot",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "grubdir",
+    build_setting_default = "grub",
+    visibility = ["//visibility:public"],
+)
+
+# --enable-mm-debug, --enable-cache-stats, --enable-boot-time
+# (configure.ac:1493, :1501, :1512).
+bool_flag(
+    name = "enable_mm_debug",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_cache_stats",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_boot_time",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "mm_debug",
+    flag_values = {":enable_mm_debug": "True"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "cache_stats",
+    flag_values = {":enable_cache_stats": "True"},
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "boot_time",
+    flag_values = {":enable_boot_time": "True"},
+    visibility = ["//visibility:public"],
+)
+
+# The optional dependencies configure "guesses" (default=guessed) by probing
+# the host.  Here the dependency is a registry module, so the guess is simply
+# whether the module has it: grub-mkfont (freetype2, configure.ac:1591) and
+# liblzma (xz, :1839) everywhere; device-mapper (lvm2, :1796) only on Linux,
+# which is the only host where upstream's header probe can succeed.
+# grub-mount (:1765) stays off: util/grub-mount.c is written to the FUSE 2 API
+# (FUSE_USE_VERSION 26, <fuse/fuse.h>) and the registry's libfuse is 3.x.
+# libzfs (:1867) stays off too: the registry has no such library.
+bool_flag(
+    name = "enable_grub_mkfont",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_liblzma",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+bool_flag(
+    name = "enable_device_mapper",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "grub_mkfont",
+    flag_values = {":enable_grub_mkfont": "True"},
+)
+
+config_setting(
+    name = "liblzma",
+    flag_values = {":enable_liblzma": "True"},
+)
+
+config_setting(
+    name = "_enable_device_mapper",
+    flag_values = {":enable_device_mapper": "True"},
+)
+
+selects.config_setting_group(
+    name = "device_mapper",
+    match_all = [
+        ":_enable_device_mapper",
+        "@platforms//os:linux",
+    ],
+)
+
+# The install layout.  configure bakes the directories into the programs
+# (GRUB_LIBDIR and friends, configure.ac:2041) and into the scripts
+# (@bindir@ ...); defaults are autoconf's for `--prefix=/usr/local`.
+# grub-install looks for the platform modules under `$libdir/grub/`.
+[
+    string_flag(
+        name = name,
+        build_setting_default = default,
+        visibility = ["//visibility:public"],
+    )
+    for name, default in {
+        "bindir": "/usr/local/bin",
+        "datadir": "/usr/local/share",
+        "datarootdir": "/usr/local/share",
+        "exec_prefix": "/usr/local",
+        "libdir": "/usr/local/lib",
+        "localedir": "/usr/local/share/locale",
+        "prefix": "/usr/local",
+        "sbindir": "/usr/local/sbin",
+        "sysconfdir": "/usr/local/etc",
+    }.items()
+]
+
+# AC_DEFINE_UNQUOTED(GRUB_BOOT_DIR_NAME ...) (configure.ac:304, :314, :2041).
+# These reach the compiler as `-D`s rather than through config-util.h because a
+# build setting's value is not known when the checks are declared.
+INSTALL_DIRS = {
+    ":bootdir": "GRUB_BOOT_DIR_NAME",
+    ":datadir": "GRUB_DATADIR",
+    ":grubdir": "GRUB_DIR_NAME",
+    ":libdir": "GRUB_LIBDIR",
+    ":localedir": "LOCALEDIR",
+    ":sysconfdir": "GRUB_SYSCONFDIR",
+}
+
+install_dirs(
+    name = "install_dirs",
+    settings = INSTALL_DIRS,
+)
+
+INSTALL_DIR_DEFINES = ["{0}=\\\"$({0})\\\"".format(v) for v in INSTALL_DIRS.values()]
+
+# The @VAR@ substitutions every script and completion template shares.  The
+# `grub_*` names are the program-name transforms (configure.ac:61); with no
+# --program-prefix they are the names themselves.
+SCRIPT_SETTINGS = {
+    ":bindir": "@bindir@",
+    ":bootdir": "@bootdirname@",
+    ":datadir": "@datadir@",
+    ":datarootdir": "@datarootdir@",
+    ":exec_prefix": "@exec_prefix@",
+    ":grubdir": "@grubdirname@",
+    ":libdir": "@libdir@",
+    ":localedir": "@localedir@",
+    ":prefix": "@prefix@",
+    ":sbindir": "@sbindir@",
+    ":sysconfdir": "@sysconfdir@",
+}
+
+SCRIPT_SUBSTITUTIONS = {
+    "@PACKAGE@": "grub",
+    "@PACKAGE_NAME@": "GRUB",
+    "@PACKAGE_VERSION@": _VERSION,
+    "@grub_bios_setup@": "grub-bios-setup",
+    "@grub_editenv@": "grub-editenv",
+    "@grub_file@": "grub-file",
+    "@grub_install@": "grub-install",
+    "@grub_mkconfig@": "grub-mkconfig",
+    "@grub_mkfont@": "grub-mkfont",
+    "@grub_mkimage@": "grub-mkimage",
+    "@grub_mklayout@": "grub-mklayout",
+    "@grub_mkpasswd_pbkdf2@": "grub-mkpasswd-pbkdf2",
+    "@grub_mkrelpath@": "grub-mkrelpath",
+    "@grub_mkrescue@": "grub-mkrescue",
+    "@grub_probe@": "grub-probe",
+    "@grub_reboot@": "grub-reboot",
+    "@grub_script_check@": "grub-script-check",
+    "@grub_set_default@": "grub-set-default",
+    "@grub_sparc64_setup@": "grub-sparc64-setup",
+} | select({
+    "@platforms//os:macos": {"@host_os@": "darwin"},
+    "//conditions:default": {"@host_os@": "linux-gnu"},
+})
+
+# ---------------------------------------------------------------------------
+# Compiler flags
+# ---------------------------------------------------------------------------
+
+# HOST_CFLAGS (configure.ac:89, :507).  The warning sets and -Werror are
+# upstream's own CI gate and are replaced by `-w`, as is usual for registry
+# modules.
+COPTS = [
+    "-w",
+    "-std=gnu99",
+]
+
+# HOST_CPPFLAGS (configure.ac:93-94, :386) plus the `-DHAVE_CONFIG_H` automake
+# adds.  CPPFLAGS_DEFAULT (conf/Makefile.common:26) defines GRUB_FILE to each
+# source's path relative to the source tree, which only grub_dprintf() reads;
+# __FILE__ is the same thing with Bazel's prefix on it.
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "GRUB_UTIL=1",
+    "_FILE_OFFSET_BITS=64",
+    "GRUB_FILE=__FILE__",
+] + INSTALL_DIR_DEFINES
+
+# gl_INIT (configure.ac:502).
+#
+# `gnulib-tool` copied ~150 `.m4` files into `m4/` and `m4/gnulib-comp.m4`
+# invokes them from `gl_INIT`; the list below is those files for which
+# `@rules_cc_autoconf//gnulib/m4/` ships an implementation, so it stands in for
+# the generated `gl_INIT` body.  It cannot be made implicit through the
+# autoconf toolchain: `cache_deps` only dedupes checker actions and the
+# toolchain `defaults` carry only the `gl_*_H_DEFAULTS` substitutions, so
+# without these config-util.h would lose the gnulib HAVE_* set and the
+# generated headers would have no GL_GENERATE_*_H to switch on.  `error_h` is
+# newer than the gnulib snapshot in this tarball; it is what the packaged
+# `error` module publishes its result through.
+GL_INIT_DEPS = [
+    "@rules_cc_autoconf//gnulib/m4/00gnulib",
+    "@rules_cc_autoconf//gnulib/m4/__inline",
+    "@rules_cc_autoconf//gnulib/m4/absolute-header",
+    "@rules_cc_autoconf//gnulib/m4/alloca",
+    "@rules_cc_autoconf//gnulib/m4/argp",
+    "@rules_cc_autoconf//gnulib/m4/base64",
+    "@rules_cc_autoconf//gnulib/m4/btowc",
+    "@rules_cc_autoconf//gnulib/m4/builtin-expect",
+    "@rules_cc_autoconf//gnulib/m4/chdir-long",
+    "@rules_cc_autoconf//gnulib/m4/close",
+    "@rules_cc_autoconf//gnulib/m4/codeset",
+    "@rules_cc_autoconf//gnulib/m4/dirent_h",
+    "@rules_cc_autoconf//gnulib/m4/dirfd",
+    "@rules_cc_autoconf//gnulib/m4/double-slash-root",
+    "@rules_cc_autoconf//gnulib/m4/dup2",
+    "@rules_cc_autoconf//gnulib/m4/eealloc",
+    "@rules_cc_autoconf//gnulib/m4/errno_h",
+    "@rules_cc_autoconf//gnulib/m4/error",
+    "@rules_cc_autoconf//gnulib/m4/error_h",
+    "@rules_cc_autoconf//gnulib/m4/exponentd",
+    "@rules_cc_autoconf//gnulib/m4/extensions",
+    "@rules_cc_autoconf//gnulib/m4/extern-inline",
+    "@rules_cc_autoconf//gnulib/m4/fchdir",
+    "@rules_cc_autoconf//gnulib/m4/fcntl",
+    "@rules_cc_autoconf//gnulib/m4/fcntl-o",
+    "@rules_cc_autoconf//gnulib/m4/fcntl_h",
+    "@rules_cc_autoconf//gnulib/m4/filenamecat",
+    "@rules_cc_autoconf//gnulib/m4/flexmember",
+    "@rules_cc_autoconf//gnulib/m4/float_h",
+    "@rules_cc_autoconf//gnulib/m4/fnmatch",
+    "@rules_cc_autoconf//gnulib/m4/fnmatch_h",
+    "@rules_cc_autoconf//gnulib/m4/fstat",
+    "@rules_cc_autoconf//gnulib/m4/getcwd",
+    "@rules_cc_autoconf//gnulib/m4/getdelim",
+    "@rules_cc_autoconf//gnulib/m4/getdtablesize",
+    "@rules_cc_autoconf//gnulib/m4/getline",
+    "@rules_cc_autoconf//gnulib/m4/getopt",
+    "@rules_cc_autoconf//gnulib/m4/getprogname",
+    "@rules_cc_autoconf//gnulib/m4/gettext",
+    "@rules_cc_autoconf//gnulib/m4/gnulib-common",
+    "@rules_cc_autoconf//gnulib/m4/iconv",
+    "@rules_cc_autoconf//gnulib/m4/include_next",
+    "@rules_cc_autoconf//gnulib/m4/intlmacosx",
+    "@rules_cc_autoconf//gnulib/m4/intmax_t",
+    "@rules_cc_autoconf//gnulib/m4/inttypes_h",
+    "@rules_cc_autoconf//gnulib/m4/langinfo_h",
+    "@rules_cc_autoconf//gnulib/m4/largefile",
+    "@rules_cc_autoconf//gnulib/m4/lib-ld",
+    "@rules_cc_autoconf//gnulib/m4/lib-link",
+    "@rules_cc_autoconf//gnulib/m4/lib-prefix",
+    "@rules_cc_autoconf//gnulib/m4/libunistring-base",
+    "@rules_cc_autoconf//gnulib/m4/limits-h",
+    "@rules_cc_autoconf//gnulib/m4/localcharset",
+    "@rules_cc_autoconf//gnulib/m4/locale-fr",
+    "@rules_cc_autoconf//gnulib/m4/locale-ja",
+    "@rules_cc_autoconf//gnulib/m4/locale-zh",
+    "@rules_cc_autoconf//gnulib/m4/locale_h",
+    "@rules_cc_autoconf//gnulib/m4/localeconv",
+    "@rules_cc_autoconf//gnulib/m4/lock",
+    "@rules_cc_autoconf//gnulib/m4/lstat",
+    "@rules_cc_autoconf//gnulib/m4/malloc",
+    "@rules_cc_autoconf//gnulib/m4/malloca",
+    "@rules_cc_autoconf//gnulib/m4/math_h",
+    "@rules_cc_autoconf//gnulib/m4/mbrtowc",
+    "@rules_cc_autoconf//gnulib/m4/mbsinit",
+    "@rules_cc_autoconf//gnulib/m4/mbsrtowcs",
+    "@rules_cc_autoconf//gnulib/m4/mbstate_t",
+    "@rules_cc_autoconf//gnulib/m4/mbswidth",
+    "@rules_cc_autoconf//gnulib/m4/mbtowc",
+    "@rules_cc_autoconf//gnulib/m4/memchr",
+    "@rules_cc_autoconf//gnulib/m4/mempcpy",
+    "@rules_cc_autoconf//gnulib/m4/memrchr",
+    "@rules_cc_autoconf//gnulib/m4/mmap-anon",
+    "@rules_cc_autoconf//gnulib/m4/mode_t",
+    "@rules_cc_autoconf//gnulib/m4/msvc-inval",
+    "@rules_cc_autoconf//gnulib/m4/msvc-nothrow",
+    "@rules_cc_autoconf//gnulib/m4/multiarch",
+    "@rules_cc_autoconf//gnulib/m4/nl_langinfo",
+    "@rules_cc_autoconf//gnulib/m4/nls",
+    "@rules_cc_autoconf//gnulib/m4/nocrash",
+    "@rules_cc_autoconf//gnulib/m4/off_t",
+    "@rules_cc_autoconf//gnulib/m4/open",
+    "@rules_cc_autoconf//gnulib/m4/open-cloexec",
+    "@rules_cc_autoconf//gnulib/m4/openat",
+    "@rules_cc_autoconf//gnulib/m4/pathmax",
+    "@rules_cc_autoconf//gnulib/m4/po",
+    "@rules_cc_autoconf//gnulib/m4/printf",
+    "@rules_cc_autoconf//gnulib/m4/printf-posix",
+    "@rules_cc_autoconf//gnulib/m4/progtest",
+    "@rules_cc_autoconf//gnulib/m4/pthread_rwlock_rdlock",
+    "@rules_cc_autoconf//gnulib/m4/rawmemchr",
+    "@rules_cc_autoconf//gnulib/m4/realloc",
+    "@rules_cc_autoconf//gnulib/m4/regex",
+    "@rules_cc_autoconf//gnulib/m4/save-cwd",
+    "@rules_cc_autoconf//gnulib/m4/size_max",
+    "@rules_cc_autoconf//gnulib/m4/sleep",
+    "@rules_cc_autoconf//gnulib/m4/ssize_t",
+    "@rules_cc_autoconf//gnulib/m4/stat",
+    "@rules_cc_autoconf//gnulib/m4/stat-time",
+    "@rules_cc_autoconf//gnulib/m4/stdalign",
+    "@rules_cc_autoconf//gnulib/m4/stdbool",
+    "@rules_cc_autoconf//gnulib/m4/stddef_h",
+    "@rules_cc_autoconf//gnulib/m4/stdint",
+    "@rules_cc_autoconf//gnulib/m4/stdint_h",
+    "@rules_cc_autoconf//gnulib/m4/stdio_h",
+    "@rules_cc_autoconf//gnulib/m4/stdlib_h",
+    "@rules_cc_autoconf//gnulib/m4/strcasecmp",
+    "@rules_cc_autoconf//gnulib/m4/strchrnul",
+    "@rules_cc_autoconf//gnulib/m4/strdup",
+    "@rules_cc_autoconf//gnulib/m4/strerror",
+    "@rules_cc_autoconf//gnulib/m4/string_h",
+    "@rules_cc_autoconf//gnulib/m4/strings_h",
+    "@rules_cc_autoconf//gnulib/m4/strncasecmp",
+    "@rules_cc_autoconf//gnulib/m4/strndup",
+    "@rules_cc_autoconf//gnulib/m4/strnlen",
+    "@rules_cc_autoconf//gnulib/m4/sysexits",
+    "@rules_cc_autoconf//gnulib/m4/sys_socket_h",
+    "@rules_cc_autoconf//gnulib/m4/sys_stat_h",
+    "@rules_cc_autoconf//gnulib/m4/sys_types_h",
+    "@rules_cc_autoconf//gnulib/m4/threadlib",
+    "@rules_cc_autoconf//gnulib/m4/time_h",
+    "@rules_cc_autoconf//gnulib/m4/unistd-safer",
+    "@rules_cc_autoconf//gnulib/m4/unistd_h",
+    "@rules_cc_autoconf//gnulib/m4/vasnprintf",
+    "@rules_cc_autoconf//gnulib/m4/visibility",
+    "@rules_cc_autoconf//gnulib/m4/vsnprintf",
+    "@rules_cc_autoconf//gnulib/m4/warn-on-use",
+    "@rules_cc_autoconf//gnulib/m4/wchar_h",
+    "@rules_cc_autoconf//gnulib/m4/wcrtomb",
+    "@rules_cc_autoconf//gnulib/m4/wctype_h",
+    "@rules_cc_autoconf//gnulib/m4/wcwidth",
+    "@rules_cc_autoconf//gnulib/m4/wint_t",
+    "@rules_cc_autoconf//gnulib/m4/xsize",
+]
+
+# The gnulib module indicators `gl_INIT` sets (m4/gnulib-comp.m4:
+# gl_*_MODULE_INDICATOR, gl_MODULE_INDICATOR and gl_MODULE_INDICATOR_FOR_TESTS).
+# The toolchain defaults publish 0 for every GNULIB_* substitution, which turns
+# the matching declarations off in the generated headers, so the ones this
+# tarball's module set enables are turned back on; the defines are the
+# GNULIB_TEST_* and GNULIB_* names config-util.h.in carries for the same set.
+GNULIB_HEADER_INDICATORS = [
+    "GNULIB_BTOWC",
+    "GNULIB_CHDIR",
+    "GNULIB_CLOSE",
+    "GNULIB_DIRFD",
+    "GNULIB_DUP2",
+    "GNULIB_FCHDIR",
+    "GNULIB_FCNTL",
+    "GNULIB_FNMATCH",
+    "GNULIB_FSTAT",
+    "GNULIB_GETCWD",
+    "GNULIB_GETDELIM",
+    "GNULIB_GETDTABLESIZE",
+    "GNULIB_GETLINE",
+    "GNULIB_LOCALECONV",
+    "GNULIB_MALLOC_POSIX",
+    "GNULIB_MBRTOWC",
+    "GNULIB_MBSINIT",
+    "GNULIB_MBSRTOWCS",
+    "GNULIB_MBTOWC",
+    "GNULIB_MEMCHR",
+    "GNULIB_MEMPCPY",
+    "GNULIB_MEMRCHR",
+    "GNULIB_NL_LANGINFO",
+    "GNULIB_OPEN",
+    "GNULIB_OPENAT",
+    "GNULIB_RAWMEMCHR",
+    "GNULIB_REALLOC_POSIX",
+    "GNULIB_SLEEP",
+    "GNULIB_STAT",
+    "GNULIB_STRCHRNUL",
+    "GNULIB_STRDUP",
+    "GNULIB_STRERROR",
+    "GNULIB_STRNDUP",
+    "GNULIB_STRNLEN",
+    "GNULIB_VSNPRINTF",
+    "GNULIB_WCRTOMB",
+    "GNULIB_WCWIDTH",
+]
+
+# The GNULIB_TEST_* defines are the header indicators plus cloexec, which has
+# no header switch.
+GNULIB_TEST_INDICATORS = [
+    "GNULIB_TEST_" + n[len("GNULIB_"):]
+    for n in GNULIB_HEADER_INDICATORS
+] + ["GNULIB_TEST_CLOEXEC"]
+
+GNULIB_MODULE_DEFINES = [
+    "GNULIB_FD_SAFER_FLAG",
+    "GNULIB_FSCANF",
+    "GNULIB_LOCK",
+    "GNULIB_MALLOC_GNU",
+    "GNULIB_MSVC_NOTHROW",
+    "GNULIB_OPENAT",
+    "GNULIB_REALLOC_GNU",
+    "GNULIB_SCANF",
+    "GNULIB_STRERROR",
+]
+
+# The check list follows `configure.ac` top to bottom; `gl_INIT` stays a
+# dependency (GL_INIT_DEPS).  Probes that gnulib also makes are resolved once
+# under those deps: AC_HEADER_MAJOR (configure.ac:430) by `sys_types_h`,
+# `sys/param.h` and `limits.h` (:423) by `gnulib-common` and `limits-h`, and
+# the program_invocation_name declarations (gl_INIT) by `getprogname`.
+autoconf(
+    name = "autoconf",
+    checks = (
+        # AC_SYS_LARGEFILE (configure.ac:375) and CPPFLAGS (:386).
+        [
+            checks.AC_DEFINE("_FILE_OFFSET_BITS", "64"),
+        ] +
+        # AC_CHECK_SIZEOF(void *), (long) (configure.ac:389) and (off_t)
+        # (:404).  The first two double as AC_COMPUTE_INT(BUILD_SIZEOF_*)
+        # (:1639): the build and host compilers are the same one here.
+        [
+            checks.AC_CHECK_SIZEOF(
+                "void *",
+                define = "SIZEOF_VOID_P",
+                subst = "BUILD_SIZEOF_VOID_P",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "long",
+                define = "SIZEOF_LONG",
+                subst = "BUILD_SIZEOF_LONG",
+            ),
+            checks.AC_CHECK_SIZEOF(
+                "off_t",
+                define = "SIZEOF_OFF_T",
+                includes = ["#include <sys/types.h>"],
+            ),
+            # AC_C_BIGENDIAN([BUILD_WORDS_BIGENDIAN=1], [...=0]) (:1641).
+            checks.AC_SUBST(
+                "BUILD_WORDS_BIGENDIAN",
+                condition = "WORDS_BIGENDIAN",
+                if_false = 0,
+                if_true = 1,
+            ),
+        ] +
+        # configure.ac:422-423.
+        macros.AC_CHECK_FUNCS([
+            "posix_memalign",
+            "memalign",
+            "getextmntent",
+            "atexit",
+        ]) + macros.AC_CHECK_HEADERS([
+            "sys/mount.h",
+            "sys/mnttab.h",
+        ]) +
+        # configure.ac:433 and :437.
+        macros.AC_CHECK_MEMBERS(
+            [
+                "struct statfs.f_fstypename",
+                "struct statfs.f_mntfromname",
+            ],
+            includes = [
+                # This comment prevents this list from being reordered
+                "#include <sys/types.h>",
+                "#include <sys/param.h>",
+                "#include <sys/mount.h>",
+            ],
+        ) +
+        # configure.ac:443: opendisk() and getrawpartition() in NetBSD's
+        # -lutil.  Only the defines are modelled; LIBUTIL is a link option no
+        # platform this module builds on needs.
+        [
+            checks.AC_CHECK_HEADER("util.h"),
+            checks.AC_CHECK_LIB(
+                "util",
+                "opendisk",
+                define = "HAVE_OPENDISK",
+                requires = ["ac_cv_header_util_h"],
+            ),
+            checks.AC_CHECK_LIB(
+                "util",
+                "getrawpartition",
+                define = "HAVE_GETRAWPARTITION",
+                requires = ["ac_cv_header_util_h"],
+            ),
+            # AC_PROG_LEX (configure.ac:336): flex's yytext is a pointer.
+            checks.AC_DEFINE("YYTEXT_POINTER", 1),
+        ] +
+        # Probes gl_INIT makes through m4 files the registry has no module
+        # for: gt_TYPE_WCHAR_T (m4/wchar_t.m4), gl_MBSWIDTH's isascii and
+        # mbswidth-declaration checks (m4/mbswidth.m4:13, the packaged module
+        # is empty) and gl_FUNC_GETOPT_POSIX's <sys/cdefs.h> probe
+        # (m4/getopt.m4:364).
+        macros.AC_CHECK_TYPES(
+            ["wchar_t"],
+            includes = ["#include <stddef.h>"],
+        ) + macros.AC_CHECK_FUNCS(["isascii"]) +
+        # gl_PREREQ_FNMATCH's AC_CHECK_FUNCS_ONCE (m4/fnmatch.m4): fnmatch.c
+        # reads these three.
+        macros.AC_CHECK_FUNCS([
+            "wmemchr",
+            "wmemcpy",
+            "wmempcpy",
+        ]) + macros.AC_CHECK_DECLS(
+            ["mbswidth"],
+            includes = ["#include <wchar.h>"],
+        ) + macros.AC_CHECK_HEADERS(["sys/cdefs.h"]) +
+        # gl_LANGINFO_H (m4/langinfo_h.m4:26-97) probes which nl_langinfo
+        # items <langinfo.h> declares; the packaged module leaves these two
+        # out and langinfo.in.h tests them in `#if`s.
+        [
+            check
+            for item in [
+                "T_FMT_AMPM",
+                "YESEXPR",
+            ]
+            for check in [
+                checks.AC_TRY_COMPILE(
+                    name = "gl_cv_header_langinfo_{}".format(item.lower()),
+                    code = "#include <langinfo.h>\nint main (void) { char* cs = nl_langinfo (" + item + "); return !cs; }\n",
+                ),
+                checks.AC_SUBST(
+                    "HAVE_LANGINFO_{}".format(item),
+                    condition = "gl_cv_header_langinfo_{}".format(item.lower()),
+                    if_false = 0,
+                    if_true = 1,
+                ),
+            ]
+        ] +
+        # --enable-device-mapper (configure.ac:1796) and --enable-liblzma
+        # (:1839); see the flags above for how the guess is made.
+        select({
+            ":device_mapper": [checks.AC_DEFINE("HAVE_DEVICE_MAPPER", 1)],
+            "//conditions:default": [],
+        }) + select({
+            ":liblzma": [checks.AC_DEFINE("USE_LIBLZMA", 1)],
+            "//conditions:default": [],
+        }) +
+        # --enable-mm-debug is an AC_DEFINE (configure.ac:1496); the two
+        # statistics options and HAVE_FONT_SOURCE are config.h.in
+        # substitutions (:1509, :1520, :2022).  HAVE_FONT_SOURCE is 0: there
+        # is no unifont to build unicode.pf2 from, which is also why
+        # --enable-grub-themes is not an option here.
+        select({
+            ":mm_debug": [checks.AC_DEFINE("MM_DEBUG", 1)],
+            "//conditions:default": [],
+        }) + select({
+            ":cache_stats": [checks.AC_SUBST("DISK_CACHE_STATS", 1)],
+            "//conditions:default": [checks.AC_SUBST("DISK_CACHE_STATS", 0)],
+        }) + select({
+            ":boot_time": [checks.AC_SUBST("BOOT_TIME_STATS", 1)],
+            "//conditions:default": [checks.AC_SUBST("BOOT_TIME_STATS", 0)],
+        }) + [
+            # gl_STDBOOL_H (m4/stdbool.m4:19-21): the packaged module probes the header
+            # but leaves GL_GENERATE_STDBOOL_H undecided ("generate the
+            # replacement unless the system header works").  The stdalign
+            # module decides GL_GENERATE_STDALIGN_H itself since
+            # rules_cc_autoconf 0.26.0.
+            checks.M4_VARIABLE(
+                "GL_GENERATE_STDBOOL_H",
+                condition = "HAVE_STDBOOL_H",
+                if_false = "true",
+                if_true = "false",
+            ),
+            checks.AC_SUBST("HAVE_FONT_SOURCE", 0),
+            # Substitutions this gnulib snapshot's templates take that the
+            # packaged (newer) modules and toolchain defaults have dropped or
+            # renamed since.  stdlib.in.h's REPLACE_MALLOC/REPLACE_REALLOC/
+            # REPLACE_CALLOC are 0: this snapshot's m4/malloc.m4 and
+            # m4/realloc.m4 replace an allocator only when malloc (0) or
+            # realloc (0, 0) returns NULL or errno is not set on failure, and
+            # glibc, musl and macOS pass both (./configure on glibc:
+            # REPLACE_REALLOC=0), so malloc.c and realloc.c are never
+            # compiled; there is no calloc module in gl_INIT.  The packaged
+            # modules' REPLACE_*_FOR_*_POSIX answer a newer question
+            # (realloc (p, 0)) that this stdlib.in.h does not ask, and the
+            # realloc one is a string the checks and the source selection
+            # read differently, so it is not consulted.  HAVE_DUP2,
+            # HAVE_MEMCHR and HAVE_TZSET are 1 on every C library this module
+            # builds against (newer gnulib stopped probing them), the
+            # `long long` pair follows AC_TYPE_LONG_LONG_INT (m4/stdint.m4),
+            # and GNULIB_OVERRIDES_WINT_T is 0: wint_t is wide enough
+            # everywhere here (m4/wint_t.m4).
+            checks.AC_SUBST("REPLACE_MALLOC", 0),
+            checks.AC_SUBST("REPLACE_REALLOC", 0),
+            checks.AC_SUBST("REPLACE_CALLOC", 0),
+            checks.AC_SUBST("HAVE_DUP2", 1),
+            checks.AC_SUBST("HAVE_MEMCHR", 1),
+            checks.AC_SUBST("HAVE_TZSET", 1),
+            checks.AC_SUBST(
+                "HAVE_LONG_LONG_INT",
+                condition = "HAVE_LONG_LONG_INT",
+                if_false = 0,
+                if_true = 1,
+            ),
+            checks.AC_SUBST(
+                "HAVE_UNSIGNED_LONG_LONG_INT",
+                condition = "HAVE_UNSIGNED_LONG_LONG_INT",
+                if_false = 0,
+                if_true = 1,
+            ),
+            checks.AC_SUBST("GNULIB_OVERRIDES_WINT_T", 0),
+            # gl_INIT sets this for the gnulib header templates; the
+            # toolchain defaults have no value for it.
+            checks.AC_SUBST(
+                "GUARD_PREFIX",
+                value = "GL",
+            ),
+            # GNULIB_GL_UNISTD_H_GETOPT=1 when getopt is replaced
+            # (m4/gnulib-comp.m4:315), which the Makefile substitutes for
+            # @GNULIB_UNISTD_H_GETOPT@.
+            checks.AC_SUBST(
+                "GNULIB_UNISTD_H_GETOPT",
+                condition = "ac_cv_subst_REPLACE_GETOPT==1",
+                if_false = 0,
+                if_true = 1,
+            ),
+        ] + [
+            checks.AC_SUBST(v, 1)
+            for v in GNULIB_HEADER_INDICATORS
+        ] + [
+            checks.AC_DEFINE(v, 1)
+            for v in GNULIB_TEST_INDICATORS + GNULIB_MODULE_DEFINES
+        ]
+    ),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":package",
+        # AC_GNU_SOURCE (configure.ac:372), the older name of this macro.
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+        # AC_C_BIGENDIAN (configure.ac:388).
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+    ] + GL_INIT_DEPS,
+)
+
+# AC_CONFIG_HEADERS([config-util.h]) (configure.ac:54).
+autoconf_hdr(
+    name = "config_util_h",
+    out = "config/config-util.h",
+    defaults = True,
+    template = "config-util.h.in",
+    deps = [":autoconf"],
+)
+
+# AC_CONFIG_FILES([config.h]) (configure.ac:2081).  config.h.in is a
+# config.status template rather than an autoheader one: a handful of @VAR@
+# substitutions around three `#if` arms for the build tools, the utilities and
+# the kernel.  The package names come from :package as quoted C strings, so the
+# quotes the template puts around those placeholders are taken off here and
+# autoconf_hdr fills them in with the probed and option-dependent ones.
+# //platform does the same for the kernel arm of every firmware platform.
+expand_template(
+    name = "config_h_in",
+    out = "config/config.h.in",
+    substitutions = {
+        "\"@PACKAGE@\"": "@PACKAGE@",
+        "\"@PACKAGE_BUGREPORT@\"": "@PACKAGE_BUGREPORT@",
+        "\"@PACKAGE_NAME@\"": "@PACKAGE_NAME@",
+        "\"@PACKAGE_STRING@\"": "@PACKAGE_STRING@",
+        "\"@PACKAGE_VERSION@\"": "@PACKAGE_VERSION@",
+        "\"@VERSION@\"": "@VERSION@",
+        # The kernel arm is not compiled by any utility, so what the other
+        # substitutions take here is immaterial; they get what
+        # --with-platform=none gave them.
+        "@BSS_START_SYMBOL@": "",
+        "@END_SYMBOL@": "",
+        "@GRUB_PLATFORM@": "none",
+        "@GRUB_TARGET_CPU@": "none",
+        "@HAVE_ASM_USCORE@": "0",
+    },
+    template = "config.h.in",
+    visibility = ["//visibility:public"],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    mode = "subst",
+    template = ":config_h_in",
+    deps = [":autoconf"],
+)
+
+# `-I$(top_builddir)` (conf/Makefile.common:29): where config.h and
+# config-util.h live.  strip_include_prefix rather than `includes` so they are
+# `-I` and come before any `-isystem` config.h a dependency might carry.
+cc_library(
+    name = "config",
+    hdrs = [
+        ":config_h",
+        ":config_util_h",
+    ],
+    strip_include_prefix = "config",
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# gnulib (grub-core/lib/gnulib, built as libgnu.a)
+# ---------------------------------------------------------------------------
+
+GL = "grub-core/lib/gnulib/"
+
+GL_INLINES = {
+    "/* The definition of _GL_ARG_NONNULL is copied here.  */": GL + "arg-nonnull.h",
+    "/* The definition of _GL_WARN_ON_USE is copied here.  */": GL + "warn-on-use.h",
+    "/* The definition of _Noreturn is copied here.  */": GL + "_Noreturn.h",
+    "/* The definitions of _GL_FUNCDECL_RPL etc. are copied here.  */": GL + "c++defs.h",
+}
+
+# The substituted gnulib headers grub-core/lib/gnulib/Makefile.am always
+# generates.  Output, template and target are derived from the stem the way
+# the Makefile derives them (`sys/stat` -> `sys_stat.in.h`).  They are written
+# under gnulib_hdrs/, an include root of their own ahead of the sources.
+GNULIB_GENERATED_HDRS = [
+    "dirent",
+    "fcntl",
+    "langinfo",
+    "locale",
+    "stdio",
+    "stdlib",
+    "string",
+    "strings",
+    "sys/stat",
+    "sys/types",
+    "time",
+    "unistd",
+    "unitypes",
+    "uniwidth",
+    "wchar",
+    "wctype",
+]
+
+[
+    autoconf_hdr(
+        name = "gnulib_{}_h".format(stem.replace("/", "_")),
+        out = "gnulib_hdrs/{}.h".format(stem),
+        defaults = True,
+        inlines = GL_INLINES,
+        mode = "subst",
+        template = GL + "{}.in.h".format(stem.replace("/", "_")),
+        deps = [":autoconf"],
+    )
+    for stem in GNULIB_GENERATED_HDRS
+]
+
+cc_library(
+    name = "gnulib_generated_hdrs",
+    hdrs = [":gnulib_{}_h".format(stem.replace("/", "_")) for stem in GNULIB_GENERATED_HDRS],
+    strip_include_prefix = "gnulib_hdrs",
+)
+
+# The headers generated only when `GL_GENERATE_*_H` says the system one is
+# unusable.  Each is processed unconditionally and cc_gnulib_conditional_hdrs
+# keeps the ones whose condition holds.
+GNULIB_CONDITIONAL_HDRS = [
+    "alloca",
+    "errno",
+    "float",
+    "fnmatch",
+    "getopt-cdefs",
+    "getopt",
+    "limits",
+    "stdalign",
+    "stdbool",
+    "stddef",
+    "stdint",
+    "sysexits",
+]
+
+[
+    autoconf_hdr(
+        name = "gnulib_{}_h_processed".format(stem.replace("-", "_")),
+        out = "_gnulib_cond/{}.h".format(stem),
+        defaults = True,
+        inlines = GL_INLINES,
+        mode = "subst",
+        template = GL + "{}.in.h".format(stem),
+        deps = [":autoconf"],
+    )
+    for stem in GNULIB_CONDITIONAL_HDRS
+]
+
+cc_gnulib_conditional_hdrs(
+    name = "gnulib_conditional_hdrs",
+    hdrs = {
+        # GL_GENERATE_*_H holds the shell words `true`/`false`, both
+        # truthy, so it is compared rather than taken for a boolean.
+        ":gnulib_{}_h_processed".format(stem.replace("-", "_")): "GL_GENERATE_{}_H==true".format(stem.replace("-", "_").upper())
+        for stem in GNULIB_CONDITIONAL_HDRS
+    },
+    deps = [":autoconf"],
+)
+
+# The gnulib headers that are sources, not templates: everything but the
+# `.in.h` templates and the generated names above.
+GNULIB_HDRS = glob(
+    [GL + "**/*.h"],
+    exclude = [GL + "**/*.in.h"] + [
+        GL + "{}.h".format(stem)
+        for stem in GNULIB_GENERATED_HDRS + GNULIB_CONDITIONAL_HDRS
+    ],
+)
+
+# Conditions for the conditionally compiled gnulib sources, by source, as
+# transcribed from the shell `if` around each module's `AC_LIBOBJ` in
+# `gl_INIT` (m4/gnulib-comp.m4); uniwidth/width.c is the one automake
+# conditional of grub-core/lib/gnulib/Makefile.am.  Each variable is
+# spelled as the cache name unique to the check that produced it
+# (`ac_cv_subst_`/`ac_cv_define_`/`ac_cv_func_`) rather than a bare name,
+# which is looked up across three namespaces and can be missing, ambiguous or
+# valueless depending on the platform; `test $X = 1` is `X==1`.
+# memrchr is a bare name because it is an `AC_DEFINE` of a constant on Linux
+# and an `AC_CHECK_FUNC` elsewhere.  GL_GENERATE_ERRNO_H holds the shell
+# words `true`/`false`, both truthy, so it is compared.
+#
+# Not listed: float.c and itold.c (gated on AC_RUN_IFELSE probes that cannot
+# run here, for compilers this module does not build with), malloc.c and
+# realloc.c (REPLACE_MALLOC and REPLACE_REALLOC are 0, see :autoconf),
+# stat-w32.c (mingw) and alloca.c (the packaged `alloca` module never sets
+# ALLOCA; every supported compiler has the builtin).
+GNULIB_CONDITIONAL_SRCS = {
+    "btowc.c": "ac_cv_subst_HAVE_BTOWC==0 || ac_cv_subst_REPLACE_BTOWC==1",
+    "chdir-long.c": "gl_cv_have_unlimited_file_name_length==no",
+    "close.c": "ac_cv_subst_REPLACE_CLOSE==1",
+    "dirfd.c": "(ac_cv_func_dirfd==0 && gl_cv_func_dirfd_macro==0) || ac_cv_subst_REPLACE_DIRFD==1",
+    "dup2.c": "ac_cv_subst_REPLACE_DUP2==1",
+    "error.c": "ac_cv_subst_HAVE_ERROR==0 || ac_cv_subst_REPLACE_ERROR==1 || ac_cv_subst_HAVE_ERROR_AT_LINE==0 || ac_cv_subst_REPLACE_ERROR_AT_LINE==1",
+    "fchdir.c": "ac_cv_subst_HAVE_FCHDIR==0",
+    "fcntl.c": "ac_cv_subst_HAVE_FCNTL==0 || ac_cv_subst_REPLACE_FCNTL==1",
+    "fnmatch.c": "ac_cv_subst_HAVE_FNMATCH==0 || ac_cv_subst_REPLACE_FNMATCH==1",
+    "fstat.c": "ac_cv_subst_REPLACE_FSTAT==1",
+    "getcwd-lgpl.c": "ac_cv_subst_REPLACE_GETCWD==1",
+    "getdelim.c": "ac_cv_define_HAVE_GETDELIM==0 || ac_cv_subst_REPLACE_GETDELIM==1",
+    "getdtablesize.c": "ac_cv_subst_HAVE_GETDTABLESIZE==0 || ac_cv_subst_REPLACE_GETDTABLESIZE==1",
+    "getline.c": "ac_cv_subst_REPLACE_GETLINE==1",
+    "getopt.c": "ac_cv_subst_REPLACE_GETOPT==1",
+    "getopt1.c": "ac_cv_subst_REPLACE_GETOPT==1",
+    "localeconv.c": "ac_cv_subst_REPLACE_LOCALECONV==1",
+    "mbrtowc.c": "ac_cv_subst_HAVE_MBRTOWC==0 || ac_cv_subst_REPLACE_MBRTOWC==1",
+    "mbsinit.c": "ac_cv_subst_HAVE_MBSINIT==0 || ac_cv_subst_REPLACE_MBSINIT==1",
+    "mbsrtowcs-state.c": "ac_cv_subst_HAVE_MBSRTOWCS==0 || ac_cv_subst_REPLACE_MBSRTOWCS==1",
+    "mbsrtowcs.c": "ac_cv_subst_HAVE_MBSRTOWCS==0 || ac_cv_subst_REPLACE_MBSRTOWCS==1",
+    "mbtowc.c": "ac_cv_subst_REPLACE_MBTOWC==1",
+    "memchr.c": "ac_cv_subst_REPLACE_MEMCHR==1",
+    "mempcpy.c": "ac_cv_subst_HAVE_MEMPCPY==0",
+    "memrchr.c": "HAVE_MEMRCHR==0",
+    "msvc-inval.c": "ac_cv_subst_HAVE_MSVC_INVALID_PARAMETER_HANDLER==1",
+    "msvc-nothrow.c": "ac_cv_subst_HAVE_MSVC_INVALID_PARAMETER_HANDLER==1",
+    "nl_langinfo.c": "ac_cv_subst_HAVE_NL_LANGINFO==0 || ac_cv_subst_REPLACE_NL_LANGINFO==1",
+    "open.c": "ac_cv_subst_REPLACE_OPEN==1",
+    "openat.c": "ac_cv_subst_HAVE_OPENAT==0 || ac_cv_subst_REPLACE_OPENAT==1",
+    "rawmemchr.c": "ac_cv_subst_HAVE_RAWMEMCHR==0",
+    "regex.c": "ac_use_included_regex==yes",
+    "sleep.c": "ac_cv_subst_HAVE_SLEEP==0 || ac_cv_subst_REPLACE_SLEEP==1",
+    "stat.c": "ac_cv_subst_REPLACE_STAT==1",
+    "strcasecmp.c": "ac_cv_subst_HAVE_STRCASECMP==0",
+    "strchrnul.c": "ac_cv_subst_HAVE_STRCHRNUL==0 || ac_cv_subst_REPLACE_STRCHRNUL==1",
+    "strdup.c": "ac_cv_subst_REPLACE_STRDUP==1",
+    "strerror-override.c": "GL_GENERATE_ERRNO_H==true || ac_cv_define_REPLACE_STRERROR_0==1",
+    "strerror.c": "ac_cv_subst_REPLACE_STRERROR==1",
+    "strncasecmp.c": "ac_cv_subst_HAVE_STRNCASECMP==0",
+    "strndup.c": "ac_cv_func_strndup==0 || ac_cv_subst_REPLACE_STRNDUP==1",
+    "strnlen.c": "ac_cv_subst_HAVE_DECL_STRNLEN==0 || ac_cv_subst_REPLACE_STRNLEN==1",
+    "uniwidth/width.c": "ac_cv_subst_HAVE_LIBUNISTRING!=yes",
+    "vsnprintf.c": "ac_cv_define_HAVE_VSNPRINTF==0 || ac_cv_subst_REPLACE_VSNPRINTF==1",
+    "wcrtomb.c": "ac_cv_subst_HAVE_WCRTOMB==0 || ac_cv_subst_REPLACE_WCRTOMB==1",
+    "wcwidth.c": "ac_cv_define_HAVE_WCWIDTH==0 || ac_cv_subst_REPLACE_WCWIDTH==1",
+}
+
+autoconf_srcs(
+    name = "gnulib_conditional_srcs",
+    srcs = {GL + src: condition for src, condition in GNULIB_CONDITIONAL_SRCS.items()},
+    # The REPLACE_* and HAVE_* a `gl_<hdr>_H_DEFAULTS` leaves at their defaults
+    # live in the toolchain defaults, not in any dep.
+    defaults = True,
+    deps = [":autoconf"],
+)
+
+# libgnu_a_SOURCES (grub-core/lib/gnulib/Makefile.am), the unconditional
+# part, plus the two `AC_LIBOBJ`s that are not under an `if`: openat-proc.c,
+# and the vasnprintf family, which gl_FUNC_VASNPRINTF adds whenever the C
+# library has no vasnprintf(), which is every C library this module builds
+# against.
+GNULIB_SRCS = [GL + src for src in [
+    "argp-ba.c",
+    "argp-eexst.c",
+    "argp-fmtstream.c",
+    "argp-fs-xinl.c",
+    "argp-help.c",
+    "argp-parse.c",
+    "argp-pin.c",
+    "argp-pv.c",
+    "argp-pvh.c",
+    "argp-xinl.c",
+    "base64.c",
+    "basename-lgpl.c",
+    "cloexec.c",
+    "dirname-lgpl.c",
+    "dup-safer-flag.c",
+    "dup-safer.c",
+    "exitfail.c",
+    "fd-hook.c",
+    "fd-safer-flag.c",
+    "fd-safer.c",
+    "filenamecat-lgpl.c",
+    "getprogname.c",
+    "glthread/lock.c",
+    "glthread/threadlib.c",
+    "hard-locale.c",
+    "localcharset.c",
+    "malloca.c",
+    "mbswidth.c",
+    "openat-die.c",
+    "openat-proc.c",
+    "pipe-safer.c",
+    "progname.c",
+    "save-cwd.c",
+    "stat-time.c",
+    "stripslash.c",
+    "strnlen1.c",
+    "unistd.c",
+    "wctype-h.c",
+    "xsize.c",
+    "asnprintf.c",
+    "printf-args.c",
+    "printf-parse.c",
+    "vasnprintf.c",
+]]
+
+# uniwidth/width.c includes its tables by bare name from its own directory,
+# which the conditionally compiled copy no longer sits in.
+cc_library(
+    name = "gnulib_uniwidth_hdrs",
+    hdrs = glob([GL + "uniwidth/*.h"]),
+    strip_include_prefix = GL + "uniwidth",
+)
+
+cc_library(
+    name = "gnulib",
+    srcs = GNULIB_SRCS + [":gnulib_conditional_srcs"],
+    hdrs = GNULIB_HDRS,
+    # regex.c and fnmatch.c include their bodies from their own directory,
+    # which the conditionally compiled copies no longer sit in, and regexec.c
+    # includes <malloc/dynarray-skeleton.c>.  Only Bazel 9 links the
+    # textual_hdrs below into the strip_include_prefix tree, so the source
+    # directory is searched as well, last, where the stale generated headers
+    # the tarball ships beside the sources lose to the system ones.
+    copts = COPTS + [
+        "-idirafter",
+        paths.join(
+            package_relative_label(":BUILD.bazel").workspace_root,
+            GL,
+        ),
+    ],
+    implementation_deps = [":gnulib_uniwidth_hdrs"],
+    # grub-core/lib/gnulib/Makefile.am compiles libgnu.a with only automake's
+    # -DHAVE_CONFIG_H and the top-level CPPFLAGS (configure.ac:385), no
+    # GRUB_UTIL: config.h then takes its `!defined (GRUB_MACHINE)` arm, which
+    # is config-util.h all the same.
+    # LIBMULTITHREAD: gl_THREADLIB (m4/threadlib.m4) sets it to -lpthread, and
+    # the pthread calls in glthread/lock.c bind to it.  The packaged module
+    # names no library and takes pthread to be in libc on every Linux, which
+    # holds only from glibc 2.34; the earlier ones ship it separately, and
+    # the later ones keep an empty libpthread so the option stays valid.
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "_FILE_OFFSET_BITS=64",
+    ],
+    strip_include_prefix = GL,
+    textual_hdrs = [GL + src for src in [
+        "fnmatch_loop.c",
+        "regcomp.c",
+        "regex_internal.c",
+        "regexec.c",
+    ]],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":gnulib_conditional_hdrs",
+        ":gnulib_generated_hdrs",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Generated sources
+# ---------------------------------------------------------------------------
+
+# Makefile.am:28-36.  The release tarball does not ship the generated parser,
+# so, as upstream, bison and flex run at build time.
+bison(
+    name = "grub_script_tab",
+    srcs = ["grub-core/script/parser.y"],
+    outs = [
+        "gen/grub_script.tab.c",
+        "gen/grub_script.tab.h",
+    ],
+    # `-Wnone` is `-w` for bison: the grammar's `%pure-parser` is a deprecation
+    # note upstream's own build prints too.
+    args = [
+        "-Wnone",
+        "-d",
+        "-p",
+        "grub_script_yy",
+        "-o",
+        "$(execpath gen/grub_script.tab.c)",
+        "$(execpath grub-core/script/parser.y)",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+flex(
+    name = "grub_script_yy",
+    srcs = ["grub-core/script/yylex.l"],
+    outs = [
+        "gen/grub_script.yy.c",
+        "gen/grub_script.yy.h",
+    ],
+    args = [
+        "-o",
+        "$(execpath gen/grub_script.yy.c)",
+        "--header-file=$(execpath gen/grub_script.yy.h)",
+        "$(execpath grub-core/script/yylex.l)",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# `-I$(builddir)` (conf/Makefile.common:27) for the two generated headers
+# script/lexer.c and the parser include.
+cc_library(
+    name = "grub_script_hdrs",
+    hdrs = [
+        "gen/grub_script.tab.h",
+        "gen/grub_script.yy.h",
+    ],
+    strip_include_prefix = "gen",
+    visibility = ["//visibility:public"],
+)
+
+# libgrub_a_init.c and grub_fstest_init.c (Makefile.am:39-65): geninit.sh
+# over the GRUB_MOD_INIT names of the library sources, which upstream collects
+# by preprocessing them.  The names are fixed by the source list -- every
+# conditional GRUB_MOD_INIT (fs/minix.c and its five includers, fs/fat.c,
+# fs/ufs.c, fs/bfs.c, disk/mdraid_linux.c) is selected by which file includes
+# it, not by the host -- so they are written out here; the list is what the
+# reference ./configure && make produced.
+LIBGRUB_INIT_MODULES = [
+    "adler32",
+    "affs",
+    "afs",
+    "bfs",
+    "blocklist",
+    "btrfs",
+    "cbfs",
+    "cpio",
+    "cpio_be",
+    "crc64",
+    "cryptodisk",
+    "disk",
+    "diskfilter",
+    "dm_nv",
+    "exfat",
+    "ext2",
+    "f2fs",
+    "fat",
+    "geli",
+    "gzio",
+    "hfs",
+    "hfsplus",
+    "hfspluscomp",
+    "iso9660",
+    "jfs",
+    "ldm",
+    "loopback",
+    "ls",
+    "luks",
+    "luks2",
+    "lvm",
+    "lzopio",
+    "macbless",
+    "mdraid09",
+    "mdraid09_be",
+    "mdraid1x",
+    "minix",
+    "minix2",
+    "minix2_be",
+    "minix3",
+    "minix3_be",
+    "minix_be",
+    "newc",
+    "nilfs2",
+    "ntfs",
+    "ntfscomp",
+    "odc",
+    "part_acorn",
+    "part_amiga",
+    "part_apple",
+    "part_bsd",
+    "part_dfly",
+    "part_dvh",
+    "part_gpt",
+    "part_msdos",
+    "part_plan",
+    "part_sun",
+    "part_sunpc",
+    "procfs",
+    "raid5rec",
+    "raid6rec",
+    "reiserfs",
+    "romfs",
+    "sfs",
+    "squash4",
+    "tar",
+    "testload",
+    "udf",
+    "ufs1",
+    "ufs1_be",
+    "ufs2",
+    "xfs",
+    "xnu_uuid",
+    "xzio",
+    "zfs",
+    "zfscrypt",
+    "zfsinfo",
+]
+
+write_file(
+    name = "libgrub_a_init_c",
+    out = "gen/libgrub_a_init.c",
+    content = geninit(LIBGRUB_INIT_MODULES),
+)
+
+# grub-fstest adds the host and hostfs modules of its own sources
+# (Makefile.am:53-65).
+write_file(
+    name = "grub_fstest_init_c",
+    out = "gen/grub_fstest_init.c",
+    content = geninit(sorted(LIBGRUB_INIT_MODULES + [
+        "host",
+        "hostfs",
+    ])),
+)
+
+# The source tree: //tests compiles upstream's check_PROGRAMS from it, and the
+# //platform data names its files for whatever builds the boot-time image.
+exports_files(
+    ["config.h.in"] + glob([
+        "grub-core/**",
+        "include/**",
+        "util/*.c",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+# Every header a kernel or module compile may include, and the sources that
+# are `#include`d rather than compiled on their own there: the
+# word-size templates, the per-CPU kern/ bodies, the gnulib and libgcrypt
+# files compiled through an includer, and the handful of fs/ and disk/ files
+# compiled several times over.
+filegroup(
+    name = "core_hdrs",
+    srcs = glob([
+        "grub-core/**/*.h",
+        "include/**/*.h",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "core_textual_srcs",
+    srcs = glob([
+        "grub-core/**/*XX.c",
+        "grub-core/**/*xx.c",
+        "grub-core/kern/*/cache.c",
+        "grub-core/kern/*/dl.c",
+        "grub-core/kern/*/dl_helper.c",
+        "grub-core/lib/libgcrypt-grub/cipher/*.c",
+        # startup.S and friends `#include` other .S files (realmode.S,
+        # relocator_common.S, the cache and setjmp bodies).
+        "grub-core/**/*.S",
+    ]) + [
+        "grub-core/commands/search.c",
+        "grub-core/disk/mdraid_linux.c",
+        "grub-core/efiemu/loadcore.c",
+        "grub-core/efiemu/prepare.c",
+        "grub-core/fs/bfs.c",
+        "grub-core/fs/cpio_common.c",
+        "grub-core/fs/fat.c",
+        "grub-core/fs/minix.c",
+        "grub-core/fs/ufs.c",
+        "grub-core/kern/disk_common.c",
+        "grub-core/lib/gnulib/fnmatch_loop.c",
+        "grub-core/lib/gnulib/regcomp.c",
+        "grub-core/lib/gnulib/regex_internal.c",
+        "grub-core/lib/gnulib/regexec.c",
+        "grub-core/loader/i386/bsd_pagetable.c",
+        "grub-core/term/i386/pc/vga_text.c",
+        "grub-core/video/sis315_init.c",
+        "grub-core/video/sm712_init.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# Headers
+# ---------------------------------------------------------------------------
+
+# `-I$(top_srcdir)/include` (conf/Makefile.common:31).  The whole tree is
+# published: the utilities include the headers of every platform (the mkimage
+# target tables, grub-file's loaders, the dl_helper variants ...).
+cc_library(
+    name = "headers",
+    hdrs = glob(["include/**/*.h"]),
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+# The per-directory `-I`s the Makefile fragments add.  Each is `-I` rather
+# than `includes` so that posix_wrap and libgcrypt_wrap, which shadow C
+# library headers, come ahead of every system directory.
+[
+    cc_library(
+        name = name,
+        hdrs = glob(
+            [dir + "/**/*.h"],
+            # posix_wrap/sys/ and friends hold headers only.
+            allow_empty = False,
+        ),
+        strip_include_prefix = dir,
+        visibility = ["//visibility:public"],
+    )
+    for name, dir in {
+        # CPPFLAGS_GCRY (conf/Makefile.common:75).
+        "gcrypt_hdrs": "include/grub/gcrypt",
+        # CPPFLAGS_DEFAULT (conf/Makefile.common:33).
+        "gcrypt_src_hdrs": "grub-core/lib/libgcrypt-grub/src",
+        # CPPFLAGS_GCRY again.
+        "gcrypt_wrap_hdrs": "grub-core/lib/libgcrypt_wrap",
+        # grubkern (Makefile.util.def:6).
+        "json_hdrs": "grub-core/lib/json",
+        # grubmods (Makefile.util.def:59).
+        "minilzo_hdrs": "grub-core/lib/minilzo",
+        # CPPFLAGS_POSIX (conf/Makefile.common:72).
+        "posix_wrap_hdrs": "grub-core/lib/posix_wrap",
+        "xzembed_hdrs": "grub-core/lib/xzembed",
+        "zstd_hdrs": "grub-core/lib/zstd",
+    }.items()
+]
+
+# ---------------------------------------------------------------------------
+# Build-machine tools (grub-core/Makefile.am:38-49)
+# ---------------------------------------------------------------------------
+
+# build-grub-module-verifier, which genmod.sh runs over every module.
+# grub-module-verifierXX.c is the word-size template the 32 and 64 files
+# include, hence the library carrying it as a textual header.
+cc_library(
+    name = "build-grub-module-verifier_lib",
+    srcs = [
+        "grub-core/kern/emu/misc.c",
+        "util/grub-module-verifier.c",
+        "util/grub-module-verifier32.c",
+        "util/grub-module-verifier64.c",
+        "util/misc.c",
+    ],
+    copts = COPTS,
+    local_defines = [
+        "GRUB_BUILD=1",
+        "GRUB_UTIL=1",
+        "GRUB_FILE=__FILE__",
+        "GRUB_BUILD_PROGRAM_NAME=\\\"build-grub-module-verifier\\\"",
+    ],
+    textual_hdrs = ["util/grub-module-verifierXX.c"],
+    deps = [
+        ":config",
+        ":headers",
+    ],
+)
+
+cc_binary(
+    name = "build-grub-module-verifier",
+    visibility = ["//visibility:public"],
+    deps = [":build-grub-module-verifier_lib"],
+)
+
+# gentrigtables, and the trigtables.c it writes for the trig module.
+cc_binary(
+    name = "gentrigtables",
+    srcs = ["grub-core/gentrigtables.c"],
+    copts = COPTS,
+    linkopts = ["-lm"],
+    local_defines = ["GRUB_FILE=__FILE__"],
+    deps = [":headers"],
+)
+
+genrule(
+    name = "trigtables",
+    outs = ["gen/trigtables.c"],
+    cmd = "$(execpath :gentrigtables) > $@",
+    cmd_bat = "$(execpath :gentrigtables) > $@",
+    tools = [":gentrigtables"],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# libgrubkern.a, libgrubmods.a, libgrubgcry.a (Makefile.util.def,
+# Makefile.utilgcry.def)
+# ---------------------------------------------------------------------------
+
+# The `.c` files these libraries and programs `#include`: grub-core/osdep/*.c
+# choose an OS-specific implementation that way; fs/minix.c, fs/ufs.c,
+# fs/fat.c, fs/bfs.c, fs/cpio_common.c, disk/mdraid_linux.c and the gcrypt
+# cipher sources are compiled through several includers; the *XX.c and *xx.c
+# files are word-size templates included twice.
+TEXTUAL_SRCS = glob(
+    [
+        "grub-core/**/*XX.c",
+        "grub-core/**/*xx.c",
+        "grub-core/lib/libgcrypt-grub/cipher/*.c",
+        "grub-core/osdep/*/*.c",
+        "util/*XX.c",
+        "util/*xx.c",
+    ],
+    exclude = [GL + "**"],
+) + [
+    "grub-core/disk/mdraid_linux.c",
+    "grub-core/fs/bfs.c",
+    "grub-core/fs/cpio_common.c",
+    "grub-core/fs/fat.c",
+    "grub-core/fs/minix.c",
+    "grub-core/fs/ufs.c",
+    "grub-core/kern/disk_common.c",
+    "util/setup.c",
+]
+
+# The headers that live beside the sources in grub-core/ (the libgcrypt cipher
+# internals, the fs/ and disk/ private headers ...), which the sources include
+# by quoted name from their own directory.
+CORE_PRIVATE_HDRS = glob(
+    ["grub-core/**/*.h"],
+    exclude = [GL + "**"],
+)
+
+cc_library(
+    name = "grubkern",
+    srcs = [
+        "grub-core/commands/extcmd.c",
+        "grub-core/disk/AFSplitter.c",
+        "grub-core/disk/cryptodisk.c",
+        "grub-core/disk/diskfilter.c",
+        "grub-core/disk/geli.c",
+        "grub-core/disk/ldm.c",
+        "grub-core/disk/luks.c",
+        "grub-core/disk/luks2.c",
+        "grub-core/fs/archelp.c",
+        "grub-core/fs/proc.c",
+        "grub-core/kern/command.c",
+        "grub-core/kern/device.c",
+        "grub-core/kern/disk.c",
+        "grub-core/kern/emu/hostdisk.c",
+        "grub-core/kern/emu/misc.c",
+        "grub-core/kern/emu/mm.c",
+        "grub-core/kern/env.c",
+        "grub-core/kern/err.c",
+        "grub-core/kern/file.c",
+        "grub-core/kern/fs.c",
+        "grub-core/kern/list.c",
+        "grub-core/kern/misc.c",
+        "grub-core/kern/partition.c",
+        "grub-core/lib/arg.c",
+        "grub-core/lib/crypto.c",
+        "grub-core/lib/disk.c",
+        "grub-core/lib/json/json.c",
+        "grub-core/lib/pbkdf2.c",
+        "grub-core/osdep/devmapper/getroot.c",
+        "grub-core/osdep/devmapper/hostdisk.c",
+        "grub-core/osdep/exec.c",
+        "grub-core/osdep/getroot.c",
+        "grub-core/osdep/hostdisk.c",
+        "grub-core/osdep/password.c",
+        "grub-core/osdep/relpath.c",
+        "grub-core/osdep/sleep.c",
+        "grub-core/osdep/unix/getroot.c",
+        "grub-core/osdep/unix/hostdisk.c",
+        "grub-core/partmap/gpt.c",
+        "grub-core/partmap/msdos.c",
+        "util/getroot.c",
+        "util/misc.c",
+    ] + CORE_PRIVATE_HDRS,
+    copts = COPTS,
+    # The per-library `-I`s do not propagate: upstream's are per-object
+    # CPPFLAGS, and posix_wrap in particular shadows C library headers.
+    implementation_deps = [":json_hdrs"],
+    local_defines = LOCAL_DEFINES,
+    textual_hdrs = TEXTUAL_SRCS,
+    toolchains = [":install_dirs"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":gcrypt_src_hdrs",
+        ":gnulib",
+        ":grubgcry",
+        ":headers",
+    ] + select({
+        ":device_mapper": ["@lvm2//:devmapper"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "grubmods",
+    srcs = [
+        "gen/grub_script.tab.c",
+        "gen/grub_script.yy.c",
+        "grub-core/commands/blocklist.c",
+        "grub-core/commands/ls.c",
+        "grub-core/commands/macbless.c",
+        "grub-core/commands/testload.c",
+        "grub-core/commands/xnu_uuid.c",
+        "grub-core/disk/dmraid_nvidia.c",
+        "grub-core/disk/loopback.c",
+        "grub-core/disk/lvm.c",
+        "grub-core/disk/mdraid1x_linux.c",
+        "grub-core/disk/mdraid_linux.c",
+        "grub-core/disk/mdraid_linux_be.c",
+        "grub-core/disk/raid5_recover.c",
+        "grub-core/disk/raid6_recover.c",
+        "grub-core/font/font.c",
+        "grub-core/fs/affs.c",
+        "grub-core/fs/afs.c",
+        "grub-core/fs/bfs.c",
+        "grub-core/fs/btrfs.c",
+        "grub-core/fs/cbfs.c",
+        "grub-core/fs/cpio.c",
+        "grub-core/fs/cpio_be.c",
+        "grub-core/fs/exfat.c",
+        "grub-core/fs/ext2.c",
+        "grub-core/fs/f2fs.c",
+        "grub-core/fs/fat.c",
+        "grub-core/fs/fshelp.c",
+        "grub-core/fs/hfs.c",
+        "grub-core/fs/hfsplus.c",
+        "grub-core/fs/hfspluscomp.c",
+        "grub-core/fs/iso9660.c",
+        "grub-core/fs/jfs.c",
+        "grub-core/fs/minix.c",
+        "grub-core/fs/minix2.c",
+        "grub-core/fs/minix2_be.c",
+        "grub-core/fs/minix3.c",
+        "grub-core/fs/minix3_be.c",
+        "grub-core/fs/minix_be.c",
+        "grub-core/fs/newc.c",
+        "grub-core/fs/nilfs2.c",
+        "grub-core/fs/ntfs.c",
+        "grub-core/fs/ntfscomp.c",
+        "grub-core/fs/odc.c",
+        "grub-core/fs/reiserfs.c",
+        "grub-core/fs/romfs.c",
+        "grub-core/fs/sfs.c",
+        "grub-core/fs/squash4.c",
+        "grub-core/fs/tar.c",
+        "grub-core/fs/udf.c",
+        "grub-core/fs/ufs.c",
+        "grub-core/fs/ufs2.c",
+        "grub-core/fs/ufs_be.c",
+        "grub-core/fs/xfs.c",
+        "grub-core/fs/zfs/zfs.c",
+        "grub-core/fs/zfs/zfs_fletcher.c",
+        "grub-core/fs/zfs/zfs_lz4.c",
+        "grub-core/fs/zfs/zfs_lzjb.c",
+        "grub-core/fs/zfs/zfs_sha256.c",
+        "grub-core/fs/zfs/zfscrypt.c",
+        "grub-core/fs/zfs/zfsinfo.c",
+        "grub-core/gfxmenu/font.c",
+        "grub-core/io/bufio.c",
+        "grub-core/io/gzio.c",
+        "grub-core/io/lzopio.c",
+        "grub-core/io/xzio.c",
+        "grub-core/kern/arm/dl_helper.c",
+        "grub-core/kern/arm64/dl_helper.c",
+        "grub-core/kern/ia64/dl_helper.c",
+        "grub-core/lib/LzFind.c",
+        "grub-core/lib/LzmaEnc.c",
+        "grub-core/lib/adler32.c",
+        "grub-core/lib/crc.c",
+        "grub-core/lib/crc64.c",
+        "grub-core/lib/datetime.c",
+        "grub-core/lib/envblk.c",
+        "grub-core/lib/hexdump.c",
+        "grub-core/lib/minilzo/minilzo.c",
+        "grub-core/lib/xzembed/xz_dec_bcj.c",
+        "grub-core/lib/xzembed/xz_dec_lzma2.c",
+        "grub-core/lib/xzembed/xz_dec_stream.c",
+        "grub-core/lib/zstd/debug.c",
+        "grub-core/lib/zstd/entropy_common.c",
+        "grub-core/lib/zstd/error_private.c",
+        "grub-core/lib/zstd/fse_decompress.c",
+        "grub-core/lib/zstd/huf_decompress.c",
+        "grub-core/lib/zstd/module.c",
+        "grub-core/lib/zstd/xxhash.c",
+        "grub-core/lib/zstd/zstd_common.c",
+        "grub-core/lib/zstd/zstd_decompress.c",
+        "grub-core/normal/charset.c",
+        "grub-core/normal/misc.c",
+        "grub-core/partmap/acorn.c",
+        "grub-core/partmap/amiga.c",
+        "grub-core/partmap/apple.c",
+        "grub-core/partmap/bsdlabel.c",
+        "grub-core/partmap/dfly.c",
+        "grub-core/partmap/dvh.c",
+        "grub-core/partmap/plan.c",
+        "grub-core/partmap/sun.c",
+        "grub-core/partmap/sunpc.c",
+        "grub-core/script/argv.c",
+        "grub-core/script/function.c",
+        "grub-core/script/lexer.c",
+        "grub-core/script/main.c",
+        "grub-core/script/script.c",
+        "grub-core/unidata.c",
+        "grub-core/video/capture.c",
+        "grub-core/video/colors.c",
+        "grub-core/video/fb/fbblit.c",
+        "grub-core/video/fb/fbfill.c",
+        "grub-core/video/fb/fbutil.c",
+        "grub-core/video/fb/video_fb.c",
+        "grub-core/video/video.c",
+        ":libgrub_a_init_c",
+    ] + CORE_PRIVATE_HDRS,
+    copts = COPTS + ["-fno-builtin"],
+    implementation_deps = [
+        ":grub_script_hdrs",
+        ":minilzo_hdrs",
+        ":xzembed_hdrs",
+        ":zstd_hdrs",
+    ],
+    local_defines = LOCAL_DEFINES + ["MINILZO_HAVE_CONFIG_H"],
+    textual_hdrs = TEXTUAL_SRCS,
+    toolchains = [":install_dirs"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":gcrypt_src_hdrs",
+        ":grubkern",
+        ":headers",
+    ],
+)
+
+cc_library(
+    name = "grubgcry",
+    srcs = [
+        "grub-core/lib/libgcrypt-grub/cipher/arcfour.c",
+        "grub-core/lib/libgcrypt-grub/cipher/blowfish.c",
+        "grub-core/lib/libgcrypt-grub/cipher/camellia.c",
+        "grub-core/lib/libgcrypt-grub/cipher/camellia-glue.c",
+        "grub-core/lib/libgcrypt-grub/cipher/cast5.c",
+        "grub-core/lib/libgcrypt-grub/cipher/crc.c",
+        "grub-core/lib/libgcrypt-grub/cipher/des.c",
+        "grub-core/lib/libgcrypt-grub/cipher/idea.c",
+        "grub-core/lib/libgcrypt-grub/cipher/init.c",
+        "grub-core/lib/libgcrypt-grub/cipher/md4.c",
+        "grub-core/lib/libgcrypt-grub/cipher/md5.c",
+        "grub-core/lib/libgcrypt-grub/cipher/rfc2268.c",
+        "grub-core/lib/libgcrypt-grub/cipher/rijndael.c",
+        "grub-core/lib/libgcrypt-grub/cipher/rmd160.c",
+        "grub-core/lib/libgcrypt-grub/cipher/seed.c",
+        "grub-core/lib/libgcrypt-grub/cipher/serpent.c",
+        "grub-core/lib/libgcrypt-grub/cipher/sha1.c",
+        "grub-core/lib/libgcrypt-grub/cipher/sha256.c",
+        "grub-core/lib/libgcrypt-grub/cipher/sha512.c",
+        "grub-core/lib/libgcrypt-grub/cipher/tiger.c",
+        "grub-core/lib/libgcrypt-grub/cipher/twofish.c",
+        "grub-core/lib/libgcrypt-grub/cipher/whirlpool.c",
+    ] + CORE_PRIVATE_HDRS,
+    copts = COPTS + ["-fno-builtin"],
+    implementation_deps = [
+        ":gcrypt_hdrs",
+        ":gcrypt_wrap_hdrs",
+        ":posix_wrap_hdrs",
+    ],
+    local_defines = LOCAL_DEFINES + ["_GCRYPT_IN_LIBGCRYPT=1"],
+    textual_hdrs = TEXTUAL_SRCS,
+    toolchains = [":install_dirs"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config",
+        ":gcrypt_src_hdrs",
+        ":headers",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Programs (Makefile.util.def).  Every one links the three libraries above
+# and libgnu.a; the `$(LIBZFS) $(LIBNVPAIR) $(LIBGEOM)` upstream also lists
+# are empty on every host this module builds for.
+#
+# Not built: grub-mount (COND_GRUB_MOUNT -- FUSE 2, see the flags above) and
+# grub-macho2img (COND_APPLE_LINKER -- only with Apple's linker as the target
+# toolchain, which no supported platform is).  The check_PROGRAMS are //tests.
+# ---------------------------------------------------------------------------
+
+# Upstream's names for the three archives.
+[
+    alias(
+        name = "lib" + name,
+        actual = ":" + name,
+        visibility = ["//visibility:public"],
+    )
+    for name in [
+        "grubgcry",
+        "grubkern",
+        "grubmods",
+    ]
+]
+
+PROGRAM_DEPS = [
+    ":config",
+    ":gcrypt_src_hdrs",
+    ":gnulib",
+    ":grubgcry",
+    ":grubkern",
+    ":grubmods",
+    ":headers",
+]
+
+# The source groups the programs share (Makefile.util.def): the argp front
+# end of every command-line program, the image writer, what the installers
+# add to it, grub-setup's two halves and the host disk and file system of the
+# programs that read images from directories.
+ARGP_SRCS = [
+    "grub-core/kern/emu/argp_common.c",
+    "grub-core/osdep/init.c",
+]
+
+MKIMAGE_SRCS = [
+    "grub-core/osdep/config.c",
+    "util/config.c",
+    "util/grub-mkimage32.c",
+    "util/grub-mkimage64.c",
+    "util/mkimage.c",
+    "util/resolve.c",
+]
+
+INSTALL_SRCS = MKIMAGE_SRCS + [
+    "grub-core/lib/reed_solomon.c",
+    "grub-core/osdep/blocklist.c",
+    "grub-core/osdep/compress.c",
+    "grub-core/osdep/ofpath.c",
+    "grub-core/osdep/platform.c",
+    "grub-core/osdep/platform_unix.c",
+    "grub-core/osdep/random.c",
+    "util/editenv.c",
+    "util/grub-install-common.c",
+    "util/setup_bios.c",
+    "util/setup_sparc.c",
+]
+
+SETUP_SRCS = [
+    "grub-core/lib/reed_solomon.c",
+    "grub-core/osdep/blocklist.c",
+    "util/grub-setup.c",
+]
+
+HOSTFS_SRCS = [
+    "grub-core/disk/host.c",
+    "grub-core/kern/emu/hostfs.c",
+]
+
+# `$(LIBLZMA)` (Makefile.util.def) goes to the programs that link
+# util/mkimage.c, the one user of xz: grub-mkimage and the installers compress
+# MIPS images with it.
+LZMA_DEPS = select({
+    ":liblzma": ["@xz//:lzma"],
+    "//conditions:default": [],
+})
+
+# The programs with no option of their own.  util/grub-setup.c is built twice,
+# once per GRUB_SETUP_FUNC; grub-mkrescue and grub-mkstandalone are
+# COND_HAVE_EXEC (configure.ac:231): every host but Windows and AROS.
+PROGRAMS = {
+    "grub-bios-setup": ARGP_SRCS + SETUP_SRCS + ["util/setup_bios.c"],
+    "grub-editenv": MKIMAGE_SRCS + [
+        "grub-core/osdep/compress.c",
+        "grub-core/osdep/init.c",
+        "util/editenv.c",
+        "util/grub-editenv.c",
+        "util/grub-install-common.c",
+    ],
+    "grub-file": HOSTFS_SRCS + [
+        "grub-core/commands/file.c",
+        "grub-core/commands/file32.c",
+        "grub-core/commands/file64.c",
+        "grub-core/io/offset.c",
+        "grub-core/kern/elf.c",
+        "grub-core/loader/i386/xen_file.c",
+        "grub-core/loader/i386/xen_file32.c",
+        "grub-core/loader/i386/xen_file64.c",
+        "grub-core/loader/lzss.c",
+        "grub-core/loader/macho.c",
+        "grub-core/loader/macho32.c",
+        "grub-core/loader/macho64.c",
+        "grub-core/osdep/init.c",
+        "util/grub-file.c",
+        "util/render-label.c",
+    ],
+    "grub-fstest": HOSTFS_SRCS + [
+        "grub-core/osdep/init.c",
+        "util/grub-fstest.c",
+        ":grub_fstest_init_c",
+    ],
+    "grub-glue-efi": ARGP_SRCS + [
+        "util/glue-efi.c",
+        "util/grub-glue-efi.c",
+    ],
+    "grub-install": ARGP_SRCS + HOSTFS_SRCS + INSTALL_SRCS + [
+        "util/grub-install.c",
+        "util/probe.c",
+        "util/render-label.c",
+    ],
+    "grub-macbless": ARGP_SRCS + ["util/grub-macbless.c"],
+    "grub-menulst2cfg": [
+        "grub-core/lib/i386/pc/vesa_modes_table.c",
+        "grub-core/lib/legacy_parse.c",
+        "grub-core/osdep/init.c",
+        "util/grub-menulst2cfg.c",
+    ],
+    "grub-mkimage": ARGP_SRCS + MKIMAGE_SRCS + ["util/grub-mkimage.c"],
+    "grub-mklayout": ARGP_SRCS + ["util/grub-mklayout.c"],
+    "grub-mknetdir": ARGP_SRCS + INSTALL_SRCS + ["util/grub-mknetdir.c"],
+    "grub-mkpasswd-pbkdf2": ARGP_SRCS + [
+        "grub-core/osdep/random.c",
+        "util/grub-mkpasswd-pbkdf2.c",
+    ],
+    "grub-mkrelpath": ARGP_SRCS + ["util/grub-mkrelpath.c"],
+    "grub-mkrescue": ARGP_SRCS + HOSTFS_SRCS + INSTALL_SRCS + [
+        "util/glue-efi.c",
+        "util/grub-mkrescue.c",
+        "util/render-label.c",
+    ],
+    "grub-mkstandalone": ARGP_SRCS + HOSTFS_SRCS + INSTALL_SRCS + [
+        "util/glue-efi.c",
+        "util/grub-mkstandalone.c",
+        "util/render-label.c",
+    ],
+    "grub-ofpathname": [
+        "grub-core/osdep/init.c",
+        "grub-core/osdep/ofpath.c",
+        "util/ieee1275/grub-ofpathname.c",
+    ],
+    "grub-probe": ARGP_SRCS + [
+        "grub-core/osdep/ofpath.c",
+        "util/grub-probe.c",
+        "util/probe.c",
+    ],
+    "grub-render-label": ARGP_SRCS + HOSTFS_SRCS + [
+        "util/grub-render-label.c",
+        "util/render-label.c",
+    ],
+    "grub-script-check": ARGP_SRCS + ["util/grub-script-check.c"],
+    "grub-sparc64-setup": ARGP_SRCS + SETUP_SRCS + [
+        "grub-core/osdep/ofpath.c",
+        "util/setup_sparc.c",
+    ],
+    "grub-syslinux2cfg": ARGP_SRCS + HOSTFS_SRCS + [
+        "grub-core/lib/getline.c",
+        "grub-core/lib/syslinux_parse.c",
+        "util/grub-syslinux2cfg.c",
+    ],
+}
+
+PROGRAM_DEFINES = {
+    "grub-bios-setup": ["GRUB_SETUP_FUNC=grub_util_bios_setup"],
+    "grub-sparc64-setup": ["GRUB_SETUP_FUNC=grub_util_sparc_setup"],
+}
+
+[
+    cc_binary(
+        name = name,
+        srcs = srcs,
+        copts = COPTS,
+        local_defines = LOCAL_DEFINES + PROGRAM_DEFINES.get(name, []),
+        toolchains = [":install_dirs"],
+        visibility = ["//visibility:public"],
+        deps = PROGRAM_DEPS + (LZMA_DEPS if "util/mkimage.c" in srcs else []),
+    )
+    for name, srcs in PROGRAMS.items()
+]
+
+# --enable-grub-mkfont (configure.ac:1591).
+cc_binary(
+    name = "grub-mkfont",
+    srcs = ARGP_SRCS + ["util/grub-mkfont.c"],
+    copts = COPTS,
+    local_defines = LOCAL_DEFINES + [
+        "GRUB_MKFONT=1",
+    ],
+    # COND_GRUB_MKFONT (configure.ac): the program is not built, and so not
+    # installed, when the option is off; here the target is incompatible, so
+    # `//...` skips it and naming it says why.
+    target_compatible_with = select({
+        ":grub_mkfont": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    toolchains = [":install_dirs"],
+    visibility = ["//visibility:public"],
+    deps = PROGRAM_DEPS + [
+        "@freetype",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Scripts, etc/grub.d and the bash completions (Makefile.util.def, config.status
+# --file substitution of the .in templates)
+# ---------------------------------------------------------------------------
+
+[
+    configure_script(
+        name = name,
+        out = "bin/" + name if dir == "bin" else "sbin/" + name,
+        settings = SCRIPT_SETTINGS,
+        substitutions = SCRIPT_SUBSTITUTIONS,
+        template = "util/{}.in".format(name),
+        visibility = ["//visibility:public"],
+    )
+    for name, dir in {
+        "grub-kbdcomp": "bin",
+        "grub-mkconfig": "sbin",
+        "grub-reboot": "sbin",
+        "grub-set-default": "sbin",
+    }.items()
+]
+
+# installdir = noinst in Makefile.util.def, but Makefile.util.am installs it
+# as pkgdata: $(datadir)/grub/grub-mkconfig_lib, which is where grub-mkconfig
+# and every grub.d script source it from.
+configure_script(
+    name = "grub-mkconfig_lib",
+    out = "share/grub/grub-mkconfig_lib",
+    is_executable = False,
+    settings = SCRIPT_SETTINGS,
+    substitutions = SCRIPT_SUBSTITUTIONS,
+    template = "util/grub-mkconfig_lib.in",
+    visibility = ["//visibility:public"],
+)
+
+# etc/grub.d (grubconf_SCRIPTS).  10_linux and 20_linux_xen are COND_HOST_LINUX,
+# 10_xnu is COND_HOST_XNU; the hurd, kfreebsd, illumos, netbsd and windows
+# ones are for hosts this module does not build on.
+[
+    configure_script(
+        name = "grub.d/" + name,
+        out = "etc/grub.d/" + name,
+        settings = SCRIPT_SETTINGS,
+        substitutions = SCRIPT_SUBSTITUTIONS,
+        template = "util/grub.d/{}.in".format(name),
+        visibility = ["//visibility:public"],
+    )
+    for name in [
+        "00_header",
+        "10_linux",
+        "10_xnu",
+        "20_linux_xen",
+        "30_os-prober",
+        "30_uefi-firmware",
+        "40_custom",
+        "41_custom",
+    ]
+]
+
+filegroup(
+    name = "grub.d",
+    srcs = [
+        "grub.d/00_header",
+        "grub.d/30_os-prober",
+        "grub.d/30_uefi-firmware",
+        "grub.d/40_custom",
+        "grub.d/41_custom",
+        "util/grub.d/README",
+    ] + select({
+        "@platforms//os:macos": ["grub.d/10_xnu"],
+        "//conditions:default": [
+            "grub.d/10_linux",
+            "grub.d/20_linux_xen",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# util/bash-completion.d/Makefile.am: one completion file for every program,
+# installed as $(sysconfdir)/bash_completion.d/grub.
+configure_script(
+    name = "bash-completion",
+    out = "etc/bash_completion.d/grub",
+    is_executable = False,
+    settings = SCRIPT_SETTINGS,
+    substitutions = SCRIPT_SUBSTITUTIONS,
+    template = "util/bash-completion.d/grub-completion.bash.in",
+    visibility = ["//visibility:public"],
+)
+
+# The bin_PROGRAMS/bin_SCRIPTS and sbin_PROGRAMS/sbin_SCRIPTS sets, for
+# consumers that stage an install tree; the optional programs are listed only
+# when their option is on, since a filegroup is incompatible when any of its
+# sources is.
+filegroup(
+    name = "bin",
+    srcs = [
+        "grub-editenv",
+        "grub-file",
+        "grub-fstest",
+        "grub-glue-efi",
+        "grub-kbdcomp",
+        "grub-menulst2cfg",
+        "grub-mkimage",
+        "grub-mklayout",
+        "grub-mknetdir",
+        "grub-mkpasswd-pbkdf2",
+        "grub-mkrelpath",
+        "grub-mkrescue",
+        "grub-mkstandalone",
+        "grub-render-label",
+        "grub-script-check",
+        "grub-syslinux2cfg",
+    ] + select({
+        ":grub_mkfont": ["grub-mkfont"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "sbin",
+    srcs = [
+        "grub-bios-setup",
+        "grub-install",
+        "grub-macbless",
+        "grub-mkconfig",
+        "grub-ofpathname",
+        "grub-probe",
+        "grub-reboot",
+        "grub-set-default",
+        "grub-sparc64-setup",
+    ],
+    visibility = ["//visibility:public"],
+)
