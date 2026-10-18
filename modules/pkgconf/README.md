@@ -19,7 +19,7 @@ grep '#undef' bazel-bin/external/pkgconf+/libpkgconf/config.h
 `_LARGE_FILES` is AIX-only and the only `#undef` a correct build emits; a failed
 probe renders as `#define HAVE_DECL_X 0`.
 
-Then re-point the `pkgconf-3.0.7` GitHub links in `overlay/` — a fifth of the
+Then re-point the `pkgconf-3.0.8` GitHub links in `overlay/` — a fifth of the
 line anchors moved across one patch release — run
 `bazel run //tools:update_integrity -- pkgconf --version=<new>`, and test both
 runfiles modes: `--noenable_runfiles` is the only local way to hit the path
