@@ -1,0 +1,252 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
+
+# Generate compat.h from template
+genrule(
+    name = "compat_h",
+    srcs = ["compat/compat.h.in"],
+    outs = ["compat/compat.h"],
+    cmd = """
+        sed -e 's/#cmakedefine HAVE_ALLOCA_H/#define HAVE_ALLOCA_H/' \
+            -e 's/#cmakedefine HAVE_BYTESWAP_H/#define HAVE_BYTESWAP_H/' \
+            -e 's/#cmakedefine HAVE_DIRENT_D_TYPE/#define HAVE_DIRENT_D_TYPE/' \
+            -e 's/#cmakedefine HAVE_VDPRINTF/#define HAVE_VDPRINTF/' \
+            -e 's/#cmakedefine HAVE_ASPRINTF/#define HAVE_ASPRINTF/' \
+            -e 's/#cmakedefine HAVE_VASPRINTF/#define HAVE_VASPRINTF/' \
+            -e 's/#cmakedefine HAVE_GETLINE/#define HAVE_GETLINE/' \
+            -e 's/#cmakedefine HAVE_STRNDUP/#define HAVE_STRNDUP/' \
+            -e 's/#cmakedefine HAVE_STRNSTR/\\/\\* #undef HAVE_STRNSTR \\*\\//' \
+            -e 's/#cmakedefine HAVE_STRDUPA/#define HAVE_STRDUPA/' \
+            -e 's/#cmakedefine HAVE_STRCHRNUL/#define HAVE_STRCHRNUL/' \
+            -e 's/#cmakedefine HAVE_GET_CURRENT_DIR_NAME/#define HAVE_GET_CURRENT_DIR_NAME/' \
+            -e 's/#cmakedefine HAVE_PTHREAD_MUTEX_TIMEDLOCK/#define HAVE_PTHREAD_MUTEX_TIMEDLOCK/' \
+            -e 's/#cmakedefine HAVE_REALPATH/#define HAVE_REALPATH/' \
+            -e 's/#cmakedefine HAVE_LOCALTIME_R/#define HAVE_LOCALTIME_R/' \
+            -e 's/#cmakedefine HAVE_GMTIME_R/#define HAVE_GMTIME_R/' \
+            -e 's/#cmakedefine HAVE_TIMEGM/#define HAVE_TIMEGM/' \
+            -e 's/#cmakedefine HAVE_STRPTIME/#define HAVE_STRPTIME/' \
+            -e 's/#cmakedefine HAVE_MMAP/#define HAVE_MMAP/' \
+            -e 's/#cmakedefine HAVE_STRCASECMP/#define HAVE_STRCASECMP/' \
+            -e 's/#cmakedefine HAVE_SETENV/#define HAVE_SETENV/' \
+            -e 's/#cmakedefine IS_BIG_ENDIAN/\\/\\* #undef IS_BIG_ENDIAN \\*\\//' \
+            -e 's/#cmakedefine HAVE_STDATOMIC/#define HAVE_STDATOMIC/' \
+            $(SRCS) > $@
+    """,
+    visibility = ["//visibility:public"],
+)
+
+# Generate ly_config.h from template
+genrule(
+    name = "ly_config_h",
+    srcs = ["src/ly_config.h.in"],
+    outs = ["src/ly_config.h"],
+    cmd = """
+        sed -e 's/@LYD_VALUE_SIZE@/24/' \
+            -e 's/@CMAKE_SHARED_MODULE_SUFFIX@/.so/' \
+            -e 's|@PLUGINS_DIR_TYPES@|/usr/lib/libyang/types|' \
+            -e 's|@PLUGINS_DIR_EXTENSIONS@|/usr/lib/libyang/extensions|' \
+            -e 's|@YANG_MODULE_DIR@|/usr/share/yang/modules/libyang|' \
+            -e 's|@CMAKE_CURRENT_SOURCE_DIR@|.|' \
+            -e 's/#cmakedefine LY_HAVE_REGEX_H/#define LY_HAVE_REGEX_H/' \
+            -e 's/#cmakedefine HAVE_REGEX_H/#define HAVE_REGEX_H/' \
+            -e 's/#cmakedefine HAVE_REG_STARTEND/#define HAVE_REG_STARTEND/' \
+            $(SRCS) > $@
+    """,
+    visibility = ["//visibility:public"],
+)
+
+# Generate version.h from template
+genrule(
+    name = "version_h",
+    srcs = ["src/version.h.in"],
+    outs = ["src/version.h"],
+    cmd = """
+        sed -e 's/@LIBYANG_MAJOR_SOVERSION@/5/' \
+            -e 's/@LIBYANG_MINOR_SOVERSION@/2/' \
+            -e 's/@LIBYANG_MICRO_SOVERSION@/11/' \
+            -e 's/@LIBYANG_SOVERSION_FULL@/5.2.11/' \
+            -e 's/@LIBYANG_MAJOR_VERSION@/5/' \
+            -e 's/@LIBYANG_MINOR_VERSION@/4/' \
+            -e 's/@LIBYANG_MICRO_VERSION@/9/' \
+            -e 's/@LIBYANG_VERSION@/5.4.9/' \
+            $(SRCS) > $@
+    """,
+    visibility = ["//visibility:public"],
+)
+
+# Copy metadata.h to src/ so it can be in the same cc_library with other public headers
+genrule(
+    name = "metadata_h",
+    srcs = ["src/plugins_exts/metadata.h"],
+    outs = ["src/metadata.h"],
+    cmd = "cp $< $@",
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "config_headers",
+    hdrs = [
+        ":compat_h",
+        ":ly_config_h",
+        ":metadata_h",
+        ":version_h",
+    ],
+    includes = [
+        ".",
+        "compat",
+        "modules",
+        "src",
+        "src/plugins_exts",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+_PUBLIC_SRC_HDRS = [
+    "context.h",
+    "dict.h",
+    "hash_table.h",
+    "in.h",
+    "libyang.h",
+    "log.h",
+    "out.h",
+    "parser_data.h",
+    "parser_schema.h",
+    "plugins.h",
+    "plugins_exts.h",
+    "plugins_types.h",
+    "printer_data.h",
+    "printer_schema.h",
+    "set.h",
+    "tree.h",
+    "tree_data.h",
+    "tree_edit.h",
+    "tree_schema.h",
+    "xpath.h",
+]
+
+_GENERATED_PUBLIC_HDRS = [
+    "compat.h",
+    "ly_config.h",
+    "metadata.h",
+    "version.h",
+]
+
+filegroup(
+    name = "public_hdrs",
+    srcs = ["src/" + h for h in _PUBLIC_SRC_HDRS] + [
+        ":compat_h",
+        ":ly_config_h",
+        ":metadata_h",
+        ":version_h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "staged_public_hdrs",
+    srcs = [":public_hdrs"],
+    outs = ["libyang/" + h for h in _PUBLIC_SRC_HDRS + _GENERATED_PUBLIC_HDRS],
+    cmd = "mkdir -p $(RULEDIR)/libyang && cp $(SRCS) $(RULEDIR)/libyang/",
+)
+
+# Public headers from src/ staged under libyang/ at the repository root
+# so <libyang/...> resolves in both cc_library and rules_go CGo even under
+# --features=external_include_paths.
+cc_library(
+    name = "headers",
+    hdrs = [":staged_public_hdrs"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "sources",
+    srcs = glob(
+        [
+            "src/*.c",
+            "src/plugins_types/*.c",
+            "src/plugins_exts/*.c",
+            "compat/*.c",
+        ],
+        exclude = [
+            "src/cmd_*.c",
+        ],
+    ) + [
+        ":compat_h",
+        ":ly_config_h",
+        ":version_h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "internal_headers",
+    srcs = glob([
+        "src/*.h",
+        "src/plugins_exts/*.h",
+        "modules/*.h",
+    ], allow_empty = True) + [
+        ":compat_h",
+        ":ly_config_h",
+        ":metadata_h",
+        ":version_h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "internal_hdrs",
+    hdrs = [":internal_headers"],
+    includes = [
+        ".",
+        "compat",
+        "modules",
+        "src",
+        "src/plugins_exts",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libyang5",
+    srcs = [":sources"],
+    copts = [
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-fvisibility=hidden",
+        "-DLIBYANG_BUILD",
+        "-DNDEBUG",
+        "-O2",
+        "-DPCRE2_CODE_UNIT_WIDTH=8",
+        "-D_FILE_OFFSET_BITS=64",
+        "-fPIC",
+    ],
+    implementation_deps = [
+        ":internal_hdrs",
+        "@pcre2//:pcre2",
+    ],
+    linkopts = [
+        "-lm",
+        "-ldl",
+        "-lpthread",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config_headers",
+        ":headers",
+    ],
+)
+
+alias(
+    name = "libyang",
+    actual = ":libyang5",
+    visibility = ["//visibility:public"],
+)
+
+# Shared library for runtime use in containers
+cc_shared_library(
+    name = "libyang5_shared",
+    shared_lib_name = "libyang.so.5",
+    visibility = ["//visibility:public"],
+    deps = [":libyang5"],
+)
