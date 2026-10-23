@@ -1,0 +1,84 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# No copts, defines or local_defines: api_test.c's #error guard is only worth anything in
+# a target that gives the private configuration no way in.
+cc_test(
+    name = "api_test",
+    size = "small",
+    srcs = ["api_test.c"],
+    args = ["$(rootpath @libmagic//:magic.mgc)"],
+    data = ["@libmagic//:magic.mgc"],
+    deps = ["@libmagic"],
+)
+
+cc_test(
+    name = "behavior_test",
+    size = "small",
+    srcs = [
+        "behavior_test.c",
+        "compressed.h",
+    ],
+    args = ["$(rootpath @libmagic//:magic.mgc)"],
+    data = ["@libmagic//:magic.mgc"],
+    local_defines = select({
+        ":bzip2": ["EXPECT_BZIP2"],
+        "//conditions:default": [],
+    }) + select({
+        ":xz": ["EXPECT_XZ"],
+        "//conditions:default": [],
+    }) + select({
+        ":zlib": ["EXPECT_ZLIB"],
+        "//conditions:default": [],
+    }) + select({
+        ":zstd": ["EXPECT_ZSTD"],
+        "//conditions:default": [],
+    }),
+    target_compatible_with = select({
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = ["@libmagic"],
+)
+
+diff_test(
+    name = "cli_test",
+    size = "small",
+    file1 = "cli_classification.txt",
+    file2 = ":classified_fixture",
+)
+
+genrule(
+    name = "classified_fixture",
+    srcs = [
+        "fixture.pdf",
+        "@libmagic//:magic.mgc",
+    ],
+    outs = ["classified_fixture.txt"],
+    # -m because file(1) has no default database of its own to find, as an uninstalled
+    # upstream build has none. --dereference: a source file reaches the action as a
+    # symlink, which file(1) would otherwise report as inode/symlink.
+    cmd = "$(execpath @libmagic//:file) -m $(execpath @libmagic//:magic.mgc) " +
+          "--dereference --brief --mime-type $(execpath fixture.pdf) > $@",
+    tools = ["@libmagic//:file"],
+)
+
+config_setting(
+    name = "bzip2",
+    flag_values = {"@libmagic//:with_bzip2": "true"},
+)
+
+config_setting(
+    name = "xz",
+    flag_values = {"@libmagic//:with_xz": "true"},
+)
+
+config_setting(
+    name = "zlib",
+    flag_values = {"@libmagic//:with_zlib": "true"},
+)
+
+config_setting(
+    name = "zstd",
+    flag_values = {"@libmagic//:with_zstd": "true"},
+)
