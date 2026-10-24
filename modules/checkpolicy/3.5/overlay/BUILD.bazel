@@ -1,0 +1,70 @@
+"""Builds the SELinux policy compilers checkpolicy and checkmodule."""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Same invocations as the upstream Makefile (`bison -y -d`, `flex`).
+genrule(
+    name = "policy_parse_src",
+    srcs = ["policy_parse.y"],
+    outs = [
+        "y.tab.c",
+        "y.tab.h",
+    ],
+    cmd = "M4=$(M4) $(BISON) -y -d -o $(execpath y.tab.c) $<",
+    toolchains = [
+        "@rules_bison//bison:current_bison_toolchain",
+        "@rules_m4//m4:current_m4_toolchain",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+genrule(
+    name = "policy_scan_src",
+    srcs = ["policy_scan.l"],
+    outs = ["lex.yy.c"],
+    cmd = "M4=$(M4) $(FLEX) --outfile=$@ $<",
+    toolchains = [
+        "@rules_flex//flex:current_flex_toolchain",
+        "@rules_m4//m4:current_m4_toolchain",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# Shared by both binaries; the `policyvers` symbol it needs is defined by each
+# binary's main file.
+cc_library(
+    name = "policy_compiler",
+    srcs = [
+        "module_compiler.c",
+        "module_compiler.h",
+        "parse_util.c",
+        "parse_util.h",
+        "policy_define.c",
+        "policy_define.h",
+        "queue.c",
+        "queue.h",
+        ":policy_parse_src",
+        ":policy_scan_src",
+    ],
+    hdrs = ["checkpolicy.h"],
+    copts = ["-fno-strict-aliasing"],
+    local_defines = ["_GNU_SOURCE"],
+    visibility = ["//visibility:private"],
+    deps = ["@libsepol"],
+)
+
+cc_binary(
+    name = "checkpolicy",
+    srcs = ["checkpolicy.c"],
+    local_defines = ["_GNU_SOURCE"],
+    deps = [":policy_compiler"],
+)
+
+cc_binary(
+    name = "checkmodule",
+    srcs = ["checkmodule.c"],
+    local_defines = ["_GNU_SOURCE"],
+    deps = [":policy_compiler"],
+)
