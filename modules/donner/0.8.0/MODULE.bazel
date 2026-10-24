@@ -1,0 +1,613 @@
+"""Donner SVG Editor & Engine: an SVG editor application plus a reusable SVG rendering, geometry, and DOM engine.
+
+A C++20 SVG editor plus rendering, geometry, and toolkit libraries providing full SVG DOM
+access with complete rendering support including text, filters, and animation."""
+
+module(
+    name = "donner",
+    version = "0.8.0",
+    compatibility_level = 0,
+)
+
+# Donner build-time feature configuration.
+# Downstream consumers can override these defaults via donner.configure() in their MODULE.bazel.
+donner = use_extension("//config:extensions.bzl", "donner")
+donner.configure()
+use_repo(donner, "donner_config")
+
+local_repository = use_repo_rule("//third_party:bazel/local.bzl", "local_repository")
+
+new_local_repository = use_repo_rule("//third_party:bazel/local.bzl", "new_local_repository")
+
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+# Build dependencies
+bazel_dep(name = "apple_support", version = "2.10.1", repo_name = "build_bazel_apple_support")  # Must be before rules_cc
+bazel_dep(name = "rules_cc", version = "0.2.26")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+##
+## Non-BCR dependencies (dev-only extension)
+##
+# harfbuzz, woff2, wgpu-native, and bazel_clang_tidy all live
+# behind `git_repository`/`new_git_repository` calls that are not permitted in
+# modules published to the Bazel Central Registry. We hide them behind a
+# module extension flagged `dev_dependency = True`, so downstream BCR consumers
+# never see them. When donner is the root module (local dev or CI), the
+# extension runs and fetches everything exactly as before.
+#
+# Every target in donner that references one of these repos MUST be behind a
+# `target_compatible_with` guard on the corresponding config_setting, so that
+# BCR consumers doing `bazel build @donner//...` simply skip those targets
+# rather than failing to resolve the missing repos. See
+# third_party/bazel/non_bcr_deps.bzl for the list.
+non_bcr_deps = use_extension("//third_party:bazel/non_bcr_deps.bzl", "non_bcr_deps", dev_dependency = True)
+use_repo(
+    non_bcr_deps,
+    "bazel_clang_tidy",
+    "clang_format_linux_aarch64",
+    "clang_format_linux_x86_64",
+    "clang_format_macos_arm64",
+    "harfbuzz",
+    "sysroot_linux_aarch64",
+    "sysroot_linux_x86_64",
+    "tracy",
+    "wgpu_native_linux_aarch64",
+    "wgpu_native_linux_x86_64",
+    "woff2",
+)
+
+# Curated embedded Google Fonts (Design 0013 W3). Fetched at build time via
+# pinned-hash http_file repos; dev_dependency so BCR consumers never fetch them
+# (only the editor links the embedded bytes). See third_party/google_fonts.
+google_fonts = use_extension("//third_party/google_fonts:fonts.bzl", "google_fonts", dev_dependency = True)
+use_repo(
+    google_fonts,
+    "gfont_bebas_neue",
+    "gfont_bitter",
+    "gfont_inter",
+    "gfont_jetbrains_mono",
+    "gfont_lato",
+    "gfont_lora",
+    "gfont_montserrat",
+    "gfont_open_sans",
+    "gfont_oswald",
+    "gfont_pacifico",
+    "gfont_playfair_display",
+    "gfont_roboto_mono",
+)
+##
+## Third-party dependencies
+##
+
+# Tiny-skia dependencies
+local_repository(
+    name = "tiny-skia-cpp",
+    path = "third_party/tiny-skia-cpp",
+)
+
+bazel_dep(name = "rules_license", version = "1.0.0")
+
+# Vulkan-Headers for the donner/gpu Vulkan backend. Headers only: the backend
+# compiles everywhere and opens the Vulkan loader at run time instead of linking
+# it, so a build needs no Vulkan library; Linux products and tests execute it.
+bazel_dep(name = "vulkan_headers", version = "1.4.349")
+bazel_dep(name = "freetype", version = "2.13.3.bcr.1")
+bazel_dep(name = "libpng", version = "1.6.58.bcr.1")
+
+# Enable FreeType's PNG support for CBDT color emoji bitmaps, and drop the font drivers and
+# renderers Donner cannot reach: FontManager admits only sfnt, WOFF and WOFF2 data, so the PFR,
+# Type 42, Windows FNT, PCF and BDF drivers never match, and nothing requests SDF rendering.
+single_version_override(
+    module_name = "freetype",
+    patch_strip = 1,
+    patches = [
+        "//third_party/patches:freetype-enable-png-module.patch",
+        "//third_party/patches:freetype-enable-png-build.patch",
+        "//third_party/patches:freetype-trim-unreachable-modules.patch",
+    ],
+    version = "2.13.3.bcr.1",
+)
+
+# entt is vendored as a git subtree under third_party/entt (pinned at upstream
+# tag v3.16.0). Using local_repository keeps entt's own BUILD.bazel, which
+# already exposes an `//:entt` alias to `//src:entt`. When we need to bump
+# entt, use `git subtree pull --prefix=third_party/entt https://github.com/skypjack/entt <tag> --squash`.
+local_repository(
+    name = "entt",
+    path = "third_party/entt",
+)
+
+local_repository(
+    name = "frozen",
+    path = "third_party/frozen",
+)
+
+new_local_repository(
+    name = "stb",
+    build_file = "//third_party:BUILD.stb",
+    path = "third_party/stb",
+)
+
+bazel_dep(name = "zlib", version = "1.3.2")
+single_version_override(
+    module_name = "zlib",
+    patch_strip = 1,
+    patches = ["//third_party/patches:zlib-detect-unistd.patch"],
+    version = "1.3.2",
+)
+
+# brotli is required by @woff2 (see non_bcr_deps.bzl); text-full only.
+bazel_dep(name = "brotli", version = "1.2.0.bcr.3")
+
+##
+## Test dependencies
+##
+# re2 is not used directly, but is selected by googletest and transitive test dependencies.
+bazel_dep(name = "re2", version = "2025-11-05.bcr.1", dev_dependency = True)
+bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True, repo_name = "com_google_gtest")
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.2", dev_dependency = True)
+bazel_dep(name = "google_benchmark", version = "1.9.5", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "pixelmatch-cpp17", version = "2.0.0", dev_dependency = True)
+
+svg_suite_deps = use_extension("//tools/svg_suite:dependencies.bzl", "suite_deps", dev_dependency = True)
+use_repo(svg_suite_deps, "picosha2")
+
+# spirv-val, built from source through Bazel so the SPIR-V validation suite is
+# hermetic. A host-installed validator made the check depend on which lane it
+# landed on, and a lane without it validated nothing.
+bazel_dep(name = "spirv_tools", version = "2026.1", dev_dependency = True)
+
+# `spirv-val` uses std::filesystem, which pulls libc++'s operations.cpp into the
+# link, and that object's unversioned `copy_file_range` does not resolve against
+# the hermetic toolchain's sysroot. The patch links the same shim
+# `donner_cc_binary` already injects into our own binaries for this reason.
+single_version_override(
+    module_name = "spirv_tools",
+    patch_strip = 1,
+    patches = ["//third_party/patches:spirv-tools-spirv-val-libc-compat.patch"],
+    version = "2026.1",
+)
+
+bazel_dep(name = "aspect_rules_js", version = "2.9.3", dev_dependency = True)
+
+# Normalize unreadable npm archive directories before remote output upload.
+single_version_override(
+    module_name = "aspect_rules_js",
+    patch_strip = 1,
+    patches = ["//third_party/patches:rules-js-readable-npm-directories.patch"],
+    version = "2.9.3",
+)
+
+# rules_nodejs registers the Node runtime toolchains that aspect_rules_js and emsdk use. Tests that
+# run Node take it from that toolchain instead of the host. Matches the version emsdk requires.
+bazel_dep(name = "rules_nodejs", version = "6.7.3", dev_dependency = True)
+
+bazel_dep(name = "rules_playwright", version = "0.5.3", dev_dependency = True)
+
+playwright = use_extension(
+    "@rules_playwright//playwright:extensions.bzl",
+    "playwright",
+    dev_dependency = True,
+)
+playwright.repo(
+    name = "playwright",
+    browsers_json = "//donner/editor/wasm/tests:browsers.1.64.0.json",
+    integrity_path_map = {
+        "builds/ffmpeg/1013/ffmpeg-linux-arm64.zip": "sha256-RXNg6AOn2NX49/Xs9WKy0zj2tPf4YznQwxk4pFHoh4s=",
+        "builds/ffmpeg/1013/ffmpeg-linux.zip": "sha256-7phkNNFY90+12cX/EJICbO7bY/Mk/pC1volGCSa3tnk=",
+        "builds/ffmpeg/1013/ffmpeg-mac-arm64.zip": "sha256-Y+SM6NSm2dSWOD5axVeyZGbnGfopEmu71fX3AWrJIpw=",
+        "builds/ffmpeg/1013/ffmpeg-mac.zip": "sha256-/98IqxPe8rY+ge2XguOd68W9SYIg6OE0+aNumE222ds=",
+        "builds/firefox/1555/firefox-debian-12-arm64.zip": "sha256-zITjtDVNnNg5ig+dIoHXi/SpF1B/M2GbLq4Gb59Z8t4=",
+        "builds/firefox/1555/firefox-debian-12.zip": "sha256-6eN+vDIeSBz1Fi+TXK7J9TMrFLMIUsbX9dFPxgysZVo=",
+        "builds/firefox/1555/firefox-mac-arm64.zip": "sha256-cusyKJ82h4l4bRbSUujk/ve2Kuch1X+C09bZIh0/0q8=",
+        "builds/firefox/1555/firefox-mac.zip": "sha256-rixuR31MX1nna+OcoNtsAD6bz5u5s8ThPPVFJ11r44g=",
+        "builds/firefox/1555/firefox-ubuntu-22.04-arm64.zip": "sha256-3YBnRQFHGZlBjlheD+rI1+Vo8fiNUou0RrnldAkan4k=",
+        "builds/firefox/1555/firefox-ubuntu-22.04.zip": "sha256-CjLx+NfkFwVzQ1tCGe/4MX5Vh1BhK2NV8Y6aTLJ+WUs=",
+        "builds/firefox/1555/firefox-ubuntu-24.04-arm64.zip": "sha256-/i4f1JBIhm6bkknRuTlLSYn1j1iaNbGe3LzoqrFQH4w=",
+        "builds/firefox/1555/firefox-ubuntu-24.04.zip": "sha256-Vk90+jxGy4PGJSFFzxVpyVI2yMQE1qWoDMc2zzImXww=",
+        "builds/webkit/2251/webkit-mac-14-arm64.zip": "sha256-J1Tspbq4dzprExVSjn2PNCl3rOeZs6kTFOG+DLMk7kk=",
+        "builds/webkit/2251/webkit-mac-14.zip": "sha256-UM5dcAQnSwGxBt2lzu5nAwE7e9DQOERXzZOlJM7TQgI=",
+        "builds/webkit/2370/webkit-debian-12-arm64.zip": "sha256-qAVS1owNvZCaG9d+PKu2A2AQGO+lBKwSUD40UuoBckU=",
+        "builds/webkit/2370/webkit-debian-12.zip": "sha256-TusMYi4pjqravIIqLIfuNulvssZZXAWY6ZHnYy+3jw8=",
+        "builds/webkit/2370/webkit-mac-15-arm64.zip": "sha256-Kb4r6D4aLUwuqfrSbtV8dwBJkfGR+oZct+YSsJfjRVc=",
+        "builds/webkit/2370/webkit-mac-15.zip": "sha256-K0PIZdssOkCHNv9Kgi8GBXCm4+Ut9+0l0u1bwjG+fkE=",
+        "builds/webkit/2370/webkit-ubuntu-22.04-arm64.zip": "sha256-b+lRfKY8+8DICuxbvaIQKBgqo0KgyRhMLwTEMTWzJaU=",
+        "builds/webkit/2370/webkit-ubuntu-22.04.zip": "sha256-R8Xm3a4DSgotFe+OhSEAiTijWSXUvSBZZtOvMOC9SZ8=",
+        "builds/webkit/2370/webkit-ubuntu-24.04-arm64.zip": "sha256-khy0HayFids3bb31KZHDqbnYUTbbG7zpNY+9g0pknYc=",
+        "builds/webkit/2370/webkit-ubuntu-24.04.zip": "sha256-Y7MaXWjZCNmu4uRFuI7cTB4dHrpIj1vX41Zo+RMVuWg=",
+    },
+)
+
+# rules_playwright 0.5.3 still generates the retired legacy macOS Chromium
+# archive path. Playwright 1.64.0 uses Chrome for Testing for supported macOS
+# releases, so provide that exact pinned archive to the generated repositories.
+http_file(
+    name = "playwright_chromium_mac_arm64",
+    dev_dependency = True,
+    integrity = "sha256-mH0vhJnIfSFnb3gXhVDPy/sbtTeGgh4s/0bFp+mbWL4=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/mac-arm64/chrome-mac-arm64.zip"],
+)
+
+# rules_playwright 0.5.3 also uses retired Chromium paths on Linux.
+# Playwright 1.64.0 fetches these Chrome for Testing archives instead.
+http_file(
+    name = "playwright_chromium_linux_x64",
+    dev_dependency = True,
+    integrity = "sha256-Q/0xdmx1M6At2i3tWtUML4Yc1UAL51CcCrrXESn3nXk=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-linux64.zip"],
+)
+
+http_file(
+    name = "playwright_chromium_headless_linux_x64",
+    dev_dependency = True,
+    integrity = "sha256-w+UFlq71LFj4/aPGs0EcM9NMiLF3s+0cIkM1n9O4uiA=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux64/chrome-headless-shell-linux64.zip"],
+)
+
+http_file(
+    name = "playwright_chromium_mac_x64",
+    dev_dependency = True,
+    integrity = "sha256-TnXaloMCJBhd3dyAASrTcy1qKaT5K6xyjITI6OvWbDQ=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/mac-x64/chrome-mac-x64.zip"],
+)
+
+http_file(
+    name = "playwright_chromium_headless_mac_arm64",
+    dev_dependency = True,
+    integrity = "sha256-lOQze3DLxWOPCTX7xGufJCvHQW9lfj++kkuvNIQEtT0=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/mac-arm64/chrome-headless-shell-mac-arm64.zip"],
+)
+
+http_file(
+    name = "playwright_chromium_headless_mac_x64",
+    dev_dependency = True,
+    integrity = "sha256-ip5KMrpbGnlvixbQGJbjVc9mYlRNl0MpY5T9mZ14IzE=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/mac-x64/chrome-headless-shell-mac-x64.zip"],
+)
+
+http_file(
+    name = "playwright_chromium_linux_arm64",
+    dev_dependency = True,
+    integrity = "sha256-kQoS//YXAgIZX3LvPTU4AccGPTAauAsfUbd9eR/aYM4=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux-arm64/chrome-linux-arm64.zip"],
+)
+
+http_file(
+    name = "playwright_chromium_headless_linux_arm64",
+    dev_dependency = True,
+    integrity = "sha256-gaudTTwwHcX9+2xUG55mMrFvyBmmqFRGD0Cnb+KyxHY=",
+    urls = ["https://cdn.playwright.dev/builds/cft/156.0.8078.4/linux-arm64/chrome-headless-shell-linux-arm64.zip"],
+)
+
+override_repo(
+    playwright,
+    **{
+        "playwright-chromium-mac10.13": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac10.14": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac10.15": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac11": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac11-arm64": "playwright_chromium_mac_arm64",
+        "playwright-chromium-mac12": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac12-arm64": "playwright_chromium_mac_arm64",
+        "playwright-chromium-mac13": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac13-arm64": "playwright_chromium_mac_arm64",
+        "playwright-chromium-mac14": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac14-arm64": "playwright_chromium_mac_arm64",
+        "playwright-chromium-mac15": "playwright_chromium_mac_x64",
+        "playwright-chromium-mac15-arm64": "playwright_chromium_mac_arm64",
+        "playwright-chromium-headless-shell-mac11": "playwright_chromium_headless_mac_x64",
+        "playwright-chromium-headless-shell-mac11-arm64": "playwright_chromium_headless_mac_arm64",
+        "playwright-chromium-headless-shell-mac12": "playwright_chromium_headless_mac_x64",
+        "playwright-chromium-headless-shell-mac12-arm64": "playwright_chromium_headless_mac_arm64",
+        "playwright-chromium-headless-shell-mac13": "playwright_chromium_headless_mac_x64",
+        "playwright-chromium-headless-shell-mac13-arm64": "playwright_chromium_headless_mac_arm64",
+        "playwright-chromium-headless-shell-mac14": "playwright_chromium_headless_mac_x64",
+        "playwright-chromium-headless-shell-mac14-arm64": "playwright_chromium_headless_mac_arm64",
+        "playwright-chromium-headless-shell-mac15": "playwright_chromium_headless_mac_x64",
+        "playwright-chromium-headless-shell-mac15-arm64": "playwright_chromium_headless_mac_arm64",
+        "playwright-chromium-debian11-arm64": "playwright_chromium_linux_arm64",
+        "playwright-chromium-debian11-x64": "playwright_chromium_linux_x64",
+        "playwright-chromium-debian12-arm64": "playwright_chromium_linux_arm64",
+        "playwright-chromium-debian12-x64": "playwright_chromium_linux_x64",
+        "playwright-chromium-ubuntu20.04-arm64": "playwright_chromium_linux_arm64",
+        "playwright-chromium-ubuntu20.04-x64": "playwright_chromium_linux_x64",
+        "playwright-chromium-ubuntu22.04-arm64": "playwright_chromium_linux_arm64",
+        "playwright-chromium-ubuntu22.04-x64": "playwright_chromium_linux_x64",
+        "playwright-chromium-ubuntu24.04-arm64": "playwright_chromium_linux_arm64",
+        "playwright-chromium-ubuntu24.04-x64": "playwright_chromium_linux_x64",
+        "playwright-chromium-headless-shell-debian11-arm64": "playwright_chromium_headless_linux_arm64",
+        "playwright-chromium-headless-shell-debian11-x64": "playwright_chromium_headless_linux_x64",
+        "playwright-chromium-headless-shell-debian12-arm64": "playwright_chromium_headless_linux_arm64",
+        "playwright-chromium-headless-shell-debian12-x64": "playwright_chromium_headless_linux_x64",
+        "playwright-chromium-headless-shell-ubuntu20.04-arm64": "playwright_chromium_headless_linux_arm64",
+        "playwright-chromium-headless-shell-ubuntu20.04-x64": "playwright_chromium_headless_linux_x64",
+        "playwright-chromium-headless-shell-ubuntu22.04-arm64": "playwright_chromium_headless_linux_arm64",
+        "playwright-chromium-headless-shell-ubuntu22.04-x64": "playwright_chromium_headless_linux_x64",
+        "playwright-chromium-headless-shell-ubuntu24.04-arm64": "playwright_chromium_headless_linux_arm64",
+        "playwright-chromium-headless-shell-ubuntu24.04-x64": "playwright_chromium_headless_linux_x64",
+    }
+)
+
+use_repo(playwright, "playwright", "playwright-firefox-mac14-arm64")
+
+npm = use_extension(
+    "@aspect_rules_js//npm:extensions.bzl",
+    "npm",
+    dev_dependency = True,
+)
+npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//donner/editor/wasm/tests:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "npm")
+
+new_local_repository(
+    name = "css-parsing-tests",
+    build_file = "//third_party:BUILD.css-parsing-tests",
+    path = "third_party/css-parsing-tests",
+)
+
+# The wgpu-native prebuilts are fetched via the non_bcr_deps module extension
+# declared above — they are not available when donner is consumed from BCR. The
+# resvg-test-suite goldens are now vendored in-tree under
+# third_party/resvg-test-suite/ so they ship in the source archive.
+
+bazel_dep(name = "rules_python", version = "2.4.2", dev_dependency = True)
+
+# Hermetic Python toolchain. Without this, rules_python's py_binary targets
+# fall back to `/usr/bin/env python3` on the host — which is fine for local
+# development, but a remote-execution sandbox may have no such host
+# interpreter available. Registering `python.toolchain()` makes
+# rules_python ship a prebuilt CPython through the action cache so RE
+# workers execute the same interpreter as local builds.
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.defaults(python_version = "3.12")
+python.toolchain(python_version = "3.12")
+use_repo(python, "python_3_12")
+
+#
+# Toolchain
+#
+
+bazel_dep(name = "toolchains_llvm", version = "1.11.2", dev_dependency = True)
+
+# Declare only the libc++ headers, not all of the LLVM distribution's include/, as compile inputs.
+# Only Bazel releases before 9 read the patched filegroup. No version is set here, so the patch
+# applies to whichever release the bazel_dep above resolves to.
+single_version_override(
+    module_name = "toolchains_llvm",
+    patch_strip = 1,
+    patches = ["//third_party/patches:toolchains_llvm-libcxx-compile-headers.patch"],
+)
+
+# To use a local copy of the toolchains_llvm repository, comment out the single_version_override
+# above (a module takes only one override, and the local copy does not get the patch), then
+# uncomment the following.
+# local_path_override(
+#     module_name = "toolchains_llvm",
+#     path = "../toolchains_llvm",
+# )
+
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+
+# Default host-detected toolchain for local builds. Keep the repo names stable
+# for existing labels such as `@llvm_toolchain_llvm`.
+llvm.toolchain(
+    name = "llvm_toolchain",
+    llvm_version = "21.1.6",
+)
+
+# Remote execution needs exec-platform-specific LLVM downloads. Otherwise a
+# macOS client can upload a Mach-O clang to a Linux worker.
+llvm.toolchain(
+    name = "llvm_toolchain_linux_aarch64",
+    exec_arch = "aarch64",
+    exec_os = "linux",
+    llvm_version = "21.1.6",
+)
+
+# Keep the Linux x86_64 variant ready for future workers and local parity.
+llvm.toolchain(
+    name = "llvm_toolchain_linux_x86_64",
+    exec_arch = "x86_64",
+    exec_os = "linux",
+    llvm_version = "21.1.6",
+)
+
+# Hermetic Linux sysroots for each toolchain above, which keep the toolchain
+# self-contained on remote-execution workers without system glibc headers.
+# Compiles and links take only the sysroot files they read; see
+# third_party/bazel/non_bcr_deps.bzl. The tags are spelled out with literal
+# names because tools/bcr_dependency_closure.py reads them statically.
+llvm.sysroot(
+    name = "llvm_toolchain",
+    label = "@sysroot_linux_aarch64//:sysroot",
+    targets = ["linux-aarch64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain",
+    label = "@sysroot_linux_x86_64//:sysroot",
+    targets = ["linux-x86_64"],
+)
+llvm.extra_compiler_files(
+    name = "llvm_toolchain",
+    label = "@sysroot_linux_aarch64//:compiler_files",
+    targets = ["linux-aarch64"],
+)
+llvm.extra_compiler_files(
+    name = "llvm_toolchain",
+    label = "@sysroot_linux_x86_64//:compiler_files",
+    targets = ["linux-x86_64"],
+)
+llvm.extra_linker_files(
+    name = "llvm_toolchain",
+    label = "@sysroot_linux_aarch64//:linker_files",
+    targets = ["linux-aarch64"],
+)
+llvm.extra_linker_files(
+    name = "llvm_toolchain",
+    label = "@sysroot_linux_x86_64//:linker_files",
+    targets = ["linux-x86_64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain_linux_aarch64",
+    label = "@sysroot_linux_aarch64//:sysroot",
+    targets = ["linux-aarch64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain_linux_aarch64",
+    label = "@sysroot_linux_x86_64//:sysroot",
+    targets = ["linux-x86_64"],
+)
+llvm.extra_compiler_files(
+    name = "llvm_toolchain_linux_aarch64",
+    label = "@sysroot_linux_aarch64//:compiler_files",
+    targets = ["linux-aarch64"],
+)
+llvm.extra_compiler_files(
+    name = "llvm_toolchain_linux_aarch64",
+    label = "@sysroot_linux_x86_64//:compiler_files",
+    targets = ["linux-x86_64"],
+)
+llvm.extra_linker_files(
+    name = "llvm_toolchain_linux_aarch64",
+    label = "@sysroot_linux_aarch64//:linker_files",
+    targets = ["linux-aarch64"],
+)
+llvm.extra_linker_files(
+    name = "llvm_toolchain_linux_aarch64",
+    label = "@sysroot_linux_x86_64//:linker_files",
+    targets = ["linux-x86_64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain_linux_x86_64",
+    label = "@sysroot_linux_aarch64//:sysroot",
+    targets = ["linux-aarch64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain_linux_x86_64",
+    label = "@sysroot_linux_x86_64//:sysroot",
+    targets = ["linux-x86_64"],
+)
+llvm.extra_compiler_files(
+    name = "llvm_toolchain_linux_x86_64",
+    label = "@sysroot_linux_aarch64//:compiler_files",
+    targets = ["linux-aarch64"],
+)
+llvm.extra_compiler_files(
+    name = "llvm_toolchain_linux_x86_64",
+    label = "@sysroot_linux_x86_64//:compiler_files",
+    targets = ["linux-x86_64"],
+)
+llvm.extra_linker_files(
+    name = "llvm_toolchain_linux_x86_64",
+    label = "@sysroot_linux_aarch64//:linker_files",
+    targets = ["linux-aarch64"],
+)
+llvm.extra_linker_files(
+    name = "llvm_toolchain_linux_x86_64",
+    label = "@sysroot_linux_x86_64//:linker_files",
+    targets = ["linux-x86_64"],
+)
+
+# Do not register a macOS LLVM exec variant. //donner/editor needs ObjC for
+# glfw's Cocoa backend, so macOS exec uses apple_support's Xcode toolchain.
+
+use_repo(
+    llvm,
+    "llvm_toolchain",
+    "llvm_toolchain_linux_aarch64",
+    "llvm_toolchain_linux_x86_64",
+    "llvm_toolchain_llvm",
+)
+
+# NOTE: To use any of these toolchains specify --config=latest_llvm (which
+# registers them via --extra_toolchains in .bazelrc). No platform enables it by
+# default: builds use the host Clang unless that config is passed, and macOS
+# always keeps the Xcode toolchain.
+# register_toolchains("@llvm_toolchain//:all", dev_dependency = True)
+
+bazel_dep(name = "zstd", version = "1.5.7.bcr.3", dev_dependency = True)
+
+#
+# Devtools
+#
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+git_override(
+    module_name = "hedron_compile_commands",
+    commit = "abb61a688167623088f8768cc9264798df6a9d10",
+    remote = "https://github.com/hedronvision/bazel-compile-commands-extractor",
+)
+
+bazel_dep(name = "rules_proto", version = "7.1.0", dev_dependency = True)
+bazel_dep(name = "protobuf", version = "30.2", dev_dependency = True)
+single_version_override(
+    module_name = "protobuf",
+    version = "30.2",
+)
+
+bazel_dep(name = "bloaty", version = "0.0.0", dev_dependency = True)
+git_override(
+    module_name = "bloaty",
+    commit = "a655c418811ef5097e37a562ce62f925bda72d88",
+    remote = "https://github.com/jwmcglynn/bloaty",
+)
+
+#
+# WebAssembly (Emscripten SDK)
+#
+
+bazel_dep(name = "emsdk", version = "5.0.5", dev_dependency = True)
+
+# Keep Python runnable remotely and declare Closure's execution-platform Java runtime.
+single_version_override(
+    module_name = "emsdk",
+    patch_strip = 1,
+    patches = [
+        "//third_party/patches:emsdk_env_sh_dyld_library_path.patch",
+        "//third_party/patches:emsdk_declared_java_runtime.patch",
+    ],
+    version = "5.0.5",
+)
+
+#
+# SVG Viewer
+#
+
+bazel_dep(name = "imgui", version = "0.0.0", dev_dependency = True)
+git_override(
+    module_name = "imgui",
+    commit = "ee1deccc08c14ab1e6abcfa6aae11d915763cdb7",
+    patch_strip = 1,
+    patches = [
+        "//third_party/patches:imgui_bazel_build_files.patch",
+        "//third_party/patches:imgui-explicit-raw-memory.patch",
+        # Match DragScalar's resting label to its left-aligned temporary text editor.
+        "//third_party/patches:imgui-left-align-drag-values.patch",
+    ],
+    remote = "https://github.com/ocornut/imgui",
+)
+
+bazel_dep(name = "glfw", version = "0.0.0", dev_dependency = True)
+git_override(
+    module_name = "glfw",
+    commit = "92dcf4ce74f2e2554a98fea09be7c705c17daa5a",
+    patch_strip = 1,
+    patches = [
+        "//third_party/patches:glfw_bazel_build_files.patch",
+    ],
+    remote = "https://github.com/glfw/glfw",
+)
