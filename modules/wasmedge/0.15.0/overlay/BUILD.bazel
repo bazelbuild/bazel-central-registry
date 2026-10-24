@@ -1,0 +1,147 @@
+load("@aspect_bazel_lib//lib:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+REPO_ROOT = package_relative_label(":BUILD").workspace_root
+INCLUDE_PREFIX = REPO_ROOT if REPO_ROOT else "."
+
+cc_library(
+    name = "wasi",
+    hdrs = ["thirdparty/wasi/api.hpp"],
+    strip_include_prefix = "thirdparty/",
+)
+
+expand_template(
+    name = "generate_common_config",
+    out = "include/common/config.h",
+    substitutions = {
+        "#cmakedefine CMAKE_INSTALL_FULL_LOCALSTATEDIR": "#define CMAKE_INSTALL_FULL_LOCALSTATEDIR",
+        "#cmakedefine HAVE_MMAP @HAVE_MMAP@": "#define HAVE_MMAP 1",
+        "#cmakedefine HAVE_PWD_H @HAVE_PWD_H@": "#define HAVE_PWD_H 1",
+        "@CMAKE_INSTALL_FULL_LOCALSTATEDIR@": "i/hope/this/isnt/used",
+    },
+    template = "include/common/config.h.in",
+)
+
+expand_template(
+    name = "generate_common_version",
+    out = "include/common/version.h",
+    substitutions = {
+        "#cmakedefine CMAKE_INSTALL_FULL_LIBDIR": "#define CMAKE_INSTALL_FULL_LIBDIR",
+        "#cmakedefine CPACK_PACKAGE_VERSION": "#define CPACK_PACKAGE_VERSION",
+        "${WASMEDGE_API_VERSION}": "4",
+        "@CMAKE_INSTALL_FULL_LIBDIR@": "i/hope/this/isnt/used",
+        "@CPACK_PACKAGE_VERSION@": "0.15.0",
+    },
+    template = "include/common/version.h.in",
+)
+
+cc_library(
+    name = "wasmedge",
+    hdrs = glob(["include/api/wasmedge/*.h"]),
+    strip_include_prefix = "include/api/",
+    visibility = ["//visibility:public"],
+    deps = [":wasmedge_lib"],
+)
+
+cc_library(
+    name = "wasmedge_lib",
+    srcs = glob(
+        include = [
+            "lib/**/*.cpp",
+            "lib/**/*.h",
+        ],
+        exclude = [
+            "lib/driver/wasiNNRPCServerTool.cpp",
+            "lib/llvm/**/*.cpp",
+        ],
+    ),
+    hdrs = glob([
+        "include/**/*.h",
+        "include/**/*.hpp",
+        "include/**/*.ipp",
+        "include/**/*.inc",
+    ]) + [
+        ":copy_enum_configure_h",
+        ":copy_enum_errcode_h",
+        ":copy_enum_inc",
+        ":copy_enum_types_h",
+        ":generate_common_config",
+        ":generate_common_version",
+        ":generate_wasmedge_version",
+    ],
+    copts = [
+        "-I{}".format(INCLUDE_PREFIX),
+        "-I{}/lib/host/wasi/".format(INCLUDE_PREFIX),
+        "-I{}/include/api/".format(INCLUDE_PREFIX),
+        "-pthread",
+        "-std=c++17",
+    ],
+    features = [
+        "-layering_check",
+        "-parse_headers",
+    ],
+    linkopts = [
+        "-ldl",
+        "-lrt",
+        "-pthread",
+    ],
+    strip_include_prefix = "include/",
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [
+        ":wasi",
+        "@blake3",
+        "@fmt",
+        "@spdlog",
+    ],
+)
+
+[
+    copy_file(
+        name = "copy_{}".format(f.replace("/", "_").replace(".", "_")),
+        allow_symlink = True,
+        src = "include/common/{}".format(f),
+        out = "include/wasmedge/{}".format(f),
+    )
+    for f in [
+        "enum.inc",
+        "enum_configure.h",
+        "enum_errcode.h",
+        "enum_types.h",
+    ]
+]
+
+expand_template(
+    name = "generate_wasmedge_version",
+    out = "include/wasmedge/version.h",
+    substitutions = {
+        "${CPACK_PACKAGE_VERSION}": "0.15.0",
+        "${WASMEDGE_API_VERSION}": "4",
+        "${WASMEDGE_VERSION_MAJOR}": "0",
+        "${WASMEDGE_VERSION_MINOR}": "15",
+        "${WASMEDGE_VERSION_PATCH}": "0",
+    },
+    template = "include/api/wasmedge/version.h.in",
+)
