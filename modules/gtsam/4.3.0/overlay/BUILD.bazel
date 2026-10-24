@@ -1,0 +1,378 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@cmake_configure_file//:cmake_configure_file.bzl", "cmake_configure_file")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+# Whether to expose the APIs that GTSAM deprecated in 4.3. Defaults to on, matching upstream's
+# GTSAM_ALLOW_DEPRECATED_SINCE_V43 CMake option. To disable it, add the following to your .bazelrc:
+#     common --@gtsam//:allow_deprecated_since_v43=False
+bool_flag(
+    name = "allow_deprecated_since_v43",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "deprecated_since_v43",
+    flag_values = {":allow_deprecated_since_v43": "True"},
+)
+
+# Whether to build the parts of GTSAM that depend on Boost. Defaults to on, matching upstream's
+# GTSAM_USE_BOOST_FEATURES and GTSAM_ENABLE_BOOST_SERIALIZATION CMake options, which this flag
+# controls together. To build without Boost, add the following to your .bazelrc:
+#     common --@gtsam//:use_boost=False
+bool_flag(
+    name = "use_boost",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "boost_enabled",
+    flag_values = {":use_boost": "True"},
+)
+
+# Auto-generate header files
+
+cmake_configure_file(
+    name = "gtsam_config",
+    src = "gtsam/config.h.in",
+    out = "gtsam/config.h",
+    defines = [
+        "GTSAM_ALLOCATOR_STL",
+        "GTSAM_DT_MERGING",
+        "GTSAM_POSE3_EXPMAP",
+        "GTSAM_ROT3_EXPMAP",
+        "GTSAM_SLOW_BUT_CORRECT_BETWEENFACTOR",
+        "GTSAM_SLOW_BUT_CORRECT_EXPMAP",
+        "GTSAM_SOURCE_DIR=.",
+        "GTSAM_TANGENT_PREINTEGRATION",
+        "GTSAM_THROW_CHEIRALITY_EXCEPTION",
+        "GTSAM_TOOLBOX_INSTALL_PATH=.",
+        "GTSAM_VERSION_MAJOR=4",
+        "GTSAM_VERSION_MINOR=3",
+        "GTSAM_VERSION_NUMERIC=40300",
+        "GTSAM_VERSION_PATCH=0",
+        "GTSAM_VERSION_STRING=4.3.0",
+        "QNX_TARGET_DATASET_DIR=.",
+    ] + select({
+        ":deprecated_since_v43": ["GTSAM_ALLOW_DEPRECATED_SINCE_V43"],
+        "//conditions:default": [],
+    }) + select({
+        ":boost_enabled": [
+            "GTSAM_ENABLE_BOOST_SERIALIZATION=1",
+            "GTSAM_USE_BOOST_FEATURES=1",
+        ],
+        "//conditions:default": [],
+    }),
+    undefines = [
+        "EIGEN_USE_MKL_ALL",
+        "GTSAM_ALLOCATOR_BOOSTPOOL",
+        "GTSAM_ALLOCATOR_TBB",
+        "GTSAM_EIGEN_VERSION_MAJOR",
+        "GTSAM_EIGEN_VERSION_MINOR",
+        "GTSAM_EIGEN_VERSION_WORLD",
+        "GTSAM_HYBRID_TIMING",
+        "GTSAM_LIEGROUP_PREINTEGRATION",
+        "GTSAM_NAVSTATE_EXPMAP",
+        "GTSAM_SUPPORT_NESTED_DISSECTION",
+        "GTSAM_TBB_BOUNDED_MEMORY_GROWTH_FLAG",
+        "GTSAM_USE_EIGEN_MKL",
+        "GTSAM_USE_EIGEN_MKL_OPENMP",
+        "GTSAM_USE_MOSEK",
+        "GTSAM_USE_QUATERNIONS",
+        "GTSAM_USE_SYSTEM_EIGEN",
+        "GTSAM_USE_SYSTEM_METIS",
+        "GTSAM_USE_TBB",
+        "TBB_GREATER_EQUAL_2020",
+    ] + select({
+        ":boost_enabled": [],
+        "//conditions:default": [
+            "GTSAM_ENABLE_BOOST_SERIALIZATION",
+            "GTSAM_USE_BOOST_FEATURES",
+        ],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cmake_configure_file(
+    name = "gtsam_dllexport",
+    src = "cmake/dllexport.h.in",
+    out = "gtsam/dllexport.h",
+    defines = [
+        "GTSAM_SHARED_LIB",
+        "library_name=GTSAM",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+cmake_configure_file(
+    name = "gtsam_unstable_dllexport",
+    src = "cmake/dllexport.h.in",
+    out = "gtsam_unstable/dllexport.h",
+    defines = [
+        "GTSAM_SHARED_LIB",
+        "library_name=GTSAM_UNSTABLE",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+# Shared libraries
+
+cc_library(
+    name = "cpp_unit_lite",
+    srcs = glob(["CppUnitLite/*.cpp"]),
+    hdrs = glob(["CppUnitLite/*.h"]),
+    include_prefix = "CppUnitLite",
+    includes = ["CppUnitLite"],
+    strip_include_prefix = "CppUnitLite",
+    visibility = ["//visibility:public"],
+)
+
+# Export data files for use by call sites
+
+filegroup(
+    name = "data",
+    srcs = glob(["examples/Data/**"]),
+    visibility = ["//visibility:public"],
+)
+
+# GTSAM stable modules
+
+GTSAM_TEST_FILES = [
+    "gtsam/**/tests/**",
+    # CUDA backends are only built upstream with GTSAM_ENABLE_CUDA.
+    "gtsam/**/cuda/**",
+    "gtsam/base/chartTesting.*",
+    "gtsam/precompiled_header.*",
+]
+
+GTSAM_THIRDPARTY_FILES = [
+    "gtsam/3rdparty/Eigen/**",
+    "gtsam/3rdparty/metis/**",
+    "gtsam/3rdparty/SuiteSparse_config/**",
+    "gtsam/3rdparty/CCOLAMD/Demo/**",
+    "gtsam/3rdparty/CCOLAMD/MATLAB/**",
+]
+
+# Headers upstream leaves out when GTSAM_USE_BOOST_FEATURES is off.
+GTSAM_BOOST_ONLY_HEADER_FILES = [
+    "gtsam/inference/graph.h",
+    "gtsam/inference/graph-inl.h",
+]
+
+GTSAM_HEADER_FILES = glob(
+    ["gtsam/**/*.h"],
+    exclude = GTSAM_TEST_FILES + GTSAM_THIRDPARTY_FILES + GTSAM_BOOST_ONLY_HEADER_FILES,
+) + select({
+    ":boost_enabled": GTSAM_BOOST_ONLY_HEADER_FILES,
+    "//conditions:default": [],
+})
+
+# CCOLAMD and SuiteSparse_config are compiled through the symbol-renaming wrappers
+# in gtsam/inference/internal/*_vendor.c, which #include these sources directly.
+SUITESPARSE_VENDORED_SOURCES = [
+    "gtsam/3rdparty/CCOLAMD/Source/ccolamd.c",
+    "gtsam/3rdparty/SuiteSparse_config/SuiteSparse_config.c",
+]
+
+GTSAM_SOURCE_FILES = glob(
+    [
+        "gtsam/**/*.cpp",
+        "gtsam/**/*.c",
+    ],
+    exclude = GTSAM_TEST_FILES + GTSAM_THIRDPARTY_FILES + SUITESPARSE_VENDORED_SOURCES,
+)
+
+GTSAM_INTERFACE_FILES = glob(
+    ["gtsam/**/*.i"],
+    exclude = GTSAM_TEST_FILES + GTSAM_THIRDPARTY_FILES,
+)
+
+cc_library(
+    name = "gtsam_header",
+    hdrs = GTSAM_HEADER_FILES + [
+        ":gtsam_config",
+        ":gtsam_dllexport",
+    ],
+    include_prefix = "gtsam",
+    includes = [
+        "gtsam/3rdparty/CCOLAMD/Include",
+        "gtsam/3rdparty",
+        "gtsam/3rdparty/cephes",
+    ],
+    strip_include_prefix = "gtsam",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "gtsam",
+    srcs = GTSAM_SOURCE_FILES,
+    hdrs = ["gtsam/3rdparty/SuiteSparse_config/SuiteSparse_config.h"],
+    textual_hdrs = SUITESPARSE_VENDORED_SOURCES,
+    copts = ["-I."],
+    strip_include_prefix = "gtsam/3rdparty/SuiteSparse_config",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":gtsam_header",
+        "@eigen",
+        "@geographiclib",
+    ] + select({
+        ":boost_enabled": [
+            "@boost.concept_check",
+            "@boost.config",
+            "@boost.filesystem",
+            "@boost.graph",
+            "@boost.move",
+            "@boost.serialization",
+            "@boost.timer",
+            "@boost.type_traits",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+# GTSAM unstable modules
+
+GTSAM_UNSTABLE_TEST_FILES = [
+    "gtsam_unstable/**/tests/**",
+    "gtsam_unstable/**/examples/**",
+]
+
+GTSAM_UNSTABLE_EXCLUDES = [
+    "gtsam_unstable/slam/serialization.*",
+    "gtsam_unstable/testing_tools/**",
+    "gtsam_unstable/timing/**",
+]
+
+# Files upstream leaves out when GTSAM_USE_BOOST_FEATURES is off.
+GTSAM_UNSTABLE_BOOST_ONLY_SOURCE_FILES = [
+    "gtsam_unstable/discrete/Scheduler.cpp",
+]
+
+GTSAM_UNSTABLE_BOOST_ONLY_HEADER_FILES = [
+    "gtsam_unstable/discrete/Scheduler.h",
+    "gtsam_unstable/partition/FindSeparator.h",
+    "gtsam_unstable/partition/FindSeparator-inl.h",
+]
+
+GTSAM_UNSTABLE_SOURCE_FILES = glob(
+    ["gtsam_unstable/**/*.cpp"],
+    exclude = GTSAM_UNSTABLE_TEST_FILES + GTSAM_UNSTABLE_EXCLUDES +
+              GTSAM_UNSTABLE_BOOST_ONLY_SOURCE_FILES,
+) + select({
+    ":boost_enabled": GTSAM_UNSTABLE_BOOST_ONLY_SOURCE_FILES,
+    "//conditions:default": [],
+})
+
+GTSAM_UNSTABLE_HEADER_FILES = glob(
+    ["gtsam_unstable/**/*.h"],
+    exclude = GTSAM_UNSTABLE_TEST_FILES + GTSAM_UNSTABLE_EXCLUDES +
+              GTSAM_UNSTABLE_BOOST_ONLY_HEADER_FILES,
+) + select({
+    ":boost_enabled": GTSAM_UNSTABLE_BOOST_ONLY_HEADER_FILES,
+    "//conditions:default": [],
+})
+
+cc_library(
+    name = "gtsam_unstable_header",
+    hdrs = GTSAM_UNSTABLE_HEADER_FILES + [
+        ":gtsam_unstable_dllexport",
+    ],
+    include_prefix = "gtsam_unstable",
+    strip_include_prefix = "gtsam_unstable",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "gtsam_unstable",
+    srcs = GTSAM_UNSTABLE_SOURCE_FILES,
+    copts = ["-I."],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cpp_unit_lite",
+        ":gtsam",
+        ":gtsam_unstable_header",
+        "@eigen",
+    ] + select({
+        ":boost_enabled": [
+            "@boost.filesystem",
+            "@boost.fusion",
+            "@boost.lambda",
+            "@boost.phoenix",
+            "@boost.serialization",
+            "@boost.smart_ptr",
+            "@boost.spirit",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+TESTS = [
+    "testDoglegOptimizer",
+    "testExpressionFactor",
+    "testExtendedKalmanFilter",
+    "testGaussianBayesTreeB",
+    "testGaussianFactorGraphB",
+    "testGaussianISAM",
+    "testGaussianISAM2",
+    "testGaussianJunctionTreeB",
+    # "testGeneralSFMFactorB",
+    # "testGncOptimizer",
+    "testGraph",
+    # "testImuPreintegration",
+    "testIterative",
+    "testManifold",
+    "testMarginals",
+    "testNonlinearFactor",
+    "testNonlinearFactorGraph",
+    "testNonlinearISAM",
+    "testNonlinearOptimizer",
+    "testPCGSolver",
+    "testPreconditioner",
+    "testRobust",
+    "testRot3Optimization",
+    # "testSerializationSlam",
+    "testSimulated2D",
+    "testSimulated2DOriented",
+    "testSimulated3D",
+    "testSubgraphPreconditioner",
+    "testSubgraphSolver",
+    # "testTranslationRecovery",
+    "testVisualISAM2",
+]
+
+cc_library(
+    name = "gtsam_test_header",
+    hdrs = glob(["tests/*.h"]),
+    include_prefix = "tests",
+    strip_include_prefix = "tests",
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "gtsam_example_header",
+    hdrs = glob(["examples/*.h"]),
+    include_prefix = "examples",
+    strip_include_prefix = "examples",
+    visibility = ["//visibility:private"],
+)
+
+[
+    cc_test(
+        name = test,
+        size = "small",
+        srcs = ["tests/{}.cpp".format(test)],
+        copts = ["-I."],
+        data = [":data"],
+        # Upstream skips testGraph when GTSAM_USE_BOOST_FEATURES is off.
+        target_compatible_with = select({
+            ":boost_enabled": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }) if test == "testGraph" else [],
+        deps = [
+            ":cpp_unit_lite",
+            ":gtsam",
+            ":gtsam_example_header",
+            ":gtsam_test_header",
+        ],
+    )
+    for test in TESTS
+]
