@@ -1,0 +1,235 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load(":autoconf.bzl", "GNU_SRCS", "NO_WARNINGS", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# The program's headers, which autoconf.bzl globs inside its macro and the
+# replacement below reads too.
+SRC_HDRS = glob(
+    ["src/**/*.h"],
+    allow_empty = True,
+)
+
+# GNU make's configure does not target MSVC: upstream builds make there with build_w32.bat around
+# the shipped src/config.h.W32 (MSVC has no <unistd.h>, <dirent.h> or mode_t for the gnulib
+# library's sources).  The generated rules are configure's build, which holds on POSIX hosts and on
+# MinGW; the rules below keep the registry's MSVC build of make as the hand-written overlay had it:
+# config.h.W32 as the config header on Windows (a patch in source.json widens its MinGW-only
+# HAVE_UMASK guard to MSVC), upstream's own glob, fnmatch and getloadavg compiled into make in place
+# of the gnulib library, the lib/*.in.h templates used as the headers they are, and the w32
+# backend's system libraries.
+
+autoconf_hdr(
+    name = "config_posix",
+    out = "src/config_posix.h",
+    template = "src/config.h.in",
+    deps = [":autoconf"],
+)
+
+# `#include "config.h"` wants a file at src/config.h: configure's on POSIX hosts and MinGW,
+# upstream's hand-maintained one on MSVC.
+copy_file(
+    name = "config",
+    src = select({
+        "@rules_cc//cc/compiler:clang-cl": "src/config.h.W32",
+        "@rules_cc//cc/compiler:msvc-cl": "src/config.h.W32",
+        "//conditions:default": ":config_posix",
+    }),
+    out = "src/config.h",
+    visibility = ["//visibility:public"],
+)
+
+# MSVC has no <glob.h> / <fnmatch.h>: the gnulib templates under lib/ are usable as they are (no
+# @VAR@ in them), at the paths the sources include.
+[
+    copy_file(
+        name = "w32lib_{}_h".format(stem),
+        src = "lib/{}.in.h".format(stem),
+        out = "w32lib/{}.h".format(stem),
+    )
+    for stem in [
+        "fnmatch",
+        "glob",
+    ]
+]
+
+MAKE_SRCS = [
+    "src/ar.c",
+    "src/arscan.c",
+    "src/commands.c",
+    "src/default.c",
+    "src/dir.c",
+    "src/expand.c",
+    "src/file.c",
+    "src/function.c",
+    "src/getopt.c",
+    "src/getopt1.c",
+    "src/guile.c",
+    "src/hash.c",
+    "src/implicit.c",
+    "src/job.c",
+    "src/load.c",
+    "src/loadapi.c",
+    "src/main.c",
+    "src/misc.c",
+    "src/output.c",
+    "src/read.c",
+    "src/remake.c",
+    "src/remote-stub.c",
+    "src/rule.c",
+    "src/shuffle.c",
+    "src/signame.c",
+    "src/strcache.c",
+    "src/variable.c",
+    "src/version.c",
+    "src/vpath.c",
+]
+
+# The Windows backend (`if WINDOWSENV` in Makefile.am), on MinGW and MSVC alike.
+W32_SRCS = [
+    "src/w32/compat/dirent.c",
+    "src/w32/compat/posixfcn.c",
+    "src/w32/pathstuff.c",
+    "src/w32/subproc/misc.c",
+    "src/w32/subproc/sub_proc.c",
+    "src/w32/subproc/w32err.c",
+    "src/w32/w32os.c",
+]
+
+# What the gnulib library provides elsewhere, compiled into make on MSVC: glob and fnmatch (no
+# system ones), getloadavg's portable fallback.
+MSVC_LIB_SRCS = [
+    "lib/fnmatch.c",
+    "lib/getloadavg.c",
+    "lib/glob.c",
+    "lib/intprops.h",
+    "lib/intprops-internal.h",
+    ":w32lib_fnmatch_h",
+    ":w32lib_glob_h",
+]
+
+# The gnulib library of lib/gnulib.mk, as the generated file declares it except on MSVC, where it
+# is empty: its sources need <unistd.h>, <dirent.h> and mode_t, and config.h.W32 has none of the
+# _GL_ATTRIBUTE_* macros configure writes into config.h.  make does not link it there (it compiles
+# MSVC_LIB_SRCS instead), but `@make//...` builds it, so it has to compile.
+cc_library(
+    name = "lib/gnu",
+    srcs = select({
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": GNU_SRCS + [":lib/gnu_gnulib_conditional_srcs"],
+    }),
+    copts = NO_WARNINGS,
+    implementation_deps = [":lib/gnu_private_headers"],
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//:__subpackages__"],
+    deps = select({
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [":lib/gnu_gnulib_conditional_srcs"],
+    }),
+)
+
+# configure's `AC_SEARCH_LIBS([dlopen], [dl])` puts -ldl in LIBS where dlopen lives outside libc
+# (glibc before 2.34).  The generated :autoconf runs that search, but its answer reaches no link
+# line: the converter carries only the substituted $(X_LIBS) variables into :linkopts (reported as
+# rules_cc_autoconf tools/convert/bugs/2026-10-24-search-libs-system-library.md).  Until it does,
+# the same search with a substitution feeds make's link.
+autoconf(
+    name = "dlopen_search",
+    checks = [
+        checks.AC_SEARCH_LIBS(
+            "dlopen",
+            ["dl"],
+            name = "make_cv_search_dlopen",
+            subst = "DLOPEN_LIBS",
+        ),
+    ],
+)
+
+autoconf_linkopts(
+    name = "dlopen_linkopts",
+    vars = ["DLOPEN_LIBS"],
+    deps = [":dlopen_search"],
+)
+
+# user32 for wsprintf (w32err.c), advapi32 for InitializeSecurityDescriptor (subproc/sub_proc.c);
+# kernel32 is default-linked.  The flag dialect follows the linker driver.
+W32_LINKOPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/DEFAULTLIB:advapi32.lib",
+        "/DEFAULTLIB:user32.lib",
+    ],
+    "@rules_cc//cc/compiler:mingw-gcc": [
+        "-ladvapi32",
+        "-luser32",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/DEFAULTLIB:advapi32.lib",
+        "/DEFAULTLIB:user32.lib",
+    ],
+    "//conditions:default": [],
+})
+
+cc_binary(
+    name = "make",
+    srcs = MAKE_SRCS + SRC_HDRS + select({
+        "@platforms//os:windows": W32_SRCS,
+        "//conditions:default": ["src/posixos.c"],
+    }) + select({
+        "@rules_cc//cc/compiler:clang-cl": MSVC_LIB_SRCS,
+        "@rules_cc//cc/compiler:msvc-cl": MSVC_LIB_SRCS,
+        "//conditions:default": [],
+    }),
+    copts = NO_WARNINGS,
+    includes = select({
+        "@platforms//os:windows": ["src/w32/include"],
+        "//conditions:default": [],
+    }) + select({
+        "@rules_cc//cc/compiler:clang-cl": [
+            "lib",
+            "w32lib",
+        ],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "lib",
+            "w32lib",
+        ],
+        "//conditions:default": [],
+    }),
+    linkopts = W32_LINKOPTS,
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        # config.h.W32 carries its own directory defaults.
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [
+            "LIBDIR=\\\"/usr/local/lib\\\"",
+            "LOCALEDIR=\\\"/usr/local/share/locale\\\"",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config_headers",
+        ":exported_headers",
+        ":linkopts",
+    ] + select({
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [
+            ":lib/gnu",
+            ":lib/gnu_private_headers",
+        ],
+    }) + select({
+        ":load_enabled": [":dlopen_linkopts"],
+        "//conditions:default": [],
+    }),
+)
