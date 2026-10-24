@@ -1,0 +1,146 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":autoconf.bzl", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# liby.a (lib/local.mk): yacc's main() and yyerror() for `-ly` consumers. The
+# converter emits one library per gnulib.mk; this one is the other.
+cc_library(
+    name = "lib/y",
+    srcs = [
+        "lib/main.c",
+        "lib/yyerror.c",
+    ],
+    copts = ["-w"],
+    implementation_deps = [":lib/bison_private_headers"],
+    local_defines = ["HAVE_CONFIG_H"],
+    visibility = ["//visibility:public"],
+)
+
+# Upstream's archive and program names, as earlier versions of this module
+# spelled them.
+alias(
+    name = "liby",
+    actual = ":lib/y",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libbison",
+    actual = ":lib/bison",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "yacc",
+    actual = ":src/bison",
+    visibility = ["//visibility:public"],
+)
+
+# The skeletons and m4sugar library (data/) bison reads at run time.
+filegroup(
+    name = "bison_pkgdata",
+    srcs = glob(["data/**/*"]),
+    visibility = ["//visibility:public"],
+)
+
+# What the binary carries as runfiles and bison.bzl passes as BISON_PKGDATADIR;
+# override globally with --@bison//:bison_pkgdatadir=<label>.
+label_flag(
+    name = "bison_pkgdatadir",
+    build_setting_default = ":bison_pkgdata",
+    visibility = ["//visibility:public"],
+)
+
+# The m4 bison runs; override globally with --@bison//:m4=<label>.
+label_flag(
+    name = "m4",
+    build_setting_default = "@m4//:m4",
+    visibility = ["//visibility:public"],
+)
+
+# Finds data/ and m4 through the runfiles library (the bison_runfiles*.patch
+# hooks in src/files.c and src/main.c call into it), so the binary works from a
+# genrule, a rules_bison toolchain or `bazel run` on every platform, Windows's
+# manifest-only runfiles included.
+cc_library(
+    name = "bison_bazel_runfiles",
+    srcs = ["src/bazel_runfiles.cc"],
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+# Replaces the generated target: the same sources, plus the runfiles glue and
+# the data and m4 the binary needs at run time.
+cc_binary(
+    name = "src/bison",
+    srcs = [
+        "lib/configmake.h",
+        "src/AnnotationList.c",
+        "src/InadequacyList.c",
+        "src/Sbitset.c",
+        "src/assoc.c",
+        "src/closure.c",
+        "src/complain.c",
+        "src/conflicts.c",
+        "src/counterexample.c",
+        "src/derivation.c",
+        "src/derives.c",
+        "src/files.c",
+        "src/fixits.c",
+        "src/getargs.c",
+        "src/glyphs.c",
+        "src/gram.c",
+        "src/graphviz.c",
+        "src/ielr.c",
+        "src/lalr.c",
+        "src/location.c",
+        "src/lr0.c",
+        "src/lssi.c",
+        "src/main.c",
+        "src/muscle-tab.c",
+        "src/named-ref.c",
+        "src/nullable.c",
+        "src/output.c",
+        "src/parse-gram.c",
+        "src/parse-simulation.c",
+        "src/print.c",
+        "src/print-graph.c",
+        "src/print-xml.c",
+        "src/reader.c",
+        "src/reduce.c",
+        "src/relation.c",
+        "src/scan-code-c.c",
+        "src/scan-gram-c.c",
+        "src/scan-skel-c.c",
+        "src/state.c",
+        "src/state-item.c",
+        "src/strversion.c",
+        "src/symlist.c",
+        "src/symtab.c",
+        "src/tables.c",
+        "src/uniqstr.c",
+    ],
+    copts = ["-w"],
+    data = [
+        ":bison_pkgdatadir",
+        ":m4",
+    ],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "INSTALLDIR=\\\"/usr/local/bin\\\"",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":bison_bazel_runfiles",
+        ":config_headers",
+        ":lib/bison",
+        ":lib/bison_private_headers",
+        ":lib_src_headers",
+        ":linkopts",
+    ],
+)
