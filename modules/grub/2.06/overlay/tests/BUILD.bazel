@@ -1,0 +1,89 @@
+# Tests for the programs this module builds.
+
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# HOST_CFLAGS/HOST_CPPFLAGS (configure.ac:100-105): the unit tests are host
+# programs like any other.
+COPTS = [
+    "-w",
+    "-std=gnu99",
+    "-fno-common",
+]
+
+LOCAL_DEFINES = [
+    "HAVE_CONFIG_H",
+    "GRUB_UTIL=1",
+    "_FILE_OFFSET_BITS=64",
+    "GRUB_FILE=__FILE__",
+]
+
+UNIT_TEST_DEPS = [
+    "//:config_headers",
+    "//:include_includes",
+    "//:grub-core/lib/gnulib/gnu",
+    "//:grubgcry",
+    "//:grubkern",
+    "//:grubkern_private_headers",
+    "//:grubmods",
+]
+
+# Upstream's native check_PROGRAMS (Makefile.util.def): each is the test and
+# the unit-test driver; grubkern already carries kern/list.c and kern/misc.c.
+[
+    cc_test(
+        name = name,
+        size = "small",
+        srcs = [
+            "{}_unit_test.c".format(stem),
+            "lib/unit_test.c",
+            "//:grub-core/tests/lib/test.c",
+        ],
+        copts = COPTS,
+        linkstatic = True,
+        local_defines = LOCAL_DEFINES,
+        deps = UNIT_TEST_DEPS,
+    )
+    for name, stem in {
+        "cmp_test": "cmp",
+        "date_test": "date",
+        "example_unit_test": "example",
+        "printf_test": "printf",
+    }.items()
+]
+
+# COND_HAVE_CXX: the one C++ test; `restrict` as configure's AC_C_RESTRICT
+# defines it for C++.
+cc_test(
+    name = "priority_queue_unit_test",
+    size = "small",
+    srcs = [
+        "lib/unit_test.c",
+        "priority_queue_unit_test.cc",
+        "//:grub-core/lib/priority_queue.c",
+        "//:grub-core/tests/lib/test.c",
+    ],
+    copts = ["-w"],
+    linkstatic = True,
+    local_defines = LOCAL_DEFINES + ["restrict=__restrict__"],
+    deps = UNIT_TEST_DEPS,
+)
+
+cc_test(
+    name = "smoke_test",
+    size = "small",
+    srcs = ["smoke_test.cc"],
+    args = [
+        "$(rlocationpath //:grub-mkimage)",
+        "$(rlocationpath //:grub-editenv)",
+        "$(rlocationpath //:grub-script-check)",
+        "$(rlocationpath //:grub-menulst2cfg)",
+    ],
+    copts = ["-std=c++17"],
+    data = [
+        "//:grub-editenv",
+        "//:grub-menulst2cfg",
+        "//:grub-mkimage",
+        "//:grub-script-check",
+    ],
+    deps = ["@rules_cc//cc/runfiles"],
+)
