@@ -1,0 +1,57 @@
+From 2d79800b6751dddd4b8b4ad50832faa5ae2a00d9 Mon Sep 17 00:00:00 2001
+From: Petter Reinholdtsen <pere@hungry.com>
+Date: Tue, 25 Mar 2025 17:32:58 +0100
+Subject: [PATCH] Replaced left shift of negative number with multiplication.
+
+This avoid these issues reported by gcc sanitazion:
+
+ vorbis_1ch_q-0.5_44100.ogg : ../../lib/psy.c:319:23: runtime error: left shift of negative value -4
+ #0 0x7f0ed5b9f8f2 in _vp_psy_init ../../lib/psy.c:319
+ #1 0x7f0ed5bf295d in _vds_shared_init ../../lib/block.c:225
+ #2 0x7f0ed5bf46c1 in vorbis_analysis_init ../../lib/block.c:298
+ #3 0x558b2aead6eb in write_vorbis_data_or_die ../../test/write_read.c:61
+ #4 0x558b2aeacc39 in main ../../test/test.c:58
+ #5 0x7f0ed51a9249 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+ #6 0x7f0ed51a9304 in __libc_start_main_impl ../csu/libc-start.c:360
+ #7 0x558b2aead0d0 in _start (test/.libs/test+0x50d0)
+
+ vorbis_1ch_q-0.5_44100.ogg : ../../lib/floor1.c:820:24: runtime error: left shift of negative value -11
+ #0 0x7fd25e52a613 in floor1_encode ../../lib/floor1.c:820
+ #1 0x7fd25e6130de in mapping0_forward ../../lib/mapping0.c:617
+ #2 0x7fd25e59f5b0 in vorbis_analysis ../../lib/analysis.c:46
+ #3 0x558ec7bfea21 in write_vorbis_data_or_die ../../test/write_read.c:101
+ #4 0x558ec7bfdc39 in main ../../test/test.c:58
+ #5 0x7fd25db33249 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+ #6 0x7fd25db33304 in __libc_start_main_impl ../csu/libc-start.c:360
+ #7 0x558ec7bfe0d0 in _start (test/.libs/test+0x50d0)
+---
+ lib/floor1.c | 2 +-
+ lib/psy.c    | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/floor1.c b/lib/floor1.c
+index c4fe3ea7e..0b46bc753 100644
+--- a/lib/floor1.c
++++ b/lib/floor1.c
+@@ -817,7 +817,7 @@ int floor1_encode(oggpack_buffer *opb,vorbis_block *vb,
+           if(val<-headroom)
+             val=headroom-val-1;
+           else
+-            val=-1-(val<<1);
++            val=-1-(val*2);
+         else
+           if(val>=headroom)
+             val= val+headroom;
+diff --git a/lib/psy.c b/lib/psy.c
+index 96213c424..d0901bf27 100644
+--- a/lib/psy.c
++++ b/lib/psy.c
+@@ -316,7 +316,7 @@ void _vp_psy_init(vorbis_look_psy *p,vorbis_info_psy *vi,
+     for(;hi<=n && (hi<i+vi->noisewindowhimin ||
+           toBARK(rate/(2*n)*hi)<(bark+vi->noisewindowhi));hi++);
+ 
+-    p->bark[i]=((lo-1)<<16)+(hi-1);
++    p->bark[i]=((lo-1)*(1<<16))+(hi-1);
+ 
+   }
+ 

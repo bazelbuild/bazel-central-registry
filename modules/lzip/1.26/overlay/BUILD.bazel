@@ -1,0 +1,68 @@
+"""Lzip - LZMA lossless data compressor - https://www.nongnu.org/lzip/"""
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# `configure` line 35 (`pkgversion`), which `Makefile.in` line 26 hands to
+# main.cc as -DPROGVERSION for `lzip --version`.  Read from MODULE.bazel so a
+# `.bcr.N` bump has one place to edit; the suffix is stripped so the banner
+# still shows upstream's version.
+LZIP_VERSION = module_version().split(".bcr.")[0]
+
+# `Makefile.in` lines 22-23 (`objs`).  The hand-written `configure` has no
+# feature checks or options to model, only CXX/CXXFLAGS and install paths.
+#
+# Upstream builds with a POSIX libc or under MinGW/Cygwin/OS2/DJGPP (the
+# `__MSVCRT__` branches in main.cc lines 42-57); it needs <unistd.h>,
+# <utime.h> and fchown(), so an MSVC toolchain will not do.  The presubmit
+# matrix leaves Windows out for that reason.
+cc_binary(
+    name = "lzip",
+    srcs = [
+        "arg_parser.cc",
+        "arg_parser.h",
+        "decoder.cc",
+        "decoder.h",
+        "encoder.cc",
+        "encoder.h",
+        "encoder_base.cc",
+        "encoder_base.h",
+        "fast_encoder.cc",
+        "fast_encoder.h",
+        "list.cc",
+        "lzip.h",
+        "lzip_index.cc",
+        "lzip_index.h",
+        "main.cc",
+    ],
+    local_defines = ['PROGVERSION=\\"{}\\"'.format(LZIP_VERSION)],
+    visibility = ["//visibility:public"],
+)
+
+# An overlay file arrives over `ctx.download`, which does not set the execute
+# bit, and `sh_test` refuses a source that is not executable.
+copy_file(
+    name = "run_check",
+    src = "testsuite/run_check.sh",
+    out = "testsuite/run_check_exe.sh",
+    is_executable = True,
+)
+
+# `make check` (`Makefile.in` line 51): testsuite/check.sh run against the
+# built binary.  See testsuite/run_check.sh for the layout it expects.
+sh_test(
+    name = "check",
+    size = "small",
+    srcs = [":run_check"],
+    args = [
+        "$(rlocationpath :lzip)",
+        "$(rlocationpath testsuite/check.sh)",
+        LZIP_VERSION,
+    ],
+    data = [":lzip"] + glob(
+        ["testsuite/*"],
+        exclude = ["testsuite/run_check.sh"],
+    ),
+    deps = ["@rules_shell//shell/runfiles"],
+)

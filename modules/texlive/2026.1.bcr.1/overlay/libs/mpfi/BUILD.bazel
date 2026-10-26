@@ -1,0 +1,46 @@
+"""MPFI - Multiple Precision Floating-Point Interval library."""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+
+autoconf_hdr(
+    name = "mpfi_config_h",
+    out = "mpfi_config.h",
+    template = "mpfi_config.h.in",
+    deps = ["//:configure"],
+)
+
+cc_library(
+    name = "mpfi_config",
+    hdrs = [":mpfi_config_h"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "mpfi",
+    srcs = glob(
+        ["mpfi-src/src/*.c"],
+        exclude = ["mpfi-src/src/*test*"],
+    ),
+    hdrs = glob(["mpfi-src/src/*.h"]),
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    # mpfr.h in BCR @mpfr 4.2.2 declares only `mpfr_z_sub`; the other
+    # two (`mpfr_q_sub`, `mpfr_z_div`) are absent. mpfi sources have
+    # static fallback implementations guarded by `#ifndef HAVE_MPFR_*`,
+    # so omitting the other defines is what we want — defining them
+    # falsely calls undeclared symbols (implicit decl). Re-probe via
+    # autoconf once rules_cc_autoconf supports linking against
+    # cc_library deps for function checks.
+    local_defines = ["HAVE_MPFR_Z_SUB"],
+    strip_include_prefix = "mpfi-src/src",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":mpfi_config",
+        "@gmp",
+        "@mpfr",
+    ],
+)
