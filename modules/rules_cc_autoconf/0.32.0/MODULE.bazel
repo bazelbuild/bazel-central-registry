@@ -1,0 +1,115 @@
+"""rules_cc_autoconf"""
+
+module(
+    name = "rules_cc_autoconf",
+    version = "0.32.0",
+)
+
+bazel_dep(name = "rules_cc", version = "0.2.9")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_features", version = "1.47.1")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.1")
+
+bazel_dep(name = "m4", version = "1.4.21.bcr.6", dev_dependency = True)
+bazel_dep(name = "rules_perl", version = "1.2.0", dev_dependency = True)
+bazel_dep(name = "rules_rust_mdbook", version = "0.74.0", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "10.1.0", dev_dependency = True)
+bazel_dep(name = "rules_req_compile", version = "1.6.5", dev_dependency = True)
+bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
+bazel_dep(name = "rules_multirun", version = "0.14.0", dev_dependency = True)
+bazel_dep(name = "rules_venv", version = "0.37.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+
+# Temporary compatibility patches for actions used by the development tools.
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//tools/patches:protobuf-auto-exec-groups.patch"],
+    version = "33.4",
+)
+
+# The m4 overlay in the registry still substitutes HAVE_RANDOM_H itself; the
+# stdlib_h port now provides it, so the local copy is a duplicate producer.
+single_version_override(
+    module_name = "m4",
+    patch_strip = 1,
+    patches = ["//tools/patches:m4-have-random-h.patch"],
+    version = "1.4.21.bcr.6",
+)
+
+register_toolchains(
+    "//gnulib/toolchain",
+)
+
+register_toolchains(
+    "//autoconf/tests/gnu:autotools_toolchain",
+    dev_dependency = True,
+)
+
+gnulib = use_extension("//gnulib/tests:deps.bzl", "gnulib", dev_dependency = True)
+use_repo(
+    gnulib,
+    "gnulib",
+)
+
+autotools = use_extension("//autoconf/tests/gnu:deps.bzl", "autotools", dev_dependency = True)
+use_repo(
+    autotools,
+    "autoconf",
+    "automake",
+)
+
+# Host compiler/SDK identity, so toolchain upgrades invalidate cached
+# conformance results (`local_config_cc` alone does not change with the SDK).
+host_cc_fingerprint = use_repo_rule("//autoconf/tests/gnu:host_fingerprint.bzl", "host_cc_fingerprint")
+
+host_cc_fingerprint(
+    name = "host_cc_fingerprint",
+    dev_dependency = True,
+)
+
+# The Python the development tools run on (`//tools/convert`, `gnulib/tools`,
+# the test helpers): the requirement locks under tools/convert/3rdparty are
+# compiled for this version, so it is pinned rather than left to rules_python's
+# default.
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+python.toolchain(
+    is_default = True,
+    python_version = "3.14",
+)
+
+# Python packages of the converter (`//tools/convert`), a development tool.
+requirements = use_extension("@rules_req_compile//extensions:python.bzl", "requirements", dev_dependency = True)
+requirements.parse(
+    name = "pip_convert",
+    config_settings = {
+        "//tools/convert/3rdparty:linux_aarch64": "linux_aarch64",
+        "//tools/convert/3rdparty:linux_x86_64": "linux_x86_64",
+        "//tools/convert/3rdparty:macos_aarch64": "macos_aarch64",
+        "//tools/convert/3rdparty:macos_x86_64": "macos_x86_64",
+        "//tools/convert/3rdparty:windows_x86_64": "windows_x86_64",
+    },
+    requirements_locks = {
+        "//tools/convert/3rdparty:requirements_linux_aarch64.txt": "linux_aarch64",
+        "//tools/convert/3rdparty:requirements_linux_x86_64.txt": "linux_x86_64",
+        "//tools/convert/3rdparty:requirements_macos_aarch64.txt": "macos_aarch64",
+        "//tools/convert/3rdparty:requirements_macos_x86_64.txt": "macos_x86_64",
+        "//tools/convert/3rdparty:requirements_windows_x86_64.txt": "windows_x86_64",
+    },
+)
+use_repo(requirements, "pip_convert")
+
+# pytest for the converter's unit tests (rules_venv's py_pytest_test), and mypy
+# and ruff for the checking aspects the .bazelrc applies to every build.
+register_toolchains(
+    "//tools/convert/3rdparty:mypy",
+    "//tools/convert/3rdparty:pytest",
+    "//tools/convert/3rdparty:ruff",
+    dev_dependency = True,
+)
+
+# Source archives converted by the converter's golden tests.
+convert_test_sources = use_extension("//tools/convert:deps.bzl", "convert_test_sources", dev_dependency = True)
+use_repo(convert_test_sources, "gzip_src")
