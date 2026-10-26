@@ -7,6 +7,7 @@ No upstream build system runs during Bazel analysis or execution.
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_python//python:defs.bzl", "py_binary")
+load("//:configure.bzl", "configure_headers")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -14,6 +15,15 @@ filegroup(
     name = "version_metadata",
     srcs = ["npm/hermes-compiler/package.json"],
     visibility = ["@hermes//tests/version:__pkg__"],
+)
+
+exports_files(
+    [
+        "external/llvh/include/llvh/Config/llvm-config.h.cmake",
+        "external/llvh/include/llvh/Config/config.h.cmake",
+        "lib/config/libhermesvm-config.h.in",
+    ],
+    visibility = ["@hermes//tests/configure:__pkg__"],
 )
 
 # CMakeLists.txt: desktop Hades, Unicode Lite, and no JIT/debugger/Intl.
@@ -78,26 +88,17 @@ DESKTOP_TARGET = select({
     "//conditions:default": ["@platforms//:incompatible"],
 })
 
-CONFIGURE_TARGET = select({
-    ":darwin_target": " --platform=macos",
-    "//conditions:default": " --platform=linux",
-}) + select({
-    ":aarch64_target": " --arch=arm64",
-    "//conditions:default": " --arch=x86_64",
-})
-
 # Expand source templates for the target ABI, including cross-compilation.
-[genrule(
-    name = "configure_" + name,
-    srcs = [template],
-    outs = ["build/include/" + output],
-    cmd = "$(execpath //hermes/configure:configure)" + CONFIGURE_TARGET + " --template=$< --output=$@",
-    tools = ["//hermes/configure"],
-) for name, template, output in [
-    ("llvm", "external/llvh/include/llvh/Config/llvm-config.h.cmake", "llvh/Config/llvm-config.h"),
-    ("llvh", "external/llvh/include/llvh/Config/config.h.cmake", "llvh/Config/config.h"),
-    ("vm", "lib/config/libhermesvm-config.h.in", "libhermesvm-config.h"),
-]]
+configure_headers(
+    arch = select({
+        ":aarch64_target": "arm64",
+        "//conditions:default": "x86_64",
+    }),
+    platform = select({
+        ":darwin_target": "macos",
+        "//conditions:default": "linux",
+    }),
+)
 
 cc_library(
     name = "headers",
