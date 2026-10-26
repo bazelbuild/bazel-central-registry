@@ -1,0 +1,1092 @@
+"""Native rules for the pinned Hermes source tree.
+
+Source lists and library boundaries follow upstream target declarations.
+No upstream build system runs during Bazel analysis or execution.
+"""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:private"])
+
+filegroup(
+    name = "version_metadata",
+    srcs = ["npm/hermes-compiler/package.json"],
+    visibility = ["@hermes//tests/version:__pkg__"],
+)
+
+# CMakeLists.txt: desktop Hades, Unicode Lite, and no JIT/debugger/Intl.
+HERMES_DEFINES = [
+    "HERMESVM_ALLOW_CONCURRENT_GC",
+    "HERMESVM_ALLOW_INLINE_ASM",
+    "HERMESVM_ALLOW_JIT=0",
+    "HERMESVM_GC_HADES",
+    "HERMESVM_INDIRECT_THREADING",
+    "HERMESVM_LOG_HEAP_SEGMENT_SIZE=22",
+    "HERMES_CHECK_NATIVE_STACK",
+    "HERMES_ENABLE_CORE_EXTENSIONS=0",
+    "HERMES_ENABLE_CONTRIB_EXTENSIONS=0",
+    "HERMES_ENABLE_UNICODE_REGEXP_PROPERTY_ESCAPES",
+    "HERMES_LLVM",
+    "HERMES_PLATFORM_UNICODE=HERMES_PLATFORM_UNICODE_LITE",
+    "HERMES_USE_BOOST_CONTEXT=0",
+    'HERMES_RELEASE_VERSION=\\"1.0.0\\"',
+    "_GNU_SOURCE",
+]
+
+# Upstream permits signed overflow and aliases VM storage across C/C++ types.
+HERMES_C_OPTIONS = [
+    "-fno-strict-aliasing",
+    "-fno-strict-overflow",
+]
+
+HERMES_CXX_OPTIONS = HERMES_C_OPTIONS + ["-std=c++17"]
+
+HERMES_INTERNAL_OPTIONS = HERMES_CXX_OPTIONS + [
+    "-fno-exceptions",
+    "-fno-rtti",
+]
+
+config_setting(
+    name = "darwin_target",
+    constraint_values = ["@platforms//os:macos"],
+)
+
+config_setting(
+    name = "linux_target",
+    constraint_values = ["@platforms//os:linux"],
+)
+
+config_setting(
+    name = "aarch64_target",
+    constraint_values = ["@platforms//cpu:aarch64"],
+)
+
+config_setting(
+    name = "x86_64_target",
+    constraint_values = ["@platforms//cpu:x86_64"],
+)
+
+DESKTOP_TARGET = select({
+    ":darwin_target": [],
+    ":linux_target": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+}) + select({
+    ":aarch64_target": [],
+    ":x86_64_target": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+CONFIGURE_TARGET = select({
+    ":darwin_target": " --platform=macos",
+    "//conditions:default": " --platform=linux",
+}) + select({
+    ":aarch64_target": " --arch=arm64",
+    "//conditions:default": " --arch=x86_64",
+})
+
+# Expand source templates for the target ABI, including cross-compilation.
+[genrule(
+    name = "configure_" + name,
+    srcs = [template],
+    outs = ["build/include/" + output],
+    cmd = "$(execpath @hermes//hermes/configure:configure)" + CONFIGURE_TARGET + " --template=$< --output=$@",
+    tools = ["@hermes//hermes/configure"],
+) for name, template, output in [
+    ("llvm", "external/llvh/include/llvh/Config/llvm-config.h.cmake", "llvh/Config/llvm-config.h"),
+    ("llvh", "external/llvh/include/llvh/Config/config.h.cmake", "llvh/Config/config.h"),
+    ("vm", "lib/config/libhermesvm-config.h.in", "libhermesvm-config.h"),
+]]
+
+cc_library(
+    name = "headers",
+    hdrs = glob([
+        "API/hermes/**/*.h",
+        "API/jsi/jsi/*.h",
+        "public/**/*.h",
+    ]),
+    includes = [
+        "API",
+        "API/jsi",
+        "public",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "build_configuration",
+    hdrs = glob(
+        [
+            "include/**/*.h",
+            "include/**/*.def",
+            "include/**/*.inc",
+            "lib/**/*.h",
+            "lib/**/*.def",
+            "lib/**/*.inc",
+            "external/llvh/**/*.h",
+            "external/llvh/**/*.def",
+            "external/llvh/**/*.inc",
+            "external/dtoa/*.h",
+            "external/dtoa/*.inc",
+            "external/zip/**/*.h",
+            "external/fast_float/**/*.h",
+            "external/dragonbox/**/*.h",
+        ],
+        allow_empty = True,
+    ) + [
+        ":configure_llvh",
+        ":configure_llvm",
+        ":configure_vm",
+    ],
+    defines = HERMES_DEFINES,
+    includes = [
+        "build/include",
+        "external",
+        "external/dragonbox",
+        "external/fast_float",
+        "external/llvh/gen/include",
+        "external/llvh/include",
+        "include",
+    ],
+    visibility = ["@hermes//tests/upstream:__pkg__"],
+    deps = [":headers"],
+)
+
+# external/dtoa/CMakeLists.txt keeps its C-only definitions off C++ callers.
+cc_library(
+    name = "dtoa_decimal",
+    srcs = [
+        "external/dtoa/dtoa.c",
+        "external/dtoa/g_fmt.c",
+    ],
+    copts = HERMES_C_OPTIONS,
+    local_defines = [
+        "IEEE_8087",
+        "Long=int",
+        "MULTIPLE_THREADS",
+        "NO_HEX_FP",
+        "NO_INFNAN_CHECK",
+    ],
+    deps = [":build_configuration"],
+)
+
+cc_library(
+    name = "dtoa",
+    srcs = ["external/dtoa/locks.cpp"],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":dtoa_decimal",
+    ],
+)
+
+cc_library(
+    name = "zip",
+    srcs = ["external/zip/src/zip.c"],
+    copts = HERMES_C_OPTIONS,
+    deps = [":build_configuration"],
+)
+
+# external/llvh/lib/Support/CMakeLists.txt: POSIX regex is C, not C++.
+cc_library(
+    name = "llvh_regex",
+    srcs = [
+        "external/llvh/lib/Support/regcomp.c",
+        "external/llvh/lib/Support/regerror.c",
+        "external/llvh/lib/Support/regexec.c",
+        "external/llvh/lib/Support/regfree.c",
+        "external/llvh/lib/Support/regstrlcpy.c",
+    ],
+    copts = HERMES_C_OPTIONS,
+    deps = [":build_configuration"],
+)
+
+# external/llvh/lib/Demangle/CMakeLists.txt
+cc_library(
+    name = "LLVHDemangle",
+    srcs = [
+        "external/llvh/lib/Demangle/ItaniumDemangle.cpp",
+        "external/llvh/lib/Demangle/MicrosoftDemangle.cpp",
+        "external/llvh/lib/Demangle/MicrosoftDemangleNodes.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+    ],
+)
+
+# external/llvh/lib/Support/CMakeLists.txt
+cc_library(
+    name = "LLVHSupport",
+    srcs = [
+        "external/llvh/lib/Support/APFloat.cpp",
+        "external/llvh/lib/Support/APInt.cpp",
+        "external/llvh/lib/Support/CommandLine.cpp",
+        "external/llvh/lib/Support/ConvertUTF.cpp",
+        "external/llvh/lib/Support/ConvertUTFWrapper.cpp",
+        "external/llvh/lib/Support/Debug.cpp",
+        "external/llvh/lib/Support/Errno.cpp",
+        "external/llvh/lib/Support/Error.cpp",
+        "external/llvh/lib/Support/ErrorHandling.cpp",
+        "external/llvh/lib/Support/FileCheck.cpp",
+        "external/llvh/lib/Support/FoldingSet.cpp",
+        "external/llvh/lib/Support/FormatVariadic.cpp",
+        "external/llvh/lib/Support/GraphWriter.cpp",
+        "external/llvh/lib/Support/Hashing.cpp",
+        "external/llvh/lib/Support/Host.cpp",
+        "external/llvh/lib/Support/InitLLVM.cpp",
+        "external/llvh/lib/Support/JSON.cpp",
+        "external/llvh/lib/Support/LineIterator.cpp",
+        "external/llvh/lib/Support/Locale.cpp",
+        "external/llvh/lib/Support/MD5.cpp",
+        "external/llvh/lib/Support/ManagedStatic.cpp",
+        "external/llvh/lib/Support/Memory.cpp",
+        "external/llvh/lib/Support/MemoryBuffer.cpp",
+        "external/llvh/lib/Support/Mutex.cpp",
+        "external/llvh/lib/Support/NativeFormatting.cpp",
+        "external/llvh/lib/Support/Path.cpp",
+        "external/llvh/lib/Support/PrettyStackTrace.cpp",
+        "external/llvh/lib/Support/Process.cpp",
+        "external/llvh/lib/Support/Program.cpp",
+        "external/llvh/lib/Support/Regex.cpp",
+        "external/llvh/lib/Support/SHA1.cpp",
+        "external/llvh/lib/Support/Signals.cpp",
+        "external/llvh/lib/Support/SmallPtrSet.cpp",
+        "external/llvh/lib/Support/SmallVector.cpp",
+        "external/llvh/lib/Support/SourceMgr.cpp",
+        "external/llvh/lib/Support/Statistic.cpp",
+        "external/llvh/lib/Support/StringExtras.cpp",
+        "external/llvh/lib/Support/StringMap.cpp",
+        "external/llvh/lib/Support/StringRef.cpp",
+        "external/llvh/lib/Support/StringSaver.cpp",
+        "external/llvh/lib/Support/TargetParser.cpp",
+        "external/llvh/lib/Support/Threading.cpp",
+        "external/llvh/lib/Support/Timer.cpp",
+        "external/llvh/lib/Support/ToolOutputFile.cpp",
+        "external/llvh/lib/Support/Triple.cpp",
+        "external/llvh/lib/Support/Twine.cpp",
+        "external/llvh/lib/Support/Unicode.cpp",
+        "external/llvh/lib/Support/Valgrind.cpp",
+        "external/llvh/lib/Support/Watchdog.cpp",
+        "external/llvh/lib/Support/WithColor.cpp",
+        "external/llvh/lib/Support/circular_raw_ostream.cpp",
+        "external/llvh/lib/Support/raw_os_ostream.cpp",
+        "external/llvh/lib/Support/raw_ostream.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    linkopts = select({
+        ":darwin_target": [],
+        "//conditions:default": [
+            "-ldl",
+            "-lpthread",
+        ],
+    }),
+    deps = [
+        ":LLVHDemangle",
+        ":build_configuration",
+        ":llvh_regex",
+    ],
+)
+
+# lib/Platform/Unicode/CMakeLists.txt
+cc_library(
+    name = "hermesPlatformUnicode",
+    srcs = [
+        "lib/Platform/Unicode/CharacterProperties.cpp",
+        "lib/Platform/Unicode/PlatformDateFormat.cpp",
+        "lib/Platform/Unicode/PlatformUnicodeCF.cpp",
+        "lib/Platform/Unicode/PlatformUnicodeEmscripten.cpp",
+        "lib/Platform/Unicode/PlatformUnicodeHermes.cpp",
+        "lib/Platform/Unicode/PlatformUnicodeJava.cpp",
+        "lib/Platform/Unicode/PlatformUnicodeLite.cpp",
+        "lib/Platform/Unicode/UnicodeCaseConversion.cpp",
+        "lib/Platform/Unicode/UnicodeCollation.cpp",
+        "lib/Platform/Unicode/UnicodeNormalization.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+    ],
+)
+
+# lib/Platform/CMakeLists.txt
+cc_library(
+    name = "hermesPlatform",
+    srcs = [
+        "lib/Platform/Logging.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+    ],
+)
+
+# lib/Support/CMakeLists.txt
+cc_library(
+    name = "hermesSupport",
+    srcs = [
+        "lib/Support/Base64.cpp",
+        "lib/Support/Base64vlq.cpp",
+        "lib/Support/BigIntSupport.cpp",
+        "lib/Support/CheckedMalloc.cpp",
+        "lib/Support/Conversions.cpp",
+        "lib/Support/ErrorHandling.cpp",
+        "lib/Support/FastArraySearch.cpp",
+        "lib/Support/FastDoubleToDecimal.cpp",
+        "lib/Support/FastStrToDouble.cpp",
+        "lib/Support/JSONEmitter.cpp",
+        "lib/Support/LEB128.cpp",
+        "lib/Support/MD5.cpp",
+        "lib/Support/MemorySizeParser.cpp",
+        "lib/Support/OSCompatCommon.cpp",
+        "lib/Support/OSCompatEmscripten.cpp",
+        "lib/Support/OSCompatPosix.cpp",
+        "lib/Support/OSCompatWindows.cpp",
+        "lib/Support/PageAccessTrackerPosix.cpp",
+        "lib/Support/PerfSection.cpp",
+        "lib/Support/RandomSeedParser.cpp",
+        "lib/Support/SHA1.cpp",
+        "lib/Support/SNPrintfBuf.cpp",
+        "lib/Support/SemaphorePosix.cpp",
+        "lib/Support/SerialExecutor.cpp",
+        "lib/Support/SimpleDiagHandler.cpp",
+        "lib/Support/SourceErrorManager.cpp",
+        "lib/Support/StackExecutor.cpp",
+        "lib/Support/StackOverflowGuard.cpp",
+        "lib/Support/StringTable.cpp",
+        "lib/Support/UTF16Stream.cpp",
+        "lib/Support/UTF8.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":LLVHSupport",
+        ":build_configuration",
+        ":dtoa",
+        ":hermesPlatformUnicode",
+    ],
+)
+
+# lib/FrontEndDefs/CMakeLists.txt
+cc_library(
+    name = "hermesFrontEndDefs",
+    srcs = [
+        "lib/FrontEndDefs/Builtins.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+    ],
+)
+
+# lib/ADT/CMakeLists.txt
+cc_library(
+    name = "hermesADT",
+    srcs = [
+        "lib/ADT/CompactArray.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesSupport",
+    ],
+)
+
+# lib/Regex/CMakeLists.txt
+cc_library(
+    name = "hermesRegex",
+    srcs = [
+        "lib/Regex/Executor.cpp",
+        "lib/Regex/RegexParser.cpp",
+        "lib/Regex/RegexSerialization.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesPlatformUnicode",
+    ],
+)
+
+# lib/AST/CMakeLists.txt
+cc_library(
+    name = "hermesAST",
+    srcs = [
+        "lib/AST/ASTBuilder.cpp",
+        "lib/AST/ASTUtils.cpp",
+        "lib/AST/AsyncGenerator.cpp",
+        "lib/AST/CommonJS.cpp",
+        "lib/AST/Context.cpp",
+        "lib/AST/ESTree.cpp",
+        "lib/AST/ESTreeJSONDumper.cpp",
+        "lib/AST/NativeContext.cpp",
+        "lib/AST/StripTS.cpp",
+        "lib/AST/TS2Flow.cpp",
+        "lib/AST/TransformAST.cpp",
+        "lib/AST/TransformDecorate.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesRegex",
+        ":hermesSupport",
+    ],
+)
+
+# lib/AST2JS/CMakeLists.txt
+cc_library(
+    name = "hermesAST2JS",
+    srcs = [
+        "lib/AST2JS/AST2JS.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesAST",
+    ],
+)
+
+# lib/Parser/CMakeLists.txt
+cc_library(
+    name = "hermesParser",
+    srcs = [
+        "lib/Parser/FlowHelpers.cpp",
+        "lib/Parser/JSLexer.cpp",
+        "lib/Parser/JSONParser.cpp",
+        "lib/Parser/JSParser.cpp",
+        "lib/Parser/JSParserImpl.cpp",
+        "lib/Parser/JSParserImpl-flow.cpp",
+        "lib/Parser/JSParserImpl-jsx.cpp",
+        "lib/Parser/JSParserImpl-ts.cpp",
+        "lib/Parser/rust-api.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":LLVHSupport",
+        ":build_configuration",
+        ":dtoa",
+        ":hermesAST",
+        ":hermesSupport",
+    ],
+)
+
+# lib/Sema/CMakeLists.txt
+cc_library(
+    name = "hermesSema",
+    srcs = [
+        "lib/Sema/ASTEval.cpp",
+        "lib/Sema/ASTLowering.cpp",
+        "lib/Sema/CheckImplicitReturn.cpp",
+        "lib/Sema/DeclCollector.cpp",
+        "lib/Sema/ESTreeClone.cpp",
+        "lib/Sema/FlowChecker.cpp",
+        "lib/Sema/FlowChecker-expr.cpp",
+        "lib/Sema/FlowChecker-scopetypes.cpp",
+        "lib/Sema/FlowContext.cpp",
+        "lib/Sema/FlowTypesDumper.cpp",
+        "lib/Sema/ScopedFunctionPromoter.cpp",
+        "lib/Sema/SemContext.cpp",
+        "lib/Sema/SemResolve.cpp",
+        "lib/Sema/SemanticResolver.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesAST",
+        ":hermesSupport",
+    ],
+)
+
+# lib/CMakeLists.txt
+cc_library(
+    name = "hermesFrontend",
+    srcs = [
+        "lib/IR/Analysis.cpp",
+        "lib/IR/CFG.cpp",
+        "lib/IR/IR.cpp",
+        "lib/IR/IRBuilder.cpp",
+        "lib/IR/IREval.cpp",
+        "lib/IR/IRHash.cpp",
+        "lib/IR/IRUtils.cpp",
+        "lib/IR/IRVerifier.cpp",
+        "lib/IR/Instrs.cpp",
+        "lib/IR/TypeContext.cpp",
+        "lib/IRGen/ESTreeIRGen.cpp",
+        "lib/IRGen/ESTreeIRGen-except.cpp",
+        "lib/IRGen/ESTreeIRGen-expr.cpp",
+        "lib/IRGen/ESTreeIRGen-func.cpp",
+        "lib/IRGen/ESTreeIRGen-legacy-class.cpp",
+        "lib/IRGen/ESTreeIRGen-stmt.cpp",
+        "lib/IRGen/ESTreeIRGen-typed-class.cpp",
+        "lib/IRGen/IRGen.cpp",
+        "lib/Utils/Dumper.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesAST",
+        ":hermesFrontEndDefs",
+        ":hermesParser",
+        ":hermesSema",
+        ":hermesSupport",
+    ],
+)
+
+# lib/CMakeLists.txt
+cc_library(
+    name = "hermesOptimizer",
+    srcs = [
+        "lib/Optimizer/PassManager/PassManager.cpp",
+        "lib/Optimizer/PassManager/Pipeline.cpp",
+        "lib/Optimizer/Scalar/Auditor.cpp",
+        "lib/Optimizer/Scalar/CSE.cpp",
+        "lib/Optimizer/Scalar/CodeMotion.cpp",
+        "lib/Optimizer/Scalar/DCE.cpp",
+        "lib/Optimizer/Scalar/FrameLoadStoreOpts.cpp",
+        "lib/Optimizer/Scalar/FuncSigOpts.cpp",
+        "lib/Optimizer/Scalar/FunctionAnalysis.cpp",
+        "lib/Optimizer/Scalar/Inlining.cpp",
+        "lib/Optimizer/Scalar/InstSimplify.cpp",
+        "lib/Optimizer/Scalar/InstructionEscapeAnalysis.cpp",
+        "lib/Optimizer/Scalar/LowerBuiltinCalls.cpp",
+        "lib/Optimizer/Scalar/LowerGeneratorFunction.cpp",
+        "lib/Optimizer/Scalar/Mem2Reg.cpp",
+        "lib/Optimizer/Scalar/MetroRequireOpt.cpp",
+        "lib/Optimizer/Scalar/ObjectMergeNewStores.cpp",
+        "lib/Optimizer/Scalar/ObjectStackPromotion.cpp",
+        "lib/Optimizer/Scalar/PrivateBrandCheckDedup.cpp",
+        "lib/Optimizer/Scalar/ResolveStaticRequire.cpp",
+        "lib/Optimizer/Scalar/ScopeElimination.cpp",
+        "lib/Optimizer/Scalar/ScopeHoisting.cpp",
+        "lib/Optimizer/Scalar/SimpleMem2Reg.cpp",
+        "lib/Optimizer/Scalar/SimpleStackPromotion.cpp",
+        "lib/Optimizer/Scalar/SimplifyCFG.cpp",
+        "lib/Optimizer/Scalar/StripDebugInsts.cpp",
+        "lib/Optimizer/Scalar/TDZDedup.cpp",
+        "lib/Optimizer/Scalar/TypeInference.cpp",
+        "lib/Optimizer/Scalar/Utils.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesFrontend",
+    ],
+)
+
+# lib/BCGen/CMakeLists.txt
+cc_library(
+    name = "hermesBackend",
+    srcs = [
+        "lib/BCGen/BackendContext.cpp",
+        "lib/BCGen/Exceptions.cpp",
+        "lib/BCGen/LiteralBufferBuilder.cpp",
+        "lib/BCGen/LowerScopes.cpp",
+        "lib/BCGen/Lowering.cpp",
+        "lib/BCGen/OptEnvironmentInit.cpp",
+        "lib/BCGen/RegAlloc.cpp",
+        "lib/BCGen/SerializedLiteralGenerator.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesFrontend",
+        ":hermesOptimizer",
+    ],
+)
+
+# lib/Inst/CMakeLists.txt
+cc_library(
+    name = "hermesInst",
+    srcs = [
+        "lib/Inst/InstDecode.cpp",
+        "lib/Inst/InstDecode2.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesFrontEndDefs",
+        ":hermesSupport",
+    ],
+)
+
+# lib/SourceMap/CMakeLists.txt
+cc_library(
+    name = "hermesSourceMap",
+    srcs = [
+        "lib/SourceMap/SourceMap.cpp",
+        "lib/SourceMap/SourceMapGenerator.cpp",
+        "lib/SourceMap/SourceMapParser.cpp",
+        "lib/SourceMap/SourceMapTranslator.cpp",
+        "lib/SourceMap/c-api.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesParser",
+    ],
+)
+
+# lib/BCGen/HBC/CMakeLists.txt
+cc_library(
+    name = "hermesHBCBackend",
+    srcs = [
+        "lib/BCGen/HBC/BCProvider.cpp",
+        "lib/BCGen/HBC/BCProviderFromSrc.cpp",
+        "lib/BCGen/HBC/Bytecode.cpp",
+        "lib/BCGen/HBC/BytecodeDisassembler.cpp",
+        "lib/BCGen/HBC/BytecodeFormConverter.cpp",
+        "lib/BCGen/HBC/BytecodeGenerator.cpp",
+        "lib/BCGen/HBC/BytecodeStream.cpp",
+        "lib/BCGen/HBC/ConsecutiveStringStorage.cpp",
+        "lib/BCGen/HBC/DebugInfo.cpp",
+        "lib/BCGen/HBC/DebugInfoNonLean.cpp",
+        "lib/BCGen/HBC/HBC.cpp",
+        "lib/BCGen/HBC/ISel.cpp",
+        "lib/BCGen/HBC/LoweringPipelines.cpp",
+        "lib/BCGen/HBC/Passes.cpp",
+        "lib/BCGen/HBC/Passes/InsertProfilePoint.cpp",
+        "lib/BCGen/HBC/Passes/OptParentEnvironment.cpp",
+        "lib/BCGen/HBC/Passes/PeepholeLowering.cpp",
+        "lib/BCGen/HBC/Passes/ReorderRegisters.cpp",
+        "lib/BCGen/HBC/SimpleBytecodeBuilder.cpp",
+        "lib/BCGen/HBC/StringKind.cpp",
+        "lib/BCGen/HBC/UniquingFilenameTable.cpp",
+        "lib/BCGen/HBC/UniquingStringLiteralTable.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesAST",
+        ":hermesBackend",
+        ":hermesInst",
+        ":hermesRegex",
+        ":hermesSourceMap",
+    ],
+)
+
+# lib/BCGen/SH/CMakeLists.txt
+cc_library(
+    name = "hermesSHBackend",
+    srcs = [
+        "lib/BCGen/SH/LineDirectiveEmitter.cpp",
+        "lib/BCGen/SH/LoadConstants.cpp",
+        "lib/BCGen/SH/LowerCalls.cpp",
+        "lib/BCGen/SH/LowerNanBoxedUnionNarrowT.cpp",
+        "lib/BCGen/SH/PeepholeLowering.cpp",
+        "lib/BCGen/SH/RecreateCheapValues.cpp",
+        "lib/BCGen/SH/SH.cpp",
+        "lib/BCGen/SH/SHRegAlloc.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesAST",
+        ":hermesBackend",
+        ":hermesInst",
+        ":hermesSourceMap",
+    ],
+)
+
+# lib/CompilerDriver/CMakeLists.txt
+cc_library(
+    name = "hermesCompilerDriver",
+    srcs = [
+        "lib/CompilerDriver/CompilerDriver.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesADT",
+        ":hermesAST",
+        ":hermesAST2JS",
+        ":hermesBackend",
+        ":hermesFrontend",
+        ":hermesHBCBackend",
+        ":hermesInst",
+        ":hermesOptimizer",
+        ":hermesParser",
+        ":hermesSHBackend",
+        ":hermesSupport",
+        ":zip",
+    ],
+)
+
+# lib/TypedLib/CMakeLists.txt
+cc_library(
+    name = "hermesTypedLib",
+    srcs = [
+        "lib/TypedLib/TypedLib.cpp",
+    ],
+    hdrs = [
+        ":typed_language_include",
+        ":typed_library_include",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+    ],
+)
+
+# lib/VM/Instrumentation/CMakeLists.txt
+cc_library(
+    name = "hermesInstrumentation",
+    srcs = [
+        "lib/VM/Instrumentation/PerfEventsLinux.cpp",
+        "lib/VM/Instrumentation/ProcessStats.cpp",
+        "lib/VM/Instrumentation/StatSamplingThread.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesSupport",
+    ],
+)
+
+# public/hermes/Public/CMakeLists.txt enables RTTI for exported exception types.
+cc_library(
+    name = "hermesPublic",
+    srcs = [
+        "public/hermes/Public/rtti.cpp",
+        "public/hermes/Public/rtti_common.cpp",
+    ],
+    copts = HERMES_CXX_OPTIONS + [
+        "-fno-exceptions",
+        "-frtti",
+    ],
+    deps = [":build_configuration"],
+)
+
+# lib/CMakeLists.txt combines these objects into hermescompiler.
+cc_library(
+    name = "hermescompiler",
+    visibility = ["@hermes//tests/upstream:__pkg__"],
+    deps = [
+        ":LLVHSupport",
+        ":dtoa",
+        ":hermesADT",
+        ":hermesAST",
+        ":hermesAST2JS",
+        ":hermesBackend",
+        ":hermesFrontEndDefs",
+        ":hermesFrontend",
+        ":hermesHBCBackend",
+        ":hermesInst",
+        ":hermesOptimizer",
+        ":hermesParser",
+        ":hermesPlatform",
+        ":hermesPlatformUnicode",
+        ":hermesPublic",
+        ":hermesRegex",
+        ":hermesSHBackend",
+        ":hermesSema",
+        ":hermesSourceMap",
+        ":hermesSupport",
+        ":hermesTypedLib",
+        ":zip",
+    ],
+)
+
+# tools/hermesc/CMakeLists.txt: genrule tools select the execution configuration.
+cc_binary(
+    name = "hermesc",
+    srcs = ["tools/hermesc/hermesc.cpp"],
+    copts = HERMES_INTERNAL_OPTIONS,
+    target_compatible_with = DESKTOP_TARGET,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":hermesCompilerDriver",
+        ":hermescompiler",
+    ],
+)
+
+py_binary(
+    name = "embed_bytes",
+    srcs = ["lib/InternalJavaScript/xxd.py"],
+    legacy_create_init = 0,
+    main = "lib/InternalJavaScript/xxd.py",
+)
+
+# lib/TypedLib/CMakeLists.txt specifies this concatenation order.
+genrule(
+    name = "typed_library_source",
+    srcs = [
+        "lib/TypedLib/00-prelude.js",
+        "lib/TypedLib/01-array.js",
+        "lib/TypedLib/02-string.js",
+        "lib/TypedLib/03-map.js",
+        "lib/TypedLib/04-set.js",
+        "lib/TypedLib/05-number.js",
+        "lib/TypedLib/05-symbol.js",
+        "lib/TypedLib/06-object.js",
+    ],
+    outs = ["build/TypedLib.js"],
+    cmd = "cat $(SRCS) > $@",
+)
+
+[genrule(
+    name = name,
+    srcs = [source],
+    outs = ["build/include/" + output],
+    cmd = "$(execpath :embed_bytes) $< > $@",
+    tools = [":embed_bytes"],
+) for name, source, output in [
+    ("typed_library_include", ":typed_library_source", "TypedLib.inc"),
+    ("typed_language_include", "doc/TypedLanguage.md", "TypedLanguage.inc"),
+]]
+
+# lib/InternalJavaScript/CMakeLists.txt orders JavaScript by filename prefix.
+genrule(
+    name = "internal_javascript_source",
+    srcs = glob(["lib/InternalJavaScript/*.js"]),
+    outs = ["build/InternalBytecode.js"],
+    cmd = "cat $(SRCS) > $@",
+)
+
+genrule(
+    name = "internal_javascript_bytecode",
+    srcs = [":internal_javascript_source"],
+    outs = ["build/InternalBytecode.hbc"],
+    cmd = "$(execpath :hermesc) -O -Wno-undefined-variable -g0 -emit-binary -out=$@ $<",
+    tools = [":hermesc"],
+)
+
+genrule(
+    name = "internal_javascript_include",
+    srcs = [":internal_javascript_bytecode"],
+    outs = ["build/include/InternalBytecode.inc"],
+    cmd = "$(execpath :embed_bytes) $< > $@",
+    tools = [":embed_bytes"],
+)
+
+cc_library(
+    name = "hermesInternalBytecode",
+    srcs = ["lib/InternalJavaScript/InternalBytecode.cpp"],
+    hdrs = [":internal_javascript_include"],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [":build_configuration"],
+)
+
+# lib/VM/CMakeLists.txt requires typeinfo for embedder subclasses.
+cc_library(
+    name = "vm_host_objects",
+    srcs = [
+        "lib/VM/DecoratedObject.cpp",
+        "lib/VM/HostModel.cpp",
+    ],
+    copts = HERMES_CXX_OPTIONS + [
+        "-fno-exceptions",
+        "-frtti",
+    ],
+    deps = [":build_configuration"],
+)
+
+# lib/VM/CMakeLists.txt: Hades source selection; JIT remains disabled.
+cc_library(
+    name = "hermesVMRuntime",
+    srcs = [
+        "lib/VM/ArrayStorage.cpp",
+        "lib/VM/BasicBlockExecutionInfo.cpp",
+        "lib/VM/BigIntPrimitive.cpp",
+        "lib/VM/BoxedDouble.cpp",
+        "lib/VM/BuildMetadata.cpp",
+        "lib/VM/Callable.cpp",
+        "lib/VM/CellKind.cpp",
+        "lib/VM/CheckHeapWellFormedAcceptor.cpp",
+        "lib/VM/CodeBlock.cpp",
+        "lib/VM/Debugger/Debugger.cpp",
+        "lib/VM/DictPropertyMap.cpp",
+        "lib/VM/Domain.cpp",
+        "lib/VM/DummyObject.cpp",
+        "lib/VM/FastArray.cpp",
+        "lib/VM/GCBase.cpp",
+        "lib/VM/HandleRootOwner.cpp",
+        "lib/VM/HeapSnapshot.cpp",
+        "lib/VM/HermesValue.cpp",
+        "lib/VM/HiddenClass.cpp",
+        "lib/VM/IdentifierTable.cpp",
+        "lib/VM/Interpreter.cpp",
+        "lib/VM/Interpreter-slowpaths.cpp",
+        "lib/VM/JIT/DiscoverBB.cpp",
+        "lib/VM/JSArray.cpp",
+        "lib/VM/JSArrayBuffer.cpp",
+        "lib/VM/JSCallSite.cpp",
+        "lib/VM/JSCallableProxy.cpp",
+        "lib/VM/JSDataView.cpp",
+        "lib/VM/JSDate.cpp",
+        "lib/VM/JSError.cpp",
+        "lib/VM/JSFinalizationRegistry.cpp",
+        "lib/VM/JSGeneratorObject.cpp",
+        "lib/VM/JSLib/Array.cpp",
+        "lib/VM/JSLib/ArrayBuffer.cpp",
+        "lib/VM/JSLib/ArrayIterator.cpp",
+        "lib/VM/JSLib/AsyncFunction.cpp",
+        "lib/VM/JSLib/Base64.cpp",
+        "lib/VM/JSLib/Base64Util.cpp",
+        "lib/VM/JSLib/BigInt.cpp",
+        "lib/VM/JSLib/Boolean.cpp",
+        "lib/VM/JSLib/CallSite.cpp",
+        "lib/VM/JSLib/DataView.cpp",
+        "lib/VM/JSLib/Date.cpp",
+        "lib/VM/JSLib/DateCache.cpp",
+        "lib/VM/JSLib/DateUtil.cpp",
+        "lib/VM/JSLib/DebuggerInternal.cpp",
+        "lib/VM/JSLib/Error.cpp",
+        "lib/VM/JSLib/FinalizationRegistry.cpp",
+        "lib/VM/JSLib/Function.cpp",
+        "lib/VM/JSLib/GeneratorFunction.cpp",
+        "lib/VM/JSLib/GeneratorPrototype.cpp",
+        "lib/VM/JSLib/GlobalObject.cpp",
+        "lib/VM/JSLib/HermesBuiltin.cpp",
+        "lib/VM/JSLib/HermesInternal.cpp",
+        "lib/VM/JSLib/Intl.cpp",
+        "lib/VM/JSLib/IteratorPrototype.cpp",
+        "lib/VM/JSLib/JSLibInternal.cpp",
+        "lib/VM/JSLib/JSLibStorage.cpp",
+        "lib/VM/JSLib/JSON.cpp",
+        "lib/VM/JSLib/JSONLexer.cpp",
+        "lib/VM/JSLib/Map.cpp",
+        "lib/VM/JSLib/Math.cpp",
+        "lib/VM/JSLib/Number.cpp",
+        "lib/VM/JSLib/Object.cpp",
+        "lib/VM/JSLib/Proxy.cpp",
+        "lib/VM/JSLib/Reflect.cpp",
+        "lib/VM/JSLib/RegExp.cpp",
+        "lib/VM/JSLib/RegExpStringIterator.cpp",
+        "lib/VM/JSLib/RuntimeJSONParse.cpp",
+        "lib/VM/JSLib/RuntimeJSONStringify.cpp",
+        "lib/VM/JSLib/Set.cpp",
+        "lib/VM/JSLib/Sorting.cpp",
+        "lib/VM/JSLib/String.cpp",
+        "lib/VM/JSLib/StringIterator.cpp",
+        "lib/VM/JSLib/Symbol.cpp",
+        "lib/VM/JSLib/TypedArray.cpp",
+        "lib/VM/JSLib/WeakMap.cpp",
+        "lib/VM/JSLib/WeakRef.cpp",
+        "lib/VM/JSLib/WeakSet.cpp",
+        "lib/VM/JSLib/escape.cpp",
+        "lib/VM/JSLib/eval.cpp",
+        "lib/VM/JSLib/print.cpp",
+        "lib/VM/JSLib/require.cpp",
+        "lib/VM/JSMapImpl.cpp",
+        "lib/VM/JSNativeFunctions.cpp",
+        "lib/VM/JSObject.cpp",
+        "lib/VM/JSProxy.cpp",
+        "lib/VM/JSRegExp.cpp",
+        "lib/VM/JSRegExpStringIterator.cpp",
+        "lib/VM/JSTypedArray.cpp",
+        "lib/VM/JSWeakMapImpl.cpp",
+        "lib/VM/JSWeakRef.cpp",
+        "lib/VM/LargeDummyObject.cpp",
+        "lib/VM/LimitedStorageProvider.cpp",
+        "lib/VM/Metadata.cpp",
+        "lib/VM/ModuleExportsCache.cpp",
+        "lib/VM/NativeState.cpp",
+        "lib/VM/Operations.cpp",
+        "lib/VM/OrderedHashMap.cpp",
+        "lib/VM/PredefinedStringIDs.cpp",
+        "lib/VM/PrimitiveBox.cpp",
+        "lib/VM/Profiler/CodeCoverageProfiler.cpp",
+        "lib/VM/Profiler/ProfileGenerator.cpp",
+        "lib/VM/Profiler/SamplingProfiler.cpp",
+        "lib/VM/Profiler/SamplingProfilerPosix.cpp",
+        "lib/VM/Profiler/SamplingProfilerSampler.cpp",
+        "lib/VM/Profiler/SamplingProfilerWindows.cpp",
+        "lib/VM/Profiler/TraceSerializer.cpp",
+        "lib/VM/PropertyAccessor.cpp",
+        "lib/VM/Runtime.cpp",
+        "lib/VM/Runtime-profilers.cpp",
+        "lib/VM/RuntimeFlags.cpp",
+        "lib/VM/RuntimeModule.cpp",
+        "lib/VM/SerializedValue.cpp",
+        "lib/VM/SingleObject.cpp",
+        "lib/VM/StackFrame.cpp",
+        "lib/VM/StackTracesTree.cpp",
+        "lib/VM/StaticH.cpp",
+        "lib/VM/StaticHInit.cpp",
+        "lib/VM/StaticHUnit.cpp",
+        "lib/VM/StorageProvider.cpp",
+        "lib/VM/StringPrimitive.cpp",
+        "lib/VM/StringRefUtils.cpp",
+        "lib/VM/StringView.cpp",
+        "lib/VM/SymbolRegistry.cpp",
+        "lib/VM/TimeLimitMonitor.cpp",
+        "lib/VM/TwineChar16.cpp",
+        "lib/VM/VTable.cpp",
+        "lib/VM/WeakValueObjectMap.cpp",
+        "lib/VM/detail/IdentifierHashTable.cpp",
+        "lib/VM/gcs/AlignedHeapSegment.cpp",
+        "lib/VM/gcs/CardBoundaryTable.cpp",
+        "lib/VM/gcs/FillerCell.cpp",
+        "lib/VM/gcs/HadesGC.cpp",
+    ],
+    copts = HERMES_INTERNAL_OPTIONS,
+    deps = [
+        ":build_configuration",
+        ":hermesInstrumentation",
+        ":hermesInternalBytecode",
+        ":hermescompiler",
+        ":vm_host_objects",
+    ],
+)
+
+# API/jsi/jsi/CMakeLists.txt and API/hermes/CMakeLists.txt enable exceptions/RTTI.
+cc_library(
+    name = "jsi",
+    srcs = ["API/jsi/jsi/jsi.cpp"],
+    copts = HERMES_CXX_OPTIONS + [
+        "-fexceptions",
+        "-frtti",
+    ],
+    deps = [":headers"],
+)
+
+cc_library(
+    name = "hermesapi",
+    srcs = [
+        "API/hermes/AsyncDebuggerAPI.cpp",
+        "API/hermes/DebuggerAPI.cpp",
+        "API/hermes/RuntimeTaskRunner.cpp",
+        "API/hermes/hermes.cpp",
+    ],
+    copts = HERMES_CXX_OPTIONS + [
+        "-fexceptions",
+        "-frtti",
+    ],
+    deps = [
+        ":build_configuration",
+        ":hermesVMRuntime",
+        ":jsi",
+    ],
+)
+
+cc_library(
+    name = "hermes_vm",
+    target_compatible_with = DESKTOP_TARGET,
+    visibility = ["//visibility:public"],
+    deps = [":hermesapi"],
+)
+
+# Development tests compile these upstream suites in the overlay's root module.
+[filegroup(
+    name = name + "_test_sources",
+    srcs = sources,
+    visibility = ["@hermes//tests/upstream:__pkg__"],
+) for name, sources in [
+    (
+        "adt",
+        [
+            "unittests/ADT/BitArrayTest.cpp",
+            "unittests/ADT/CompactArrayTest.cpp",
+        ],
+    ),
+    (
+        "support",
+        [
+            "unittests/Support/ConversionsTest.cpp",
+            "unittests/Support/UnicodeTest.cpp",
+        ],
+    ),
+    (
+        "regex",
+        ["unittests/Support/RegexTest.cpp"],
+    ),
+]]
