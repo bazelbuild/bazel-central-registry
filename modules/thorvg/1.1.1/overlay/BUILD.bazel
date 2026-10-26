@@ -1,0 +1,201 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+bool_flag(
+    name = "simd",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "threads",
+    build_setting_default = True,
+)
+
+bool_flag(
+    name = "openmp",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "avx_vector_support",
+    constraint_values = ["@platforms//cpu:x86_64"],
+    flag_values = {":simd": "True"},
+)
+
+config_setting(
+    name = "neon_vector_support",
+    constraint_values = ["@platforms//cpu:aarch64"],
+    flag_values = {":simd": "True"},
+)
+
+config_setting(
+    name = "thread_support",
+    flag_values = {":threads": "True"},
+)
+
+config_setting(
+    name = "openmp_enabled",
+    flag_values = {":openmp": "True"},
+)
+
+config_setting(
+    name = "windows_msvc",
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "msvc-cl"},
+)
+
+config_setting(
+    name = "linux_gcc",
+    constraint_values = ["@platforms//os:linux"],
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "gcc"},
+)
+
+selects.config_setting_group(
+    name = "linux_openmp_gcc",
+    match_all = [
+        ":linux_gcc",
+        ":openmp_enabled",
+    ],
+)
+
+selects.config_setting_group(
+    name = "windows_openmp_msvc",
+    match_all = [
+        ":openmp_enabled",
+        ":windows_msvc",
+    ],
+)
+
+cc_library(
+    name = "thorvg",
+    srcs = glob([
+        "src/bindings/capi/*.cpp",
+        "src/bindings/capi/*.h",
+        "src/common/*.cpp",
+        "src/common/*.h",
+        "src/loaders/jpg/*.cpp",
+        "src/loaders/jpg/*.h",
+        "src/loaders/lottie/*.cpp",
+        "src/loaders/lottie/*.h",
+        "src/loaders/lottie/rapidjson/**/*.h",
+        "src/loaders/png/*.cpp",
+        "src/loaders/png/*.h",
+        "src/loaders/raw/*.cpp",
+        "src/loaders/raw/*.h",
+        "src/loaders/sfnt/*.cpp",
+        "src/loaders/sfnt/*.h",
+        "src/loaders/svg/*.cpp",
+        "src/loaders/svg/*.h",
+        "src/loaders/webp/**/*.cpp",
+        "src/loaders/webp/**/*.h",
+        "src/renderer/*.cpp",
+        "src/renderer/*.h",
+        "src/renderer/cpu_engine/*.cpp",
+        "src/renderer/cpu_engine/*.h",
+        "src/savers/gif/*.cpp",
+        "src/savers/gif/*.h",
+    ]) + [":config_h"],
+    hdrs = [
+        "inc/thorvg.h",
+        "src/bindings/capi/thorvg_capi.h",
+        "src/loaders/lottie/thorvg_lottie.h",
+    ],
+    copts = select({
+        ":windows_msvc": ["/std:c++14"],
+        "//conditions:default": [
+            "-std=c++14",
+            "-fno-exceptions",
+            "-fno-rtti",
+        ],
+    }) + select({
+        ":avx_vector_support": ["-mavx2"],
+        "//conditions:default": [],
+    }) + select({
+        ":linux_openmp_gcc": ["-fopenmp"],
+        ":windows_openmp_msvc": ["/openmp"],
+        "//conditions:default": [],
+    }),
+    defines = [
+        "TVG_STATIC",
+        "THORVG_VERSION_STRING=\\\"1.1.1\\\"",
+        "THORVG_CPU_ENGINE_SUPPORT=1",
+        "THORVG_FILE_IO_SUPPORT=1",
+        "THORVG_GIF_SAVER_SUPPORT=1",
+        "THORVG_JPG_LOADER_SUPPORT=1",
+        "THORVG_LOTTIE_LOADER_SUPPORT=1",
+        "THORVG_OTF_LOADER_SUPPORT=1",
+        "THORVG_PARTIAL_RENDER_SUPPORT=1",
+        "THORVG_PNG_LOADER_SUPPORT=1",
+        "THORVG_SFNT_LOADER_SUPPORT=1",
+        "THORVG_SVG_LOADER_SUPPORT=1",
+        "THORVG_TTF_LOADER_SUPPORT=1",
+        "THORVG_WEBP_LOADER_SUPPORT=1",
+        "THORVG_CAPI_BINDING_SUPPORT=1",
+    ] + select({
+        ":thread_support": ["THORVG_THREAD_SUPPORT=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":linux_openmp_gcc": ["THORVG_OPENMP_SUPPORT=1"],
+        ":windows_openmp_msvc": ["THORVG_OPENMP_SUPPORT=1"],
+        "//conditions:default": [],
+    }) + select({
+        ":avx_vector_support": ["THORVG_AVX_VECTOR_SUPPORT=1"],
+        ":neon_vector_support": ["THORVG_NEON_VECTOR_SUPPORT=1"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [
+            "WIN32_LEAN_AND_MEAN",
+            "NOMINMAX",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "inc",
+        "src/bindings/capi",
+        "src/common",
+        "src/loaders",
+        "src/loaders/jpg",
+        "src/loaders/lottie",
+        "src/loaders/png",
+        "src/loaders/raw",
+        "src/loaders/sfnt",
+        "src/loaders/svg",
+        "src/loaders/webp",
+        "src/loaders/webp/dec",
+        "src/loaders/webp/dsp",
+        "src/loaders/webp/utils",
+        "src/loaders/webp/webp",
+        "src/renderer",
+        "src/renderer/cpu_engine",
+        "src/savers",
+        "src/savers/gif",
+    ],
+    linkopts = selects.with_or({
+        ":linux_openmp_gcc": ["-lpthread", "-lm", "-lgomp"],
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lpthread", "-lm"],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "config_h",
+    outs = ["config.h"],
+    cmd = "echo '' > $@",
+)
+
+cc_test(
+    name = "test_initializer",
+    linkstatic = True,
+    srcs = [
+        "test/catch.hpp",
+        "test/testInitializer.cpp",
+        "test/testMain.cpp",
+    ],
+    copts = select({
+        ":windows_msvc": ["/std:c++14"],
+        "//conditions:default": ["-std=c++14"],
+    }),
+    includes = ["test"],
+    deps = [":thorvg"],
+)

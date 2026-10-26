@@ -1,0 +1,105 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# _cmsGetTime (src/cmsplugin.c) picks its thread-safe time conversion from these: HAVE_GMTIME_R uses gmtime_r,
+# HAVE_GMTIME_S uses the CRT's gmtime_s, and with neither it falls back to plain gmtime() serialized behind the
+# context mutex. configure.ac probes gmtime_r first and only tries gmtime_s when it is absent. Presence is a
+# target libc property, declared per-OS (opt-in) below; neither macro reaches a public header, so both are local.
+_POSIX_REENTRANT_TIME = ["HAVE_GMTIME_R"]
+
+# Facts from configure.ac deliberately not translated here, because the sources already obtain each one:
+#
+#   - Compiler flags: the library needs none. src/Makefile.am carries no AM_CFLAGS (its
+#     `CFLAGS = -pedantic -Wall -std=c99 -O3` line is commented out), and configure.ac's two additions are
+#     -fvisibility=hidden and AX_PTHREAD's $PTHREAD_CFLAGS. Upstream does apply -fvisibility=hidden to the static
+#     library as well, but it is a GNU-driver spelling that not every compiler accepts, and the hidden binding it
+#     records in the archive's objects is immaterial once they are linked into an executable. Its companion
+#     HAVE_FUNC_ATTRIBUTE_VISIBILITY only annotates the exported API, and lcms2.h defines CMSAPI empty without it.
+#     $PTHREAD_CFLAGS is not required in order to include <pthread.h> and call the mutex API.
+#   - WORDS_BIGENDIAN (AC_C_BIGENDIAN): lcms2.h derives CMS_USE_BIG_ENDIAN from compiler predefines and defaults
+#     to little-endian, so an injected define is only an override for targets that derivation does not recognize.
+#   - HasTHREADS: leaving it undefined leaves CMS_NO_PTHREADS undefined, which is threading-on — the same state
+#     HasTHREADS=1 produces. lcms2_internal.h then picks Win32 critical sections or pthreads from
+#     CMS_IS_WINDOWS_, which lcms2.h derives from _WIN32/_MSC_VER, so the choice needs no help from here.
+#   - CMS_DONT_USE_SSE2: no file under src/ or include/ reads it in this release.
+cc_library(
+    name = "lcms2",
+    # srcs mirror liblcms2_la_SOURCES (src/Makefile.am) exactly; that list includes the private
+    # lcms2_internal.h, which is why a header sits in srcs rather than hdrs.
+    # src/lcms2.def and src/lcms2.rc.in are in the tree but belong to the DLL configurations only.
+    srcs = [
+        "src/cmsalpha.c",
+        "src/cmscam02.c",
+        "src/cmscgats.c",
+        "src/cmscnvrt.c",
+        "src/cmserr.c",
+        "src/cmsgamma.c",
+        "src/cmsgmt.c",
+        "src/cmshalf.c",
+        "src/cmsintrp.c",
+        "src/cmsio0.c",
+        "src/cmsio1.c",
+        "src/cmslut.c",
+        "src/cmsmd5.c",
+        "src/cmsmtrx.c",
+        "src/cmsnamed.c",
+        "src/cmsopt.c",
+        "src/cmspack.c",
+        "src/cmspcs.c",
+        "src/cmsplugin.c",
+        "src/cmsps2.c",
+        "src/cmssamp.c",
+        "src/cmssm.c",
+        "src/cmstypes.c",
+        "src/cmsvirt.c",
+        "src/cmswtpnt.c",
+        "src/cmsxform.c",
+        "src/lcms2_internal.h",
+    ],
+    # The installed public surface, verbatim from include_HEADERS (include/Makefile.am).
+    hdrs = [
+        "include/lcms2.h",
+        "include/lcms2_plugin.h",
+    ],
+    # liblcms2_la_LIBADD is LCMS_LIB_DEPLIBS, which configure.ac assembles as "$LIB_MATH $LIB_THREAD" — libm plus
+    # pthread, and nothing else. Both are needed only where they are standalone libraries; elsewhere the platform
+    # C runtime already provides the math functions, and threading comes from the Win32 API rather than pthread.
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lm",
+            "-lpthread",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = select(
+        {
+            "@platforms//os:emscripten": _POSIX_REENTRANT_TIME,
+            "@platforms//os:linux": _POSIX_REENTRANT_TIME,
+            "@platforms//os:macos": _POSIX_REENTRANT_TIME,
+            "@platforms//os:wasi": _POSIX_REENTRANT_TIME,
+            # The Windows CRT has gmtime_s rather than gmtime_r; record what it does have, don't default it.
+            "@platforms//os:windows": ["HAVE_GMTIME_S"],
+        },
+        no_match_error = "lcms2: no declared libc reentrant-time capability for this target OS. Add an " +
+                         "@platforms//os arm: HAVE_GMTIME_R if the libc provides gmtime_r; HAVE_GMTIME_S only if " +
+                         "it provides the Microsoft-CRT gmtime_s, errno_t gmtime_s(struct tm*, const time_t*), " +
+                         "which is the form _cmsGetTime (src/cmsplugin.c) calls — a libc offering just the C11 " +
+                         "Annex K gmtime_s must not assert it, as that one takes its arguments in the opposite " +
+                         "order and returns a pointer. Otherwise [].",
+    ),
+    # Sources reach the public headers as "lcms2.h" / "lcms2_plugin.h"
+    # (AM_CPPFLAGS = -I$(top_builddir)/include -I$(top_srcdir)/include). The build-tree include directory holds
+    # nothing — this release generates no config header — so stripping the source-tree include/ alone is faithful.
+    strip_include_prefix = "include",
+    visibility = ["//visibility:public"],
+)
+
+# The upstream testsuite compiles against the PRIVATE header: testbed/testcms2.h includes
+# "lcms2_internal.h", which upstream satisfies by putting -I$(top_srcdir)/src on the testbed's
+# AM_CPPFLAGS. Headers in a target's srcs are invisible to dependents, hence this second view
+# of the file; the restricted visibility keeps the module's public surface at :lcms2 alone.
+cc_library(
+    name = "lcms2_internal_hdrs",
+    hdrs = ["src/lcms2_internal.h"],
+    strip_include_prefix = "src",
+    visibility = ["//testbed:__pkg__"],
+)

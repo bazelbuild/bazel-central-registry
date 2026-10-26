@@ -1,0 +1,58 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//:component_flags.bzl", "BUILD_VARIANTS", "variant_prefix")
+
+_FFMPEG_TEST_COPTS = [
+    "-D_ISOC11_SOURCE",
+    "-D_FILE_OFFSET_BITS=64",
+    "-D_LARGEFILE_SOURCE",
+    "-std=c17",
+    "-Wno-error=implicit-function-declaration",
+] + select({
+    "@platforms//os:macos": ["-D_DARWIN_C_SOURCE"],
+    "//conditions:default": [],
+})
+
+# Public-API tests — representative of external consumption.
+[
+    cc_test(
+        name = variant_prefix(v) + src + "_test",
+        srcs = [src + ".c"],
+        copts = _FFMPEG_TEST_COPTS,
+        deps = [
+            "//:{}avcodec".format(variant_prefix(v)),
+        ],
+    )
+    for v in BUILD_VARIANTS
+    for src in [
+        "avpacket",
+        "codec_desc",
+    ]
+]
+
+# Bazel versions less than 9 do not have `cc_test.additional_compiler_inputs`
+cc_library(
+    name = "bitstream_template_access",
+    testonly = True,
+    includes = ["."],
+    textual_hdrs = ["bitstream_template.c"],
+)
+
+# Internal tests — exercise internals via private headers.
+[
+    cc_test(
+        name = variant_prefix(v) + src + "_test",
+        srcs = [src + ".c"],
+        copts = ["-DHAVE_AV_CONFIG_H"] + _FFMPEG_TEST_COPTS,
+        deps = [
+            ":bitstream_template_access",
+            "//:avcodec_test_hdrs",
+            "//:{}avcodec".format(variant_prefix(v)),
+        ],
+    )
+    for v in BUILD_VARIANTS
+    for src in [
+        "bitstream_be",
+        "bitstream_le",
+    ]
+]

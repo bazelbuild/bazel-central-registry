@@ -1,0 +1,81 @@
+# Written for the registry; upstream has no Bazel build. Same targets as
+# 3.4.0, with each library stating its include directory, so a dependent
+# reaches the headers as system headers (-isystem) and does not compile them
+# under its own warning flags.
+
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+exports_files(["toml.hpp"])
+
+# The single-header form: `#include <toml.hpp>`.
+cc_library(
+    name = "toml++",
+    hdrs = ["toml.hpp"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "tomlplusplus",
+    actual = "toml++",
+    visibility = ["//visibility:public"],
+)
+
+# The multi-header form: `#include <toml++/toml.hpp>`, and `<toml.hpp>` as
+# 3.4.0 reached it. 3.4.0 reached the first through `strip_include_prefix`,
+# which is not a system include directory.
+cc_library(
+    name = "toml++-src",
+    srcs = glob([
+        "include/toml++/impl/*.hpp",
+        "include/toml++/impl/*.inl",
+    ]),
+    hdrs = [
+        "include/toml++/toml.h",
+        "include/toml++/toml.hpp",
+    ],
+    includes = [
+        "include",
+        "include/toml++",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "vendor",
+    hdrs = glob(["vendor/*.hpp"]),
+)
+
+cc_test(
+    name = "tests",
+    srcs = glob(
+        [
+            "tests/*.cpp",
+            "tests/*.hpp",
+        ],
+        exclude = [
+            "tests/odr_test_1.cpp",
+        ],
+    ),
+    copts = select({
+        "@platforms//os:windows": ["/std:c++17"],
+        "//conditions:default": ["-std=c++17"],
+    }),
+    deps = [
+        ":toml++",
+        ":toml++-src",
+        ":vendor",
+    ],
+)
+
+cc_test(
+    name = "odr_test_1",
+    srcs = ["tests/odr_test_1.cpp"],
+    copts = select({
+        "@platforms//os:windows": ["/std:c++17"],
+        "//conditions:default": ["-std=c++17"],
+    }),
+    deps = [
+        ":toml++",
+    ],
+)

@@ -1,0 +1,351 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+load("@rules_cc//cc:objc_library.bzl", "objc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+exports_files(
+    ["LICENSE"],
+    visibility = ["//visibility:private"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# This intentionally uses MuJoCo's headless renderer. It keeps the physics and
+# model compiler hermetic and avoids host OpenGL/X11 packages. Applications that
+# need the mjr rendering API should provide a rendering backend separately.
+cc_library(
+    name = "mujoco",
+    srcs = [
+        "plugin/obj_decoder/obj_decoder.cc",
+        "plugin/stl_decoder/stl_decoder.cc",
+        "src/engine/engine_callback.c",
+        "src/engine/engine_collision_box.c",
+        "src/engine/engine_collision_convex.c",
+        "src/engine/engine_collision_driver.c",
+        "src/engine/engine_collision_gjk.c",
+        "src/engine/engine_collision_primitive.c",
+        "src/engine/engine_collision_sdf.c",
+        "src/engine/engine_core_constraint.c",
+        "src/engine/engine_core_smooth.c",
+        "src/engine/engine_core_util.c",
+        "src/engine/engine_crossplatform.cc",
+        "src/engine/engine_derivative.c",
+        "src/engine/engine_derivative_fd.c",
+        "src/engine/engine_forward.c",
+        "src/engine/engine_init.c",
+        "src/engine/engine_inverse.c",
+        "src/engine/engine_io.c",
+        "src/engine/engine_island.c",
+        "src/engine/engine_memory.c",
+        "src/engine/engine_name.c",
+        "src/engine/engine_passive.c",
+        "src/engine/engine_plugin.cc",
+        "src/engine/engine_print.c",
+        "src/engine/engine_ray.c",
+        "src/engine/engine_sensor.c",
+        "src/engine/engine_setconst.c",
+        "src/engine/engine_sleep.c",
+        "src/engine/engine_solver.c",
+        "src/engine/engine_support.c",
+        "src/engine/engine_thread.cc",
+        "src/engine/engine_util_blas.c",
+        "src/engine/engine_util_errmem.c",
+        "src/engine/engine_util_misc.c",
+        "src/engine/engine_util_solve.c",
+        "src/engine/engine_util_sparse.c",
+        "src/engine/engine_util_spatial.c",
+        "src/engine/engine_vis_init.c",
+        "src/engine/engine_vis_interact.c",
+        "src/engine/engine_vis_visualize.c",
+        "src/user/user_api.cc",
+        "src/user/user_cache.cc",
+        "src/user/user_composite.cc",
+        "src/user/user_flexcomp.cc",
+        "src/user/user_init.c",
+        "src/user/user_mesh.cc",
+        "src/user/user_model.cc",
+        "src/user/user_objects.cc",
+        "src/user/user_resolver.cc",
+        "src/user/user_resource.cc",
+        "src/user/user_threadpool.cc",
+        "src/user/user_util.cc",
+        "src/user/user_vfs.cc",
+        "src/xml/mjz/mjz_decoder.cc",
+        "src/xml/mjz/mjz_encoder.cc",
+        "src/xml/xml.cc",
+        "src/xml/xml_api.cc",
+        "src/xml/xml_base.cc",
+        "src/xml/xml_global.cc",
+        "src/xml/xml_native_reader.cc",
+        "src/xml/xml_native_writer.cc",
+        "src/xml/xml_numeric_format.cc",
+        "src/xml/xml_urdf.cc",
+        "src/xml/xml_util.cc",
+    ],
+    hdrs = glob(["include/mujoco/*.h"]),
+    conlyopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-std=c11"],
+    }),
+    copts = select({
+        "@platforms//os:windows": ["/wd4005"],
+        "//conditions:default": [
+            "-Wno-unknown-pragmas",
+        ],
+    }),
+    cxxopts = select({
+        "@platforms//os:windows": [
+            "/std:c++20",
+            "/EHsc",
+        ],
+        "//conditions:default": [
+            "-std=c++20",
+            "-fexceptions",
+        ],
+    }),
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-lm",
+            "-pthread",
+        ],
+    }),
+    local_defines = [
+        "CCD_STATIC_DEFINE",
+        "MC_IMPLEM_ENABLE",
+        "MUJOCO_DLL_EXPORTS",
+        "TINYOBJLOADER_IMPLEMENTATION",
+        "_GNU_SOURCE",
+    ],
+    textual_hdrs = glob([
+        "src/cc/*.h",
+        "src/engine/*.h",
+        "src/user/*.h",
+        "src/xml/*.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@ccd",
+        "@lodepng",
+        "@marchingcubecpp",
+        "@miniz",
+        "@qhull//:qhull_r",
+        "@tinyobjloader",
+        "@tinyxml2",
+    ],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "mujoco_noop_renderer",
+    srcs = ["src/render/noop/render_noop.c"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = [":mujoco"],
+)
+
+cc_library(
+    name = "mujoco_renderer",
+    srcs = [
+        "src/render/classic/glad/glad.c",
+        "src/render/classic/glad/loader.cc",
+        "src/render/classic/render_context.c",
+        "src/render/classic/render_gl2.c",
+        "src/render/classic/render_gl3.c",
+        "src/render/classic/render_util.c",
+        "src/ui/ui_main.c",
+    ],
+    conlyopts = ["-std=c11"],
+    cxxopts = [
+        "-std=c++20",
+        "-fexceptions",
+    ],
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "//conditions:default": [],
+    }),
+    local_defines = ["_GNU_SOURCE"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    textual_hdrs = glob([
+        "src/render/classic/*.h",
+        "src/render/classic/font/*.inc",
+        "src/render/classic/glad/*.h",
+        "src/ui/*.h",
+    ]),
+    visibility = ["//visibility:public"],
+    deps = [":mujoco"],
+    alwayslink = True,
+)
+
+objc_library(
+    name = "simulate_macos",
+    srcs = [
+        "simulate/glfw_corevideo.mm",
+        "simulate/macos_gui.mm",
+    ],
+    copts = [
+        "-std=c++20",
+        "-fexceptions",
+        "-fno-objc-arc",
+        "-Wno-deprecated-declarations",
+    ],
+    includes = ["simulate"],
+    linkopts = [
+        "-framework Cocoa",
+        "-framework CoreVideo",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    textual_hdrs = [
+        "simulate/glfw_adapter.h",
+        "simulate/glfw_corevideo.h",
+        "simulate/glfw_dispatch.h",
+        "simulate/platform_ui_adapter.h",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":mujoco",
+        "@glfw",
+    ],
+)
+
+cc_library(
+    name = "simulate_lib",
+    srcs = [
+        "simulate/glfw_adapter.cc",
+        "simulate/glfw_dispatch.cc",
+        "simulate/platform_ui_adapter.cc",
+        "simulate/simulate.cc",
+    ],
+    hdrs = [
+        "simulate/glfw_adapter.h",
+        "simulate/glfw_dispatch.h",
+        "simulate/platform_ui_adapter.h",
+        "simulate/simulate.h",
+    ],
+    cxxopts = [
+        "-std=c++20",
+        "-fexceptions",
+    ],
+    includes = ["simulate"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    textual_hdrs = [
+        "simulate/array_safety.h",
+        "simulate/glfw_corevideo.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":mujoco",
+        ":mujoco_renderer",
+        "@glfw",
+        "@lodepng",
+    ] + select({
+        "@platforms//os:macos": [":simulate_macos"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "simulate",
+    srcs = ["simulate/main.cc"],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":simulate_lib"],
+)
+
+# Support for running the upstream unit tests in //test. The first-party
+# engine plugins are linked statically into the test binaries (registration
+# happens via mjPLUGIN_LIB_INIT static constructors) instead of being loaded
+# dynamically through MUJOCO_PLUGIN_DIR as in the upstream CMake build.
+filegroup(
+    name = "models",
+    testonly = True,
+    srcs = glob(["model/**"]),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "elasticity_plugin",
+    testonly = True,
+    srcs = glob([
+        "plugin/elasticity/*.cc",
+        "plugin/elasticity/*.h",
+    ]),
+    cxxopts = ["-std=c++20"],
+    visibility = ["//visibility:public"],
+    deps = [":mujoco"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "actuator_plugin",
+    testonly = True,
+    srcs = glob([
+        "plugin/actuator/*.cc",
+        "plugin/actuator/*.h",
+    ]),
+    cxxopts = ["-std=c++20"],
+    visibility = ["//visibility:public"],
+    deps = [":mujoco"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "sdf_plugin",
+    testonly = True,
+    srcs = glob([
+        "plugin/sdf/*.cc",
+        "plugin/sdf/*.h",
+    ]),
+    cxxopts = ["-std=c++20"],
+    visibility = ["//visibility:public"],
+    deps = [":mujoco"],
+    alwayslink = True,
+)
+
+cc_library(
+    name = "sensor_plugin",
+    testonly = True,
+    srcs = glob([
+        "plugin/sensor/*.cc",
+        "plugin/sensor/*.h",
+    ]),
+    cxxopts = ["-std=c++20"],
+    visibility = ["//visibility:public"],
+    deps = [":mujoco"],
+    alwayslink = True,
+)

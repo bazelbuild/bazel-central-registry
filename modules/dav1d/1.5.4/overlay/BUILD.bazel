@@ -1,0 +1,120 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_PRIVATE_HEADERS = glob([
+    "include/common/*.h",
+    "src/**/*.h",
+]) + [
+    "config.h",
+    "include/vcs_version.h",
+]
+
+_PUBLIC_HEADERS = glob(["include/dav1d/*.h"])
+
+_TEMPLATE_SOURCES = [
+    "src/cdef_apply_tmpl.c",
+    "src/cdef_tmpl.c",
+    "src/fg_apply_tmpl.c",
+    "src/filmgrain_tmpl.c",
+    "src/ipred_prepare_tmpl.c",
+    "src/ipred_tmpl.c",
+    "src/itx_tmpl.c",
+    "src/lf_apply_tmpl.c",
+    "src/loopfilter_tmpl.c",
+    "src/looprestoration_tmpl.c",
+    "src/lr_apply_tmpl.c",
+    "src/mc_tmpl.c",
+    "src/recon_tmpl.c",
+]
+
+[
+    cc_library(
+        name = "bitdepth_{}".format(bitdepth),
+        srcs = _TEMPLATE_SOURCES + _PRIVATE_HEADERS,
+        hdrs = _PUBLIC_HEADERS,
+        includes = [
+            ".",
+            "include",
+        ],
+        linkstatic = True,
+        local_defines = ["BITDEPTH={}".format(bitdepth)],
+        visibility = ["//visibility:private"],
+    )
+    for bitdepth in [
+        8,
+        16,
+    ]
+]
+
+cc_library(
+    name = "dav1d",
+    srcs = [
+        "src/cdf.c",
+        "src/cpu.c",
+        "src/ctx.c",
+        "src/data.c",
+        "src/decode.c",
+        "src/dequant_tables.c",
+        "src/getbits.c",
+        "src/intra_edge.c",
+        "src/itx_1d.c",
+        "src/lf_mask.c",
+        "src/lib.c",
+        "src/log.c",
+        "src/mem.c",
+        "src/msac.c",
+        "src/obu.c",
+        "src/pal.c",
+        "src/picture.c",
+        "src/qm.c",
+        "src/ref.c",
+        "src/refmvs.c",
+        "src/scan.c",
+        "src/tables.c",
+        "src/thread_task.c",
+        "src/warpmv.c",
+        "src/wedge.c",
+    ] + _PRIVATE_HEADERS + select({
+        "@platforms//os:windows": ["src/win32/thread.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = _PUBLIC_HEADERS,
+    includes = [
+        ".",
+        "include",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    linkstatic = True,
+    deps = [
+        ":bitdepth_16",
+        ":bitdepth_8",
+    ],
+    alwayslink = True,
+)
+
+[
+    cc_test(
+        name = "{}_header_test".format(header.replace(".", "_")),
+        srcs = ["tests/header_test.c"],
+        copts = ["-DDAV1D_TEST_HEADER=\\\"dav1d/{}\\\"".format(header)],
+        deps = [":dav1d"],
+    )
+    for header in [
+        "common.h",
+        "data.h",
+        "dav1d.h",
+        "headers.h",
+        "picture.h",
+        "version.h",
+    ]
+]
+
+cc_test(
+    name = "decoder_test",
+    srcs = ["tests/decoder_test.c"],
+    deps = [":dav1d"],
+)

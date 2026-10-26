@@ -1,0 +1,26 @@
+diff --git a/folly/testing/TestUtil.cpp b/folly/testing/TestUtil.cpp
+index 42d05bb..fc875fe 100644
+--- a/folly/testing/TestUtil.cpp
++++ b/folly/testing/TestUtil.cpp
+@@ -237,6 +237,21 @@ fs::path find_resource(std::string_view resource) {
+   if (pos == std::string::npos) {
+     throw std::invalid_argument("invalid: " + std::string(resource));
+   }
++  // Under Bazel, data files are staged in runfiles below a directory per
++  // repository, and TEST_SRCDIR points at the runfiles root. The resource
++  // path is relative to the repository that owns it, so try each of them.
++  if (auto const* srcdir = std::getenv("TEST_SRCDIR")) {
++    try {
++      for (auto const& entry : fs::directory_iterator(fs::path(srcdir))) {
++        auto const candidate = entry.path() / std::string(resource);
++        if (fs::exists(candidate)) {
++          return candidate;
++        }
++      }
++    } catch (std::exception const&) {
++      // Not a Bazel test, or the runfiles tree is not readable.
++    }
++  }
+   auto const ext = folly::ext::test_find_resource;
+   auto fn = ext //
+       ? fs::path(ext(resource)) // hooked, eg via internal extension

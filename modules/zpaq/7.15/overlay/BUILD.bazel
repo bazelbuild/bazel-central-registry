@@ -1,0 +1,51 @@
+"""ZPAQ 7.15 - https://mattmahoney.net/dc/zpaq.html"""
+
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+package(default_visibility = ["//visibility:private"])
+
+# `Makefile` builds libzpaq.cpp as the reusable library. The implementation's
+# JIT emits x86 machine code and requires SSE2. Bazel's generic x86_32
+# constraint does not guarantee SSE2, so enable JIT only on x86_64.
+cc_library(
+    name = "zpaq",
+    srcs = ["libzpaq.cpp"],
+    hdrs = ["libzpaq.h"],
+    includes = ["."],
+    linkopts = select({
+        # libzpaq::random() uses CryptoAPI on Windows.
+        "@platforms//os:windows": ["advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["unix"],
+    }) + select({
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": ["NOJIT"],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libzpaq",
+    actual = ":zpaq",
+    visibility = ["//visibility:public"],
+)
+
+# `Makefile` links zpaq.cpp with libzpaq and pthreads on POSIX systems. The
+# source supplies the native Win32 threading implementation on Windows.
+cc_binary(
+    name = "zpaq_cli",
+    srcs = ["zpaq.cpp"],
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":zpaq"],
+)

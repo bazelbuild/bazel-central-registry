@@ -1,0 +1,118 @@
+module(
+    name = "ahab",
+    version = "0.2.1",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+###############################################################################
+# Core deps
+###############################################################################
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+###############################################################################
+# The binary
+###############################################################################
+
+prebuilt = use_extension("//private:extensions.bzl", "prebuilt")
+use_repo(prebuilt, "ahab_prebuilt")
+
+version = use_extension(
+    "//private:extensions.bzl",
+    "version",
+    dev_dependency = True,
+)
+use_repo(version, "ahab_version")
+
+###############################################################################
+# Building Ahab itself
+###############################################################################
+
+bazel_dep(name = "rules_rs", version = "0.0.104", dev_dependency = True)
+bazel_dep(name = "rules_proto", version = "7.1.0", dev_dependency = True)
+bazel_dep(name = "protobuf", version = "35.1", dev_dependency = True)
+
+###############################################################################
+# Starlark formatting
+###############################################################################
+
+bazel_dep(
+    name = "buildifier_prebuilt",
+    version = "8.5.1.3",
+    dev_dependency = True,
+)
+
+###############################################################################
+# Hermetic C/C++ toolchain
+###############################################################################
+
+# Rust linking shells out to a C/C++ compiler, so without a registered cc
+# toolchain Bazel falls back to whatever cc/ld happen to be on the host. The
+# llvm module provides a zero-sysroot, fully hermetic LLVM-based cc
+# toolchain.
+bazel_dep(name = "llvm", version = "0.8.14", dev_dependency = True)
+
+###############################################################################
+# Rust toolchain
+###############################################################################
+
+toolchains = use_extension(
+    "@rules_rs//rs/toolchains:module_extension.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+toolchains.toolchain(
+    edition = "2024",
+    version = "1.86.0",
+)
+use_repo(toolchains, "default_rust_toolchains")
+
+# rules_rs redistributes a patched rules_rust under its own name, which is
+# what `//rust` and `//proto` load their rules from.
+rules_rust = use_extension(
+    "@rules_rs//rs:rules_rust.bzl",
+    "rules_rust",
+    dev_dependency = True,
+)
+use_repo(rules_rust, "rules_rust")
+
+register_toolchains(
+    "@default_rust_toolchains//...",
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)
+
+###############################################################################
+# Third-party crate dependencies
+###############################################################################
+
+crate = use_extension(
+    "@rules_rs//rs:extensions.bzl",
+    "crate",
+    dev_dependency = True,
+)
+crate.from_cargo(
+    name = "ahab_crates",
+    cargo_lock = "//:Cargo.lock",
+    cargo_toml = "//:Cargo.toml",
+    platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-unknown-linux-musl",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+    ],
+)
+crate.annotation(
+    crate = "protoc-gen-prost",
+    gen_binaries = ["protoc-gen-prost"],
+    repositories = ["ahab_crates"],
+)
+use_repo(crate, "ahab_crates")
+
+register_toolchains(
+    "//proto:prost_toolchain",
+    dev_dependency = True,
+)

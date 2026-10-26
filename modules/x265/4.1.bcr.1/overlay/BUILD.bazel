@@ -1,0 +1,462 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_nasm//nasm:defs.bzl", "nasm_library")
+
+# CMake's HIGH_BIT_DEPTH=ON without MAIN12, i.e. Main10. Upstream defaults to
+# HIGH_BIT_DEPTH=OFF (BIT_DEPTH 8); this module ships the Main10 configuration.
+BIT_DEPTH = 10
+
+X265_BUILD = 215
+
+# cmake/Version.cmake derives this from the git tag, which a source archive does
+# not carry, so it is pinned to the release this module packages.
+X265_VERSION = "4.1"
+
+selects.config_setting_group(
+    name = "msvc_like",
+    match_any = [
+        "@rules_cc//cc/compiler:clang-cl",
+        "@rules_cc//cc/compiler:msvc-cl",
+    ],
+)
+
+selects.config_setting_group(
+    name = "gnu_like",
+    match_any = [
+        "@rules_cc//cc/compiler:clang",
+        "@rules_cc//cc/compiler:gcc",
+    ],
+)
+
+selects.config_setting_group(
+    name = "gnu_like_x86_64",
+    match_all = [
+        ":gnu_like",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+# Matches CMake: configure_file("x265_config.h.in" "${PROJECT_BINARY_DIR}/x265_config.h").
+# Upstream's template substitutes X265_BUILD and nothing else, and this header is
+# installed alongside x265.h, so anything extra added here would end up in a
+# consumer's include path.
+write_file(
+    name = "x265_config_h_in",
+    out = "source/x265_config.h.in",
+    content = [
+        "#ifndef X265_CONFIG_H",
+        "#define X265_CONFIG_H",
+        "",
+        "/* Defines generated at build time */",
+        "",
+        "/* Incremented each time public API is changed, X265_BUILD is used as",
+        " * the shared library SONAME on platforms which support it. It also",
+        " * prevents linking against a different version of the static lib */",
+        "#undef X265_BUILD",
+        "",
+        "#endif",
+        "",
+    ],
+    newline = "unix",
+)
+
+autoconf(
+    name = "x265_config_checks",
+    checks = [
+        checks.AC_DEFINE(
+            "X265_BUILD",
+            str(X265_BUILD),
+        ),
+    ],
+)
+
+autoconf_hdr(
+    name = "x265_config_h",
+    out = "source/x265_config.h",
+    template = ":x265_config_h_in",
+    deps = [":x265_config_checks"],
+)
+
+# CMake passes the results of these two checks on the command line
+# (-DHAVE_INT_TYPES_H=1 globally, -DHAVE_STRTOK_R=1 on param.cpp). A configure
+# check cannot produce a copt in Bazel, so they go into a private header that
+# every compile force-includes instead. Either way they stay out of
+# x265_config.h, where names this generic would collide with a consumer's own.
+write_file(
+    name = "x265_autoconf_h_in",
+    out = "source/x265_autoconf.h.in",
+    content = [
+        "#ifndef X265_AUTOCONF_H",
+        "#define X265_AUTOCONF_H",
+        "",
+        "#undef HAVE_INT_TYPES_H",
+        "#undef HAVE_STRTOK_R",
+        "",
+        "#endif",
+        "",
+    ],
+    newline = "unix",
+)
+
+autoconf(
+    name = "x265_autoconf_checks",
+    checks = [
+        checks.AC_CHECK_HEADER("inttypes.h"),
+        checks.AC_DEFINE(
+            "HAVE_INT_TYPES_H",
+            condition = "ac_cv_header_inttypes_h",
+            if_false = "0",
+            if_true = "1",
+        ),
+        checks.AC_TRY_LINK(
+            name = "ac_cv_func_strtok_r",
+            code = "strtok_r(0, 0, 0);",
+            includes = ["#include <string.h>"],
+        ),
+        # param.cpp tests this with #if !defined(HAVE_STRTOK_R) and supplies its
+        # own implementation, so the macro has to stay undefined when the
+        # function is missing (as it is with MSVC, which spells it strtok_s).
+        checks.AC_DEFINE(
+            "HAVE_STRTOK_R",
+            condition = "ac_cv_func_strtok_r",
+            if_false = None,
+            if_true = "1",
+        ),
+    ],
+)
+
+autoconf_hdr(
+    name = "x265_autoconf_h",
+    out = "source/x265_autoconf.h",
+    template = ":x265_autoconf_h_in",
+    deps = [":x265_autoconf_checks"],
+)
+
+# add_definitions() from source/CMakeLists.txt. These reach the C++ compile only;
+# the assembler gets the mostly disjoint set in ASM_DEFINES below. Notably
+# BIT_DEPTH, ARCH_X86_64, PIC, PREFIX and HAVE_ALIGNED_STACK are assembler-only,
+# and X265_VERSION is set on version.cpp alone.
+CC_DEFINES = [
+    "-DEXPORT_C_API=1",
+    "-DHIGH_BIT_DEPTH=1",
+    "-DX265_DEPTH={}".format(BIT_DEPTH),
+    "-DX265_NS=x265",
+] + select({
+    "@platforms//os:macos": ["-DMACOS=1"],
+    "//conditions:default": [],
+}) + select({
+    "@platforms//cpu:aarch64": [
+        "-DX265_ARCH_ARM64=1",
+        "-DHAVE_NEON=1",
+        # source/CMakeLists.txt has an if(ARM64) block that appends BIT_DEPTH to
+        # ASM_FLAGS, mirroring what CMakeASM_NASMInformation.cmake does for x86.
+        # The aarch64 .S files are compiled by the C compiler here, so it has to
+        # ride along in the copts; no C++ source reads the bare macro.
+        "-DBIT_DEPTH={}".format(BIT_DEPTH),
+    ],
+    "@platforms//cpu:arm": [
+        "-DX265_ARCH_ARM=1",
+        "-DHAVE_ARMV6=1",
+    ],
+    "@platforms//cpu:x86_64": [
+        "-DX86_64=1",
+        "-DX265_ARCH_X86=1",
+    ],
+    "//conditions:default": [],
+})
+
+# ASM_FLAGS from source/cmake/CMakeASM_NASMInformation.cmake.
+ASM_DEFINES = [
+    "-DBIT_DEPTH={}".format(BIT_DEPTH),
+    "-DHIGH_BIT_DEPTH=1",
+    "-DX265_NS=x265",
+] + select({
+    "@platforms//cpu:x86_64": ["-DARCH_X86_64=1"],
+    "//conditions:default": ["-DARCH_X86_64=0"],
+}) + select({
+    # ENABLE_PIC defaults to ON for x86-64 everywhere except Windows.
+    "@platforms//os:windows": [],
+    "//conditions:default": ["-DPIC"],
+}) + select({
+    # Follows CMake's GCC variable, which covers gcc, clang and icc but not
+    # cl.exe.
+    "@rules_cc//cc/compiler:msvc-cl": ["-DHAVE_ALIGNED_STACK=0"],
+    "//conditions:default": ["-DHAVE_ALIGNED_STACK=1"],
+}) + select({
+    # nasm's macho64 output needs the leading-underscore symbol prefix.
+    "@platforms//os:macos": ["-DPREFIX"],
+    "//conditions:default": [],
+})
+
+# Deviations from upstream, all deliberate:
+#   * -w / /w replaces -Wall -Wextra -Wshadow / /W4. A registry module compiles
+#     as a dependency of somebody else's build; its warnings are noise there.
+#   * c++14 replaces upstream's -std=gnu++98, which current toolchains no longer
+#     accept for this source.
+#   * /Ob2, /MP and /D_CRT_SECURE_NO_WARNINGS are dropped: the first is the
+#     compilation mode's job in Bazel, the second is a build-parallelism switch,
+#     the third only silences warnings that /w already covers.
+CC_COPTS = CC_DEFINES + [
+    "-DENABLE_ASSEMBLY=1",
+] + select({
+    ":msvc_like": [
+        "/w",
+        "/std:c++14",
+        "/FIx265_autoconf.h",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=c++14",
+        "-D__STDC_LIMIT_MACROS=1",
+        "-ffast-math",
+        "-fno-exceptions",
+        "-include",
+        "x265_autoconf.h",
+    ],
+}) + select({
+    ":gnu_like_x86_64": ["-mstackrealign"],
+    "//conditions:default": [],
+})
+
+# SSE2 is the x86-64 baseline for cl.exe and it exposes the SSE3/SSSE3/SSE4.1
+# intrinsics unconditionally, so the isa-specific vec/ libraries below need no
+# extra option there.
+_SSE3_COPTS = select({
+    ":msvc_like": [],
+    "//conditions:default": ["-msse3"],
+})
+
+_SSSE3_COPTS = select({
+    ":msvc_like": [],
+    "//conditions:default": ["-mssse3"],
+})
+
+_SSE41_COPTS = select({
+    ":msvc_like": [],
+    "//conditions:default": ["-msse4.1"],
+})
+
+# Everything include_directories(. common encoder "${PROJECT_BINARY_DIR}") makes
+# visible during the build but install() does not ship. Reaching these through
+# implementation_deps keeps names as generic as common/common.h out of a
+# consumer's include path.
+cc_library(
+    name = "internal_hdrs",
+    hdrs = [
+        ":x265_autoconf_h",
+        ":x265_config_h",
+    ] + glob([
+        "source/*.h",
+        "source/common/*.h",
+        "source/encoder/*.h",
+        "source/input/*.h",
+        "source/output/*.h",
+    ]) + select({
+        "@platforms//cpu:aarch64": glob(["source/common/aarch64/*.h"]),
+        "@platforms//cpu:x86_64": glob(["source/common/x86/*.h"]),
+        "//conditions:default": [],
+    }),
+    includes = [
+        "source",
+        "source/common",
+        "source/encoder",
+    ],
+    # The aarch64 assembly is #include-ed by its siblings rather than assembled
+    # on its own.
+    textual_hdrs = select({
+        "@platforms//cpu:aarch64": [
+            "source/common/aarch64/asm.S",
+            "source/common/aarch64/blockcopy8-common.S",
+            "source/common/aarch64/mc-a-common.S",
+            "source/common/aarch64/p2s-common.S",
+            "source/common/aarch64/pixel-util-common.S",
+            "source/common/aarch64/ssd-a-common.S",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "vec_sse3",
+    srcs = ["source/common/vec/dct-sse3.cpp"],
+    copts = CC_COPTS + _SSE3_COPTS,
+    implementation_deps = [":internal_hdrs"],
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+)
+
+cc_library(
+    name = "vec_ssse3",
+    srcs = ["source/common/vec/dct-ssse3.cpp"],
+    copts = CC_COPTS + _SSSE3_COPTS,
+    implementation_deps = [":internal_hdrs"],
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+)
+
+cc_library(
+    name = "vec_sse41",
+    srcs = ["source/common/vec/dct-sse41.cpp"],
+    copts = CC_COPTS + _SSE41_COPTS,
+    implementation_deps = [":internal_hdrs"],
+    target_compatible_with = ["@platforms//cpu:x86_64"],
+)
+
+# Upstream's libx265. install() ships x265.h and x265_config.h, so those are the
+# only headers this exports.
+cc_library(
+    name = "x265",
+    srcs = glob([
+        "source/common/*.cpp",
+        "source/encoder/*.cpp",
+    ]) + select({
+        "@platforms//cpu:aarch64": glob(
+            include = [
+                "source/common/aarch64/*.cpp",
+                "source/common/aarch64/*.S",
+            ],
+            exclude = [
+                "source/common/aarch64/sao-prim-sve.cpp",
+                "source/common/aarch64/dct-prim-sve.cpp",
+                "source/common/aarch64/sao-prim-sve2.cpp",
+                "source/common/aarch64/filter-neon-dotprod.cpp",
+                "source/common/aarch64/filter-neon-i8mm.cpp",
+                "source/common/aarch64/asm.S",
+                "source/common/aarch64/asm-sve.S",
+                "source/common/aarch64/ssd-a-common.S",
+                "source/common/aarch64/pixel-util-common.S",
+                "source/common/aarch64/mc-a-common.S",
+                "source/common/aarch64/blockcopy8-common.S",
+                "source/common/aarch64/p2s-common.S",
+                "source/common/aarch64/blockcopy8-sve.S",
+                "source/common/aarch64/p2s-sve.S",
+                "source/common/aarch64/pixel-util-sve.S",
+                "source/common/aarch64/mc-a-sve2.S",
+                "source/common/aarch64/pixel-util-sve2.S",
+                "source/common/aarch64/ssd-a-sve2.S",
+                "source/common/aarch64/sad-neon-dotprod.S",
+                "source/common/aarch64/ssd-neon-dotprod.S",
+            ],
+        ),
+        "@platforms//cpu:x86_64": [":asm"] + glob(
+            include = [
+                "source/common/vec/*.cpp",
+                "source/common/x86/*.cpp",
+            ],
+            exclude = [
+                "source/common/vec/dct-sse3.cpp",
+                "source/common/vec/dct-ssse3.cpp",
+                "source/common/vec/dct-sse41.cpp",
+            ],
+        ),
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "source/x265.h",
+        ":x265_config_h",
+    ],
+    # CMake sets X265_VERSION on version.cpp alone; it is the only file that
+    # reads the macro, so widening it to the target costs nothing.
+    copts = CC_COPTS + ["-DX265_VERSION={}".format(X265_VERSION)],
+    implementation_deps = [":internal_hdrs"] + select({
+        "@platforms//cpu:x86_64": [
+            ":vec_sse3",
+            ":vec_sse41",
+            ":vec_ssse3",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = ["source"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = 1,
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "x265_isystem",
+    includes = ["source"],
+    visibility = ["//visibility:public"],
+    deps = [":x265"],
+)
+
+nasm_library(
+    name = "asm",
+    srcs = glob(
+        include = [
+            "source/common/x86/*.asm",
+        ],
+        exclude = [
+            "source/common/x86/intrapred8.asm",
+            "source/common/x86/intrapred8_allangs.asm",
+            "source/common/x86/ipfilter8.asm",
+            "source/common/x86/h-ipfilter8.asm",
+            "source/common/x86/v4-ipfilter8.asm",
+            "source/common/x86/pixel-32.asm",
+            "source/common/x86/sad-a.asm",
+            "source/common/x86/x86inc.asm",
+            "source/common/x86/x86util.asm",
+        ],
+    ),
+    hdrs = [
+        "source/common/x86/x86inc.asm",
+        "source/common/x86/x86util.asm",
+    ],
+    copts = ASM_DEFINES,
+    includes = ["source/common/x86"],
+    tags = ["manual"],
+)
+
+# checkasm assembly for TestBench (source/test/checkasm-a.asm needs -I source/common/x86)
+nasm_library(
+    name = "test_checkasm_asm",
+    srcs = ["source/test/checkasm-a.asm"],
+    hdrs = [
+        "source/common/x86/x86inc.asm",
+        "source/common/x86/x86util.asm",
+    ],
+    copts = ASM_DEFINES,
+    includes = ["source/common/x86"],
+    tags = ["manual"],
+)
+
+# Unit test for encoder primitives (TestBench in native build)
+# Verifies intrinsics and assembly match C reference
+# x86_64 needs checkasm; aarch64 uses direct calls (no checkasm asm)
+cc_test(
+    name = "TestBench",
+    srcs = [
+        "source/test/intrapredharness.cpp",
+        "source/test/intrapredharness.h",
+        "source/test/ipfilterharness.cpp",
+        "source/test/ipfilterharness.h",
+        "source/test/mbdstharness.cpp",
+        "source/test/mbdstharness.h",
+        "source/test/pixelharness.cpp",
+        "source/test/pixelharness.h",
+        "source/test/testbench.cpp",
+        "source/test/testharness.h",
+    ] + select({
+        "@platforms//cpu:x86_64": [":test_checkasm_asm"],
+        "//conditions:default": [],
+    }),
+    # source/test/CMakeLists.txt probes for __rdtsc in intrin.h, which only the
+    # MSVC-compatible compilers provide.
+    copts = CC_COPTS + select({
+        ":msvc_like": ["-DHAVE_RDTSC=1"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":internal_hdrs",
+        ":x265",
+    ],
+)

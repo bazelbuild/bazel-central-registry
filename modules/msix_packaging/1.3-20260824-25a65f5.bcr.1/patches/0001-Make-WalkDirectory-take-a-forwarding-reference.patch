@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mikhail Zinchenko <m1d3ry@proton.me>
+Date: Tue, 1 Sep 2026 17:24:21 +0200
+Subject: [PATCH] Make WalkDirectory take a forwarding reference
+
+`WalkDirectory` declared its visitor as `Lambda&`, a non-const lvalue reference. Its call sites in
+`OpenFile` and `GetFilesByLastModDate` pass a temporary lambda. A conforming compiler rejects the bind
+of an rvalue to a non-const lvalue reference, so the file only compiles under the permissive mode of
+MSVC. clang-cl rejects it.
+
+`Lambda&&` is a forwarding reference. It binds the temporary at the two call sites and also the lvalue
+`visitor` in the recursive call, so the behaviour under MSVC does not change.
+---
+ src/msix/PAL/FileSystem/Win32/DirectoryObject.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/msix/PAL/FileSystem/Win32/DirectoryObject.cpp b/src/msix/PAL/FileSystem/Win32/DirectoryObject.cpp
+index 5cfcdb8e..df14e01d 100644
+--- a/src/msix/PAL/FileSystem/Win32/DirectoryObject.cpp
++++ b/src/msix/PAL/FileSystem/Win32/DirectoryObject.cpp
+@@ -41,7 +41,7 @@ namespace MSIX
+         }
+ 
+         template <class Lambda>
+-        void WalkDirectory(const std::string& root, WalkOptions options, Lambda& visitor)
++        void WalkDirectory(const std::string& root, WalkOptions options, Lambda&& visitor)
+         {
+             static std::string dot(".");
+             static std::string dotdot("..");

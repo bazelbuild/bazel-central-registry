@@ -1,0 +1,124 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+string_flag(
+    name = "ssl",
+    build_setting_default = "boringssl",
+    values = [
+        "openssl",
+        "boringssl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "openssl",
+    flag_values = {":ssl": "openssl"},
+)
+
+config_setting(
+    name = "boringssl",
+    flag_values = {":ssl": "boringssl"},
+)
+
+_COPTS = select({
+    "@platforms//os:windows": [
+        "/std:c++20",
+        "/bigobj",
+        # OpenSSL propagates _WINSOCKAPI_, which makes Asio reject winsock2.h.
+        # Remove it and force the header that the Asio guard expects.
+        "/U_WINSOCKAPI_",
+        "/FIwinsock2.h",
+    ],
+    "//conditions:default": ["-std=c++20"],
+})
+
+_LOCAL_DEFINES = ["BOOST_ASIO_NO_DEPRECATED"] + select({
+    "@platforms//os:windows": [
+        "WIN32_LEAN_AND_MEAN",
+        "_SCL_SECURE_NO_WARNINGS",
+        "_CRT_SECURE_NO_DEPRECATE",
+    ],
+    "//conditions:default": [],
+})
+
+# The private headers and the public ones listed here use std::coroutine_handle
+# without including <coroutine>, so they are not self-contained.
+_TEXTUAL_HDRS = glob([
+    "include/boost/cobalt/detail/**/*.hpp",
+    "include/boost/cobalt/impl/**/*.hpp",
+]) + [
+    "include/boost/cobalt/channel.hpp",
+    "include/boost/cobalt/composition.hpp",
+    "include/boost/cobalt/noop.hpp",
+    "include/boost/cobalt/op.hpp",
+    "include/boost/cobalt/result.hpp",
+]
+
+# boost/cobalt/io.hpp is the umbrella header for the io/ directory, so it
+# belongs to the io target rather than the core one.
+_IO_HDRS = ["include/boost/cobalt/io.hpp"] + glob(["include/boost/cobalt/io/**/*.hpp"])
+
+cc_library(
+    name = "boost.cobalt",
+    srcs = [
+        "src/channel.cpp",
+        "src/detail/exception.cpp",
+        "src/detail/util.cpp",
+        "src/error.cpp",
+        "src/main.cpp",
+        "src/this_thread.cpp",
+        "src/thread.cpp",
+    ],
+    hdrs = glob(
+        ["include/**/*.hpp"],
+        exclude = _IO_HDRS + _TEXTUAL_HDRS,
+    ),
+    copts = _COPTS,
+    features = ["parse_headers"],
+    includes = ["include"],
+    local_defines = _LOCAL_DEFINES + ["BOOST_COBALT_SOURCE=1"],
+    textual_hdrs = _TEXTUAL_HDRS,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@boost.asio",
+        "@boost.callable_traits",
+        "@boost.circular_buffer",
+        "@boost.config",
+        "@boost.container",
+        "@boost.context",
+        "@boost.core",
+        "@boost.intrusive",
+        "@boost.mp11",
+        "@boost.preprocessor",
+        "@boost.smart_ptr",
+        "@boost.system",
+        "@boost.throw_exception",
+        "@boost.variant2",
+    ],
+)
+
+cc_library(
+    name = "boost.cobalt.io",
+    srcs = glob(["src/io/*.cpp"]),
+    hdrs = _IO_HDRS,
+    copts = _COPTS,
+    features = ["parse_headers"],
+    includes = ["include"],
+    local_defines = _LOCAL_DEFINES + ["BOOST_COBALT_SOURCE=1"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":boost.cobalt",
+        "@boost.endian",
+        "@boost.static_string",
+    ] + select({
+        ":boringssl": [
+            "@boringssl//:crypto",
+            "@boringssl//:ssl",
+        ],
+        ":openssl": [
+            "@openssl//:crypto",
+            "@openssl//:ssl",
+        ],
+    }),
+)
