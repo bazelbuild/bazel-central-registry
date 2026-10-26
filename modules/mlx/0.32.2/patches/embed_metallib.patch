@@ -1,0 +1,62 @@
+diff --git a/mlx/backend/metal/device.cpp b/mlx/backend/metal/device.cpp
+index 2f25f89..eeaa01b 100644
+--- a/mlx/backend/metal/device.cpp
++++ b/mlx/backend/metal/device.cpp
+@@ -111,6 +111,25 @@ std::pair<MTL::Library*, NS::Error*> load_library_from_path(
+   return std::make_pair(lib, error);
+ }
+ 
++#ifdef MLX_METAL_EMBEDDED_METALLIB
++extern "C" const unsigned char mlx_embedded_metallib[];
++extern "C" const size_t mlx_embedded_metallib_size;
++
++// Load mlx.metallib from bytes linked into the binary.
++std::pair<MTL::Library*, NS::Error*> load_embedded_library(
++    MTL::Device* device) {
++  auto data = dispatch_data_create(
++      mlx_embedded_metallib,
++      mlx_embedded_metallib_size,
++      nullptr,
++      DISPATCH_DATA_DESTRUCTOR_DEFAULT);
++  NS::Error* error = nullptr;
++  auto lib = device->newLibrary(data, &error);
++  dispatch_release(data);
++  return std::make_pair(lib, error);
++}
++#endif
++
+ #ifdef SWIFTPM_BUNDLE
+ MTL::Library* try_load_bundle(
+     MTL::Device* device,
+@@ -207,7 +226,7 @@ MTL::Library* load_default_library(MTL::Device* device) {
+     return lib;
+   }
+ 
+-  NS::Error* error[5];
++  NS::Error* error[6] = {};
+   MTL::Library* lib;
+   // First try the colocated mlx.metallib
+   std::tie(lib, error[0]) = load_colocated_library(device, "mlx");
+@@ -233,12 +252,20 @@ MTL::Library* load_default_library(MTL::Device* device) {
+     return lib;
+   }
+ 
++#ifdef MLX_METAL_EMBEDDED_METALLIB
++  // Then try the metallib embedded into the binary
++  std::tie(lib, error[4]) = load_embedded_library(device);
++  if (lib) {
++    return lib;
++  }
++#endif
++
+   // Finally try default_mtllib_path
+-  std::tie(lib, error[4]) = load_library_from_path(device, default_mtllib_path);
++  std::tie(lib, error[5]) = load_library_from_path(device, default_mtllib_path);
+   if (!lib) {
+     std::ostringstream msg;
+     msg << "Failed to load the default metallib. ";
+-    for (int i = 0; i < 5; i++) {
++    for (int i = 0; i < 6; i++) {
+       if (error[i] != nullptr) {
+         msg << error[i]->localizedDescription()->utf8String() << " ";
+       }
