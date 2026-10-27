@@ -6,11 +6,24 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files(["src/libsepol.map.in"])
 
+# Quote-includes reachable from cil_lexer.l. The generated .c is not a sibling of
+# cil/src, so copy this fixed 3.5 set beside it instead of publishing cil/src.
+_CIL_LEXER_HDRS = [
+    "cil_flavor.h",
+    "cil_internal.h",
+    "cil_lexer.h",
+    "cil_list.h",
+    "cil_log.h",
+    "cil_mem.h",
+    "cil_symtab.h",
+    "cil_tree.h",
+]
+
 genrule(
     name = "cil_lexer_src",
-    srcs = ["cil/src/cil_lexer.l"],
-    outs = ["cil_lexer.c"],
-    cmd = "M4=$(M4) $(FLEX) --outfile=$@ $<",
+    srcs = ["cil/src/cil_lexer.l"] + ["cil/src/" + hdr for hdr in _CIL_LEXER_HDRS],
+    outs = ["cil_lexer.c"] + _CIL_LEXER_HDRS,
+    cmd = "M4=$(M4) $(FLEX) --outfile=$(execpath cil_lexer.c) $(execpath cil/src/cil_lexer.l) && cp " + " ".join(["$(execpath cil/src/%s)" % hdr for hdr in _CIL_LEXER_HDRS]) + " $(RULEDIR)/",
     toolchains = [
         "@rules_flex//flex:current_flex_toolchain",
         "@rules_m4//m4:current_m4_toolchain",
@@ -35,12 +48,8 @@ cc_library(
         "-include",
         "$(execpath sepol_compat.h)",
     ],
-    # cil/src is a private implementation detail (needed because the generated
-    # cil_lexer.c quote-includes its siblings there), but cc_library's `includes`
-    # has no non-propagating form, so it unavoidably leaks to our dependents too.
     includes = [
         "cil/include",
-        "cil/src",
         "include",
         "include/sepol",
     ],
