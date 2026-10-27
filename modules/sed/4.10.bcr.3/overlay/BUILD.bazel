@@ -1,0 +1,268 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load(":autoconf.bzl", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# The names earlier versions of this module exported.
+alias(
+    name = "bin/sed",
+    actual = ":sed/sed",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "sed_bin",
+    actual = ":sed/sed",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libsed",
+    actual = ":lib/sed",
+    visibility = ["//visibility:public"],
+)
+
+# Smoke test
+# =============================================================================
+
+write_file(
+    name = "sed_test_input",
+    out = "sed_test_input.txt",
+    content = [
+        "Hello World",
+        "This is a test.",
+        "Hello again.",
+        "",
+    ],
+    newline = "unix",
+)
+
+genrule(
+    name = "sed_test_output",
+    srcs = [":sed_test_input"],
+    outs = ["sed_test_output.txt"],
+    cmd = "$(execpath :sed) 's/Hello/Hallo/g' $(SRCS) > $@",
+    # cmd_bat + --binary: see :behavior_*_output for the rationale.
+    cmd_bat = "$(execpath :sed) --binary \"s/Hello/Hallo/g\" $(SRCS) > $@",
+    tools = [":sed"],
+)
+
+write_file(
+    name = "sed_test_golden",
+    out = "sed_test_golden.txt",
+    content = [
+        "Hallo World",
+        "This is a test.",
+        "Hallo again.",
+        "",
+    ],
+    newline = "unix",
+)
+
+diff_test(
+    name = "sed_diff_test",
+    file1 = "sed_test_output.txt",
+    file2 = "sed_test_golden.txt",
+)
+
+# Native sed behavior tests.  The upstream testsuite/*.sh tests need the
+# gnulib init.sh framework + executable bits that the tarball-overlay flow
+# doesn't preserve, so each :behavior_* pair runs one sed expression
+# against the inlined "Summum Bonum" poem (from testsuite/distrib.inp:13-28)
+# and compares to a checked-in golden.
+write_file(
+    name = "browning_input",
+    out = "browning.txt",
+    content = [
+        "                _Summum Bonum_",
+        "",
+        "    All the breath and the bloom of the",
+        "            year in the bag of one bee:",
+        "    All the wonder and wealth of the mine in",
+        "         the heart of one gem:",
+        "    In the core of one pearl all the shade and the",
+        "           shine of the sea:",
+        "    Breath and bloom, shade and shine, -- wonder,",
+        "        wealth, and -- how far above them --",
+        "          Truth, thats brighter than gem,",
+        "          Trust, that's purer than pearl, --",
+        "    Brightest truth, purest trust in the universe --",
+        "              all were for me",
+        "                 In the kiss of one girl.",
+        "        -- Robert Browning",
+        "",
+    ],
+    newline = "unix",
+)
+
+SED_BEHAVIOR_TESTS = {
+    # Delete blank lines.
+    "delete_blanks": {
+        "expr": "/^$$/d",
+        "golden": [
+            "                _Summum Bonum_",
+            "    All the breath and the bloom of the",
+            "            year in the bag of one bee:",
+            "    All the wonder and wealth of the mine in",
+            "         the heart of one gem:",
+            "    In the core of one pearl all the shade and the",
+            "           shine of the sea:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than gem,",
+            "          Trust, that's purer than pearl, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # Extended regex via -E with alternation.
+    "extended_regex": {
+        "expr": "s/(pearl|gem|sea)/JEWEL/g",
+        "extra_flags": "-E",
+        "golden": [
+            "                _Summum Bonum_",
+            "",
+            "    All the breath and the bloom of the",
+            "            year in the bag of one bee:",
+            "    All the wonder and wealth of the mine in",
+            "         the heart of one JEWEL:",
+            "    In the core of one JEWEL all the shade and the",
+            "           shine of the JEWEL:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than JEWEL,",
+            "          Trust, that's purer than JEWEL, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # `-n` plus explicit `p`: print only lines mentioning the speaker.
+    "print_match": {
+        "expr": "/Browning/p",
+        "extra_flags": "-n",
+        "golden": [
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # Address range with grouped commands - strip leading whitespace from
+    # the first three content lines after the title.
+    "range_trim": {
+        "expr": "3,5s/^ *//",
+        "golden": [
+            "                _Summum Bonum_",
+            "",
+            "All the breath and the bloom of the",
+            "year in the bag of one bee:",
+            "All the wonder and wealth of the mine in",
+            "         the heart of one gem:",
+            "    In the core of one pearl all the shade and the",
+            "           shine of the sea:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than gem,",
+            "          Trust, that's purer than pearl, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+    # Hold-space swap: reverse line order ("tac" emulation).
+    # Both `$` chars are doubled so genrule's cmd template leaves them alone.
+    # No `-n`: the classic idiom relies on auto-print for the final line.
+    "reverse_lines": {
+        "expr": "1!G;h;$$!d",
+        "golden": [
+            "        -- Robert Browning",
+            "                 In the kiss of one girl.",
+            "              all were for me",
+            "    Brightest truth, purest trust in the universe --",
+            "          Trust, that's purer than pearl, --",
+            "          Truth, thats brighter than gem,",
+            "        wealth, and -- how far above them --",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "           shine of the sea:",
+            "    In the core of one pearl all the shade and the",
+            "         the heart of one gem:",
+            "    All the wonder and wealth of the mine in",
+            "            year in the bag of one bee:",
+            "    All the breath and the bloom of the",
+            "",
+            "                _Summum Bonum_",
+            "",
+        ],
+    },
+    # Basic substitution: rewrite the title marker.
+    "substitution": {
+        "expr": "s/_Summum Bonum_/== Summum Bonum ==/",
+        "golden": [
+            "                == Summum Bonum ==",
+            "",
+            "    All the breath and the bloom of the",
+            "            year in the bag of one bee:",
+            "    All the wonder and wealth of the mine in",
+            "         the heart of one gem:",
+            "    In the core of one pearl all the shade and the",
+            "           shine of the sea:",
+            "    Breath and bloom, shade and shine, -- wonder,",
+            "        wealth, and -- how far above them --",
+            "          Truth, thats brighter than gem,",
+            "          Trust, that's purer than pearl, --",
+            "    Brightest truth, purest trust in the universe --",
+            "              all were for me",
+            "                 In the kiss of one girl.",
+            "        -- Robert Browning",
+            "",
+        ],
+    },
+}
+
+[
+    [
+        write_file(
+            name = "behavior_{}_golden".format(name),
+            out = "behavior_{}_golden.txt".format(name),
+            content = spec["golden"],
+            newline = "unix",
+        ),
+        genrule(
+            name = "behavior_{}_output".format(name),
+            srcs = [":browning_input"],
+            outs = ["behavior_{}_output.txt".format(name)],
+            cmd = "$(execpath :sed) {extra} '{expr}' $(SRCS) > $@".format(
+                expr = spec["expr"],
+                extra = spec.get("extra_flags", ""),
+            ),
+            # cmd_bat goes through cmd.exe instead of msys2 bash so that
+            # scripts starting with `/` (e.g. `/Browning/p`) don't get
+            # rewritten to Windows paths; double-quote because cmd.exe
+            # doesn't strip single quotes.  --binary keeps sed.exe's
+            # stdin/stdout in binary mode so `> $@` doesn't CRLF-translate
+            # the output relative to the unix-newline golden.
+            cmd_bat = '$(execpath :sed) --binary {extra} "{expr}" $(SRCS) > $@'.format(
+                expr = spec["expr"],
+                extra = spec.get("extra_flags", ""),
+            ),
+            tools = [":sed"],
+        ),
+        diff_test(
+            name = "behavior_{}_test".format(name),
+            file1 = "behavior_{}_output.txt".format(name),
+            file2 = "behavior_{}_golden.txt".format(name),
+        ),
+    ]
+    for name, spec in SED_BEHAVIOR_TESTS.items()
+]

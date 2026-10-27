@@ -1,0 +1,90 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+exports_files(
+    ["LICENSE"],
+    visibility = ["//visibility:private"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# Used by the BCR test module.
+exports_files(
+    ["examples/arrays.safetensors"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "mlx-c",
+    srcs = glob(
+        ["mlx/c/*.cpp"],
+        exclude = ["mlx/c/object.cpp"],
+    ) + glob(["mlx/c/private/*.h"]),
+    hdrs = glob(["mlx/c/*.h"]),
+    cxxopts = ["-std=c++20"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = ["@mlx"],
+)
+
+alias(
+    name = "mlxc",
+    actual = ":mlx-c",
+    visibility = ["//visibility:public"],
+)
+
+[
+    cc_binary(
+        name = example,
+        srcs = ["examples/{}.c".format(example)],
+        visibility = ["//visibility:public"],
+        deps = [":mlx-c"],
+    )
+    for example in [
+        "example",
+        "example-closure",
+        "example-export",
+        "example-float64",
+        "example-grad",
+        "example-graph",
+        "example-metal-kernel",
+        "example-ops",
+        "example-stream-tls",
+        "example-thread-stream",
+    ]
+]
+
+cc_binary(
+    name = "example-gguf",
+    srcs = ["examples/example-gguf.c"],
+    visibility = ["//visibility:public"],
+    deps = [":mlx-c"],
+)
+
+cc_binary(
+    name = "example-safe-tensors",
+    srcs = ["examples/example-safe-tensors.c"],
+    data = ["examples/arrays.safetensors"],
+    visibility = ["//visibility:public"],
+    deps = [":mlx-c"],
+)

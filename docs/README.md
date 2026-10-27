@@ -72,7 +72,7 @@ Validations performed in the scripts are:
 
 - Verify the module version exists in the `metadata.json` of the module.
 - Verify the source archive URL matches the source repository specified in `metadata.json`.
-- Verify the source archive URL is stable if it comes from GitHub. (See [this discussion](https://github.com/bazel-contrib/SIG-rules-authors/issues/11#issuecomment-1029861300)). Comment `@bazel-io skip_check unstable_url` to skip this optional check.
+- Verify the source archive URL is stable if it comes from GitHub. (See [this blog post](https://blog.bazel.build/2023/02/15/github-archive-checksum.html)). Comment `@bazel-io skip_check unstable_url` to skip this optional check.
 - Verify the integrity values of the source archive and patch files (if any) are correct.
 - Verify the patches and overlay files (if any) apply to the source archive. The checked-in `MODULE.bazel` file doesn't need to match the one in the source archive since Bazel always uses the checked-in one.
 - Verify the `compatibility_level` in `MODULE.bazel` matches the previous version. If the bump is intentional, comment `@bazel-io skip_check compatibility_level` in the PR to skip this optional check.
