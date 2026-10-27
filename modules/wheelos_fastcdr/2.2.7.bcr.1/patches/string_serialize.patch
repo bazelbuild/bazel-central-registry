@@ -1,0 +1,85 @@
+diff --git include/fastcdr/Cdr.h include/fastcdr/Cdr.h
+--- include/fastcdr/Cdr.h
++++ include/fastcdr/Cdr.h
+@@ -669,6 +669,9 @@
+     Cdr_DllAPI Cdr& serialize(
+             const char* string_t);
+ 
++    Cdr_DllAPI Cdr& serialize(
++            const char* string_t, size_t str_length);
++
+     /*!
+      * @brief This function serializes a wstring.
+      * @param string_t The pointer to the wstring that will be serialized in the buffer.
+@@ -683,21 +686,12 @@
+      * @param string_t The string that will be serialized in the buffer.
+      * @return Reference to the eprosima::fastcdr::Cdr object.
+      * @exception exception::NotEnoughMemoryException This exception is thrown when trying to serialize a position that exceeds the internal memory size.
+-     * @exception exception::BadParamException This exception is thrown when trying to serialize a string with null characters.
+      */
+     TEMPLATE_SPEC
+     Cdr& serialize(
+             const std::string& string_t)
+     {
+-        // Check there are no null characters in the string.
+-        const char* c_str = string_t.c_str();
+-        const auto str_len = strlen(c_str);
+-        if (string_t.size() > str_len)
+-        {
+-            throw exception::BadParamException("The string contains null characters");
+-        }
+-
+-        return serialize_sequence(c_str, str_len + 1);
++        return serialize(string_t.c_str(), string_t.size());
+     }
+ 
+     /*!
+diff --git src/cpp/Cdr.cpp src/cpp/Cdr.cpp
+--- src/cpp/Cdr.cpp
++++ src/cpp/Cdr.cpp
+@@ -843,6 +843,45 @@
+ }
+ 
+ Cdr& Cdr::serialize(
++        const char* string_t,
++        size_t str_length)
++{
++    uint32_t length = 0;
++
++    if (string_t != nullptr)
++    {
++        length = size_to_uint32(str_length) + 1;
++    }
++
++    if (length > 0)
++    {
++        Cdr::state state_before_error(*this);
++        serialize(length);
++
++        if (((end_ - offset_) >= length) || resize(length))
++        {
++            // Save last datasize.
++            last_data_size_ = sizeof(uint8_t);
++
++            offset_.memcopy(string_t, length);
++            offset_ += length;
++        }
++        else
++        {
++            set_state(state_before_error);
++            throw NotEnoughMemoryException(NotEnoughMemoryException::NOT_ENOUGH_MEMORY_MESSAGE_DEFAULT);
++        }
++    }
++    else
++    {
++        serialize(length);
++    }
++
++    serialized_member_size_ = SERIALIZED_MEMBER_SIZE;
++    return *this;
++}
++
++Cdr& Cdr::serialize(
+         const char* string_t)
+ {
+     uint32_t length = 0;

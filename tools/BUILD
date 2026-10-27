@@ -71,6 +71,56 @@ py_test(
     deps = [":bcr_validation"],
 )
 
+py_binary(
+    name = "check_registry_changes",
+    srcs = ["check_registry_changes.py"],
+    imports = ["."],
+    legacy_create_init = 0,
+    deps = [requirement("pyyaml")],
+)
+
+py_test(
+    name = "check_registry_changes_test",
+    srcs = ["check_registry_changes_test.py"],
+    legacy_create_init = 0,
+    deps = [":check_registry_changes"],
+)
+
+py_binary(
+    name = "wheelos_presubmit",
+    srcs = ["wheelos_presubmit.py"],
+    data = ["//:metadata.schema.json"],
+    legacy_create_init = 0,
+    deps = [
+        ":bcr_presubmit",
+        ":bcr_validation",
+        ":registry",
+        requirement("jsonschema"),
+        requirement("pyyaml"),
+    ],
+)
+
+py_test(
+    name = "wheelos_presubmit_test",
+    srcs = ["wheelos_presubmit_test.py"],
+    legacy_create_init = 0,
+    deps = [":wheelos_presubmit"],
+)
+
+py_binary(
+    name = "publish_registry",
+    srcs = ["publish_registry.py"],
+    imports = ["."],
+    legacy_create_init = 0,
+)
+
+py_test(
+    name = "publish_registry_test",
+    srcs = ["publish_registry_test.py"],
+    legacy_create_init = 0,
+    deps = [":publish_registry"],
+)
+
 py_library(
     name = "verify_stable_archives",
     srcs = ["verify_stable_archives.py"],

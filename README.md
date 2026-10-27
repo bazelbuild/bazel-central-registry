@@ -8,7 +8,45 @@ Besides hosting metadata about Bazel-specific libraries (commonly known as "rule
 
 The BCR is just like a regular [Bazel registry](https://bazel.build/external/registry), with some extra metadata fields and policy restrictions. You can contribute to the BCR by sending pull requests; see [BCR policies](docs/bcr-policies.md) and [contribution guidelines](docs/README.md) for more information.
 
-## Disclaimer
+## WheelOS validation and publication
+
+Run these commands from this registry checkout, inside the managed development
+container as the mapped non-root user:
+
+```sh
+bazelisk test //tools:check_registry_changes_test //tools:publish_registry_test //tools:wheelos_presubmit_test
+bazelisk run //tools:check_registry_changes -- --base <previous-registry-commit>
+bazelisk run //tools:wheelos_presubmit -- --module=<name>@<version> --bazel-version=8.8.1 --base=<previous-registry-commit>
+```
+
+Published version directories are append-only. Correct a broken version by
+adding a revision and yanking the old version in metadata; do not rewrite its
+source, patches, or hashes. New entries require checksummed HTTPS archives.
+Uploaded release assets are preferred but not required. The WheelOS presubmit
+accepts HTTPS GitHub archives pinned to a full 40-character commit or a numeric
+release tag (`refs/tags/1.2.3` or `refs/tags/v1.2.3`), waiving only upstream's
+optional URL byte-stability classification. Branches, short hashes and floating
+tags receive no waiver. Tag archives are accepted by project policy, not
+classified as intrinsically immutable: never move release tags, and changed
+archive bytes must fail integrity verification. Source-repository matching,
+download integrity, overlays/patches and MODULE consistency remain mandatory;
+changed archive bytes must fail rather than updating an existing integrity.
+
+Pull requests validate changed metadata and every new entry's declared Ubuntu
+22.04 Bazel matrix. Consumers fetch from this registry without local source
+overrides. The spconv generation presubmit is not GPU execution evidence;
+its CUDA 12.8 / SM89 consumer needs a separate GPU build and runtime test.
+
+Production publication requires the validation workflow to succeed and the
+`registry-production` GitHub environment to be configured with the existing R2
+credentials and appropriate deployment protection. Only registry content is
+uploaded, immutable objects use conditional creation, and metadata is written
+last with concurrency checks. Nothing is deleted. A new upload or newly
+advertised version not validated in that run blocks publication; after an
+earlier failed deployment, use the manual workflow's earlier `base` to include
+all outstanding versions in validation.
+
+## Upstream infrastructure disclaimer
 
 The core infrastructure of the Bazel Central Registry depends on GitHub and Google Cloud. Bazel users who enable Bzlmod (the default since Bazel 8) depend on the BCR by default. While we try to keep the BCR infrastructure simple and reliable, we assume no liability for any damages caused by build failures due to potential BCR infrastructure failures.
 

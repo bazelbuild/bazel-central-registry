@@ -1,0 +1,95 @@
+name: Registry validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      base:
+        required: true
+        type: string
+    outputs:
+      versions:
+        description: Versions whose consumers passed in this run
+        value: ${{ jobs.policy.outputs.versions }}
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.changes.outputs.matrix }}
+      versions: ${{ steps.changes.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install existing registry YAML dependency
+        run: python -m pip install PyYAML==6.0.3
+      - name: Policy regression tests
+        run: |
+          python -m unittest discover -s tools -p check_registry_changes_test.py -v
+          python -m unittest discover -s tools -p publish_registry_test.py -v
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: registry-policy
+      - name: Presubmit runner regression tests
+        run: bazelisk test //tools:wheelos_presubmit_test --test_output=errors
+      - name: Enforce add-only versions and select consumer matrix
+        id: changes
+        env:
+          BASE_REF: ${{ inputs.base || github.event.pull_request.base.sha }}
+        run: python tools/check_registry_changes.py --base "$BASE_REF" --github-output "$GITHUB_OUTPUT"
+      - name: Validate changed metadata schemas, including yanks
+        env:
+          BASE_REF: ${{ inputs.base || github.event.pull_request.base.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import PurePosixPath
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", "-z", os.environ["BASE_REF"], "--", "modules"]
+          ).decode().split("\0")
+          modules = sorted({
+              PurePosixPath(path).parts[1] for path in changed
+              if len(PurePosixPath(path).parts) == 3 and path.endswith("/metadata.json")
+          })
+          if modules:
+              subprocess.run(
+                  ["bazelisk", "test", "--test_output=errors",
+                   *[f"//:test_metadata.modules/{name}" for name in modules]],
+                  check=True,
+              )
+          PY
+
+  consumers:
+    needs: policy
+    if: needs.policy.outputs.versions != '[]'
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: true
+      matrix:
+        include: ${{ fromJSON(needs.policy.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: registry-${{ matrix.bazel_version }}
+      - name: Verify archive, patches, metadata and consumers
+        env:
+          MODULE: ${{ matrix.module }}
+          CONSUMER_BAZEL: ${{ matrix.bazel_version }}
+          BASE_REF: ${{ inputs.base || github.event.pull_request.base.sha }}
+        run: |
+          bazelisk run //tools:wheelos_presubmit -- \
+            --module="$MODULE" --bazel-version="$CONSUMER_BAZEL" --base="$BASE_REF"

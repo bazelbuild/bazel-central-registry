@@ -1,0 +1,125 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cuda//cuda:defs.bzl", "cuda_library")
+load("@rules_python//python:defs.bzl", "py_library")
+load("//bazel:codegen.bzl", "spconv_codegen")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "generator_sources",
+    srcs = glob(["spconv/**/*.py"]),
+    imports = ["."],
+)
+
+spconv_codegen(
+    name = "generated",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "sm89",
+    flag_values = {
+        "@rules_cuda//cuda:archs": "sm_89",
+        "@rules_cuda//cuda:enable": "true",
+    },
+)
+
+filegroup(
+    name = "generated_headers",
+    srcs = [":generated"],
+    output_group = "headers",
+)
+
+filegroup(
+    name = "generated_cc",
+    srcs = [":generated"],
+    output_group = "cc",
+)
+
+filegroup(
+    name = "generated_cuda",
+    srcs = [":generated"],
+    output_group = "cuda",
+)
+
+cc_library(
+    name = "headers",
+    hdrs = [":generated_headers"],
+    defines = [
+        "TV_CUDA",
+        "TV_ENABLE_HARDWARE_ACC",
+    ],
+    includes = ["generated/include"],
+    deps = [
+        "@cuda//:cublas",
+        "@cuda//:cuda_runtime",
+        "@cumm_codegen//:headers",
+    ],
+)
+
+cuda_library(
+    name = "kernels",
+    srcs = [":generated_cuda"],
+    copts = [
+        "-std=c++17",
+        "-O3",
+        "--extended-lambda",
+    ],
+    deps = select(
+        {":sm89": [":headers"]},
+        no_match_error = "spconv requires CUDA 12.8 / SM89; set --@rules_cuda//cuda:enable=true --@rules_cuda//cuda:archs=sm_89.",
+    ),
+)
+
+cc_library(
+    name = "spconv",
+    srcs = [":generated_cc"],
+    copts = [
+        "-O3",
+        "-Wno-unused-variable",
+        "-Wno-unused-but-set-variable",
+        "-Wno-error=reorder",
+    ],
+    linkstatic = True,
+    deps = [
+        ":headers",
+        ":kernels",
+    ],
+    # Generated CUDA objects call back into this host object group.
+    alwayslink = True,
+)
+
+genrule(
+    name = "license_notices",
+    srcs = [
+        "LICENSE",
+        "@cumm_codegen//:license",
+    ],
+    outs = [
+        "CUMM-LICENSE",
+        "SPCONV-LICENSE",
+    ],
+    cmd = "cp $(execpath LICENSE) $(@D)/SPCONV-LICENSE && " +
+          "cp $(execpath @cumm_codegen//:license) $(@D)/CUMM-LICENSE",
+)
+
+filegroup(
+    name = "licenses",
+    srcs = [":license_notices"],
+)
+
+filegroup(
+    name = "source_manifest",
+    srcs = ["spconv-source.json"],
+)
+
+filegroup(
+    name = "upstream_sources",
+    srcs = glob(["spconv/**/*.py"]) + [
+        "LICENSE",
+        "docs/PURE_CPP_BUILD.md",
+    ],
+)

@@ -1,0 +1,221 @@
+diff --git include/fastdds/rtps/writer/RTPSWriter.h include/fastdds/rtps/writer/RTPSWriter.h
+index b4503bd..94eaa62 100644
+--- include/fastdds/rtps/writer/RTPSWriter.h
++++ include/fastdds/rtps/writer/RTPSWriter.h
+@@ -20,6 +20,7 @@
+ #define _FASTDDS_RTPS_RTPSWRITER_H_
+ 
+ #include <chrono>
++#include <atomic>
+ #include <functional>
+ #include <limits>
+ #include <memory>
+@@ -549,6 +550,7 @@ protected:
+     bool is_async_ = false;
+     //!Separate sending activated
+     bool m_separateSendingEnabled = false;
++    std::atomic<bool> deinitialized_{false};
+ 
+     //! The liveliness kind of this writer
+     LivelinessQosPolicyKind liveliness_kind_;
+diff --git include/fastdds/rtps/writer/StatefulWriter.h include/fastdds/rtps/writer/StatefulWriter.h
+index 0b45a7b..afb39c0 100644
+--- include/fastdds/rtps/writer/StatefulWriter.h
++++ include/fastdds/rtps/writer/StatefulWriter.h
+@@ -332,6 +332,8 @@ public:
+ 
+     SequenceNumber_t next_sequence_number() const;
+ 
++    void begin_shutdown();
++
+     /**
+      * @brief Sends a periodic heartbeat
+      *
+@@ -523,6 +525,7 @@ private:
+ 
+     //! True to disable piggyback heartbeats
+     bool disable_heartbeat_piggyback_;
++    std::atomic<bool> shutting_down_{false};
+     //! True to disable positive ACKs
+     bool disable_positive_acks_;
+     //! Keep duration for disable positive ACKs QoS
+diff --git include/fastrtps/utils/TimedMutex.hpp include/fastrtps/utils/TimedMutex.hpp
+index 84d4b45..636f8cc 100644
+--- include/fastrtps/utils/TimedMutex.hpp
++++ include/fastrtps/utils/TimedMutex.hpp
+@@ -21,6 +21,7 @@
+ 
+ #include <chrono>
+ #include <iostream>
++#include <mutex>
+ 
+ #if defined(_WIN32)
+ 
+diff --git include/fastrtps/utils/shared_mutex.hpp include/fastrtps/utils/shared_mutex.hpp
+index d692414..53c8ce4 100644
+--- include/fastrtps/utils/shared_mutex.hpp
++++ include/fastrtps/utils/shared_mutex.hpp
+@@ -631,12 +631,7 @@ using std::swap;
+ 
+ namespace eprosima {
+ 
+-#ifdef NDEBUG
+ using shared_mutex = detail::shared_mutex<detail::shared_mutex_type::PTHREAD_RWLOCK_PREFER_READER_NP>;
+-#else
+-using shared_mutex =
+-        detail::debug_wrapper<detail::shared_mutex<detail::shared_mutex_type::PTHREAD_RWLOCK_PREFER_READER_NP>>;
+-#endif // NDEBUG
+ 
+ } //namespace eprosima
+ 
+diff --git src/cpp/fastrtps_deprecated/publisher/PublisherImpl.cpp src/cpp/fastrtps_deprecated/publisher/PublisherImpl.cpp
+index f4b17fb..ffbf936 100644
+--- src/cpp/fastrtps_deprecated/publisher/PublisherImpl.cpp
++++ src/cpp/fastrtps_deprecated/publisher/PublisherImpl.cpp
+@@ -103,6 +103,10 @@ PublisherImpl::~PublisherImpl()
+     if (mp_writer != nullptr)
+     {
+         EPROSIMA_LOG_INFO(PUBLISHER, this->getGuid().entityId << " in topic: " << this->m_att.topic.topicName);
++        if (auto* writer = dynamic_cast<StatefulWriter*>(mp_writer); writer != nullptr)
++        {
++            writer->begin_shutdown();
++        }
+     }
+ 
+     RTPSDomain::removeRTPSWriter(mp_writer);
+diff --git src/cpp/rtps/flowcontrol/FlowControllerImpl.hpp src/cpp/rtps/flowcontrol/FlowControllerImpl.hpp
+index ab05d3f..09e270c 100644
+--- src/cpp/rtps/flowcontrol/FlowControllerImpl.hpp
++++ src/cpp/rtps/flowcontrol/FlowControllerImpl.hpp
+@@ -1393,7 +1393,26 @@ private:
+                 if (nullptr == current_writer || current_writer->getGuid() != change_to_process->writerGUID)
+                 {
+                     auto writer_it = writers_.find(change_to_process->writerGUID);
+-                    assert(writers_.end() != writer_it);
++                    if (writers_.end() == writer_it)
++                    {
++                        fastrtps::rtps::CacheChange_t* previous = change_to_process->writer_info.previous;
++                        fastrtps::rtps::CacheChange_t* next = change_to_process->writer_info.next;
++                        if (previous != nullptr)
++                        {
++                            previous->writer_info.next = next;
++                        }
++                        if (next != nullptr)
++                        {
++                            next->writer_info.previous = previous;
++                        }
++                        change_to_process->writer_info.previous = nullptr;
++                        change_to_process->writer_info.next = nullptr;
++                        change_to_process->writer_info.is_linked.store(false);
++
++                        sched.work_done();
++                        change_to_process = sched.get_next_change_nts();
++                        continue;
++                    }
+ 
+                     current_writer = writer_it->second;
+                 }
+diff --git src/cpp/rtps/history/History.cpp src/cpp/rtps/history/History.cpp
+index 39232ca..e1ba62c 100644
+--- src/cpp/rtps/history/History.cpp
++++ src/cpp/rtps/history/History.cpp
+@@ -180,6 +180,14 @@ bool History::remove_all_changes()
+ bool History::get_min_change(
+         CacheChange_t** min_change)
+ {
++    if (mp_mutex == nullptr)
++    {
++        EPROSIMA_LOG_ERROR(RTPS_HISTORY, "You need to create a RTPS Entity with this History before using it");
++        return false;
++    }
++
++    std::lock_guard<RecursiveTimedMutex> guard(*mp_mutex);
++
+     if (!m_changes.empty())
+     {
+         *min_change = m_changes.front();
+@@ -192,6 +200,14 @@ bool History::get_min_change(
+ bool History::get_max_change(
+         CacheChange_t** max_change)
+ {
++    if (mp_mutex == nullptr)
++    {
++        EPROSIMA_LOG_ERROR(RTPS_HISTORY, "You need to create a RTPS Entity with this History before using it");
++        return false;
++    }
++
++    std::lock_guard<RecursiveTimedMutex> guard(*mp_mutex);
++
+     if (!m_changes.empty())
+     {
+         *max_change = m_changes.back();
+diff --git src/cpp/rtps/writer/RTPSWriter.cpp src/cpp/rtps/writer/RTPSWriter.cpp
+index ec7527b..cae165a 100644
+--- src/cpp/rtps/writer/RTPSWriter.cpp
++++ src/cpp/rtps/writer/RTPSWriter.cpp
+@@ -161,6 +161,11 @@ RTPSWriter::~RTPSWriter()
+ 
+ void RTPSWriter::deinit()
+ {
++    if (deinitialized_.exchange(true))
++    {
++        return;
++    }
++
+     // First, unregister changes from FlowController. This action must be protected.
+     {
+         std::lock_guard<RecursiveTimedMutex> guard(mp_mutex);
+@@ -264,6 +269,10 @@ bool RTPSWriter::release_change(
+ SequenceNumber_t RTPSWriter::get_seq_num_min()
+ {
+     CacheChange_t* change;
++    if (deinitialized_.load() || mp_history == nullptr)
++    {
++        return c_SequenceNumber_Unknown;
++    }
+     if (mp_history->get_min_change(&change) && change != nullptr)
+     {
+         return change->sequenceNumber;
+@@ -277,6 +286,10 @@ SequenceNumber_t RTPSWriter::get_seq_num_min()
+ SequenceNumber_t RTPSWriter::get_seq_num_max()
+ {
+     CacheChange_t* change;
++    if (deinitialized_.load() || mp_history == nullptr)
++    {
++        return c_SequenceNumber_Unknown;
++    }
+     if (mp_history->get_max_change(&change) && change != nullptr)
+     {
+         return change->sequenceNumber;
+diff --git src/cpp/rtps/writer/StatefulWriter.cpp src/cpp/rtps/writer/StatefulWriter.cpp
+index 596a8a2..2e4c79d 100644
+--- src/cpp/rtps/writer/StatefulWriter.cpp
++++ src/cpp/rtps/writer/StatefulWriter.cpp
+@@ -1733,6 +1733,15 @@ SequenceNumber_t StatefulWriter::next_sequence_number() const
+     return mp_history->next_sequence_number();
+ }
+ 
++void StatefulWriter::begin_shutdown()
++{
++    {
++        std::unique_lock<RecursiveTimedMutex> lock(mp_mutex);
++        shutting_down_.store(true);
++    }
++    deinit();
++}
++
+ bool StatefulWriter::send_periodic_heartbeat(
+         bool final,
+         bool liveliness)
+@@ -1999,6 +2008,11 @@ bool StatefulWriter::process_acknack(
+         fastdds::rtps::VendorId_t /*origin_vendor_id*/)
+ {
+     std::unique_lock<RecursiveTimedMutex> lock(mp_mutex);
++    if (shutting_down_.load())
++    {
++        result = false;
++        return false;
++    }
+     result = (m_guid == writer_guid);
+ 
+     if (result)

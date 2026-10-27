@@ -1,0 +1,259 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,28 @@
++package(default_visibility = ["//visibility:public"])
++
++exports_files(["README.bazel.md"])
++
++alias(
++    name = "spconv",
++    actual = "@spconv_generated//:spconv",
++)
++
++alias(
++    name = "licenses",
++    actual = "@spconv_generated//:licenses",
++)
++
++alias(
++    name = "source_manifest",
++    actual = "@spconv_generated//:source_manifest",
++)
++
++filegroup(
++    name = "upstream_sources",
++    srcs = glob([
++        "spconv/**/*.py",
++    ]) + [
++        "LICENSE",
++        "docs/PURE_CPP_BUILD.md",
++    ],
++)
+diff --git a/MODULE.bazel b/MODULE.bazel
+new file mode 100644
+--- /dev/null
++++ b/MODULE.bazel
+@@ -0,0 +1,15 @@
++module(
++    name = "spconv",
++    version = "2.3.8.bcr.2",
++    bazel_compatibility = [">=7.2.1"],
++)
++
++bazel_dep(name = "rules_cc", version = "0.2.14")
++bazel_dep(name = "rules_cuda", version = "0.3.0")
++
++cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
++use_repo(cuda, "cuda")
++
++generated_source = use_repo_rule("//bazel:repositories.bzl", "spconv_source_repository")
++
++generated_source(name = "spconv_generated")
+diff --git a/README.bazel.md b/README.bazel.md
+new file mode 100644
+--- /dev/null
++++ b/README.bazel.md
+@@ -0,0 +1,60 @@
++# spconv 2.3.8 inference source integration
++
++This registry revision uses the official spconv archive at immutable commit
++`263d6b47425ef843c82f997b12d8b714013d216c`. `bazel-integration.patch` adds
++the Bzlmod module and source BUILD integration. The registry also supplies a
++checksummed `bazel/generated-inference-sm89.tar.xz` overlay containing generated
++C++/CUDA source and cumm headers. It is not an official upstream generated
++release and contains no precompiled runtime library.
++
++## Provenance and platform scope
++
++The supplement packages the previously prepared inference source tree without
++altering source/header contents. Unused generated `CMakeLists.txt` files with
++absolute generator-host paths are omitted; Bazel owns the build definitions.
++Its `spconv-source.json` records:
++
++- spconv 2.3.8 at `263d6b47425ef843c82f997b12d8b714013d216c`;
++- cumm 0.7.11 at `b8d83b6511b70746d04485d0d2ec00896b735430`;
++- inference-only generation for CUDA 12.8 / compute capability 8.9;
++- Python 3.10.19, pccm 0.4.16, ccimport 0.4.4, NumPy 2.2.6 and SymPy 1.14.0.
++
++The source preparation procedure remains documented in registry revision
++2.3.8.bcr.1 and upstream `docs/PURE_CPP_BUILD.md`. This revision does not run
++code generation, pip, or Python imports during dependency resolution. The
++manifest records provenance but is not an independent reproducibility
++attestation; reproducing the generator output is a separate acceptance step.
++
++Only the CUDA 12.8 / SM89 consumer is covered. Do not assume this source
++specialization supports Orin/SM87, other architectures, or other CUDA versions.
++Such targets require separately generated and validated source supplements.
++The CUDA toolkit/driver must be supplied by the consumer's environment.
++Select `--@rules_cuda//cuda:archs=sm_89` explicitly for the supported build.
++
++## Consumer targets
++
++```sh
++bazel build --config=gpu --@rules_cuda//cuda:archs=sm_89 @spconv//:spconv
++```
++
++`--config=gpu` in this example is the Apollo consumer's existing configuration,
++not a config defined by this module. An independent consumer must configure
++its own rules_cuda toolkit and enable CUDA.
++
++- `@spconv//:spconv`: static inference C++/CUDA library built from source.
++- `@spconv//:licenses`: retained spconv and cumm Apache-2.0 notices.
++- `@spconv//:source_manifest`: packaged generation provenance.
++
++There is no `SPCONV_SOURCE_ROOT` requirement and no implicit fallback to a
++mutable host directory. Archive/patch/overlay integrity is checked by Bazel.
++Existing 2.3.8.bcr.1 consumers are unchanged.
++
++## Packaging
++
++The supplement is a sorted POSIX tar archive, with numeric owner/group zero,
++fixed mtime zero, normalized file/directory modes, and XZ compression.
++It contains only `spconv`, `cumm`, and `spconv-source.json`; no object files,
++shared libraries, symlinks, model weights, or host checkout paths are needed.
++Both upstream LICENSE files are retained and exposed to downstream installers.
++This is an architecture-specific generated source distribution, not a general
++upstream spconv source-only build.
+diff --git a/bazel/BUILD.bazel b/bazel/BUILD.bazel
+new file mode 100644
+--- /dev/null
++++ b/bazel/BUILD.bazel
+@@ -0,0 +1,6 @@
++exports_files([
++    "generated-inference-sm89.tar.xz",
++    "repositories.bzl",
++    "source.BUILD",
++    "versions.json",
++])
+diff --git a/bazel/repositories.bzl b/bazel/repositories.bzl
+new file mode 100644
+--- /dev/null
++++ b/bazel/repositories.bzl
+@@ -0,0 +1,38 @@
++"""Extract the checksummed registry-supplied inference source supplement."""
++
++def _spconv_source_repository_impl(ctx):
++    ctx.extract(ctx.attr.archive)
++    for path in [
++        "spconv/include/spconvlib/spconv/csrc/sparse/all/SpconvOps.h",
++        "spconv/src",
++        "spconv/LICENSE",
++        "cumm/include/tensorview/tensor.h",
++        "cumm/LICENSE",
++        "spconv-source.json",
++    ]:
++        if not ctx.path(path).exists:
++            fail("Incomplete packaged spconv source tree: {}".format(path))
++    versions = json.decode(ctx.read(ctx.attr.versions))
++    manifest = json.decode(ctx.read("spconv-source.json"))
++    for name in ["spconv_commit", "cumm_commit"]:
++        if manifest.get(name) != versions[name]:
++            fail("Unsupported {} in packaged spconv provenance".format(name))
++    if manifest.get("inference_only") != True:
++        fail("Packaged spconv source must be inference-only")
++    if manifest.get("cuda_arch") != "8.9" or manifest.get("cuda_version") != "12.8":
++        fail("This source supplement supports CUDA 12.8 / SM89 only")
++    for project in ["spconv", "cumm"]:
++        ctx.symlink(project + "/LICENSE", project.upper() + "-LICENSE")
++    ctx.file("BUILD.bazel", ctx.read(ctx.attr.build_file))
++
++spconv_source_repository = repository_rule(
++    implementation = _spconv_source_repository_impl,
++    attrs = {
++        "archive": attr.label(
++            default = "//bazel:generated-inference-sm89.tar.xz",
++            allow_single_file = True,
++        ),
++        "build_file": attr.label(default = "//bazel:source.BUILD"),
++        "versions": attr.label(default = "//bazel:versions.json"),
++    },
++)
+diff --git a/bazel/source.BUILD b/bazel/source.BUILD
+new file mode 100644
+--- /dev/null
++++ b/bazel/source.BUILD
+@@ -0,0 +1,71 @@
++load("@rules_cc//cc:defs.bzl", "cc_library")
++load("@rules_cuda//cuda:defs.bzl", "cuda_library")
++
++package(default_visibility = ["//visibility:private"])
++
++licenses(["notice"])
++
++filegroup(
++    name = "licenses",
++    srcs = [
++        "CUMM-LICENSE",
++        "SPCONV-LICENSE",
++    ],
++    visibility = ["//visibility:public"],
++)
++
++filegroup(
++    name = "source_manifest",
++    srcs = ["spconv-source.json"],
++    visibility = ["//visibility:public"],
++)
++
++cc_library(
++    name = "headers",
++    hdrs = glob([
++        "spconv/include/**",
++        "cumm/include/**",
++    ]),
++    defines = [
++        "TV_CUDA",
++        "TV_ENABLE_HARDWARE_ACC",
++    ],
++    includes = [
++        "cumm/include",
++        "spconv/include",
++    ],
++    deps = [
++        "@cuda//:cublas",
++        "@cuda//:cuda_runtime",
++    ],
++)
++
++cuda_library(
++    name = "kernels",
++    srcs = glob(["spconv/src/**/*.cu"]),
++    copts = [
++        "-std=c++17",
++        "-O3",
++        "--extended-lambda",
++    ],
++    deps = [":headers"],
++)
++
++cc_library(
++    name = "spconv",
++    srcs = glob(["spconv/src/**/*.cc"]),
++    copts = [
++        "-O3",
++        "-Wno-unused-variable",
++        "-Wno-unused-but-set-variable",
++        "-Wno-error=reorder",
++    ],
++    linkstatic = True,
++    visibility = ["//visibility:public"],
++    deps = [
++        ":headers",
++        ":kernels",
++    ],
++    # Generated CUDA objects call back into this host object group.
++    alwayslink = True,
++)
+diff --git a/bazel/versions.json b/bazel/versions.json
+new file mode 100644
+--- /dev/null
++++ b/bazel/versions.json
+@@ -0,0 +1,6 @@
++{
++    "spconv_version": "2.3.8",
++    "spconv_commit": "263d6b47425ef843c82f997b12d8b714013d216c",
++    "cumm_version": "0.7.11",
++    "cumm_commit": "b8d83b6511b70746d04485d0d2ec00896b735430"
++}

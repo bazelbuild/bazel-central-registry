@@ -1,184 +1,49 @@
-name: Sync BCR to Cloudflare R2
+name: Publish BCR to Cloudflare R2
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      base:
+        description: Last validated registry commit to compare against
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: registry-production
+  cancel-in-progress: false
 
 jobs:
+  validate:
+    if: github.repository == 'wheelos/bazel-central-registry'
+    uses: ./.github/workflows/validate-modules.yml
+    with:
+      base: ${{ inputs.base || github.event.before }}
+
   deploy:
-    if: github.repository == 'wheelos/bazel-central-registry' && github.actor != 'github-actions[bot]' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
-    runs-on: ubuntu-latest
-    concurrency:
-      group: sync-r2-${{ github.ref }}
-      cancel-in-progress: true
+    needs: validate
+    runs-on: ubuntu-22.04
+    environment: registry-production
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
-
-      # - name: Set up Python
-      #   uses: actions/setup-python@v4
-      #   with:
-      #     python-version: '3.10'
-
-      # - name: Install dependencies
-      #   run: pip install requests
-
-      # - name: Mirror Archives
-      #   run: |
-      #     python .github/scripts/mirror_archives.py
-
-      - name: Determine sync base
-        id: sync_base
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          STATE_FILE=".github/r2_sync_checkpoint"
-          BASE_SHA="${{ github.event.before }}"
-
-          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
-            echo "source=event_before" >> "$GITHUB_OUTPUT"
-            echo "Using sync base from github.event.before: ${BASE_SHA}"
-            exit 0
-          fi
-
-          if [ -f "$STATE_FILE" ]; then
-            LAST_SYNC_SHA=$(tr -d '\r\n' < "$STATE_FILE")
-            if [ -n "$LAST_SYNC_SHA" ] && git cat-file -e "${LAST_SYNC_SHA}^{commit}" 2>/dev/null; then
-              echo "base_sha=${LAST_SYNC_SHA}" >> "$GITHUB_OUTPUT"
-              echo "source=checkpoint_file" >> "$GITHUB_OUTPUT"
-              echo "Using sync base from checkpoint file: ${LAST_SYNC_SHA}"
-              exit 0
-            fi
-          fi
-
-          if git rev-list --max-count=1 HEAD >/dev/null 2>&1; then
-            BASE_SHA=$(git rev-list --max-count=1 HEAD)
-            echo "base_sha=${BASE_SHA}" >> "$GITHUB_OUTPUT"
-            echo "source=last_commit" >> "$GITHUB_OUTPUT"
-            echo "Using fallback sync base from the most recent commit: ${BASE_SHA}"
-            exit 0
-          fi
-
-          echo "base_sha=" >> "$GITHUB_OUTPUT"
-          echo "source=none" >> "$GITHUB_OUTPUT"
-          echo "No valid sync base found; full sync will be used."
-
-      - name: Detect changed modules
-        id: changed_modules
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          BASE_SHA="${{ steps.sync_base.outputs.base_sha }}"
-          echo "Comparing HEAD against base SHA: ${BASE_SHA}"
-          if [ -z "$BASE_SHA" ]; then
-            echo "should_incremental=false" >> "$GITHUB_OUTPUT"
-            echo "module_names=" >> "$GITHUB_OUTPUT"
-            echo "No valid base SHA available; falling back to full sync."
-            exit 0
-          fi
-
-          CHANGED_PATHS=$(git diff --name-only "$BASE_SHA" HEAD)
-          echo "Changed paths between ${BASE_SHA} and HEAD:"
-          printf '%s\n' "$CHANGED_PATHS"
-
-          if [ -z "$CHANGED_PATHS" ]; then
-            echo "should_incremental=false" >> "$GITHUB_OUTPUT"
-            echo "module_names=" >> "$GITHUB_OUTPUT"
-            echo "No file changes detected; falling back to full sync."
-            exit 0
-          fi
-
-          MODULES=()
-          while IFS= read -r path; do
-            case "$path" in
-              modules/*)
-                module_name="${path#modules/}"
-                module_name="${module_name%%/*}"
-                if [ -n "$module_name" ] && [ "$module_name" != "" ]; then
-                  MODULES+=("$module_name")
-                fi
-                ;;
-            esac
-          done <<< "$CHANGED_PATHS"
-
-          if [ ${#MODULES[@]} -eq 0 ]; then
-            echo "should_incremental=false" >> "$GITHUB_OUTPUT"
-            echo "module_names=" >> "$GITHUB_OUTPUT"
-            echo "No modules changed; falling back to full sync."
-            exit 0
-          fi
-
-          if printf '%s\n' "$CHANGED_PATHS" | grep -qvE '^modules/'; then
-            echo "should_incremental=false" >> "$GITHUB_OUTPUT"
-            echo "module_names=" >> "$GITHUB_OUTPUT"
-            echo "Mixed repository changes detected; falling back to full sync."
-            exit 0
-          fi
-
-          UNIQUE_MODULES=$(printf '%s\n' "${MODULES[@]}" | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
-          echo "should_incremental=true" >> "$GITHUB_OUTPUT"
-          echo "module_names=${UNIQUE_MODULES}" >> "$GITHUB_OUTPUT"
-          echo "Changed modules detected: ${UNIQUE_MODULES}"
-
-      - name: Sync changed modules to R2
-        id: sync_changed
-        if: steps.changed_modules.outputs.should_incremental == 'true'
-        shell: bash
+      - name: Publish add-only objects and verify remote contents
         env:
-          AWS_S3_BUCKET: "wheelos-bazel-registry"
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_S3_ENDPOINT: "https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com"
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          VALIDATED_VERSIONS: ${{ needs.validate.outputs.versions }}
+          BASE_REF: ${{ inputs.base || github.event.before }}
         run: |
-          set -euo pipefail
-          for module in ${{ steps.changed_modules.outputs.module_names }}; do
-            echo "Syncing modules/$module to s3://$AWS_S3_BUCKET/modules/$module"
-            aws s3 sync "modules/$module" "s3://${AWS_S3_BUCKET}/modules/$module" \
-              --endpoint-url "$AWS_S3_ENDPOINT" \
-              --delete \
-              --no-progress
-          done
-
-      - name: Sync full repository to R2
-        id: sync_full
-        if: steps.changed_modules.outputs.should_incremental != 'true'
-        uses: jakejarvis/s3-sync-action@master
-        with:
-          args: --delete --exclude '.git/*' --exclude '.github/*'
-        env:
-          AWS_S3_BUCKET: "wheelos-bazel-registry"
-          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_S3_ENDPOINT: "https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com"
-          SOURCE_DIR: "."
-
-      - name: Persist sync checkpoint
-        if: github.actor != 'github-actions[bot]' && (steps.sync_changed.conclusion == 'success' || steps.sync_full.conclusion == 'success')
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          STATE_FILE=".github/r2_sync_checkpoint"
-          echo "${{ github.sha }}" > "$STATE_FILE"
-
-          if git diff --quiet -- "$STATE_FILE"; then
-            echo "No checkpoint update required."
-            exit 0
-          fi
-
-          echo "Updating sync checkpoint to ${{ github.sha }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "$STATE_FILE"
-          git commit -m "chore: update R2 sync checkpoint"
-          git push
+          printf '%s\n' "$VALIDATED_VERSIONS" > "$RUNNER_TEMP/registry-validated-versions.json"
+          python3 tools/publish_registry.py \
+            --bucket wheelos-bazel-registry --endpoint-url "$R2_ENDPOINT" \
+            --validated-versions "$RUNNER_TEMP/registry-validated-versions.json" \
+            --base "$BASE_REF"

@@ -1,0 +1,337 @@
+diff --git a/.bazelignore b/.bazelignore
+index d4ea0ee..16d3c4d 100644
+--- a/.bazelignore
++++ b/.bazelignore
+@@ -1,2 +1 @@
+ .cache
+-perception
+diff --git a/MODULE.bazel b/MODULE.bazel
+index 39057de..297589f 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -23,6 +23,7 @@ bazel_dep(name = "nlohmann_json", version = "3.12.0", repo_name = "com_github_nl
+ bazel_dep(name = "osqp", version = "1.0.0.bcr.2")
+ bazel_dep(name = "proj", version = "9.8.0")
+ bazel_dep(name = "sqlite3", version = "3.50.0")
++bazel_dep(name = "spconv", version = "2.3.8.bcr.3")
+ 
+ cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+ use_repo(cuda, "cuda")
+diff --git a/perception/README.md b/perception/README.md
+index bffc825..50ff3ef 100644
+--- a/perception/README.md
++++ b/perception/README.md
+@@ -1,25 +1,22 @@
+ # Perception capabilities
+ 
+-This directory groups independent common-library modules. It is not a
+-detector runtime, Cyber integration package or an aggregate Bzlmod module.
++This directory groups packages in the single `wheelos_common` Bzlmod module.
++Keep compute and model-format responsibilities separate without publishing
++independently versioned perception modules for now.
+ 
+-| Module root | Identity | Ownership |
++| Package group | Module | Ownership |
+ | --- | --- | --- |
+-| `ops/` | `wheelos_perception_ops` | Neutral sparse graph data, device API, CUDA executor and numerical tests |
+-| `model_io/` | `wheelos_perception_model_io` | Supported sparse ONNX importer, schemas and validation tests |
++| `ops/` | `wheelos_common` | Neutral sparse graph data, device API, CUDA executor and numerical tests |
++| `model_io/` | `wheelos_common` | Supported sparse ONNX importer, schemas and validation tests |
+ 
+ Model I/O depends only on the neutral graph target, not the executor. Model
+-consumers depend directly on the public targets they use. BEVFusion and
++consumers declare `wheelos_common` and use its public package targets. BEVFusion and
+ CenterPoint retain their preprocessing, heads, decoding and lifecycle;
+ PointPillars retains its model-specific pillar/scatter/plugin implementation
+ and has no mandatory spconv dependency.
+ 
+-There are no compatibility aliases for the old `perception_ops/ops/spconv`
+-source layout. Independent module source archives must include the module's
+-own LICENSE and schema/source provenance. Registry publication remains separate
+-from local override validation.
+-
+-The legacy root module is now developed as `wheelos_common@0.1.3`; it still
+-owns existing framework-coupled packages and is not an aggregate for these
+-independent perception modules. Registry `wheelos_common@0.1.1.bcr.1` repairs
+-the older immutable source delivery, not this unpublished source snapshot.
++Use `@wheelos_common//perception/ops/spconv:spconv_backbone` and
++`@wheelos_common//perception/model_io/onnx:sparse_model`. Package-level dependencies
++keep the importer independent of CUDA compilation. Registry publication remains
++separate from local override validation; the released `v0.1.3` archive needs
++the registry's consolidation patch to expose this layout.
+diff --git a/perception/model_io/MODULE.bazel b/perception/model_io/MODULE.bazel
+deleted file mode 100644
+index 96b3dfb..0000000
+--- a/perception/model_io/MODULE.bazel
++++ /dev/null
+@@ -1,11 +0,0 @@
+-module(
+-    name = "wheelos_perception_model_io",
+-    version = "0.1.0",
+-    compatibility_level = 1,
+-)
+-
+-bazel_dep(name = "rules_cc", version = "0.0.9")
+-bazel_dep(name = "protobuf", version = "29.0", repo_name = "com_google_protobuf")
+-bazel_dep(name = "wheelos_perception_ops", version = "0.1.0")
+-
+-bazel_dep(name = "googletest", version = "1.17.0", dev_dependency = True, repo_name = "com_google_googletest")
+diff --git a/perception/model_io/README.md b/perception/model_io/README.md
+index 6a97ba1..f138a1c 100644
+--- a/perception/model_io/README.md
++++ b/perception/model_io/README.md
+@@ -1,8 +1,9 @@
+ # Perception model I/O
+ 
+-`wheelos_perception_model_io` owns supported model-format import, not execution.
+-`//onnx:sparse_model` imports the FP16 sparse ONNX dialect used by BEVFusion
+-and CenterPoint into `wheelos_perception_ops//spconv:sparse_model`.
++The `wheelos_common` package `//perception/model_io/onnx:sparse_model` owns
++supported model-format import, not execution. It imports the FP16 sparse ONNX
++dialect used by BEVFusion and CenterPoint into
++`//perception/ops/spconv:sparse_model`.
+ 
+ The importer validates operators, shapes, attributes, weights and graph
+ connectivity. It neither executes CUDA nor depends on CUDA headers, TensorRT,
+@@ -11,10 +12,10 @@ constraints remain explicit; this is not a general-purpose ONNX runtime.
+ Errors are reported as exceptions with the existing `spconv ONNX:` prefix.
+ 
+ The schema snapshot under `onnx/schema` preserves the source and license
+-used before extraction. Tests live at `//onnx:sparse_model_test`.
+-Run tests with this directory as the Bazel root and an explicit override for
+-the sibling ops module. Googletest is development-only, not a product
+-dependency. `test_module/` is a separate consumer root that builds
++used before extraction. Tests live at
++`//perception/model_io/onnx:sparse_model_test`.
++Run tests with the common repository as the Bazel root.
++`test_module/` is a separate consumer root that builds
+ `//:importer_consumer` using the public importer and neutral graph APIs.
+-This module is developed through explicit local Bzlmod overrides and is not
+-yet published to a registry.
++The common module is developed through an explicit local Bzlmod override;
++there is no independently published model-I/O module.
+diff --git a/perception/model_io/onnx/BUILD.bazel b/perception/model_io/onnx/BUILD.bazel
+index da86656..4abde05 100644
+--- a/perception/model_io/onnx/BUILD.bazel
++++ b/perception/model_io/onnx/BUILD.bazel
+@@ -9,9 +9,9 @@ cc_library(
+     strip_include_prefix = "include",
+     visibility = ["//visibility:public"],
+     deps = [
+-        "//onnx/schema:onnx_proto_cc",
++        "//perception/model_io/onnx/schema:onnx_proto_cc",
++        "//perception/ops/spconv:sparse_model",
+         "@com_google_protobuf//:protobuf",
+-        "@wheelos_perception_ops//spconv:sparse_model",
+     ],
+ )
+ 
+@@ -21,7 +21,7 @@ cc_test(
+     srcs = ["tests/sparse_model_test.cc"],
+     deps = [
+         ":sparse_model",
+-        "//onnx/schema:onnx_proto_cc",
++        "//perception/model_io/onnx/schema:onnx_proto_cc",
+         "@com_google_googletest//:gtest_main",
+     ],
+ )
+diff --git a/perception/model_io/onnx/schema/BUILD.bazel b/perception/model_io/onnx/schema/BUILD.bazel
+index 3cf3e6d..0e47619 100644
+--- a/perception/model_io/onnx/schema/BUILD.bazel
++++ b/perception/model_io/onnx/schema/BUILD.bazel
+@@ -1,7 +1,7 @@
+ load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+ load("@com_google_protobuf//bazel:proto_library.bzl", "proto_library")
+ 
+-package(default_visibility = ["//onnx:__pkg__"])
++package(default_visibility = ["//perception/model_io/onnx:__pkg__"])
+ 
+ proto_library(
+     name = "onnx_proto",
+@@ -9,7 +9,7 @@ proto_library(
+         "onnx-ml.proto",
+         "onnx-operators-ml.proto",
+     ],
+-    strip_import_prefix = "/onnx/schema",
++    strip_import_prefix = "/perception/model_io/onnx/schema",
+ )
+ 
+ cc_proto_library(
+diff --git a/perception/model_io/onnx/schema/README.md b/perception/model_io/onnx/schema/README.md
+index 8158176..e4f1726 100644
+--- a/perception/model_io/onnx/schema/README.md
++++ b/perception/model_io/onnx/schema/README.md
+@@ -10,6 +10,6 @@ during common-library extraction. Both schema files retain their embedded
+ upstream license notices. Their earlier import provenance is described above;
+ no newer upstream schema revision is claimed.
+ 
+-`//onnx/schema:onnx_proto_cc` supplies host-side protobuf parsing for this
++`//perception/model_io/onnx/schema:onnx_proto_cc` supplies host-side protobuf parsing for this
+ module's importer, independently of Apollo. This package does not execute
+ operators or depend on the spconv CUDA library.
+diff --git a/perception/model_io/test_module/BUILD.bazel b/perception/model_io/test_module/BUILD.bazel
+index 858a18e..d99f6fe 100644
+--- a/perception/model_io/test_module/BUILD.bazel
++++ b/perception/model_io/test_module/BUILD.bazel
+@@ -4,7 +4,7 @@ cc_library(
+     name = "importer_consumer",
+     srcs = ["importer_consumer.cc"],
+     deps = [
+-        "@wheelos_perception_model_io//onnx:sparse_model",
+-        "@wheelos_perception_ops//spconv:sparse_model",
++        "@wheelos_common//perception/model_io/onnx:sparse_model",
++        "@wheelos_common//perception/ops/spconv:sparse_model",
+     ],
+ )
+diff --git a/perception/model_io/test_module/MODULE.bazel b/perception/model_io/test_module/MODULE.bazel
+index 12064c5..096ca0c 100644
+--- a/perception/model_io/test_module/MODULE.bazel
++++ b/perception/model_io/test_module/MODULE.bazel
+@@ -1,15 +1,8 @@
+ module(name = "perception_model_io_consumer")
+ 
+ bazel_dep(name = "rules_cc", version = "0.0.9")
+-bazel_dep(name = "wheelos_perception_model_io", version = "0.1.0")
+-bazel_dep(name = "wheelos_perception_ops", version = "0.1.0")
+-
+-local_path_override(
+-    module_name = "wheelos_perception_model_io",
+-    path = "..",
+-)
+-
++bazel_dep(name = "wheelos_common", version = "0.1.3")
+ local_path_override(
+-    module_name = "wheelos_perception_ops",
+-    path = "../../ops",
++    module_name = "wheelos_common",
++    path = "../../..",
+ )
+diff --git a/perception/ops/MODULE.bazel b/perception/ops/MODULE.bazel
+deleted file mode 100644
+index 9bd7932..0000000
+--- a/perception/ops/MODULE.bazel
++++ /dev/null
+@@ -1,15 +0,0 @@
+-# Independent capability module within the wheelos/common source repository.
+-module(
+-    name = "wheelos_perception_ops",
+-    version = "0.1.0",
+-    compatibility_level = 1,
+-)
+-
+-bazel_dep(name = "rules_cc", version = "0.0.9")
+-bazel_dep(name = "rules_cuda", version = "0.3.0")
+-bazel_dep(name = "spconv", version = "2.3.8.bcr.2")
+-
+-cuda = use_extension("@rules_cuda//cuda:extensions.bzl", "toolchain")
+-use_repo(cuda, "cuda")
+-
+-bazel_dep(name = "googletest", version = "1.17.0", dev_dependency = True, repo_name = "com_google_googletest")
+diff --git a/perception/ops/README.md b/perception/ops/README.md
+index 0cc47f1..d3576c1 100644
+--- a/perception/ops/README.md
++++ b/perception/ops/README.md
+@@ -1,10 +1,10 @@
+ # WheelOS Perception Operators
+ 
+-This capability module is maintained in the `wheelos/common` source checkout.
++This package is maintained inside the `wheelos_common` Bzlmod module.
+ 
+-This Bzlmod module contains reusable perception compute operators. Its first
++This package contains reusable perception compute operators. Its first
+ capability is the CUDA sparse-convolution graph executor backed by the
+-repository's declared `spconv@2.3.8.bcr.2` dependency.
++repository's declared `spconv@2.3.8.bcr.3` dependency.
+ 
+ The package owns the model-neutral sparse graph data structures, execution
+ API, CUDA implementation, and their direct spconv dependency. It does not own
+@@ -15,10 +15,10 @@ the validated graph to the executor.
+ 
+ ## Sparse-convolution target
+ 
+-Consumers declare a direct dependency on `wheelos_perception_ops` and use:
++Consumers declare a direct dependency on `wheelos_common` and use:
+ 
+ ```text
+-@wheelos_perception_ops//spconv:spconv_backbone
++@wheelos_common//perception/ops/spconv:spconv_backbone
+ ```
+ 
+ The API accepts a validated sparse graph description and exposes stream-aware
+@@ -27,24 +27,27 @@ next forward call or destruction. An instance is not safe for concurrent use
+ or for use across CUDA devices. See `spconv/` for the public API and
+ operator-specific tests/constraints.
+ 
+-`//spconv:sparse_model` exposes only standard-C++ graph data. Format import
+-belongs to `wheelos_perception_model_io`, not this module. CPU graph consumers
++`//perception/ops/spconv:sparse_model` exposes only standard-C++ graph data. Format import
++belongs to `//perception/model_io/onnx`, not this package. CPU graph consumers
+ do not configure a CUDA toolkit; execution targets explicitly depend on CUDA.
+-GPU tests live at `//spconv:spconv_backbone_test` and compare a small sparse
++GPU tests live at `//perception/ops/spconv:spconv_backbone_test` and compare a small sparse
+ convolution/scatter graph against a CPU reference on two nondefault streams.
+-Run these tests with this module as the Bazel root; googletest is a development
+-dependency and the tests are not an external consumer API.
++Run these tests with the common repository as the Bazel root.
+ `test_module/` is a separate consumer root that builds `//:executor_consumer`
+-against the public executor without importing the library's test dependencies.
++and links `//:executor_consumer_link` against the public executor without
++importing the library's test dependencies. The link target rejects undefined
++symbols, so a host-only archive cannot pass as a complete CUDA executor.
+ It declares `rules_cuda` directly because its build flags use that module's
+ settings. Run it with the same SM89, C++17 and optimized-build flags.
+ 
+-The module is currently consumed through Apollo's opt-in local Bzlmod override
++The common module is currently consumed through Apollo's opt-in local Bzlmod override
+ in `.bazelrc.dev`; it is not yet published to a remote registry.
+ 
+-The local registry's spconv revision packages the official upstream archive,
+-Bazel integration patch and a checksummed generated-source supplement for
+-CUDA 12.8 / SM89. It no longer requires `SPCONV_SOURCE_ROOT` or consumer-side
+-code generation. Other GPU architectures require separate source validation.
++The local registry's spconv revision runs upstream PCCM generation as a Bazel
++action, using pinned Python dependencies and an explicit, content-checked
++output manifest for CUDA 12.8 / SM89. No generated-source archive or
++`SPCONV_SOURCE_ROOT` is required. Generation currently requires a Linux x86_64
++execution platform; Python and cumm's native helper are build tools only.
++Other GPU architectures require separate generation and runtime validation.
+ The executor requires `--@rules_cuda//cuda:archs=sm_89` at analysis time,
+ CUDA 12.8 at compile time and an SM89 device at runtime.
+diff --git a/perception/ops/test_module/BUILD.bazel b/perception/ops/test_module/BUILD.bazel
+index 73572e5..f22d8fb 100644
+--- a/perception/ops/test_module/BUILD.bazel
++++ b/perception/ops/test_module/BUILD.bazel
+@@ -1,7 +1,15 @@
+-load("@rules_cc//cc:defs.bzl", "cc_library")
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+ 
+ cc_library(
+     name = "executor_consumer",
+     srcs = ["executor_consumer.cc"],
+-    deps = ["@wheelos_perception_ops//spconv:spconv_backbone"],
++    deps = ["@wheelos_common//perception/ops/spconv:spconv_backbone"],
++)
++
++cc_binary(
++    name = "executor_consumer_link",
++    srcs = ["executor_consumer.cc"],
++    linkopts = ["-Wl,--no-undefined"],
++    linkshared = True,
++    deps = ["@wheelos_common//perception/ops/spconv:spconv_backbone"],
+ )
+diff --git a/perception/ops/test_module/MODULE.bazel b/perception/ops/test_module/MODULE.bazel
+index b6ec8e7..927821d 100644
+--- a/perception/ops/test_module/MODULE.bazel
++++ b/perception/ops/test_module/MODULE.bazel
+@@ -2,8 +2,8 @@ module(name = "perception_ops_consumer")
+ 
+ bazel_dep(name = "rules_cc", version = "0.0.9")
+ bazel_dep(name = "rules_cuda", version = "0.3.0")
+-bazel_dep(name = "wheelos_perception_ops", version = "0.1.0")
++bazel_dep(name = "wheelos_common", version = "0.1.3")
+ local_path_override(
+-    module_name = "wheelos_perception_ops",
+-    path = "..",
++    module_name = "wheelos_common",
++    path = "../../..",
+ )

@@ -1,5 +1,10 @@
 load("@npm//tools:ajv-cli/package_json.bzl", ajv = "bin")
 
+exports_files(
+    ["metadata.schema.json"],
+    visibility = ["//tools:__pkg__"],
+)
+
 _METADATA_FILES = glob(["modules/*/metadata.json"])
 
 [
