@@ -1,0 +1,51 @@
+--- a/lib/VM/JSCallableProxy.cpp
++++ b/lib/VM/JSCallableProxy.cpp
+@@ -79,12 +79,8 @@
+     PinnedValue<> thisArg;
+   } lv;
+   LocalsRAII lraii(runtime, &lv);
+-  // We do the constructor related work of checking for a valid call and making
+-  // `this` here, before obtaining the slots for the actual call operation. In
+-  // the spec, this work happens first so it's important to keep the order. For
+-  // instance, if obtaining the `.prototype` of the new.target during
+-  // ordinaryCreateFromConstructor ends up revoking this proxy, then we should
+-  // throw an error when we attempt to find the "construct" trap.
++  // A construct trap creates its own result without reading newTarget.prototype.
++  // Only forwarding to the target may allocate a receiver.
+   if (isConstructorCall) {
+     // The interpreter won't verify if a construct call to a proxy is valid, so
+     // we do that validation here. We should check before we run any user JS
+@@ -93,16 +89,6 @@
+           isConstructor(runtime, callerFrame->getNewTargetRef()))) {
+       return runtime.raiseTypeError("Function is not a constructor");
+     }
+-    // When called as a constructor, JSCallableProxy does not receive a
+-    // populated `this` parameter. So we create it here.
+-    auto thisArgRes = ordinaryCreateFromConstructor_RJS(
+-        runtime,
+-        Handle<Callable>::vmcast(&callerFrame->getNewTargetRef()),
+-        runtime.objectPrototype);
+-    if (LLVM_UNLIKELY(thisArgRes == ExecutionStatus::EXCEPTION)) {
+-      return ExecutionStatus::EXCEPTION;
+-    }
+-    lv.thisArg = std::move(*thisArgRes);
+   } else {
+     lv.thisArg = callerFrame.getThisArgRef();
+   }
+@@ -118,6 +104,16 @@
+   }
+   // 6. If trap is undefined, then
+   if (!*trapRes) {
++    if (isConstructorCall) {
++      auto thisArgRes = Callable::createThisForConstruct_RJS(
++          Handle<Callable>::vmcast(target),
++          runtime,
++          Handle<>(&callerFrame->getNewTargetRef()));
++      if (LLVM_UNLIKELY(thisArgRes == ExecutionStatus::EXCEPTION)) {
++        return ExecutionStatus::EXCEPTION;
++      }
++      lv.thisArg = std::move(*thisArgRes);
++    }
+     //   a. Return ? Call(target, thisArgument, argumentsList).
+     // OR
+     //   a. Assert: IsConstructor(target) is true.
