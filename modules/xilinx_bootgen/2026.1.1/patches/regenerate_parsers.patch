@@ -1,0 +1,74 @@
+Regenerating the parsers with the registry's bison 3.8 and flex 2.6.4 (the
+bison() and flex() targets of BUILD.bazel, in place of the checked-in bison
+2.7 / flex 2.5 output in bisonflex/) needs two edits to the sources.
+
+parser/bif.y gives INT_HASH and int_hash the tag <inthash_t>, which is not a
+member of the grammar's %union.  Bison 2.7 never emitted code for the tag;
+bison 3.8 emits the typed default action of `int_hash: INT_HASH` and the
+compile fails with "union has no member named inthash_t".  The scanner never
+produces INT_HASH and the only rule using int_hash logs that the attribute is
+unsupported, so the two symbols are made untyped.
+
+common/include/*scanner.h include the flex 2.5 FlexLexer.h bundled in
+win_include/ by relative path.  A flex 2.6.4 scanner does not compile against
+it (yyin and yyout became streams rather than pointers, constructors were
+added), so the headers take <FlexLexer.h> from the flex that generated the
+scanners (@flex//:headers) instead.
+
+diff -ruN a/common/include/bifscanner.h b/common/include/bifscanner.h
+--- a/common/include/bifscanner.h	2026-10-28 16:53:33.556280775 -0700
++++ b/common/include/bifscanner.h	2026-10-28 16:53:33.566985561 -0700
+@@ -29,7 +29,7 @@
+ #if ! defined(yyFlexLexerOnce)
+ #undef yyFlexLexer
+ #define yyFlexLexer bifFlexLexer
+-#include "../win_include/FlexLexer.h"
++#include <FlexLexer.h>
+ #endif
+ 
+ // Override the interface for yylex since we namespaced it
+diff -ruN a/common/include/cmdoptionsscanner.h b/common/include/cmdoptionsscanner.h
+--- a/common/include/cmdoptionsscanner.h	2026-10-28 16:53:33.561240389 -0700
++++ b/common/include/cmdoptionsscanner.h	2026-10-28 16:53:33.567117683 -0700
+@@ -30,7 +30,7 @@
+ 
+ #undef yyFlexLexer
+ #define yyFlexLexer reginitFlexLexer
+-#include "../win_include/FlexLexer.h"
++#include <FlexLexer.h>
+ #endif
+ 
+ // Override the interface for yylex since we namespaced it
+diff -ruN a/common/include/reginitscanner.h b/common/include/reginitscanner.h
+--- a/common/include/reginitscanner.h	2026-10-28 16:53:33.564414916 -0700
++++ b/common/include/reginitscanner.h	2026-10-28 16:53:33.567152202 -0700
+@@ -30,7 +30,7 @@
+ 
+ #undef yyFlexLexer
+ #define yyFlexLexer reginitFlexLexer
+-#include "../win_include/FlexLexer.h"
++#include <FlexLexer.h>
+ #endif
+ 
+ // Override the interface for yylex since we namespaced it
+diff -ruN a/parser/bif.y b/parser/bif.y
+--- a/parser/bif.y	2026-10-28 16:53:33.553198548 -0700
++++ b/parser/bif.y	2026-10-28 16:53:33.566159870 -0700
+@@ -154,7 +154,7 @@
+ %token <core_t>         CORE
+ %token <bhrsa_t>        BH_RSA
+ %token <authhash_t>     AUTH_HASH
+-%token <inthash_t>      INT_HASH
++%token      INT_HASH
+ %token <pufhdloc_t>     PUFHD_LOC
+ %token <optkey_t>       OPT_KEY
+ %token <authonly_t>     AUTH_ONLY
+@@ -190,7 +190,7 @@
+ %type <core_t>          core
+ %type <bhrsa_t>         bh_rsa
+ %type <authhash_t>      auth_hash
+-%type <inthash_t>       int_hash
++%type       int_hash
+ %type <pufhdloc_t>      pufhd_loc
+ %type <optkey_t>        opt_key
+ %type <authonly_t>      auth_only
