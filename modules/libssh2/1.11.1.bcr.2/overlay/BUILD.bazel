@@ -1,0 +1,128 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":autoconf.bzl", "NO_WARNINGS", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# --with-crypto (configure.ac:107), replacing the generated flag so its default
+# is a backend the registry provides rather than configure's `auto` probe
+# order; `openssl` and `mbedtls` are the two with modules, the other values
+# keep their config_settings loadable and select nothing.
+string_flag(
+    name = "crypto",
+    build_setting_default = "openssl",
+    values = [
+        "auto",
+        "libgcrypt",
+        "mbedtls",
+        "no",
+        "openssl",
+        "wincng",
+        "wolfssl",
+        "yes",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The library's name under the previous hand-written overlay.
+alias(
+    name = "libssh2",
+    actual = ":src/ssh2",
+    visibility = ["//visibility:public"],
+)
+
+# Replaces the generated `src/ssh2`: the crypto backend comes in through the
+# `crypto` setting (crypto.c textually includes openssl.c or mbedtls.c on
+# LIBSSH2_OPENSSL / LIBSSH2_MBEDTLS, which the autoconf target defines from the
+# same setting), zlib always: configure's --with-libz defaults to `auto`, which
+# finds the registry's zlib, so LIBSSH2_HAVE_ZLIB is defined and comp.c calls it
+# (the generated `libz` flag only stands for an explicit --with-libz=yes).  Windows
+# links the system libraries src/Makefile.am passes as LIBS there.
+cc_library(
+    name = "src/ssh2",
+    srcs = [
+        "src/agent.c",
+        "src/bcrypt_pbkdf.c",
+        "src/chacha.c",
+        "src/channel.c",
+        "src/cipher-chachapoly.c",
+        "src/comp.c",
+        "src/crypt.c",
+        "src/crypto.c",
+        "src/global.c",
+        "src/hostkey.c",
+        "src/keepalive.c",
+        "src/kex.c",
+        "src/knownhost.c",
+        "src/mac.c",
+        "src/misc.c",
+        "src/packet.c",
+        "src/pem.c",
+        "src/poly1305.c",
+        "src/publickey.c",
+        "src/scp.c",
+        "src/session.c",
+        "src/sftp.c",
+        "src/transport.c",
+        "src/userauth.c",
+        "src/userauth_kbd_packet.c",
+        "src/version.c",
+    ],
+    hdrs = [
+        "include/libssh2.h",
+        "include/libssh2_publickey.h",
+        "include/libssh2_sftp.h",
+    ],
+    copts = NO_WARNINGS,
+    implementation_deps = [
+        ":config_headers",
+        ":src/ssh2_private_headers",
+        "@zlib//:z",
+    ] + select({
+        ":crypto_mbedtls": ["@mbedtls"],
+        ":crypto_openssl": ["@openssl//:crypto"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "include",
+        "src",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:ws2_32.lib",
+            "-DEFAULTLIB:bcrypt.lib",
+            "-DEFAULTLIB:crypt32.lib",
+            "-DEFAULTLIB:advapi32.lib",
+            "-DEFAULTLIB:user32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    # The backend macro beside the config header's copy: the generated probes link
+    # the backend by its -l name (-lmbedcrypto, -lssl -lcrypto) next to the module's
+    # archives, so they fail where that name is not a system library (mbedtls's
+    # archive is libmbedtls.a; hermetic toolchains have no system OpenSSL) and the
+    # header then lacks LIBSSH2_MBEDTLS / LIBSSH2_OPENSSL.  Stated here until the
+    # converter drops the -l words a registry dependency stands for.
+    local_defines = ["HAVE_CONFIG_H"] + select({
+        ":crypto_mbedtls": ["LIBSSH2_MBEDTLS"],
+        ":crypto_openssl": ["LIBSSH2_OPENSSL"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "/",
+    textual_hdrs = [
+        "src/agent_win.c",
+        "src/blowfish.c",
+        "src/libgcrypt.c",
+        "src/mbedtls.c",
+        "src/openssl.c",
+        "src/os400qc3.c",
+        "src/wincng.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":include_includes"],
+)
