@@ -1,0 +1,40 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//:component_flags.bzl", "BUILD_VARIANTS", "variant_prefix")
+
+cc_test(
+    name = "library_config_test",
+    size = "small",
+    srcs = ["library_config_test.c"],
+    copts = select({
+        "//:avcodec_libvpx_is_used": ["-DEXPECT_LIBVPX=1"],
+        "//conditions:default": ["-DEXPECT_LIBVPX=0"],
+    }) + select({
+        "//:avdevice_xcb_is_used": ["-DEXPECT_LIBXCB=1"],
+        "//conditions:default": ["-DEXPECT_LIBXCB=0"],
+    }),
+    deps = [
+        "//:avdevice",
+        "//:avformat",
+        "//:config_internal",
+    ],
+)
+
+[
+    genrule(
+        name = variant_prefix(v) + tool + "_version",
+        outs = [(v.replace("-", "_") + "_" if v else "") + tool + "_version.txt"],
+        cmd = "$(execpath //:{}{}) -version > $@".format(
+            variant_prefix(v),
+            tool,
+        ),
+        tools = ["//:{}{}".format(
+            variant_prefix(v),
+            tool,
+        )],
+    )
+    for v in BUILD_VARIANTS
+    for tool in [
+        "ffmpeg",
+        "ffprobe",
+    ]
+]
