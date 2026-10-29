@@ -1,0 +1,219 @@
+Guard optional-object call sites with the preprocessor instead of `if`.
+
+FFmpeg 7.1 calls into a handful of objects that are only compiled when a
+component is enabled, and relies on the compiler folding away the guarding
+`if (CONFIG_FRAME_THREAD_ENCODER && ...)` / `if (INLINE_SSE2(cpu_flags))`
+branch when the condition is a compile-time zero.  GCC and Clang do that even
+at -O0, but cl.exe only does it once optimizations are on, so an unoptimized
+MSVC build is left referencing ff_frame_thread_encoder_init, ff_rtmpe_*,
+ff_fdct_sse2 and ff_vc1dsp_init_mmx* and fails to link.
+
+Switch those sites to `#if`, matching the form these same functions have in
+FFmpeg 9.0.  The generated code is unchanged for compilers that were already
+eliminating the branches.
+
+diff --git a/libavcodec/avcodec.c b/libavcodec/avcodec.c
+--- a/libavcodec/avcodec.c
++++ b/libavcodec/avcodec.c
+@@ -435,10 +435,11 @@
+     if (avcodec_is_open(avctx)) {
+         AVCodecInternal *avci = avctx->internal;
+ 
+-        if (CONFIG_FRAME_THREAD_ENCODER &&
+-            avci->frame_thread_encoder && avctx->thread_count > 1) {
++#if CONFIG_FRAME_THREAD_ENCODER
++        if (avci->frame_thread_encoder && avctx->thread_count > 1) {
+             ff_frame_thread_encoder_free(avctx);
+         }
++#endif
+         if (HAVE_THREADS && avci->thread_ctx)
+             ff_thread_free(avctx);
+         if (avci->needs_close && ffcodec(avctx->codec)->close)
+diff --git a/libavcodec/encode.c b/libavcodec/encode.c
+--- a/libavcodec/encode.c
++++ b/libavcodec/encode.c
+@@ -333,10 +333,13 @@
+ 
+     av_assert0(codec->cb_type == FF_CODEC_CB_TYPE_ENCODE);
+ 
+-    if (CONFIG_FRAME_THREAD_ENCODER && avci->frame_thread_encoder)
++#if CONFIG_FRAME_THREAD_ENCODER
++    if (avci->frame_thread_encoder)
+         /* This will unref frame. */
+         ret = ff_thread_video_encode_frame(avctx, avpkt, frame, &got_packet);
+-    else {
++    else
++#endif
++    {
+         ret = ff_encode_encode_cb(avctx, avpkt, frame, &got_packet);
+     }
+ 
+@@ -835,11 +838,11 @@
+         memcpy(sd_packet->data, sd_frame->data, sd_frame->size);
+     }
+ 
+-    if (CONFIG_FRAME_THREAD_ENCODER) {
+-        ret = ff_frame_thread_encoder_init(avctx);
+-        if (ret < 0)
+-            return ret;
+-    }
++#if CONFIG_FRAME_THREAD_ENCODER
++    ret = ff_frame_thread_encoder_init(avctx);
++    if (ret < 0)
++        return ret;
++#endif
+ 
+     return 0;
+ }
+diff --git a/libavcodec/x86/fdctdsp_init.c b/libavcodec/x86/fdctdsp_init.c
+--- a/libavcodec/x86/fdctdsp_init.c
++++ b/libavcodec/x86/fdctdsp_init.c
+@@ -26,6 +26,7 @@
+ av_cold void ff_fdctdsp_init_x86(FDCTDSPContext *c, AVCodecContext *avctx,
+                                  unsigned high_bit_depth)
+ {
++#if HAVE_SSE2_INLINE
+     int cpu_flags = av_get_cpu_flags();
+     const int dct_algo = avctx->dct_algo;
+ 
+@@ -35,4 +36,5 @@
+                 c->fdct = ff_fdct_sse2;
+         }
+     }
++#endif
+ }
+diff --git a/libavcodec/x86/vc1dsp_init.c b/libavcodec/x86/vc1dsp_init.c
+--- a/libavcodec/x86/vc1dsp_init.c
++++ b/libavcodec/x86/vc1dsp_init.c
+@@ -102,6 +102,7 @@
+ {
+     int cpu_flags = av_get_cpu_flags();
+ 
++#if HAVE_6REGS && HAVE_INLINE_ASM && HAVE_MMX_EXTERNAL
+     if (HAVE_6REGS && INLINE_MMX(cpu_flags))
+         if (EXTERNAL_MMX(cpu_flags))
+         ff_vc1dsp_init_mmx(dsp);
+@@ -109,6 +110,7 @@
+     if (HAVE_6REGS && INLINE_MMXEXT(cpu_flags))
+         if (EXTERNAL_MMXEXT(cpu_flags))
+         ff_vc1dsp_init_mmxext(dsp);
++#endif /* HAVE_6REGS && HAVE_INLINE_ASM && HAVE_MMX_EXTERNAL */
+ 
+ #define ASSIGN_LF4(EXT) \
+         dsp->vc1_v_loop_filter4  = ff_vc1_v_loop_filter4_ ## EXT; \
+diff --git a/libavformat/rtmpproto.c b/libavformat/rtmpproto.c
+--- a/libavformat/rtmpproto.c
++++ b/libavformat/rtmpproto.c
+@@ -1247,7 +1247,10 @@
+     int i;
+     int server_pos, client_pos;
+     uint8_t digest[32], signature[32];
+-    int ret, type = 0;
++    int ret;
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++    int type = 0;
++#endif
+ 
+     av_log(s, AV_LOG_DEBUG, "Handshaking...\n");
+ 
+@@ -1256,7 +1259,8 @@
+     for (i = 9; i <= RTMP_HANDSHAKE_PACKET_SIZE; i++)
+         tosend[i] = av_lfg_get(&rnd) >> 24;
+ 
+-    if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++    if (rt->encrypted) {
+         /* When the client wants to use RTMPE, we have to change the command
+          * byte to 0x06 which means to use encrypted data and we have to set
+          * the flash version to at least 9.0.115.0. */
+@@ -1271,6 +1275,7 @@
+         if ((ret = ff_rtmpe_gen_pub_key(rt->stream, tosend + 1)) < 0)
+             return ret;
+     }
++#endif
+ 
+     client_pos = rtmp_handshake_imprint_with_digest(tosend + 1, rt->encrypted);
+     if (client_pos < 0)
+@@ -1304,7 +1309,9 @@
+             return server_pos;
+ 
+         if (!server_pos) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
+             type = 1;
++#endif
+             server_pos = rtmp_validate_digest(serverdata + 1, 8);
+             if (server_pos < 0)
+                 return server_pos;
+@@ -1334,7 +1341,8 @@
+         if (ret < 0)
+             return ret;
+ 
+-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++        if (rt->encrypted) {
+             /* Compute the shared secret key sent by the server and initialize
+              * the RC4 encryption. */
+             if ((ret = ff_rtmpe_compute_secret_key(rt->stream, serverdata + 1,
+@@ -1344,6 +1352,7 @@
+             /* Encrypt the signature received by the server. */
+             ff_rtmpe_encrypt_sig(rt->stream, signature, digest, serverdata[0]);
+         }
++#endif
+ 
+         if (memcmp(signature, clientdata + RTMP_HANDSHAKE_PACKET_SIZE - 32, 32)) {
+             av_log(s, AV_LOG_ERROR, "Signature mismatch\n");
+@@ -1364,25 +1373,30 @@
+         if (ret < 0)
+             return ret;
+ 
+-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++        if (rt->encrypted) {
+             /* Encrypt the signature to be send to the server. */
+             ff_rtmpe_encrypt_sig(rt->stream, tosend +
+                                  RTMP_HANDSHAKE_PACKET_SIZE - 32, digest,
+                                  serverdata[0]);
+         }
++#endif
+ 
+         // write reply back to the server
+         if ((ret = ffurl_write(rt->stream, tosend,
+                                RTMP_HANDSHAKE_PACKET_SIZE)) < 0)
+             return ret;
+ 
+-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++        if (rt->encrypted) {
+             /* Set RC4 keys for encryption and update the keystreams. */
+             if ((ret = ff_rtmpe_update_keystream(rt->stream)) < 0)
+                 return ret;
+         }
++#endif
+     } else {
+-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++        if (rt->encrypted) {
+             /* Compute the shared secret key sent by the server and initialize
+              * the RC4 encryption. */
+             if ((ret = ff_rtmpe_compute_secret_key(rt->stream, serverdata + 1,
+@@ -1395,16 +1409,19 @@
+                                      serverdata[0]);
+             }
+         }
++#endif
+ 
+         if ((ret = ffurl_write(rt->stream, serverdata + 1,
+                                RTMP_HANDSHAKE_PACKET_SIZE)) < 0)
+             return ret;
+ 
+-        if (CONFIG_FFRTMPCRYPT_PROTOCOL && rt->encrypted) {
++#if CONFIG_FFRTMPCRYPT_PROTOCOL
++        if (rt->encrypted) {
+             /* Set RC4 keys for encryption and update the keystreams. */
+             if ((ret = ff_rtmpe_update_keystream(rt->stream)) < 0)
+                 return ret;
+         }
++#endif
+     }
+ 
+     return 0;
