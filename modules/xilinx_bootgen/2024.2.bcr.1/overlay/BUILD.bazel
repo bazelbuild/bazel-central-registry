@@ -1,0 +1,63 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+exports_files(["LICENSE"])
+
+# Apache 2.0; LICENSE also carries the notices of the bundled bison skeleton,
+# flex scanner class, keccak and stdint.h the sources were built with.
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# Upstream's -Wall is dropped: third-party warnings are noise to consumers.
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# CXXFLAGS = -std=c++0x; the C files take the toolchain default, as CFLAGS
+# does.  MSVC's oldest selectable standard is C++14.
+CXXOPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/std:c++14"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++14"],
+    "//conditions:default": ["-std=c++0x"],
+})
+
+# Upstream's one program, from every .cpp and .c in this directory, linked
+# against OpenSSL.  The bison/flex output is compiled as checked in: the
+# grammars sit in the same directory as the sources that include their
+# headers, where regenerated headers could not shadow the checked-in ones.
+# cdo-driver/ is a standalone library the Makefile does not build; it has
+# no target.
+cc_binary(
+    name = "bootgen",
+    srcs = glob([
+        "*.c",
+        "*.cpp",
+        "*.h",
+        "*.hh",
+        "*.hpp",
+    ]),
+    copts = COPTS,
+    cxxopts = CXXOPTS,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@openssl//:crypto",
+        "@openssl//:ssl",
+    ],
+)
