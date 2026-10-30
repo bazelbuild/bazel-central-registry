@@ -1,0 +1,100 @@
+"""
+Perl rules
+"""
+
+module(
+    name = "rules_perl",
+    version = "2.1.0",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_cc", version = "0.2.9")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+# Stardoc is used by //docs to regression test the `bzl_library` tree.
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+
+# Stardoc pulls in protobuf, whose Starlark actions do not yet declare their
+# toolchains and so fail analysis under `--incompatible_auto_exec_groups`.
+# Patch the affected actions until the upstream fix is released:
+# https://github.com/protocolbuffers/protobuf/pull/30568
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//tools/patches:protobuf-auto-exec-groups.patch"],
+    version = "33.4",
+)
+
+repos = use_extension("@rules_perl//perl:extensions.bzl", "perl_repositories")
+use_repo(
+    repos,
+    "perl_aarch64_linux_gnu",
+    "perl_aarch64_linux_musl",
+    "perl_aarch64_linux_musl_static",
+    "perl_aarch64_macos",
+    "perl_aarch64_windows_msvc",
+    "perl_x86_64_linux_gnu",
+    "perl_x86_64_linux_musl",
+    "perl_x86_64_linux_musl_static",
+    "perl_x86_64_macos",
+    "perl_x86_64_windows_gnu",
+    "perl_x86_64_windows_msvc",
+    "perl_x86_64_windows_strawberry",
+)
+
+# Same order as //perl:platforms.bzl; among toolchains whose constraints and
+# settings all match, the first registered wins, so each platform's default
+# build comes first.
+
+# Target toolchains: the perl a target is built for.
+register_toolchains(
+    "@rules_perl//perl:perl_x86_64_linux_musl_static_toolchain",
+    "@rules_perl//perl:perl_aarch64_linux_musl_static_toolchain",
+    "@rules_perl//perl:perl_x86_64_linux_gnu_toolchain",
+    "@rules_perl//perl:perl_aarch64_linux_gnu_toolchain",
+    "@rules_perl//perl:perl_x86_64_linux_musl_toolchain",
+    "@rules_perl//perl:perl_aarch64_linux_musl_toolchain",
+    "@rules_perl//perl:perl_x86_64_macos_toolchain",
+    "@rules_perl//perl:perl_aarch64_macos_toolchain",
+    "@rules_perl//perl:perl_x86_64_windows_msvc_toolchain",
+    "@rules_perl//perl:perl_aarch64_windows_msvc_toolchain",
+    "@rules_perl//perl:perl_x86_64_windows_gnu_toolchain",
+    "@rules_perl//perl:perl_x86_64_windows_strawberry_toolchain",
+)
+
+# Exec toolchains: the perl that runs build actions such as xsubpp.
+register_toolchains(
+    "@rules_perl//perl:perl_x86_64_linux_musl_static_toolchain_exec",
+    "@rules_perl//perl:perl_aarch64_linux_musl_static_toolchain_exec",
+    "@rules_perl//perl:perl_x86_64_linux_gnu_toolchain_exec",
+    "@rules_perl//perl:perl_aarch64_linux_gnu_toolchain_exec",
+    "@rules_perl//perl:perl_x86_64_linux_musl_toolchain_exec",
+    "@rules_perl//perl:perl_aarch64_linux_musl_toolchain_exec",
+    "@rules_perl//perl:perl_x86_64_macos_toolchain_exec",
+    "@rules_perl//perl:perl_aarch64_macos_toolchain_exec",
+    "@rules_perl//perl:perl_x86_64_windows_msvc_toolchain_exec",
+    "@rules_perl//perl:perl_aarch64_windows_msvc_toolchain_exec",
+    "@rules_perl//perl:perl_x86_64_windows_gnu_toolchain_exec",
+    "@rules_perl//perl:perl_x86_64_windows_strawberry_toolchain_exec",
+)
+
+cpan = use_extension("@rules_perl//perl/cpan:extensions.bzl", "cpan")
+cpan.install(
+    name = "cpan_compiler_deps",
+    lock = "//perl/cpan/3rdparty:cpanfile.snapshot.lock.json",
+)
+use_repo(
+    cpan,
+    "cpan_compiler_deps",
+)
+
+dev_repos = use_extension("@rules_perl//perl:extensions.bzl", "perl_dev_repositories", dev_dependency = True)
+use_repo(
+    dev_repos,
+    "fcgi",
+)
+
+# lcov's genhtml, a Perl tool with CPAN dependencies, is run by
+# //examples/genhtml and //test/data_dep. The module builds it with rules_perl.
+bazel_dep(name = "lcov", version = "2.6", dev_dependency = True)
