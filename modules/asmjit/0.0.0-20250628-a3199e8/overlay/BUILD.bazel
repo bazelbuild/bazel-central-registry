@@ -1,14 +1,27 @@
 # Bazel build of AsmJit (CMakeLists.txt) as a static library (ASMJIT_STATIC)
 # with its x86 and AArch64 backends.
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
-load("@rules_license//rules:license.bzl", "license")
+load(":defs.bzl", "ASMJIT_COPTS", "ASMJIT_LINKOPTS")
 
-package(default_applicable_licenses = [":license"])
+package(default_package_metadata = [":package_metadata"])
 
 license(
     name = "license",
-    license_kinds = ["@rules_license//licenses/spdx:Zlib"],
-    license_text = "LICENSE.md",
+    kind = "@package_metadata//licenses/spdx:Zlib",
+    text = "LICENSE.md",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
 )
 
 exports_files(["LICENSE.md"])
@@ -17,20 +30,32 @@ cc_library(
     name = "asmjit",
     srcs = glob(["src/asmjit/**/*.cpp"]),
     hdrs = glob(["src/asmjit/**/*.h"]),
-    # AsmJit requires C++17 (target_compile_features(... cxx_std_17)).
-    copts = select({
-        "@rules_cc//cc/compiler:clang-cl": ["/std:c++17"],
-        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
-        "//conditions:default": ["-std=c++17"],
-    }),
+    copts = ASMJIT_COPTS,
     defines = ["ASMJIT_STATIC"],
     includes = ["src"],
-    linkopts = select({
-        "@platforms//os:linux": [
-            "-lpthread",
-            "-lrt",
-        ],
-        "//conditions:default": [],
-    }),
+    linkopts = ASMJIT_LINKOPTS,
     visibility = ["//visibility:public"],
+)
+
+# AsmJit compiled with its embedded unit tests (ASMJIT_TEST), which only
+# //test:asmjit_test_unit links, as upstream's asmjit_test_unit target does.
+cc_library(
+    name = "asmjit_with_unit_tests",
+    testonly = True,
+    # With ASMJIT_TEST, the sources include "../../../test/<header>".
+    srcs = glob(["src/asmjit/**/*.cpp"]) + [
+        "//test:asmjit_test_random.h",
+        "//test:broken.h",
+    ],
+    hdrs = glob(["src/asmjit/**/*.h"]),
+    copts = ASMJIT_COPTS,
+    defines = [
+        "ASMJIT_STATIC",
+        "ASMJIT_TEST",
+    ],
+    includes = ["src"],
+    linkopts = ASMJIT_LINKOPTS,
+    visibility = ["//test:__pkg__"],
+    # The unit tests register themselves from static initializers.
+    alwayslink = True,
 )
