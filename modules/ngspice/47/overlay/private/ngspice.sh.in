@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -uo pipefail
+set +e
+
+# Standard Bazel runfiles initialization, including manifest-only execution.
+f=bazel_tools/tools/bash/runfiles/runfiles.bash
+source "${RUNFILES_DIR:-/dev/null}/$f" 2>/dev/null ||
+  source "$(grep -sm1 "^$f " "${RUNFILES_MANIFEST_FILE:-/dev/null}" | cut -d ' ' -f 2-)" 2>/dev/null ||
+  source "$0.runfiles/$f" 2>/dev/null ||
+  source "$(grep -sm1 "^$f " "$0.runfiles_manifest" | cut -d ' ' -f 2-)" 2>/dev/null ||
+  { echo 'Cannot locate Bazel runfiles' >&2; exit 1; }
+set -e
+
+install_dir="$(rlocation '@INSTALL_RUNFILE@')"
+install_dir="$(cd "$install_dir" && pwd -P)"
+init_dir="$(mktemp -d "${TMPDIR:-/tmp}/ngspice.XXXXXXXX")"
+trap 'rm -rf "$init_dir"' EXIT
+{
+  printf '%s\n' '* Bazel ngspice runtime initialization' 'alias exit quit' 'alias acct rusage all'
+  # SPICE_SCRIPTS also controls the default sourcepath. Restore installed scripts
+  # and the caller's optional input directory after relocating spinit.
+  # Ngspice lowercases ordinary set lines while reading spinit. setcs preserves
+  # path case, which matters on case-sensitive filesystems.
+  printf 'setcs sourcepath = ( . "%s/share/ngspice/scripts"' "$install_dir"
+  if [[ -n "${NGSPICE_INPUT_DIR:-}" ]]; then
+    printf ' "%s"' "$NGSPICE_INPUT_DIR"
+  fi
+  printf ' )\n'
+  for model in spice2poly analog digital xtradev xtraevt table tlines; do
+    model_path="$install_dir/lib/ngspice/$model.cm"
+    if [[ -f "$model_path" ]]; then
+      printf 'codemodel "%s"\n' "$model_path"
+    fi
+  done
+} > "$init_dir/spinit"
+export SPICE_SCRIPTS="$init_dir"
+export SPICE_LIB_DIR="$install_dir/share/ngspice"
+export NGSPICE_CODE_MODEL_DIR="$install_dir/lib/ngspice"
+"$install_dir/bin/ngspice" "$@"
