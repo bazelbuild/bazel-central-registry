@@ -1,0 +1,84 @@
+diff --git a/src/xspice/icm/digital/d_cosim/cfunc.mod b/src/xspice/icm/digital/d_cosim/cfunc.mod
+--- a/src/xspice/icm/digital/d_cosim/cfunc.mod
++++ b/src/xspice/icm/digital/d_cosim/cfunc.mod
+@@ -158,9 +158,13 @@
+ static void *cosim_dlopen(const char *fn)
+ {
+     const char **xp;
++    const char  *library_dir = getenv("NGSPICE_CODE_MODEL_DIR");
+     size_t       l1, l2;
+     void        *handle;
+     char         path[2048];
++
++    if (!library_dir || !*library_dir)
++        library_dir = NGSPICELIBDIR;
+ 
+     l1 = strlen(fn);
+     for (xp = exts; *xp; xp++) {
+@@ -173,7 +177,7 @@
+             return handle;
+         if (TESTFN(path))       // File exists.
+             break;
+-        snprintf(path, sizeof path,  NGSPICELIBDIR "/%s%s", fn, *xp);
++        snprintf(path, sizeof path, "%s/%s%s", library_dir, fn, *xp);
+         handle = dlopen(path, FLAGS);
+         if (handle)
+             return handle;
+diff --git a/src/xspice/verilog/icarus_shim.h b/src/xspice/verilog/icarus_shim.h
+--- a/src/xspice/verilog/icarus_shim.h
++++ b/src/xspice/verilog/icarus_shim.h
+@@ -70,6 +70,7 @@
+     volatile uint32_t   out_pending;
+     struct ngvp_port   *ports;          // Port information array.
+     void               *vvp_handle;     // dlopen() handle for libvvp.
++    char               *vpi_path;       // Owned relocated VPI module path.
+ };
+ 
+ /* Function to find the current d_cosim instance data. Called by VPI code
+diff --git a/src/xspice/verilog/icarus_shim.c b/src/xspice/verilog/icarus_shim.c
+--- a/src/xspice/verilog/icarus_shim.c
++++ b/src/xspice/verilog/icarus_shim.c
+@@ -187,6 +187,7 @@
+     cr_yield_to_sim(&ctx->cr_ctx);
+     cr_cleanup(&ctx->cr_ctx);
+     free(ctx->ports);
++    free(ctx->vpi_path);
+     dlclose(ctx->vvp_handle);
+     free(ctx);
+     pinfo->handle = NULL;
+@@ -215,7 +216,7 @@
+     struct vvp_ptrs            fns;
+     void                     **fpptr;
+     const char                *file;
+-    struct ng_vvp             *ctx;
++    struct ng_vvp             *ctx = (struct ng_vvp *)pinfo->handle;
+     int                        i;
+ 
+     cr_safety();        // Make safe with signals.
+@@ -247,12 +248,23 @@
+ 
+     if (pinfo->lib_argc >= 2 && pinfo->lib_argv[1][0]) // Explicit VPI file.
+         file = pinfo->lib_argv[1];
+-    else
++    else {
+ #ifdef STAND_ALONE
+         file = "./ivlng";
+ #else
+-        file = NGSPICELIBDIR "/ivlng";
+-#endif
++        const char *library_dir = getenv("NGSPICE_CODE_MODEL_DIR");
++        if (library_dir && *library_dir) {
++            size_t length = strlen(library_dir) + sizeof("/ivlng");
++            ctx->vpi_path = malloc(length);
++            if (!ctx->vpi_path)
++                fail("malloc", ENOMEM);
++            snprintf(ctx->vpi_path, length, "%s/ivlng", library_dir);
++            file = ctx->vpi_path;
++        } else {
++            file = NGSPICELIBDIR "/ivlng";
++        }
++#endif
++    }
+     fns.load_module(file);
+     fns.run(pinfo->sim_argv[0]);
+ 

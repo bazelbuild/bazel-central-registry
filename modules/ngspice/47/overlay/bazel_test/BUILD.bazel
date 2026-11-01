@@ -1,0 +1,50 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+exports_files(
+    [".spiceinit"],
+    visibility = ["//clang_openmp:__pkg__"],
+)
+
+config_setting(
+    name = "with_xspice",
+    flag_values = {"@ngspice//:xspice": "true"},
+)
+
+config_setting(
+    name = "with_openmp",
+    flag_values = {"@ngspice//:openmp": "true"},
+)
+
+FEATURE_ARGS = select({
+    ":with_xspice": ["true"],
+    "//conditions:default": ["false"],
+}) + select({
+    ":with_openmp": ["true"],
+    "//conditions:default": ["false"],
+})
+
+cc_test(
+    name = "shared_smoke",
+    size = "small",
+    srcs = ["shared_smoke.cc"],
+    args = ["$(rootpath @ngspice//:runtime)"] + FEATURE_ARGS,
+    copts = ["-std=c++17"],
+    data = [
+        ".spiceinit",
+        "@ngspice//:runtime",
+    ],
+    env = {
+        "OMP_DYNAMIC": "FALSE",
+        "OMP_THREAD_LIMIT": "4",
+    },
+    deps = ["@ngspice"],
+)
+
+sh_test(
+    name = "cli_smoke",
+    size = "small",
+    srcs = ["cli_smoke.sh"],
+    args = ["$(rootpath @ngspice//:ngspice_bin)"] + FEATURE_ARGS,
+    data = glob(["*.cir"]) + ["@ngspice//:ngspice_bin"],
+)
