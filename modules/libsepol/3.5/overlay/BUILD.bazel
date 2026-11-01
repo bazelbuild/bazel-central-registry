@@ -1,0 +1,59 @@
+"""Builds libsepol (SELinux policy library) from the upstream release tarball."""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_flex//flex:flex.bzl", "flex")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["src/libsepol.map.in"])
+
+flex(
+    name = "cil_scan",
+    src = "cil/src/cil_lexer.l",
+    visibility = ["//visibility:private"],
+)
+
+# The generated lexer quote-includes cil/src. That path stays on this private
+# library; implementation_deps keeps it off dependents of :libsepol.
+cc_library(
+    name = "cil_lexer",
+    srcs = [":cil_scan"] + glob([
+        "cil/include/cil/*.h",
+        "cil/src/*.h",
+        "include/sepol/**/*.h",
+    ]),
+    includes = [
+        "cil/include",
+        "cil/src",
+        "include",
+        "include/sepol",
+    ],
+    local_defines = ["_GNU_SOURCE"],
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "libsepol",
+    srcs = glob([
+        "src/*.c",
+        "src/*.h",
+        "cil/src/*.c",
+        "cil/src/*.h",
+    ]),
+    hdrs = glob([
+        "include/sepol/**/*.h",
+        "cil/include/cil/*.h",
+    ]),
+    additional_compiler_inputs = ["sepol_compat.h"],
+    copts = [
+        "-include",
+        "$(execpath sepol_compat.h)",
+    ],
+    implementation_deps = [":cil_lexer"],
+    includes = [
+        "cil/include",
+        "include",
+        "include/sepol",
+    ],
+    local_defines = ["_GNU_SOURCE"],
+)
