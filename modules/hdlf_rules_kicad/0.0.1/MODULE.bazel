@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+module(
+    name = "hdlf_rules_kicad",
+    version = "0.0.1",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+# This module's helpers (the launcher, the stub and checker of swap_test)
+# and its development tools are Go, built from source. They are pure Go,
+# so a user of the module needs no C++ toolchain for them; rules_go brings
+# its own Go SDK.
+bazel_dep(name = "rules_go", version = "0.64.2")
+
+# Go modules from outside the standard library, pinned by go.sum and built
+# from source: oksvg and rasterx draw the schematic sheets as PNG
+# (kicad/private/svgpng). go.mod lists them.
+bazel_dep(name = "gazelle", version = "0.54.0")
+
+# Fetches KiCad's 3D model libraries over BitTorrent, web-seeded from
+# bt.hdlfactory.com (issue #43; kicad/private/models_pins.bzl).
+bazel_dep(name = "rules_bittorrent", version = "2.1.1")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(go_deps, "com_github_srwiley_oksvg", "com_github_srwiley_rasterx")
+
+# The helpers toolchain, which every rule that runs a tool needs.
+register_toolchains(
+    "//kicad/toolchains:helpers",
+    # Last, so it is picked only off Linux x86_64 (spec P1).
+    "//kicad/toolchains:unsupported",
+)
+
+# KiCad itself, prebuilt and pinned by sha256 (kicad/private/extensions.bzl).
+kicad = use_extension("//kicad:extensions.bzl", "kicad")
+use_repo(kicad, "kicad_libs", "kicad_toolchains")
+
+register_toolchains(
+    "@kicad_toolchains//:all",
+    # swap_test's stand-in for kicad-cli.
+    "//kicad/toolchains:kicad_stub",
+    # The normalizer and its stand-in.
+    "//kicad/toolchains:normalize",
+    "//kicad/toolchains:normalize_stub",
+)
+
+# The demonstration tools of the swap test template
+# (kicad/private/swapdemo) and of determinism_test's own tests
+# (kicad/private/detdemo).
+register_toolchains(
+    "//kicad/private/swapdemo:all",
+    "//kicad/private/detdemo:all",
+    dev_dependency = True,
+)
+
+# stardoc renders through Java and protobuf. Protobuf 34.1 and later bring a
+# prebuilt protoc (enabled in .bazelrc), so the documentation build compiles
+# no C++ and needs no C++ toolchain. Dev only: it raises the version stardoc
+# would otherwise pick.
+bazel_dep(name = "protobuf", version = "36.2", dev_dependency = True)
+
+# Bazel's Java launcher (used by stardoc) asks for a C++ toolchain even when
+# nothing compiles C++, and .bazelrc turns off host toolchain detection. zig's
+# toolchain is one self-contained binary, so it reads nothing from the host.
+# Dev only: a user of the module brings its own C++ toolchain if it needs one.
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0", dev_dependency = True)
+
+zig_toolchains = use_extension(
+    "@hermetic_cc_toolchain//toolchain:ext.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+use_repo(zig_toolchains, "zig_sdk")
+
+register_toolchains(
+    "@zig_sdk//toolchain:linux_amd64_gnu.2.31",
+    dev_dependency = True,
+)
+
+bazel_dep(name = "bazel_lib", version = "3.7.2", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "10.1.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
