@@ -1,0 +1,48 @@
+# The root module's targets need its dev dependencies: test the examples only.
+# '--lockfile_mode=off' overrides 'error' from the examples' '.bazelrc'.
+bcr_test_module:
+  module_path: examples
+  matrix:
+    platform:
+      - ubuntu2204
+      - macos_arm64
+    bazel:
+      - 8.x
+      - 9.x
+  tasks:
+    # The 'cortex_m' examples fetch QEMU with nix. Install it like
+    # 'rules_nixpkgs_core' and 'rules_elm' do: the Bazel CI setup ignores the
+    # PATH from ~/.profile, which the installer updates.
+    # https://github.com/bazelbuild/bazel-central-registry/blob/main/modules/rules_nixpkgs_core/0.14.0/presubmit.yml
+    # https://github.com/bazelbuild/bazel-central-registry/blob/main/modules/rules_elm/1.1.1/presubmit.yml
+    run_test_module_ubuntu:
+      name: Run test module
+      platform: ubuntu2204
+      bazel: ${{ bazel }}
+      environment:
+        PATH: /var/lib/buildkite-agent/.nix-profile/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      shell_commands:
+        - curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
+      test_flags:
+        - --lockfile_mode=off
+      test_targets:
+        - //...
+    # installing nix on macOS needs a multi-user install with 'sudo'
+    run_test_module_macos:
+      name: Run test module without nix
+      platform: macos_arm64
+      bazel: ${{ bazel }}
+      test_flags:
+        - --lockfile_mode=off
+        - --config=no_nix
+      test_targets:
+        - //...
+    run_test_module_bazel_7:
+      name: Run test module with Bazel 7
+      platform: ${{ platform }}
+      bazel: 7.1.0
+      test_flags:
+        - --lockfile_mode=off
+        - --config=bazel7
+      test_targets:
+        - //...
