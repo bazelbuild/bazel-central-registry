@@ -1,6 +1,5 @@
-# The root module's targets need its dev dependencies: test the examples only.
-# '--lockfile_mode=off' overrides 'error' from the examples' '.bazelrc'.
 bcr_test_module:
+  # all tests are within the examples module
   module_path: examples
   matrix:
     platform:
@@ -10,9 +9,13 @@ bcr_test_module:
       - 8.x
       - 9.x
   tasks:
-    # The 'cortex_m' examples fetch QEMU with nix. Install it like
-    # 'rules_nixpkgs_core' and 'rules_elm' do: the Bazel CI setup ignores the
-    # PATH from ~/.profile, which the installer updates.
+    # The 'cortex_m' examples fetch QEMU with nix. Copy nix setup from
+    # 'rules_nixpkgs_core' and 'rules_elm', but pin the installer, which
+    # checks the hashes of the tarballs it downloads.
+    # NOTE: the installer hash is published at
+    # https://releases.nixos.org/nix/nix-<version>/install.sha256
+    # NOTE: the Bazel CI setup ignores the PATH from ~/.profile, which the
+    # installer updates.
     # https://github.com/bazelbuild/bazel-central-registry/blob/main/modules/rules_nixpkgs_core/0.14.0/presubmit.yml
     # https://github.com/bazelbuild/bazel-central-registry/blob/main/modules/rules_elm/1.1.1/presubmit.yml
     run_test_module_ubuntu:
@@ -22,11 +25,15 @@ bcr_test_module:
       environment:
         PATH: /var/lib/buildkite-agent/.nix-profile/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       shell_commands:
-        - curl -L https://nixos.org/nix/install | sh -s -- --no-daemon
+        - curl -fsSL -o /tmp/install-nix https://releases.nixos.org/nix/nix-2.35.4/install
+        - echo "118c3dfa04bdc946b3f577365b9a295607142c9b920e2c07b184e266d62b1ee1  /tmp/install-nix" | sha256sum -c
+        - sh /tmp/install-nix --no-daemon
       test_flags:
+        # lockfile is set for the pinned version of Bazel used for development
         - --lockfile_mode=off
       test_targets:
         - //...
+
     # installing nix on macOS needs a multi-user install with 'sudo'
     run_test_module_macos:
       name: Run test module without nix
@@ -37,6 +44,7 @@ bcr_test_module:
         - --config=no_nix
       test_targets:
         - //...
+
     run_test_module_bazel_7:
       name: Run test module with Bazel 7
       platform: ${{ platform }}
