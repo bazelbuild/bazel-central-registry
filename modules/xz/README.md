@@ -1,6 +1,9 @@
 # xz (liblzma)
 
-Starting with 5.8.4, Linux and macOS x86-64 platforms that advertise PCLMUL,
+The experimental BCR version `5.8.4.alpha.0` uses the alpha
+`platforms_contrib` dependency to configure hardware CRC support.
+
+Linux and macOS x86-64 platforms that advertise PCLMUL,
 SSSE3, and SSE4.1 through `platforms_contrib` select the direct hardware CRC32
 and CRC64 paths. Other x86-64 platforms retain upstream runtime CPU detection
 and a software fallback. PCLMUL is not implied by x86-64-v2, v3, or v4.
@@ -8,7 +11,7 @@ and a software fallback. PCLMUL is not implied by x86-64-v2, v3, or v4.
 For example, add `platforms_contrib` to your root `MODULE.bazel`:
 
 ```starlark
-bazel_dep(name = "xz", version = "5.8.4")
+bazel_dep(name = "xz", version = "5.8.4.alpha.0")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "platforms_contrib", version = "1.0.0-alpha.0")
 ```
