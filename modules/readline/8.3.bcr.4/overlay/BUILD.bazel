@@ -1,0 +1,43 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load(":autoconf.bzl", "NO_WARNINGS", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# The `<readline/readline.h>` header set under the previous hand-written
+# overlay's name.
+alias(
+    name = "prefixed_readline_header",
+    actual = ":readline_prefixed_headers",
+    visibility = ["//visibility:public"],
+)
+
+# Replaces the generated target.  examples/Makefile.in keeps rlptytest out of `all`
+# (OTHEREXE): the source hard-codes Linux's <pty.h> ("#if 1 /* LINUX */"; macOS has
+# <util.h>) and links $(LIBUTIL) for openpty.  The converter reads every program rule of a
+# hand-written Makefile.in and knows no `program:` decision for them, so the Linux-only
+# build is stated here until it does.
+cc_binary(
+    name = "examples/rlptytest",
+    srcs = ["examples/rlptytest.c"],
+    copts = NO_WARNINGS,
+    linkopts = ["-lutil"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "READLINE_LIBRARY",
+        "RL_LIBRARY_VERSION=\"\\\"8.3\\\"\"",
+    ],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":examples/headers",
+        ":readline",
+        ":top_srcdir_headers",
+        "@ncurses",
+    ],
+)
