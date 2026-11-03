@@ -4,6 +4,19 @@ This is a community-maintained setup to build Git (and libgit) using Bazel.
 
 ## Release notes
 
+### 2.55.0.bcr.1
+
+- Lowered the `rules_rust` floor from 0.71.3 to 0.69.0. `rules_rust` 0.71.1+
+  rejects non-root `crate_universe` calls without a lockfile, so depending on
+  `git` broke dependency resolution for any module graph that also contains
+  `protobuf` < 37 (which calls `crate.from_specs()` without one). The Rust
+  sources build unchanged on 0.69.0.
+- Enabled `RUNTIME_PREFIX` on Linux and macOS, as upstream's
+  `config.mak.uname` does on platforms that support it. Git now resolves
+  `libexec/git-core`, `share/git-core/templates` and `etc/gitconfig` relative to
+  its executable instead of the filesystem root, so the built programs work
+  when installed under any prefix (for example `/usr/local`).
+
 ### 2.54.0
 
 - Rebased the Bazel integration on top of upstream Git 2.54.0.
