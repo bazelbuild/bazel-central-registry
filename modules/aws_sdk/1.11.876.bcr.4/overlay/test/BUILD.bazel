@@ -1,0 +1,74 @@
+load("@platforms_contrib//cpu/x86_64:x86_64.bzl", "x86_64_level_constraints")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Compile every dispatch tier even when a presubmit host cannot execute it.
+[
+    platform(
+        name = name,
+        constraint_values = [
+            "@platforms//os:linux",
+            "@platforms//cpu:x86_64",
+        ] + x86_64_level_constraints(level) + [
+            "@platforms_contrib//cpu/x86_64/feature:{}_available".format(feature)
+            for feature in features
+        ],
+    )
+    for name, level, features in [
+        ("x86_64_v1", "v1", []),
+        (
+            "x86_64_v2",
+            "v2",
+            ["pclmul"],
+        ),
+        (
+            "x86_64_v3",
+            "v3",
+            ["pclmul"],
+        ),
+        ("x86_64_v3_no_pclmul", "v3", []),
+        (
+            "x86_64_v4",
+            "v4",
+            [
+                "pclmul",
+                "vpclmulqdq",
+            ],
+        ),
+        (
+            "x86_64_v4_no_vpclmul",
+            "v4",
+            ["pclmul"],
+        ),
+    ]
+]
+
+cc_test(
+    name = "checksums_test",
+    size = "small",
+    srcs = ["checksums_test.c"],
+    linkopts = [
+        "-Wl,--wrap=aws_checksums_crc32c_sw",
+        "-Wl,--wrap=aws_checksums_crc64nvme_sw",
+    ],
+    linkstatic = True,
+    local_defines = select({
+        "@platforms_contrib//cpu/x86_64:at_least_v2": ["TEST_X86_V2"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms_contrib//cpu/x86_64:at_least_v3": ["TEST_X86_V3"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms_contrib//cpu/x86_64:at_least_v4": ["TEST_X86_V4"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms_contrib//cpu/x86_64/feature:pclmul": ["TEST_PCLMUL"],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms_contrib//cpu/x86_64/feature:vpclmulqdq": ["TEST_VPCLMUL"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "@aws_sdk//:aws-c-common",
+        "@aws_sdk//:aws-checksums",
+    ],
+)
