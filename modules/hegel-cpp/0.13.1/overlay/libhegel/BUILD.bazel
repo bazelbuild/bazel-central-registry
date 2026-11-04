@@ -1,0 +1,59 @@
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+
+config_setting(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+config_setting(
+    name = "darwin_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+# The released macOS dylib's install name is the absolute CI build path,
+# which does not exist on this machine. Rewrite it to an @rpath name so
+# executables that link it resolve it through their RPATH.
+genrule(
+    name = "darwin_dylib",
+    srcs = ["@libhegel-darwin-arm64//file"],
+    outs = ["libhegel_c.dylib"],
+    cmd = "cp $< $@ && chmod +w $@ && install_name_tool -id @rpath/libhegel_c.dylib $@",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+cc_import(
+    name = "engine",
+    shared_library = select(
+        {
+            ":darwin_arm64": ":darwin_dylib",
+            ":linux_amd64": "@libhegel-linux-amd64//file",
+            ":linux_arm64": "@libhegel-linux-arm64//file",
+        },
+        no_match_error = "libhegel: no prebuilt release for this platform " +
+                         "(see libhegel/libhegel.bzl for the supported set)",
+    ),
+)
+
+# The vendored C ABI header plus the prebuilt engine, as one target.
+# Equivalent to the CMake imported target hegel::libhegel.
+cc_library(
+    name = "libhegel",
+    hdrs = ["hegel.h"],
+    includes = ["."],
+    visibility = ["//:__pkg__"],
+    deps = [":engine"],
+)

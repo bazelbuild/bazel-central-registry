@@ -1,0 +1,57 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Equivalent of the CMake HEGEL_THROW_SITE option. Failure reports name the
+# source position of the throw that failed a test case, which requires the
+# C++ runtime to be a shared library. Build with --//:throw_site=false for a
+# toolchain that links the C++ runtime statically; reports then name the
+# exception type without the throw site.
+bool_flag(
+    name = "throw_site",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "throw_site_disabled",
+    flag_values = {":throw_site": "false"},
+    visibility = ["//visibility:public"],
+)
+
+# Private headers in src/, included with angle brackets (<engine.h>). A
+# repository-relative include path (rather than a -Isrc copt, which is
+# execroot-relative) so the library also builds when this repository is
+# consumed as an external module. implementation_deps keeps the path out
+# of consumers' include search paths.
+cc_library(
+    name = "private_hdrs",
+    hdrs = glob(["src/*.h"]),
+    strip_include_prefix = "src",
+    visibility = ["//visibility:private"],
+)
+
+# The Hegel C++ library. Equivalent to the CMake `hegel` target: reflection
+# is on (reflect-cpp, C++20) and libhegel resolves the hegel_* symbols.
+cc_library(
+    name = "hegel",
+    srcs = glob(["src/*.cpp"]),
+    hdrs = glob(["include/hegel/**/*.h"]),
+    defines = ["HEGEL_HAS_REFLECTION=1"],
+    implementation_deps = [":private_hdrs"],
+    includes = ["include"],
+    linkopts = [
+        # dlsym/dladdr for throw-site capture (src/hegel.cpp).
+        "-ldl",
+        # spawn()/Worker run test bodies on std::thread.
+        "-lpthread",
+    ],
+    # Private define: no public header reads the macro.
+    local_defines = select({
+        ":throw_site_disabled": ["HEGEL_HAS_THROW_SITE=0"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//libhegel",
+        "@reflect-cpp//:core",
+    ],
+)
