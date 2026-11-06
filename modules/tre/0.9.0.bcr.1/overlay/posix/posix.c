@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
 /*
   Real, unprefixed POSIX entry points forwarding to TRE.
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
 /*
   A POSIX <regex.h> whose regcomp, regexec, regerror and regfree are TRE's.
 
