@@ -1,0 +1,42 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# The qpdf CLI (qpdf/CMakeLists.txt): links plain libqpdf and uses only the
+# public API — upstream keeps it out of the needs_private_headers list, and
+# qpdf.cc includes nothing but <qpdf/...> install headers.
+#
+# Windows unicode argv: upstream's check_wmain (top CMakeLists.txt) probes
+# whether an `extern "C" wmain(int, wchar_t*[])` links, and on success compiles
+# qpdf with -DWINDOWS_WMAIN — qpdf.cc's `#ifdef WINDOWS_WMAIN` then swaps its
+# narrow main for wmain and routes the UTF-16 argv through
+# QUtil::call_main_from_wmain. The probe succeeds on every supported Windows
+# toolchain. The -municode link flag is the probe's second round: mingw's CRT
+# needs it to wire the wmain entry point, while the MSVC CRT auto-detects
+# wmain.
+#
+# Deliberately omitted: upstream additionally links wsetargv.obj (MSVC) /
+# CRT_glob.o (mingw) so qpdf.exe expands argv wildcards itself. Left out here —
+# shell-side globbing covers the common cases and the objects need toolchain-
+# path lookups Bazel can't spell portably.
+cc_binary(
+    name = "qpdf",
+    srcs = ["qpdf.cc"],
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++20"],
+        "@rules_cc//cc/compiler:clang-cl": ["/std:c++20"],
+        "//conditions:default": ["-std=c++20"],
+    }),
+    linkopts = select({
+        "//:windows_msvc": [],
+        "//:windows_clang_cl": [],
+        "@platforms//os:windows": ["-municode"],
+        "//conditions:default": [],
+    }),
+    local_defines = select({
+        "//:windows_msvc": ["WINDOWS_WMAIN"],
+        "//:windows_clang_cl": ["WINDOWS_WMAIN"],
+        "@platforms//os:windows": ["WINDOWS_WMAIN"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["//libqpdf:qpdf"],
+)
