@@ -16,9 +16,16 @@
 
 import unittest
 from registry import RegistryClient
-from tools.bcr_validation import BcrValidator, BcrValidationException, is_ref_in_original_repo
+from tools.bcr_validation import (
+    BcrValidationResult,
+    BcrValidator,
+    BcrValidationException,
+    is_ref_in_original_repo,
+    main,
+)
+from toolchain_registrations import ForeignRegistration, UnanalyzedRegistration
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 class TestBcrValidation(unittest.TestCase):
@@ -60,6 +67,53 @@ class TestBcrValidation(unittest.TestCase):
         self.assertEqual(1, self.bcr_validator.getValidationReturnCode())
         _, message = self.bcr_validator.validation_results[-1]
         self.assertIn("strip_prefix 'missing' may not match the archive layout", message)
+
+    @patch("tools.bcr_validation.analyze_registrations")
+    def test_toolchain_registrations_only_warn(self, analyze_registrations):
+        analyze_registrations.return_value = (
+            [ForeignRegistration(3, "//:toolchain", ["@@bazel_tools//tools/cpp:toolchain_type"])],
+            [UnanalyzedRegistration(4, "it doesn't use string literals")],
+        )
+        self.bcr_validator.verify_toolchain_registrations(module_name="foobar", version="0.0.0")
+        self.assertEqual(0, self.bcr_validator.getValidationReturnCode())
+        foreign, unanalyzed = self.bcr_validator.validation_results
+        self.assertEqual(BcrValidationResult.WARNING, foreign[0])
+        self.assertIn("MODULE.bazel:3: //:toolchain registers toolchains for all dependents", foreign[1])
+        self.assertIn("@@bazel_tools//tools/cpp:toolchain_type", foreign[1])
+        self.assertEqual(BcrValidationResult.WARNING, unanalyzed[0])
+        self.assertIn("MODULE.bazel:4: Can't determine", unanalyzed[1])
+
+    @patch("tools.bcr_validation.analyze_registrations")
+    def test_toolchain_registrations_good(self, analyze_registrations):
+        analyze_registrations.return_value = ([], [])
+        self.bcr_validator.verify_toolchain_registrations(module_name="foobar", version="0.0.0")
+        self.assertEqual([BcrValidationResult.GOOD], [result for result, _ in self.bcr_validator.validation_results])
+
+    @patch("tools.bcr_validation.analyze_registrations", return_value=([], []))
+    def test_toolchain_registrations_run_module_code_only_without_review(self, analyze_registrations):
+        for result, run_module_code in [
+            (BcrValidationResult.GOOD, True),
+            (BcrValidationResult.WARNING, True),
+            (BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW, False),
+            (BcrValidationResult.FAILED, False),
+        ]:
+            self.bcr_validator.validation_results = [(result, "message")]
+            self.bcr_validator.verify_toolchain_registrations(module_name="foobar", version="0.0.0")
+            self.assertEqual(run_module_code, analyze_registrations.call_args.kwargs["run_module_code"], result)
+
+    @patch("tools.bcr_validation.parse_module_versions", return_value=[("foobar", "0.0.0")])
+    @patch("tools.bcr_validation.analyze_registrations", return_value=([], []))
+    def test_main_checks_toolchain_registrations_after_other_validations(self, analyze_registrations, _):
+        def require_review(validator):
+            validator.report(BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW, "message")
+
+        with (
+            patch.object(BcrValidator, "validate_module"),
+            patch.object(BcrValidator, "validate_metadata"),
+            patch.object(BcrValidator, "global_checks", autospec=True, side_effect=require_review),
+        ):
+            self.assertEqual(42, main(["--registry=/fake", "--check=foobar@0.0.0"]))
+        self.assertFalse(analyze_registrations.call_args.kwargs["run_module_code"])
 
     def test_is_ref_in_original_repo_rejects_pull_request_refs(self):
         # Pull-request refs (refs/pull/N/head and refs/pull/N/merge) are created by
