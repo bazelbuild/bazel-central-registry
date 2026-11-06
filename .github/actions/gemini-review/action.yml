@@ -1,0 +1,163 @@
+name: 'BCR Gemini PR Reviewer'
+description: 'Prepares BCR PR context, runs Gemini CLI analysis (read-only), and deterministically posts the review.'
+
+inputs:
+  github_token:
+    description: 'Read-only GitHub token used to read PR metadata and passed to the read-only GitHub MCP server'
+    required: true
+  review_token:
+    description: 'Privileged GitHub token used only in deterministic steps to post reactions and submit the PR review (never passed to Gemini CLI)'
+    required: false
+    default: ''
+  pr_number:
+    description: 'Pull request number to review'
+    required: true
+  additional_context:
+    description: 'Optional focus or instructions for the review'
+    required: false
+    default: ''
+  gemini_api_key:
+    description: 'Gemini API key'
+    required: false
+    default: ''
+  gemini_model:
+    description: 'Gemini model name'
+    required: false
+    default: 'gemini-4-argon'
+  gemini_cli_version:
+    description: 'Gemini CLI version to install'
+    required: false
+    default: ''
+  gemini_debug:
+    description: 'Enable Gemini CLI debug logging'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Acknowledge manual comment request
+      if: github.event_name == 'issue_comment' && inputs.gemini_api_key != ''
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.review_token || inputs.github_token }}
+        REPOSITORY: ${{ github.repository }}
+        COMMENT_ID: ${{ github.event.comment.id }}
+      run: |-
+        gh api "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+          -f content='eyes' || true
+
+    - name: Prepare BCR review context
+      id: prepare_context
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        GEMINI_API_KEY_SET: ${{ inputs.gemini_api_key != '' && 'true' || 'false' }}
+        REPOSITORY: ${{ github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_ACTION: ${{ github.event.action }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        COMMENT_BODY: ${{ github.event.comment.body }}
+        INPUT_CONTEXT: ${{ inputs.additional_context }}
+      run: |-
+        if [[ "${GEMINI_API_KEY_SET}" != "true" ]]; then
+          echo "Skipping Gemini PR review: GEMINI_API_KEY is not configured."
+          echo "should_run=false" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+        umask 077
+        printf 'GITHUB_PERSONAL_ACCESS_TOKEN=%s\n' "${GITHUB_TOKEN}" > /tmp/github-mcp.env
+        python3 "${{ github.action_path }}/prepare_context.py"
+
+    - name: Run Gemini pull request review
+      if: steps.prepare_context.outputs.should_run == 'true'
+      uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
+      id: gemini_pr_review
+      env:
+        GEMINI_CLI_TRUST_WORKSPACE: 'true'
+        GEMINI_CLI_GITHUB_TOKEN: ${{ inputs.github_token }}
+      with:
+        gemini_api_key: ${{ inputs.gemini_api_key }}
+        gemini_cli_version: ${{ inputs.gemini_cli_version }}
+        gemini_debug: ${{ inputs.gemini_debug }}
+        gemini_model: ${{ inputs.gemini_model }}
+        workflow_name: 'bcr-gemini-review'
+        github_pr_number: ${{ steps.prepare_context.outputs.pr_number }}
+        settings: |-
+          {
+            "model": {
+              "maxSessionTurns": 50
+            },
+            "telemetry": {
+              "enabled": false,
+              "target": "gcp"
+            },
+            "mcp": {
+              "allowed": [
+                "github"
+              ]
+            },
+            "mcpServers": {
+              "github": {
+                "command": "docker",
+                "args": [
+                  "run",
+                  "-i",
+                  "--rm",
+                  "--env-file",
+                  "/tmp/github-mcp.env",
+                  "-e",
+                  "GITHUB_PERSONAL_ACCESS_TOKEN",
+                  "-e",
+                  "GITHUB_READ_ONLY=1",
+                  "-e",
+                  "GITHUB_TOOLSETS=repos,issues,pull_requests",
+                  "ghcr.io/github/github-mcp-server:v0.27.0"
+                ],
+                "includeTools": [
+                  "get_commit",
+                  "get_file_contents",
+                  "issue_read",
+                  "pull_request_read",
+                  "search_code"
+                ],
+                "env": {
+                  "GITHUB_PERSONAL_ACCESS_TOKEN": "${GEMINI_CLI_GITHUB_TOKEN}"
+                },
+                "trust": true
+              }
+            },
+            "tools": {
+              "allowed": [
+                "mcp_github_*",
+                "read_file",
+                "glob",
+                "grep_search",
+                "list_directory"
+              ],
+              "exclude": [
+                "run_shell_command",
+                "write_file",
+                "replace",
+                "web_fetch",
+                "google_web_search"
+              ]
+            }
+          }
+        # Named bcr-review rather than gemini-review because run-gemini-cli copies
+        # its own default commands (including gemini-review.toml) into .gemini/commands/.
+        prompt: '/bcr-review'
+
+    - name: Post Gemini pull request review
+      if: steps.prepare_context.outputs.should_run == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.review_token || inputs.github_token }}
+      run: |-
+        python3 "${{ github.action_path }}/post_review.py"
+
+    - name: Cleanup temporary files
+      if: always()
+      shell: bash
+      run: |-
+        rm -rf /tmp/github-mcp.env .gemini/context.json gemini-artifacts
