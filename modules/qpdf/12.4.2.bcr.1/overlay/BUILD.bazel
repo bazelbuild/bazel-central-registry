@@ -1,0 +1,101 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+
+# Packages mirror the upstream source directories. This root package holds the
+# module's shared configuration vocabulary — the flags and the config_settings
+# the packages select on — and the bare-@qpdf entry point.
+
+# Crypto provider selection. Upstream permits several providers compiled into
+# one archive (QPDFCryptoProvider.cc registers each under its own #ifdef;
+# libqpdf/CMakeLists.txt's DEFAULT_CRYPTO only picks which one is default). This
+# overlay's policy is one provider per build, chosen by this flag:
+#
+#   - native:         qpdf's own AES/SHA2/MD5/RC4 implementation (the
+#                     libqpdf_crypto_native source group) — self-contained, no
+#                     external crypto dependency at all.
+#   - openssl:        build the openssl Bazel module from source — hermetic and
+#                     reproducible, and self-contained on libc variants (e.g.
+#                     musl-static) where no system libcrypto exists to link.
+#                     QPDFCrypto_openssl.cc uses only libcrypto's EVP/RAND API,
+#                     never libssl, so it links -lcrypto alone.
+#   - openssl_system: dynamic-link the platform-provided libcrypto — the path a
+#                     FIPS / platform-validated deployment requires.
+string_flag(
+    name = "crypto",
+    build_setting_default = "native",
+    values = [
+        "native",
+        "openssl",
+        "openssl_system",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "crypto_native",
+    flag_values = {":crypto": "native"},
+    visibility = ["//libqpdf:__pkg__"],
+)
+
+config_setting(
+    name = "crypto_openssl",
+    flag_values = {":crypto": "openssl"},
+    visibility = ["//libqpdf:__pkg__"],
+)
+
+config_setting(
+    name = "crypto_openssl_system",
+    flag_values = {":crypto": "openssl_system"},
+    visibility = ["//libqpdf:__pkg__"],
+)
+
+# The standard platform vocabulary carries no libc axis, so a libc-family fact
+# that varies within an OS cannot be derived from constraints the module can
+# name. malloc_info(3) is the one such fact (glibc has it; musl does not), so it
+# is the consumer's declaration: set the flag only when the target libc provides
+# malloc_info(3). The default records absence, the safe direction — omitting it
+# skips an optional malloc diagnostics dump, while asserting it where absent is
+# a loud compile break.
+bool_flag(
+    name = "malloc_info",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "malloc_info_enabled",
+    flag_values = {":malloc_info": "True"},
+    visibility = ["//libqpdf:__pkg__"],
+)
+
+# Windows refined by compiler driver. The flag key mirrors the one rules_cc
+# 0.2.15's cc/compiler:msvc-cl / :clang-cl config_settings use, so these and
+# the rules_cc settings resolve against the same toolchain fact. Each is a
+# strict specialization of @platforms//os:windows, so a select carrying both
+# resolves unambiguously: Bazel picks these on MSVC-driver Windows, and the
+# bare windows key's remaining match is GNU-driver Windows (mingw-w64) — a
+# live consumer configuration (clang targeting mingw), not a dead arm.
+config_setting(
+    name = "windows_msvc",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+    visibility = [
+        "//libqpdf:__pkg__",
+        "//qpdf:__pkg__",
+    ],
+)
+
+config_setting(
+    name = "windows_clang_cl",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang-cl"},
+    visibility = [
+        "//libqpdf:__pkg__",
+        "//qpdf:__pkg__",
+    ],
+)
+
+alias(
+    name = "qpdf",
+    actual = "//libqpdf:qpdf",
+    visibility = ["//visibility:public"],
+)
