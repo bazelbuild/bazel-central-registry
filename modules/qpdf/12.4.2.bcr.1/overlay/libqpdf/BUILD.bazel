@@ -1,4 +1,6 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Dynamic link against the platform-provided libcrypto: the toolchain/platform
@@ -305,11 +307,69 @@ cc_library(
 )
 
 # ---------------------------------------------------------------------------
+# Separately licensed sources compiled by the native provider
+# ---------------------------------------------------------------------------
+#
+# The files compile as part of :qpdf, with its flags and hidden visibility, so
+# they link as members of libqpdf exactly as upstream builds them. Each set
+# reaches :qpdf's srcs through a filegroup whose applicable_licenses replaces
+# the REPO.bazel default, so the SBOM lists the component only when the native
+# arm selects it. Dropping or renaming a file in a future release fails this
+# filegroup rather than leaving a stale component behind.
+
+# sphlib 3.0 (NOTICE.md). sha2.c, sha2big.c and the sph/ headers carry the
+# notice LICENSE.sphlib reproduces; NOTICE.md quotes it with the years
+# 2007-2011. The sph/ headers stay in :internal_headers and sph/md_helper.c in
+# :qpdf's textual_hdrs, since only these two units compile them.
+filegroup(
+    name = "sphlib_srcs",
+    srcs = [
+        "sha2.c",
+        "sha2big.c",
+    ],
+    applicable_licenses = [":sphlib_metadata"],
+)
+
+license(
+    name = "sphlib_license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE.sphlib",
+)
+
+package_metadata(
+    name = "sphlib_metadata",
+    attributes = [":sphlib_license"],
+    purl = "pkg:generic/sphlib@3.0",
+)
+
+# MD5_native.cc is qpdf's own class derived from the RFC 1321 reference
+# implementation, and carries the RSA Data Security notice LICENSE.md5
+# reproduces. Its purl is scoped to qpdf and versioned by the qpdf release.
+filegroup(
+    name = "md5_native_srcs",
+    srcs = ["MD5_native.cc"],
+    applicable_licenses = [":md5_native_metadata"],
+)
+
+license(
+    name = "md5_native_license",
+    kind = "@package_metadata//licenses/spdx:RSA-MD",
+    text = "LICENSE.md5",
+)
+
+package_metadata(
+    name = "md5_native_metadata",
+    attributes = [":md5_native_license"],
+    purl = "pkg:generic/qpdf/md5_native@" + module_version().split(".bcr.")[0],
+)
+
+# ---------------------------------------------------------------------------
 # libqpdf
 # ---------------------------------------------------------------------------
 #
-# srcs mirror libqpdf_SOURCES (libqpdf/CMakeLists.txt) exactly. Target named
-# for its archive: -lqpdf -> libqpdf.a.
+# srcs mirror libqpdf_SOURCES (libqpdf/CMakeLists.txt) exactly, the
+# separately licensed units through the filegroups above. Target named for its
+# archive: -lqpdf -> libqpdf.a.
 cc_library(
     name = "qpdf",
     srcs = [
@@ -410,16 +470,17 @@ cc_library(
         # fails on ordering and a two-.so link fails on hidden visibility. One
         # compiled library is upstream's model and the only linkable one.
         {
-            # qpdf's built-in provider plus the bundled SPH SHA-2 units.
+            # qpdf's built-in provider plus the bundled SPH SHA-2 units and
+            # the RFC 1321-derived MD5, which come in through the filegroups
+            # that carry their package metadata.
             "//:crypto_native": [
                 "AES_PDF_native.cc",
-                "MD5_native.cc",
                 "QPDFCrypto_native.cc",
                 "RC4_native.cc",
                 "SHA2_native.cc",
                 "rijndael.cc",
-                "sha2.c",
-                "sha2big.c",
+                ":md5_native_srcs",
+                ":sphlib_srcs",
             ],
             # The libcrypto-backed provider, shared by the hermetic and system
             # openssl arms — only the link differs.
@@ -428,12 +489,12 @@ cc_library(
         },
         no_match_error = "unhandled //:crypto value",
     ),
-    # CMAKE_C/CXX_VISIBILITY_PRESET hidden (top CMakeLists.txt): the static build
-    # never defines libqpdf_EXPORTS, so DLL.h's QPDF_DLL is inert and hidden
-    # visibility keeps internal symbols out of the eventual link's surface. The
-    # MSVC-driver arms get [] because -fvisibility is a GNU-driver flag with no
-    # MSVC equivalent — MSVC symbols are already hidden unless
-    # __declspec-exported.
+    # CMAKE_C/CXX_VISIBILITY_PRESET hidden (top CMakeLists.txt). Outside Windows
+    # and Cygwin, DLL.h defines QPDF_DLL as visibility("default") under __GNUC__,
+    # with or without libqpdf_EXPORTS, so the public API stays exported and
+    # internal symbols stay out of the eventual link's surface. The MSVC-driver
+    # arms get [] because -fvisibility is a GNU-driver flag with no MSVC
+    # equivalent — MSVC symbols are already hidden unless __declspec-exported.
     copts = select({
         "@rules_cc//cc/compiler:msvc-cl": [],
         "@rules_cc//cc/compiler:clang-cl": [],
