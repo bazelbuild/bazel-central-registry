@@ -1,0 +1,87 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under
+# the Apache 2.0 License.
+#
+# This product includes software developed at Datadog
+# (https://www.datadoghq.com/) Copyright 2025-Present Datadog, Inc.
+
+module(
+    name = "datadog-rules-test-optimization-go",
+    version = "2.0.0",
+)
+
+bazel_dep(name = "datadog-rules-test-optimization", version = "2.0.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# The SDK repositories that go_wrap_sdk writes load rules_go as
+# @io_bazel_rules_go, so this module sees it under that name.
+bazel_dep(name = "rules_go", version = "0.59.0", repo_name = "io_bazel_rules_go")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+
+# The ddtest-instrumented Go SDKs and Mini. The root module configures the SDK
+# with topt_go_ddtest.sdk(...); these toolchains only match tests that the
+# instrumentation transition selects, so other builds fetch nothing.
+topt_go_ddtest = use_extension("//:topt_go_ddtest_extension.bzl", "topt_go_ddtest")
+use_repo(topt_go_ddtest, "topt_go_ddtest_mini", "topt_go_ddtest_toolchains")
+
+register_toolchains("@topt_go_ddtest_toolchains//:all")
+
+# The companion's own tests instrument the official Go SDK.
+topt_go_ddtest_dev = use_extension(
+    "//:topt_go_ddtest_extension.bzl",
+    "topt_go_ddtest",
+    dev_dependency = True,
+)
+topt_go_ddtest_dev.sdk(go_version = "1.26.3")
+
+# A FIPS-like SDK variant on another Go version, which tests/ddtest's
+# go_cross_binary selects below an instrumented test.
+topt_go_ddtest_dev.sdk(
+    experiments = ["boringcrypto"],
+    go_version = "1.25.9",
+    sdk_version = "1.25.9fips",
+)
+
+# Dev-only stub repository so companion-module tests can resolve
+# @test_optimization_data labels without network access.
+example_stub_repo = use_extension(
+    "//tests:example_stub_repo.bzl",
+    "example_stub_repo_extension",
+    dev_dependency = True,
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data",
+    service_keys = [
+        "go_service",
+        "ruby_service",
+    ],
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_static",
+    service_name = "static-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_static_module",
+    go_module_path = "github.com/DataDog/dd-source",
+    go_sanitized_module_path = "github_com_datadog_dd_source",
+    labels = [
+        "example_com_embed_pkg",
+        "example_com_other_pkg",
+    ],
+    module_group_by_identifier = {
+        "example.com/embed/pkg": "module_example_com_embed_pkg",
+        "example.com/other/pkg": "module_example_com_other_pkg",
+    },
+    service_name = "static-module-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_static_disabled",
+    enabled = False,
+    service_name = "static-disabled-service",
+)
+use_repo(
+    example_stub_repo,
+    "test_optimization_data",
+    "test_optimization_data_static",
+    "test_optimization_data_static_disabled",
+    "test_optimization_data_static_module",
+)
