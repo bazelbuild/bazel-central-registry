@@ -1,12 +1,5 @@
-// Smoke test for the @qpdf module: a downstream consumer compiles against the
-// public <qpdf/...> headers, links libqpdf plus its zlib/libjpeg_turbo deps,
-// and calls into it at run time. Asserting the exact version catches
-// wrong-version archive resolution and broken module wiring. Writing an empty
-// PDF to a memory buffer exercises the selected crypto provider: QPDFWriter
-// generates the trailer /ID with MD5, which dispatches through
-// QPDFCryptoProvider, so a provider that failed to register or link fails
-// here. No file I/O on purpose: this must also run on Windows CI, where a
-// materialized runfiles tree is not guaranteed.
+// Writing a PDF computes its trailer /ID with MD5 through the selected crypto provider. No file I/O, so it runs on
+// Windows CI too.
 
 #include <cstdio>
 #include <memory>
