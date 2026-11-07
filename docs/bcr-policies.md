@@ -5,7 +5,7 @@ Contributors should follow these policies when reviewing and accepting modules t
 - All changes to the BCR repository must be submitted and reviewed as a pull request.
 - Add-only: existing module versions must not be modified to ensure reproducible builds.
 - Every module version must have a [presubmit.yml](https://docs.google.com/document/d/1moQfNcEIttsk6vYanNKIy3ZuK53hQUFq1b1r0rmsYVg/edit#heading=h.e6t527rxhw5i) file.
--   BCR modules can only depend on modules already in the BCR.
+- BCR modules can only depend on modules already in the BCR.
 
 ## BCR maintenance policies
 
@@ -55,9 +55,26 @@ Here are steps that a BCR maintainer should keep in mind when reviewing PRs:
   - If possible, encourage PR authors to add the latest LTS track to the `bazel` field in `presubmit.yml`.
 - When a module maintainer is not responsive, a BCR maintainer can step in and merge the pull request. However, you must leave a comment notifying the module maintainer when doing so.
 
+### Responding to a malicious module version
+
+If a malicious or compromised module version lands in the BCR, a BCR maintainer should do the following:
+
+1. **Confirm it.** Check that the version is malicious, not just vulnerable. A vulnerable version only needs a [yank](README.md#yank-a-module-version). Keep exploit details out of public threads until the version is removed.
+2. **Remove and yank it in one PR.**
+   - Delete `modules/<module>/<version>/`.
+   - Remove `<version>` from `versions` in `metadata.json`.
+   - Add `<version>` to `yanked_versions` with a reason that links to the tracking issue.
+
+   Deleting stops new downloads. The yank fails any build that still gets the version from a mirror, clone, or cache. This is an exception to the [add-only](README.md#add-only) policy and to the rule against yanking the latest version. Any BCR maintainer can review and merge the PR.
+
+3. **Check for related damage.** Look at the module's other versions and at BCR modules that depend on the bad one. If a module maintainer's account was compromised, remove them from `maintainers`.
+4. **Tell users.** Post in the tracking issue and in the [bzlmod](https://bazelbuild.slack.com/archives/C014RARENH0) Slack channel. Say which version is affected, what it does if known, and what users should do, such as upgrade and rotate exposed credentials.
+5. **Follow up.** Summarize the incident in the tracking issue and update this section if needed.
+
 ### Removal or retirement of a BCR maintainer
 
 A BCR maintainer may be removed or retired from their duties under the following situations:
+
 - **Inactivity:** Prolonged inactivity (greater than 6 months) without a declared leave of absence.
 - **Voluntary Resignation:** Maintainers can step down at any time by sending a notification to the Rules Authors SIG or the Bazel team.
 - **Violation of Policies:** Continuous failure to conform to standard review policies or violations of the Code of Conduct.
