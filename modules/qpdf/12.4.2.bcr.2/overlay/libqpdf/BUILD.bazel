@@ -1,5 +1,6 @@
 load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
 load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//licenses/rules:license_kind.bzl", "license_kind")
 load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
@@ -298,11 +299,14 @@ cc_library(
         "qpdf/global_private.hh",
         "qpdf/qpdf-c_impl.hh",
         "qpdf/qpdflogger-c_impl.hh",
-        "qpdf/rijndael.h",
-        "sph/sph_sha2.h",
-        "sph/sph_types.h",
         ":qpdf-config",
-    ],
+    ] + select({
+        "//:crypto_native": [
+            ":rijndael_hdrs",
+            ":sphlib_hdrs",
+        ],
+        "//conditions:default": [],
+    }),
     strip_include_prefix = "/libqpdf",
 )
 
@@ -317,16 +321,60 @@ cc_library(
 # arm selects it. Dropping or renaming a file in a future release fails this
 # filegroup rather than leaving a stale component behind.
 
-# sphlib 3.0 (NOTICE.md). sha2.c, sha2big.c and the sph/ headers carry the
+license_kind(
+    name = "public_domain",
+    full_name = "Public domain dedication",
+    identifier = "LicenseRef-PublicDomain",
+)
+
+license(
+    name = "rijndael_license",
+    kind = ":public_domain",
+    text = "LICENSE.rijndael",
+)
+
+package_metadata(
+    name = "rijndael_metadata",
+    attributes = [":rijndael_license"],
+    purl = "pkg:generic/qpdf/rijndael@" + module_version().split(".bcr.")[0],
+)
+
+filegroup(
+    name = "rijndael_srcs",
+    srcs = ["rijndael.cc"],
+    applicable_licenses = [":rijndael_metadata"],
+)
+
+filegroup(
+    name = "rijndael_hdrs",
+    srcs = ["qpdf/rijndael.h"],
+    applicable_licenses = [":rijndael_metadata"],
+)
+
+# sphlib 3.0 (NOTICE.md). sha2.c, sha2big.c and the sph/ files carry the
 # notice LICENSE.sphlib reproduces; NOTICE.md quotes it with the years
-# 2007-2011. The sph/ headers stay in :internal_headers and sph/md_helper.c in
-# :qpdf's textual_hdrs, since only these two units compile them.
+# 2007-2011.
 filegroup(
     name = "sphlib_srcs",
     srcs = [
         "sha2.c",
         "sha2big.c",
     ],
+    applicable_licenses = [":sphlib_metadata"],
+)
+
+filegroup(
+    name = "sphlib_hdrs",
+    srcs = [
+        "sph/sph_sha2.h",
+        "sph/sph_types.h",
+    ],
+    applicable_licenses = [":sphlib_metadata"],
+)
+
+filegroup(
+    name = "sphlib_textual_hdrs",
+    srcs = ["sph/md_helper.c"],
     applicable_licenses = [":sphlib_metadata"],
 )
 
@@ -478,8 +526,8 @@ cc_library(
                 "QPDFCrypto_native.cc",
                 "RC4_native.cc",
                 "SHA2_native.cc",
-                "rijndael.cc",
                 ":md5_native_srcs",
+                ":rijndael_srcs",
                 ":sphlib_srcs",
             ],
             # The libcrypto-backed provider, shared by the hermetic and system
@@ -528,7 +576,7 @@ cc_library(
     # round-function macros; it is not a standalone translation unit, so it must
     # be a textual header, not a compiled src.
     textual_hdrs = select({
-        "//:crypto_native": ["sph/md_helper.c"],
+        "//:crypto_native": [":sphlib_textual_hdrs"],
         "//conditions:default": [],
     }),
     visibility = ["//visibility:public"],
