@@ -1,0 +1,512 @@
+# Copyright 2026 Open Source Robotics Foundation, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@package_metadata//licenses:defs.bzl", "license")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+package(
+    default_package_metadata = [":license_bsd_3_clause"],
+    default_visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "LICENSE.txt",
+    "AMD/Doc/License.txt",
+    "CCOLAMD/Doc/License.txt",
+])
+
+license(
+    name = "license_bsd_3_clause",
+    kind = "@package_metadata//licenses/spdx:BSD-3-Clause",
+    text = "LICENSE.txt",
+)
+
+license(
+    name = "license_lgpl_2_1_or_later",
+    kind = "@package_metadata//licenses/spdx:LGPL-2.1-or-later",
+    text = "LICENSE.txt",
+)
+
+license(
+    name = "license_gpl_2_0_or_later",
+    kind = "@package_metadata//licenses/spdx:GPL-2.0-or-later",
+    text = "LICENSE.txt",
+)
+
+license(
+    name = "license_apache_2_0",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE.txt",
+)
+
+LGPL_LICENSES = [":license_lgpl_2_1_or_later"]
+
+CHOLMOD_LICENSES = [
+    ":license_apache_2_0",
+    ":license_gpl_2_0_or_later",
+    ":license_lgpl_2_1_or_later",
+]
+
+ALL_LICENSES = [
+    ":license_apache_2_0",
+    ":license_bsd_3_clause",
+    ":license_gpl_2_0_or_later",
+    ":license_lgpl_2_1_or_later",
+]
+
+# CXSparse uses C99 complex types, which MSVC does not support. Upstream builds
+# it without complex support (NCOMPLEX) there; this module does not provide it
+# on MSVC-compatible compilers at all.
+CXSPARSE_INCOMPATIBLE = select({
+    "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+    "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
+
+CXSPARSE_DEPS = select({
+    "@rules_cc//cc/compiler:clang-cl": [],
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "//conditions:default": [":cxsparse"],
+})
+
+# Public headers are exposed through `hdrs` + `strip_include_prefix` only, so
+# that consumers see exactly the upstream-installed headers. Internal headers
+# and the `*.c` files that upstream `#include`s (e.g. `amd_l1.c` includes
+# `amd_1.c` to build the 64-bit variant) live in `*_private` libraries that are
+# wired in via `implementation_deps`, so neither they nor their `includes`
+# leak to dependents. This keeps every target `layering_check` clean.
+
+cc_library(
+    name = "config",
+    srcs = ["SuiteSparse_config/SuiteSparse_config.c"],
+    hdrs = ["SuiteSparse_config/SuiteSparse_config.h"],
+    defines = select({
+        "@platforms//os:windows": ["NTIMER"],
+        "//conditions:default": [],
+    }),
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+    strip_include_prefix = "SuiteSparse_config",
+)
+
+alias(
+    name = "suitesparse_config",
+    actual = ":config",
+)
+
+cc_library(
+    name = "amd_private",
+    hdrs = glob(["AMD/Include/*.h"]),
+    includes = ["AMD/Include"],
+    textual_hdrs = glob(["AMD/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "amd",
+    srcs = glob(["AMD/Source/*.c"]),
+    hdrs = ["AMD/Include/amd.h"],
+    implementation_deps = [":amd_private"],
+    strip_include_prefix = "AMD/Include",
+    deps = [":config"],
+)
+
+cc_library(
+    name = "camd_private",
+    hdrs = glob(["CAMD/Include/*.h"]),
+    includes = ["CAMD/Include"],
+    textual_hdrs = glob(["CAMD/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "camd",
+    srcs = glob(["CAMD/Source/*.c"]),
+    hdrs = ["CAMD/Include/camd.h"],
+    implementation_deps = [":camd_private"],
+    strip_include_prefix = "CAMD/Include",
+    deps = [":config"],
+)
+
+cc_library(
+    name = "colamd_private",
+    hdrs = glob(["COLAMD/Include/*.h"]),
+    includes = ["COLAMD/Include"],
+    textual_hdrs = glob(["COLAMD/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "colamd",
+    srcs = glob(["COLAMD/Source/*.c"]),
+    hdrs = ["COLAMD/Include/colamd.h"],
+    implementation_deps = [":colamd_private"],
+    strip_include_prefix = "COLAMD/Include",
+    deps = [":config"],
+)
+
+cc_library(
+    name = "ccolamd_private",
+    hdrs = glob(["CCOLAMD/Include/*.h"]),
+    includes = ["CCOLAMD/Include"],
+    textual_hdrs = glob(["CCOLAMD/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "ccolamd",
+    srcs = glob(["CCOLAMD/Source/*.c"]),
+    hdrs = ["CCOLAMD/Include/ccolamd.h"],
+    implementation_deps = [":ccolamd_private"],
+    strip_include_prefix = "CCOLAMD/Include",
+    deps = [":config"],
+)
+
+cc_library(
+    name = "btf_private",
+    hdrs = glob(["BTF/Include/*.h"]),
+    includes = ["BTF/Include"],
+    package_metadata = LGPL_LICENSES,
+    textual_hdrs = glob(["BTF/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "btf",
+    srcs = glob(["BTF/Source/*.c"]),
+    hdrs = ["BTF/Include/btf.h"],
+    implementation_deps = [":btf_private"],
+    package_metadata = LGPL_LICENSES,
+    strip_include_prefix = "BTF/Include",
+    deps = [":config"],
+)
+
+cc_library(
+    name = "ldl_private",
+    hdrs = glob(["LDL/Include/*.h"]),
+    includes = ["LDL/Include"],
+    package_metadata = LGPL_LICENSES,
+    textual_hdrs = glob(["LDL/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "ldl",
+    srcs = glob(["LDL/Source/*.c"]),
+    hdrs = ["LDL/Include/ldl.h"],
+    implementation_deps = [":ldl_private"],
+    package_metadata = LGPL_LICENSES,
+    strip_include_prefix = "LDL/Include",
+    deps = [":config"],
+)
+
+cc_library(
+    name = "klu_private",
+    hdrs = glob(["KLU/Include/*.h"]),
+    includes = ["KLU/Include"],
+    package_metadata = LGPL_LICENSES,
+    textual_hdrs = glob(["KLU/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":amd",
+        ":btf",
+        ":colamd",
+        ":config",
+    ],
+)
+
+cc_library(
+    name = "klu",
+    srcs = glob(["KLU/Source/*.c"]),
+    hdrs = [
+        "KLU/Include/klu.h",
+        "KLU/Include/klu_version.h",
+    ],
+    implementation_deps = [":klu_private"],
+    package_metadata = LGPL_LICENSES,
+    strip_include_prefix = "KLU/Include",
+    deps = [
+        ":amd",
+        ":btf",
+        ":colamd",
+        ":config",
+    ],
+)
+
+cc_library(
+    name = "cxsparse_private",
+    hdrs = glob(["CXSparse/Include/*.h"]),
+    includes = ["CXSparse/Include"],
+    package_metadata = LGPL_LICENSES,
+    target_compatible_with = CXSPARSE_INCOMPATIBLE,
+    textual_hdrs = glob(["CXSparse/Source/*.c"]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+cc_library(
+    name = "cxsparse",
+    srcs = glob(["CXSparse/Source/*.c"]),
+    hdrs = ["CXSparse/Include/cs.h"],
+    implementation_deps = [":cxsparse_private"],
+    package_metadata = LGPL_LICENSES,
+    strip_include_prefix = "CXSparse/Include",
+    target_compatible_with = CXSPARSE_INCOMPATIBLE,
+    deps = [":config"],
+)
+
+cc_library(
+    name = "cholmod_private",
+    hdrs = glob(["CHOLMOD/Include/*.h"]),
+    includes = ["CHOLMOD/Include"],
+    package_metadata = CHOLMOD_LICENSES,
+    textual_hdrs = glob([
+        "CHOLMOD/Check/*.c",
+        "CHOLMOD/Cholesky/*.c",
+        "CHOLMOD/MatrixOps/*.c",
+        "CHOLMOD/Modify/*.c",
+        "CHOLMOD/Utility/*.c",
+    ]),
+    visibility = ["//visibility:private"],
+    deps = [
+        ":amd",
+        ":camd",
+        ":ccolamd",
+        ":colamd",
+        ":config",
+    ],
+)
+
+# Built without the METIS-based partitioning and supernodal (BLAS/LAPACK)
+# modules, matching the subset of CHOLMOD that is vendored here.
+cc_library(
+    name = "cholmod",
+    srcs = glob([
+        "CHOLMOD/Check/cholmod_*.c",
+        "CHOLMOD/Cholesky/cholmod_*.c",
+        "CHOLMOD/MatrixOps/cholmod_*.c",
+        "CHOLMOD/Modify/cholmod_*.c",
+        "CHOLMOD/Utility/cholmod_*.c",
+    ]),
+    hdrs = [
+        "CHOLMOD/Include/cholmod.h",
+        "CHOLMOD/Include/cholmod_types.h",
+    ],
+    defines = [
+        "NPARTITION",
+        "NSUPERNODAL",
+    ],
+    implementation_deps = [
+        ":amd",
+        ":camd",
+        ":ccolamd",
+        ":cholmod_private",
+        ":colamd",
+    ],
+    package_metadata = CHOLMOD_LICENSES,
+    strip_include_prefix = "CHOLMOD/Include",
+    deps = [":config"],
+)
+
+# Upstream installs every public header flat as `<suitesparse/foo.h>`. The
+# headers are copied into a single directory so that one target declares all
+# of them (keeping consumers `layering_check` clean) and so that their own
+# `#include "SuiteSparse_config.h"` etc. resolve to the sibling copies.
+PREFIXED_HEADERS = {
+    "SuiteSparse_config.h": "SuiteSparse_config/SuiteSparse_config.h",
+    "amd.h": "AMD/Include/amd.h",
+    "btf.h": "BTF/Include/btf.h",
+    "camd.h": "CAMD/Include/camd.h",
+    "ccolamd.h": "CCOLAMD/Include/ccolamd.h",
+    "cholmod.h": "CHOLMOD/Include/cholmod.h",
+    "cholmod_types.h": "CHOLMOD/Include/cholmod_types.h",
+    "colamd.h": "COLAMD/Include/colamd.h",
+    "cs.h": "CXSparse/Include/cs.h",
+    "klu.h": "KLU/Include/klu.h",
+    "klu_version.h": "KLU/Include/klu_version.h",
+    "ldl.h": "LDL/Include/ldl.h",
+}
+
+[
+    copy_file(
+        name = "prefixed_" + hdr,
+        src = src,
+        out = "_prefixed/suitesparse/" + hdr,
+        package_metadata = ALL_LICENSES,
+        visibility = ["//visibility:private"],
+    )
+    for hdr, src in PREFIXED_HEADERS.items()
+]
+
+cc_library(
+    name = "prefixed_headers",
+    hdrs = [
+        "_prefixed/suitesparse/" + hdr
+        for hdr in PREFIXED_HEADERS
+        if hdr != "cs.h"
+    ] + select({
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": ["_prefixed/suitesparse/cs.h"],
+    }),
+    package_metadata = ALL_LICENSES,
+    strip_include_prefix = "_prefixed",
+    deps = [":suitesparse"],
+)
+
+cc_library(
+    name = "suitesparse",
+    package_metadata = ALL_LICENSES,
+    deps = [
+        ":amd",
+        ":btf",
+        ":camd",
+        ":ccolamd",
+        ":cholmod",
+        ":colamd",
+        ":config",
+        ":klu",
+        ":ldl",
+    ] + CXSPARSE_DEPS,
+)
+
+# Kept for backward compatibility with earlier versions of this module.
+filegroup(
+    name = "source_files",
+    srcs = glob([
+        "CCOLAMD/Include/*.h",
+        "CCOLAMD/Source/*.c",
+    ]) + ["SuiteSparse_config/SuiteSparse_config.h"],
+)
+
+# Upstream demo programs that need no input data. Tagged `manual` so that
+# `@suitesparse//...` in downstream builds does not pick them up.
+
+cc_test(
+    name = "amd_demo_test",
+    srcs = ["AMD/Demo/amd_demo.c"],
+    tags = ["manual"],
+    deps = [":amd"],
+)
+
+cc_test(
+    name = "amd_demo2_test",
+    srcs = ["AMD/Demo/amd_demo2.c"],
+    tags = ["manual"],
+    deps = [":amd"],
+)
+
+cc_test(
+    name = "amd_l_demo_test",
+    srcs = ["AMD/Demo/amd_l_demo.c"],
+    tags = ["manual"],
+    deps = [":amd"],
+)
+
+cc_test(
+    name = "amd_simple_test",
+    srcs = ["AMD/Demo/amd_simple.c"],
+    tags = ["manual"],
+    deps = [":amd"],
+)
+
+cc_test(
+    name = "camd_demo_test",
+    srcs = ["CAMD/Demo/camd_demo.c"],
+    tags = ["manual"],
+    deps = [":camd"],
+)
+
+cc_test(
+    name = "camd_demo2_test",
+    srcs = ["CAMD/Demo/camd_demo2.c"],
+    tags = ["manual"],
+    deps = [":camd"],
+)
+
+cc_test(
+    name = "camd_l_demo_test",
+    srcs = ["CAMD/Demo/camd_l_demo.c"],
+    tags = ["manual"],
+    deps = [":camd"],
+)
+
+cc_test(
+    name = "camd_simple_test",
+    srcs = ["CAMD/Demo/camd_simple.c"],
+    tags = ["manual"],
+    deps = [":camd"],
+)
+
+cc_test(
+    name = "ccolamd_example_test",
+    srcs = ["CCOLAMD/Demo/ccolamd_example.c"],
+    tags = ["manual"],
+    deps = [":ccolamd"],
+)
+
+cc_test(
+    name = "ccolamd_l_example_test",
+    srcs = ["CCOLAMD/Demo/ccolamd_l_example.c"],
+    tags = ["manual"],
+    deps = [":ccolamd"],
+)
+
+cc_test(
+    name = "colamd_example_test",
+    srcs = ["COLAMD/Demo/colamd_example.c"],
+    tags = ["manual"],
+    deps = [":colamd"],
+)
+
+cc_test(
+    name = "colamd_l_example_test",
+    srcs = ["COLAMD/Demo/colamd_l_example.c"],
+    tags = ["manual"],
+    deps = [":colamd"],
+)
+
+cc_test(
+    name = "klu_simple_test",
+    srcs = ["KLU/Demo/klu_simple.c"],
+    package_metadata = LGPL_LICENSES,
+    tags = ["manual"],
+    deps = [":klu"],
+)
+
+cc_test(
+    name = "ldllsimple_test",
+    srcs = ["LDL/Demo/ldllsimple.c"],
+    package_metadata = LGPL_LICENSES,
+    tags = ["manual"],
+    deps = [":ldl"],
+)
+
+cc_test(
+    name = "ldlsimple_test",
+    srcs = ["LDL/Demo/ldlsimple.c"],
+    package_metadata = LGPL_LICENSES,
+    tags = ["manual"],
+    deps = [":ldl"],
+)
