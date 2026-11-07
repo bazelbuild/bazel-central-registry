@@ -1,6 +1,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
-# Built from its autotools sources (Project/GNU/Library/Makefile.am, authoritative over Project/CMake).
+# Mirrors Project/GNU/Library/Makefile.am, not Project/CMake.
 cc_library(
     name = "mediainfo",
     srcs = [
@@ -504,12 +504,17 @@ cc_library(
         "MediaInfo/XmlUtils.h",
         "MediaInfoDLL/MediaInfoDLL.cpp",
         "MediaInfoDLL/MediaInfoJNI.cpp",
-        "//Source/ThirdParty:srcs",
+        # Compiled here, as Makefile.am does, so they share this library's flags.
+        "//Source/ThirdParty:aes_gladman_srcs",
+        "//Source/ThirdParty:fmt_srcs",
+        "//Source/ThirdParty:hmac_gladman_srcs",
+        "//Source/ThirdParty:md5_srcs",
+        "//Source/ThirdParty:sha1_gladman_srcs",
+        "//Source/ThirdParty:sha2_gladman_srcs",
+        "//Source/ThirdParty:tfsxml_srcs",
+        "//Source/ThirdParty:tinyxml2_srcs",
     ],
-    # The headers Makefile.am installs: MediaInfo/ always, MediaInfoDLL/ under COMPILE_DLL, which configure enables by
-    # default. Less MediaInfoDLL.h, a header-only loader that dlopens the shared libmediainfo at run time, which this
-    # target does not build. The library's other headers are build-internal: private in srcs above, or in
-    # //Source/ThirdParty.
+    # Makefile.am's installed headers, less MediaInfoDLL.h, which dlopens a shared libmediainfo this doesn't build.
     hdrs = [
         "MediaInfo/MediaInfo.h",
         "MediaInfo/MediaInfoList.h",
@@ -517,15 +522,13 @@ cc_library(
         "MediaInfo/MediaInfo_Events.h",
         "MediaInfoDLL/MediaInfoDLL_Static.h",
     ],
-    # cxxopts not copts: AM_CXXFLAGS is C++-only, the bundled ThirdParty C units carry no -std upstream, and a
-    # C compile rejects a C++ -std flag.
+    # Not copts: the ThirdParty C sources compile here too and reject a C++ -std.
     cxxopts = select({
         "@rules_cc//cc/compiler:msvc-cl": [],
         "@rules_cc//cc/compiler:clang-cl": [],
         "//conditions:default": ["-std=c++11"],  # AM_CXXFLAGS
     }),
-    # zlib is link-only for consumers: libmediainfo.pc.in carries -lz but no Requires: zlib, and no installed header
-    # includes zlib.h. An edge rather than a -lz linkopt.
+    # zlib is private: no installed header includes zlib.h.
     implementation_deps = [
         "//Source/ThirdParty:aes",
         "//Source/ThirdParty:base64",
@@ -541,26 +544,18 @@ cc_library(
         "@zlib",
     ],
     includes = ["."],
-    # configure disables these by default (--with-graphviz/libcurl/libmms = no); without them Setup.h derives
-    # the _YES form and the TUs pull in gvc.h / curl/curl.h / libmms headers (Reader_libcurl/libmms self-guard
-    # to empty). All build-internal. Not set: MEDIAINFO_MD5/SHA1/SHA2/AES (Setup.h derives them to 1) and any
-    # zlib macro (header + link edge suffice) -- asserting either would re-encode a fact the library headers
-    # already carry.
+    # configure's defaults (--with-graphviz/libcurl/libmms=no); Setup.h otherwise assumes they're available.
     local_defines = [
         "MEDIAINFO_GRAPHVIZ_NO",
         "MEDIAINFO_LIBCURL_NO",
         "MEDIAINFO_LIBMMS_NO",
     ] + select({
-        # MediaInfoDLL_Static.h marks the C API dllexport for MediaInfoDLL.cpp under MSVC-style toolchains; in a
-        # static archive that re-exports it from any binary linking those objects. Upstream's own MSVC DLL project
-        # sets this to suppress it (Project/MSVC2022/Dll/MediaInfoDll.vcxproj). MinGW never takes that path.
+        # Otherwise the C API is dllexported from every binary that links it. Upstream's MSVC DLL project sets it too.
         "@rules_cc//cc/compiler:msvc-cl": ["MEDIAINFODLL_EXPORTS_NODLLEXPORT"],
         "@rules_cc//cc/compiler:clang-cl": ["MEDIAINFODLL_EXPORTS_NODLLEXPORT"],
         "//conditions:default": [],
     }),
     visibility = ["//:__pkg__"],
-    # Public: MediaInfo_Const.h includes <ZenLib/Conf.h> (the .pc's Requires: libzen), and @zenlib//:zen
-    # propagates the UNICODE/_UNICODE defines whose wide-Ztring ABI consumers must match, so they are not repeated
-    # here.
+    # Public: MediaInfo_Const.h includes ZenLib/Conf.h, and zen carries the UNICODE defines consumers must match.
     deps = ["@zenlib//:zen"],
 )
