@@ -1,0 +1,59 @@
+diff --git a/memory/memory_allocator_test.cc b/memory/memory_allocator_test.cc
+--- a/memory/memory_allocator_test.cc
++++ b/memory/memory_allocator_test.cc
+@@ -58,7 +58,9 @@
+   std::shared_ptr<MemoryAllocator> orig, copy;
+   Status s = MemoryAllocator::CreateFromString(config_options, id_, &orig);
+   if (!IsSupported()) {
+-    ASSERT_TRUE(s.IsNotSupported());
++    // The factory is registered even when the allocator is unavailable.
++    // ObjectRegistry::NewObject returns InvalidArgument when a factory fails.
++    ASSERT_TRUE(s.IsInvalidArgument());
+   } else {
+     ASSERT_OK(s);
+     ASSERT_NE(orig, nullptr);
+diff --git a/db/db_etc2_test.cc b/db/db_etc2_test.cc
+--- a/db/db_etc2_test.cc
++++ b/db/db_etc2_test.cc
+@@ -27,6 +27,7 @@
+ #include "rocksdb/utilities/replayer.h"
+ #include "rocksdb/wal_filter.h"
+ #include "test_util/testutil.h"
++#include "util/aligned_buffer.h"
+ #include "util/defer.h"
+ #include "util/mutexlock.h"
+ #include "util/random.h"
+@@ -7609,7 +7610,7 @@
+   SyncPoint::GetInstance()->SetCallBack(
+       "BlockBasedTableBuilder::WriteBlock:TamperWithCompressedData",
+       [&](void* arg) {
+-        std::string* output = static_cast<std::string*>(arg);
++        auto* output = static_cast<GrowableBuffer*>(arg);
+         // https://github.com/facebook/zstd/blob/dev/doc/zstd_compression_format.md#zstandard-frames
+         // Checksum is the last 4 bytes, corrupting that part in unit test is
+         // more controllable.
+diff --git a/table/table_test.cc b/table/table_test.cc
+--- a/table/table_test.cc
++++ b/table/table_test.cc
+@@ -5926,15 +5926,16 @@
+         c.Finish(options, ioptions, moptions, table_options,
+                  GetPlainInternalComparator(options.comparator), &keys, &kvmap);
+ 
+-        size_t table_file_size = c.TEST_GetSink()->contents().size();
+-        size_t approx_sst_overhead = 1000;
++        // Test the data compression ratio independently of metadata size,
++        // which varies with the platform and build version string.
++        size_t table_data_size =
++            c.GetTableReader()->GetTableProperties()->data_size;
+         if (compressible_to < threshold / 1024.0) {
+           // Should be compressed (substantial variance depending on algorithm)
+-          EXPECT_NEAR2(len * compressible_to + approx_sst_overhead,
+-                       table_file_size, len / 8);
++          EXPECT_NEAR2(len * compressible_to, table_data_size, len / 8);
+         } else {
+           // Should not be compressed
+-          EXPECT_NEAR2(len + approx_sst_overhead, table_file_size, len / 10);
++          EXPECT_NEAR2(len, table_data_size, len / 10);
+         }
+       }
+     }

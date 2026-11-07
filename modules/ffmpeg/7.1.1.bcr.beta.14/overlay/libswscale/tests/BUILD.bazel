@@ -1,0 +1,39 @@
+load("//:component_flags.bzl", "cc_variant_test")
+
+# -w / /w mirrors _FFMPEG_BASE_COPTS in //:BUILD.bazel. These tests compile
+# upstream's own test drivers, which are not warning-clean, so a consumer that
+# builds @ffmpeg//... with --copt=-Wall would otherwise get diagnostics about
+# sources it does not own.
+_FFMPEG_TEST_COPTS = [
+    "-D_ISOC11_SOURCE",
+    "-D_FILE_OFFSET_BITS=64",
+    "-D_LARGEFILE_SOURCE",
+] + select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/w",
+        "/std:c17",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/std:c17",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=c17",
+        "-Wno-error=implicit-function-declaration",
+    ],
+}) + select({
+    "@platforms//os:macos": ["-D_DARWIN_C_SOURCE"],
+    "//conditions:default": [],
+})
+
+# Public-API test — representative of external consumption.
+cc_variant_test(
+    name = "floatimg_cmp_test",
+    srcs = ["floatimg_cmp.c"],
+    copts = _FFMPEG_TEST_COPTS,
+    deps = [
+        "//:avutil",
+        "//:swscale",
+    ],
+)

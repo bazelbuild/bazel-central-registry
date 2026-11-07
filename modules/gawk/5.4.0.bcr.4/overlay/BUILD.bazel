@@ -1,0 +1,345 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":autoconf.bzl", "autoconf_targets")
+load(":gawk_minimal.bzl", "gawk_minimal")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# The headers of the bison-generated parser, which autoconf.bzl globs inside its macro and the
+# replacement below reads too.
+BISON_HDRS = glob(
+    ["bison/**/*.h"],
+    allow_empty = True,
+)
+
+exports_files(["gawk_tool.sh.tpl"])
+
+# --disable-pma: the persistent memory allocator. Its configure checks set
+# SKIP_PERSIST_MALLOC for another macro body to read, which the conversion
+# does not follow, so the option is declared here and pma.c and its checks
+# key on :pma_linux (upstream keeps PMA for Linux; the other hosts it allows
+# are not built here).
+bool_flag(
+    name = "pma",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "pma_linux",
+    constraint_values = ["@platforms//os:linux"],
+    flag_values = {":pma": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+# --disable-extensions: dynamic extension loading. configure's tests of it
+# mix the option with the host OS, so its checks key on :extensions_on by
+# decision; the extension/ sub-configure shares the setting.
+bool_flag(
+    name = "extensions",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "extensions_on",
+    flag_values = {":extensions": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+# The option states the test package selects on.
+config_setting(
+    name = "builtin_intdiv0_on",
+    flag_values = {":builtin_intdiv0": "True"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "extensions_off",
+    flag_values = {":extensions": "False"},
+    visibility = ["//:__subpackages__"],
+)
+
+config_setting(
+    name = "lint_off",
+    flag_values = {":lint": "False"},
+    visibility = ["//:__subpackages__"],
+)
+
+# MSVC-style frontends: /FI puts the shim before every other include (in
+# particular before gawkapi.h and support/regex.h). GCC-style frontends keep
+# gnu11, under which clang >= 16 still accepts the implicit declarations
+# gawk's vendored regex relies on.
+GAWK_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/w",
+        "/std:c11",
+        "/FImsvc_shim.h",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/std:c11",
+        "/FImsvc_shim.h",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=gnu11",
+    ],
+})
+
+# Replaces the generated `mpfr` flag: configure only *checks* for MPFR+GMP on the host, and the
+# published entries kept gawk, a build tool of many modules, free of both libraries unless asked.
+# Off by default; --@gawk//:mpfr=true links them (the generated targets select on :mpfr_enabled).
+bool_flag(
+    name = "mpfr",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+# GMP and MPFR only when --@gawk//:mpfr=true (off by default: decisions.bzl `flag:mpfr`),
+# matching the generated targets' selects; the bazel_deps stay declared but are not fetched.
+MPFR_DEPS = select({
+    ":mpfr_enabled": [
+        "@gmp",
+        "@mpfr",
+    ],
+    "//conditions:default": [],
+})
+
+MSVC_SHIM_DEPS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [
+        ":_msvc_shim",
+        ":_msvc_langinfo_stub",
+    ],
+    "//conditions:default": [],
+})
+
+# Windows with a GNU-style toolchain: MinGW GCC, or clang targeting MinGW as
+# hermetic_llvm's Windows toolchain does. Upstream builds that with pc/Makefile
+# rather than configure: gawkmisc.c switches on __MINGW32__ to pc/gawkmisc.pc,
+# the sources include pc/'s headers by bare name (<socket.h>, <langinfo.h>,
+# "popen.h"), and pc/getid.c and pc/popen.c are compiled alongside.
+selects.config_setting_group(
+    name = "_windows_clang",
+    match_all = [
+        "@platforms//os:windows",
+        "@rules_cc//cc/compiler:clang",
+    ],
+)
+
+selects.config_setting_group(
+    name = "windows_gnu",
+    match_any = [
+        "@rules_cc//cc/compiler:mingw-gcc",
+        ":_windows_clang",
+    ],
+)
+
+# pc/'s headers under their bare names, without pc/config.h (the pc/Makefile
+# build's own, which must not shadow the autoconf one).
+cc_library(
+    name = "_pc_headers",
+    hdrs = [
+        "pc/dlfcn.h",
+        "pc/in.h",
+        "pc/langinfo.h",
+        "pc/mbc32.h",
+        "pc/popen.h",
+        "pc/socket.h",
+    ],
+    strip_include_prefix = "pc",
+    textual_hdrs = [
+        "pc/gawkmisc.pc",
+        "pc/nl_langinfo.c",
+    ],
+)
+
+WINDOWS_GNU_DEPS = select({
+    ":windows_gnu": [":_pc_headers"],
+    "//conditions:default": [],
+})
+
+WINDOWS_GNU_SRCS = select({
+    ":windows_gnu": [
+        "pc/getid.c",
+        "pc/popen.c",
+    ],
+    "//conditions:default": [],
+})
+
+# MinGW's printf family follows MSVC's unless told otherwise; HAVE_POPEN_H is
+# pc/config.sed's addition to config.h (io.c and builtin.c include pc/popen.h
+# under it), not a configure macro, so it cannot be a define: decision.
+WINDOWS_GNU_DEFINES = select({
+    ":windows_gnu": [
+        "HAVE_POPEN_H",
+        "__USE_MINGW_ANSI_STDIO=1",
+    ],
+    "//conditions:default": [],
+})
+
+# Upstream does not support MSVC; awk_h_msvc_stdc_exempt.patch and these two
+# headers (see their comments) make the interpreter compile there.
+cc_library(
+    name = "_msvc_shim",
+    hdrs = ["msvc_shim.h"],
+)
+
+cc_library(
+    name = "_msvc_langinfo_stub",
+    hdrs = ["msvc_compat/langinfo.h"],
+    strip_include_prefix = "msvc_compat",
+)
+
+# The headers extensions and earlier versions of this module exported.
+cc_library(
+    name = "gettext",
+    hdrs = ["gettext.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "nonposix",
+    hdrs = ["nonposix.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "custom",
+    hdrs = ["custom.h"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "gawkapi",
+    actual = ":exported_headers",
+    visibility = ["//visibility:public"],
+)
+
+# Replaces the generated targets: the same sources with the MSVC shim and the
+# C dialect above, and for the binary the run-time extension directory and
+# suffix (-DDEFLIBPATH / -DSHLIBEXT, which the Makefile takes from configure)
+# and the libraries the dynamic loading and MinGW need.
+cc_library(
+    name = "support/support",
+    srcs = [
+        "support/dfa.c",
+        "support/getopt.c",
+        "support/getopt1.c",
+        "support/localeinfo.c",
+        "support/malloc/dynarray_at_failure.c",
+        "support/malloc/dynarray_emplace_enlarge.c",
+        "support/malloc/dynarray_finalize.c",
+        "support/malloc/dynarray_resize.c",
+        "support/malloc/dynarray_resize_clear.c",
+        "support/minrx.c",
+        "support/random.c",
+        "support/regex.c",
+    ] + select({
+        ":pma_linux": ["support/pma.c"],
+        "//conditions:default": [],
+    }),
+    copts = GAWK_COPTS,
+    implementation_deps = [
+        ":config_headers",
+        ":exported_headers",
+        ":support/support_private_headers",
+    ] + MPFR_DEPS + MSVC_SHIM_DEPS + WINDOWS_GNU_DEPS,
+    includes = ["support"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "GAWK",
+    ],
+    textual_hdrs = [
+        "support/charset.c",
+        "support/malloc/dynarray-skeleton.c",
+        "support/regcomp.c",
+        "support/regex_internal.c",
+        "support/regexec.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "gawk",
+    srcs = [
+        "array.c",
+        "bison/awkgram.c",
+        "bison/awkgram.h",
+        "bison/command.c",
+        "bison/command.h",
+        "builtin.c",
+        "cint_array.c",
+        "debug.c",
+        "eval.c",
+        "ext.c",
+        "field.c",
+        "floatcomp.c",
+        "gawkapi.c",
+        "gawkmisc.c",
+        "int_array.c",
+        "io.c",
+        "main.c",
+        "mpfr.c",
+        "msg.c",
+        "node.c",
+        "printf.c",
+        "profile.c",
+        "re.c",
+        "replace.c",
+        "str_array.c",
+        "symbol.c",
+        "version.c",
+    ] + BISON_HDRS + WINDOWS_GNU_SRCS,
+    copts = GAWK_COPTS,
+    includes = ["bison"],
+    linkopts = select({
+        "@platforms//os:linux": ["-ldl"],
+        "@platforms//os:macos": ["-ldl"],
+        "//conditions:default": [],
+    }) + select({
+        # Windows GNU toolchains only: winsock for io.c's socket paths, and GNU
+        # ld's tolerance of the multiple definitions carried from the
+        # pre-autoconf overlay.
+        ":windows_gnu": [
+            "-lws2_32",
+            "-Wl,-allow-multiple-definition",
+        ],
+        "//conditions:default": [],
+    }),
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "DEFPATH=\"\\\".:/usr/local/share/awk\\\"\"",
+        "GAWK",
+        "LOCALEDIR=\"\\\"/usr/local/share/locale\\\"\"",
+    ] + select({
+        "@platforms//os:windows": [
+            "DEFLIBPATH=\"\\\"c:/gnu/lib/gawk\\\"\"",
+            "SHLIBEXT=\"\\\"dll\\\"\"",
+        ],
+        "//conditions:default": [
+            "DEFLIBPATH=\"\\\"/usr/local/lib/gawk\\\"\"",
+            "SHLIBEXT=\"\\\"so\\\"\"",
+        ],
+    }) + WINDOWS_GNU_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":config_headers",
+        ":linkopts",
+        ":support/support",
+        ":support/support_private_headers",
+    ] + MPFR_DEPS + MSVC_SHIM_DEPS + WINDOWS_GNU_DEPS,
+)
+
+# gawk with every optional dependency forced off, for modules that run gawk
+# during their own build.
+gawk_minimal(
+    name = "gawk_minimal",
+    visibility = ["//visibility:public"],
+)

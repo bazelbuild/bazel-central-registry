@@ -1,0 +1,95 @@
+"""
+The rinx Bazel module: the rinx binary, built from the Cargo workspace under
+crates/ with rules_rust, and the rules in defs.bzl that drive it.
+
+Users depend on it with `bazel_dep(name = "rinx", ...)`; see README.md.
+Everything marked `dev_dependency = True` below serves only this repository's
+own examples, tests and scripts, and is invisible to such a user.
+
+  bazel build //:rinx                  # build the binary
+  bazel build //examples:site          # build the full example site
+  bazel build //examples/team_a:docs   # build team_a in isolation
+"""
+
+module(
+    name = "rinx",
+    version = "0.1.0",
+)
+
+# ── Rust toolchain ────────────────────────────────────────────────────────────
+
+bazel_dep(name = "rules_rust", version = "0.74.0")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+# ── Crate dependencies (serde, serde_json) ────────────────────────────────────
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//:Cargo.lock",
+    # The crate_universe resolver's own lockfile, distinct from Cargo.lock
+    # above. It is required — not merely an optimization — whenever
+    # rinx is consumed as a *non-root* module: rules_rust refuses to
+    # repin across a module boundary, since the producer's lockfile normally
+    # sits in a read-only bzlmod cache. `scripts/benchmark.py` builds the
+    # CPython corpus in exactly that shape, via `local_path_override`, so
+    # without this the benchmark cannot analyze at all.
+    #
+    # Regenerate with:
+    #   CARGO_BAZEL_REPIN=1 bazel mod deps
+    lockfile = "//:Cargo.bazel.lock",
+    manifests = ["//:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
+)
+
+use_repo(crate, "crates")
+
+# ── Java toolchain & PlantUML ──────────────────────────────────────────────────
+
+bazel_dep(name = "rules_java", version = "9.6.0")
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_file(
+    name = "plantuml_jar",
+    urls = ["https://repo1.maven.org/maven2/net/sourceforge/plantuml/plantuml/1.2024.4/plantuml-1.2024.4.jar"],
+    sha256 = "a79ce5f149778886ef41d39738a28cae54eeb4a847def2ac771fccbf97ebdc5e",
+    downloaded_file_path = "plantuml.jar",
+)
+
+# ── Python toolchain ──────────────────────────────────────────────────────────
+
+bazel_dep(name = "rules_python", version = "2.0.0")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    python_version = "3.11",
+    is_default = True,
+)
+
+# The Python packages `scripts/` may need. No rule of rinx's uses them, so a
+# user of the module never resolves this hub.
+pip = use_extension(
+    "@rules_python//python/extensions:pip.bzl",
+    "pip",
+    dev_dependency = True,
+)
+pip.parse(
+    hub_name = "pypi",
+    python_version = "3.11",
+    requirements_lock = "//scripts:requirements.txt",
+)
+use_repo(pip, "pypi")
+

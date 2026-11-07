@@ -1,0 +1,107 @@
+"""rules_terraform"""
+
+module(
+    name = "rules_terraform",
+    version = "0.0.5",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_go", version = "0.59.0")
+bazel_dep(name = "gazelle", version = "0.43.0")
+bazel_dep(name = "bazel_lib", version = "3.1.0")
+
+# Toolchains. Each extension materializes a hub declaring one toolchain per
+# (version, platform) for the releases shipped in `//<engine>/private:versions.bzl`
+# and any a `version` tag asks for. `//<engine>/settings:version` picks one;
+# empty means the default.
+terraform_toolchains = use_extension("//terraform:extensions.bzl", "terraform_toolchains")
+use_repo(terraform_toolchains, "terraform", "terraform_toolchains")
+
+register_toolchains("@terraform_toolchains//:all")
+
+tofu_toolchains = use_extension("//tofu:extensions.bzl", "tofu_toolchains")
+use_repo(tofu_toolchains, "tofu", "tofu_toolchains")
+
+register_toolchains("@tofu_toolchains//:all")
+
+# Releases outside the shipped table, requested the way a downstream user
+# would. Dev-only: they exercise the SHA256SUMS-to-facts path (see the
+# `terraform@…` and `tofu@…` entries in MODULE.bazel.lock) and are selectable
+# with the version flag, but neither is the default.
+terraform_toolchains_dev = use_extension("//terraform:extensions.bzl", "terraform_toolchains", dev_dependency = True)
+terraform_toolchains_dev.version(version = "1.12.2")
+
+tofu_toolchains_dev = use_extension("//tofu:extensions.bzl", "tofu_toolchains", dev_dependency = True)
+tofu_toolchains_dev.version(version = "1.9.1")
+
+# Dependencies for the in-repo test fixtures. Dev-only so downstream
+# consumers of rules_terraform don't materialize our test hubs. One `deps`
+# tag per hub: `lock` brings the providers a lock pins, `roots` brings the
+# registry modules some directories' `module` blocks name.
+terraform = use_extension("//terraform:extensions.bzl", "terraform", dev_dependency = True)
+terraform.deps(
+    name = "test_providers_with_provider",
+    lock = "//tests/with_provider:.terraform.lock.hcl",
+)
+terraform.deps(
+    name = "test_providers_with_modules_ext",
+    lock = "//tests/with_modules_ext:.terraform.lock.hcl",
+)
+terraform.deps(
+    name = "test_providers_with_third_party",
+    lock = "//tests/with_third_party_provider:.terraform.lock.hcl",
+)
+
+# Registry modules, pooled across hubs:
+# * //tests/nested_registry names one from a shared library, so the library's
+#   directory is listed, not the root module that consumes it — the root has
+#   no `module` block naming a registry module, and scanning it would find
+#   nothing.
+# * //tests/transitive_registry names a registry module composed of another;
+#   the hub holds both, though only the parent is named by a block.
+terraform.deps(
+    name = "test_registry_modules",
+    roots = [
+        "//tests/nested_registry/modules/wrapper:main.tf",
+        "//tests/transitive_registry:main.tf",
+    ],
+)
+
+# Git modules: three spellings of one GitHub repository at one tag, including
+# a `//subdir` whose module names a registry module, so the checkout is read
+# for its own references.
+terraform.deps(
+    name = "test_git_modules",
+    root = "//tests/with_git_module:main.tf",
+)
+use_repo(
+    terraform,
+    "test_git_modules",
+    "test_providers_with_modules_ext",
+    "test_providers_with_provider",
+    "test_providers_with_third_party",
+    "test_registry_modules",
+)
+
+# The same resolver against the OpenTofu registry, which answers the
+# protocol's `download` endpoint rather than registry.terraform.io's
+# per-version metadata. One fixture goes through it so both paths stay
+# under test.
+tofu = use_extension("//tofu:extensions.bzl", "tofu", dev_dependency = True)
+tofu.deps(
+    name = "test_tofu_registry_modules",
+    roots = ["//tests/with_registry_module:main.tf"],
+)
+use_repo(tofu, "test_tofu_registry_modules")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.23.4")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "rules_rust_mdbook", version = "0.71.3", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "rules_venv", version = "0.19.0", dev_dependency = True)
