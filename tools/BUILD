@@ -58,6 +58,7 @@ py_binary(
         ":attestations",
         ":registry",
         ":slsa",
+        ":toolchain_registrations",
         ":verify_stable_archives",
         requirement("requests"),
         requirement("zstandard"),
@@ -69,6 +70,19 @@ py_test(
     srcs = ["bcr_validation_test.py"],
     legacy_create_init = 0,
     deps = [":bcr_validation"],
+)
+
+py_library(
+    name = "toolchain_registrations",
+    srcs = ["toolchain_registrations.py"],
+    imports = ["."],
+)
+
+py_test(
+    name = "toolchain_registrations_test",
+    srcs = ["toolchain_registrations_test.py"],
+    legacy_create_init = 0,
+    deps = [":toolchain_registrations"],
 )
 
 py_library(

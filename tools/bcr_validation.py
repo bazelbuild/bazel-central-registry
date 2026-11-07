@@ -26,6 +26,8 @@ Validations performed are:
     - If not, we should require BCR maintainer review.
   - Verify the patches and overlay files apply to the source archive.
   - Verify attestations (SLSA provenance / VSA) referenced by attestations.json (if it exists).
+  - Warn about non-dev toolchain registrations for types the module doesn't own.
+    If all other validations pass without a BCR maintainer review, this runs the module's extensions and repo rules.
 """
 
 import argparse
@@ -58,6 +60,7 @@ from registry import download_file
 from registry import integrity
 from registry import integrity_for_comparison
 from registry import read
+from toolchain_registrations import analyze_registrations
 from verify_stable_archives import UrlStability
 from verify_stable_archives import verify_stable_archive
 
@@ -66,6 +69,7 @@ class BcrValidationResult(Enum):
     GOOD = 1
     NEED_BCR_MAINTAINER_REVIEW = 2
     FAILED = 3
+    WARNING = 4
 
 
 RED = "\x1b[31m"
@@ -77,12 +81,14 @@ COLOR = {
     BcrValidationResult.GOOD: GREEN,
     BcrValidationResult.NEED_BCR_MAINTAINER_REVIEW: YELLOW,
     BcrValidationResult.FAILED: RED,
+    BcrValidationResult.WARNING: YELLOW,
 }
 
 UPSTREAM_MODULES_DIR_URL = "https://bcr.bazel.build/modules"
 
 DEFAULT_SLSA_VERIFIER_VERSION = "v2.7.1"
 
+TOOLCHAIN_REGISTRATIONS_DISCUSSION_URL = "https://github.com/bazelbuild/bazel/discussions/32428"
 ATTESTATIONS_DOCS_URL = "https://github.com/bazelbuild/bazel-central-registry/blob/main/docs/attestations.md"
 
 GITHUB_REPO_RE = re.compile(r"^github:([^/]+/[^/]+)$")
@@ -748,6 +754,33 @@ class BcrValidator:
                         f"Symlink is not allowed: {full_path}",
                     )
 
+    def verify_toolchain_registrations(self, module_name, version):
+        """Verify that the module only registers toolchains for all dependents if it owns their types.
+
+        Must run after all other validations: Expanding registrations runs module code, which presubmit jobs only do
+        without a BCR maintainer review if these validations return 0.
+        """
+        foreign, unanalyzed = analyze_registrations(
+            self.registry.root, module_name, version, run_module_code=self.getValidationReturnCode() == 0
+        )
+        path = self.registry.get_module_dot_bazel_path(module_name, version)
+        # Dependents may rely on these registrations, so they don't fail the validation.
+        for line, pattern, toolchain_types in foreign:
+            self.report(
+                BcrValidationResult.WARNING,
+                f"{path}:{line}: {pattern} registers toolchains for all dependents of {module_name}, but the module"
+                f" doesn't own these toolchain types: {', '.join(toolchain_types)}. Add `dev_dependency = True` if only"
+                " the module's own builds need it, otherwise ask users to register it in their root module."
+                f" See {TOOLCHAIN_REGISTRATIONS_DISCUSSION_URL}.",
+            )
+        for line, reason in unanalyzed:
+            self.report(
+                BcrValidationResult.WARNING,
+                f"{path}:{line}: Can't determine the toolchain types of this registration: {reason}",
+            )
+        if not foreign and not unanalyzed:
+            self.report(BcrValidationResult.GOOD, "The module's non-dev toolchain registrations are for types it owns.")
+
     def validate_module(self, module_name, version, skipped_validations):
         print_expanded_group(f"Validating {module_name}@{version}")
         self.verify_module_existence(module_name, version)
@@ -990,7 +1023,8 @@ def main(argv=None):
         + '"presubmit_yml", to bypass the presubmit.yml check; '
         + '"presubmit_task", to bypass the presubmit.yml tasks check; '
         + '"source_repo", to bypass the source repo verification; '
-        + '"attestations", to skip the attestations check. '
+        + '"attestations", to skip the attestations check; '
+        + '"toolchain_registrations", to skip the toolchain registrations check. '
         + "This flag can be repeated to skip multiple validations.",
     )
 
@@ -1028,6 +1062,11 @@ def main(argv=None):
 
     # Perform some global checks
     validator.global_checks()
+
+    if module_versions and "toolchain_registrations" not in args.skip_validation:
+        print_expanded_group("Validating toolchain registrations")
+        for name, version in module_versions:
+            validator.verify_toolchain_registrations(name, version)
 
     return validator.getValidationReturnCode()
 

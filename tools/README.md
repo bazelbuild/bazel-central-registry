@@ -40,7 +40,7 @@ options:
   --skip_validation SKIP_VALIDATION
                         Bypass the given step for validating modules. Supported values are: "url_stability", to bypass the URL stability check; "presubmit_yml", to bypass the
                         presubmit.yml check; "presubmit_task", to bypass the presubmit.yml tasks check; "source_repo", to bypass the source repo verification; "attestations",
-                        to skip the attestations check. This flag can be repeated to skip multiple validations.
+                        to skip the attestations check; "toolchain_registrations", to skip the toolchain registrations check. This flag can be repeated to skip multiple validations.
 ```
 
 ## print_all_src_urls.py
