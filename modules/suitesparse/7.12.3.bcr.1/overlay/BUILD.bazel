@@ -67,6 +67,21 @@ ALL_LICENSES = [
     ":license_lgpl_2_1_or_later",
 ]
 
+# CXSparse uses C99 complex types, which MSVC does not support. Upstream builds
+# it without complex support (NCOMPLEX) there; this module does not provide it
+# on MSVC-compatible compilers at all.
+CXSPARSE_INCOMPATIBLE = select({
+    "@rules_cc//cc/compiler:clang-cl": ["@platforms//:incompatible"],
+    "@rules_cc//cc/compiler:msvc-cl": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
+
+CXSPARSE_DEPS = select({
+    "@rules_cc//cc/compiler:clang-cl": [],
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "//conditions:default": [":cxsparse"],
+})
+
 # Public headers are exposed through `hdrs` + `strip_include_prefix` only, so
 # that consumers see exactly the upstream-installed headers. Internal headers
 # and the `*.c` files that upstream `#include`s (e.g. `amd_l1.c` includes
@@ -244,6 +259,7 @@ cc_library(
     hdrs = glob(["CXSparse/Include/*.h"]),
     includes = ["CXSparse/Include"],
     package_metadata = LGPL_LICENSES,
+    target_compatible_with = CXSPARSE_INCOMPATIBLE,
     textual_hdrs = glob(["CXSparse/Source/*.c"]),
     visibility = ["//visibility:private"],
     deps = [":config"],
@@ -256,6 +272,7 @@ cc_library(
     implementation_deps = [":cxsparse_private"],
     package_metadata = LGPL_LICENSES,
     strip_include_prefix = "CXSparse/Include",
+    target_compatible_with = CXSPARSE_INCOMPATIBLE,
     deps = [":config"],
 )
 
@@ -344,7 +361,15 @@ PREFIXED_HEADERS = {
 
 cc_library(
     name = "prefixed_headers",
-    hdrs = ["_prefixed/suitesparse/" + hdr for hdr in PREFIXED_HEADERS],
+    hdrs = [
+        "_prefixed/suitesparse/" + hdr
+        for hdr in PREFIXED_HEADERS
+        if hdr != "cs.h"
+    ] + select({
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": ["_prefixed/suitesparse/cs.h"],
+    }),
     package_metadata = ALL_LICENSES,
     strip_include_prefix = "_prefixed",
     deps = [":suitesparse"],
@@ -361,10 +386,9 @@ cc_library(
         ":cholmod",
         ":colamd",
         ":config",
-        ":cxsparse",
         ":klu",
         ":ldl",
-    ],
+    ] + CXSPARSE_DEPS,
 )
 
 # Kept for backward compatibility with earlier versions of this module.
