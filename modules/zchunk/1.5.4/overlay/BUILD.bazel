@@ -1,0 +1,74 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+expand_template(
+    name = "zck_header",
+    out = "include/zck.h",
+    substitutions = {"@version@": module_version()},
+    template = "include/zck.h.in",
+)
+
+# Source lists follow src/lib/**/meson.build, using the OpenSSL hash backend.
+cc_library(
+    name = "zchunk",
+    srcs = [
+        "src/lib/buzhash/buzhash.c",
+        "src/lib/comp/comp.c",
+        "src/lib/comp/nocomp/nocomp.c",
+        "src/lib/comp/zstd/zstd.c",
+        "src/lib/compint.c",
+        "src/lib/dl/dl.c",
+        "src/lib/dl/multipart.c",
+        "src/lib/dl/range.c",
+        "src/lib/error.c",
+        "src/lib/hash/hash.c",
+        "src/lib/hash/openssl/openssl.c",
+        "src/lib/header.c",
+        "src/lib/index/index_common.c",
+        "src/lib/index/index_create.c",
+        "src/lib/index/index_read.c",
+        "src/lib/io.c",
+        "src/lib/log.c",
+        "src/lib/zck.c",
+    ],
+    hdrs = [":zck_header"],
+    copts = [
+        "-std=gnu11",
+        "-fvisibility=hidden",
+    ],
+    implementation_deps = [
+        ":private_headers",
+        "@openssl//:crypto",
+        "@zstd",
+    ],
+    local_defines = [
+        "ZCHUNK_OPENSSL",
+        "ZCHUNK_ZSTD",
+    ],
+    strip_include_prefix = "include",
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        "@platforms//os:macos": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "private_headers",
+    hdrs = [
+        "src/lib/buzhash/buzhash.h",
+        "src/lib/comp/nocomp/nocomp.h",
+        "src/lib/comp/zstd/zstd.h",
+        "src/lib/hash/openssl/openssl.h",
+        "src/lib/uthash.h",
+        "src/lib/zck_private.h",
+    ],
+    strip_include_prefix = "src/lib",
+)
+
+alias(
+    name = "zck",
+    actual = ":zchunk",
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,86 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load(":gzip_test.bzl", "declared_tests", "gzip_test")
+
+package(default_visibility = ["//visibility:private"])
+
+# ---------------------------------------------------------------------------
+# Upstream shell test suite (tests/Makefile.am `TESTS`).
+# ---------------------------------------------------------------------------
+
+# An overlay file arrives over `ctx.download`, which does not set the execute
+# bit, and `sh_test` refuses a source that is not executable.
+copy_file(
+    name = "run_gzip_test",
+    src = "run_gzip_test.sh",
+    out = "run_gzip_test_exe.sh",
+    is_executable = True,
+)
+
+# The scripts source `init.sh`/`init.cfg` and `hufts` reads `hufts-segv.gz`,
+# so the directory is made available whole; the excluded patterns are this
+# package's own files plus automake bookkeeping.
+filegroup(
+    name = "upstream_test_data",
+    srcs = glob(
+        ["*"],
+        exclude = [
+            "*.bzl",
+            "BUILD.bazel",
+            "Makefile.am",
+            "Makefile.in",
+            "run_gzip_test.sh",
+        ],
+    ),
+)
+
+# A verbatim mirror of tests/Makefile.am `TESTS`, so that re-checking it at
+# the next version bump is a plain diff.
+UPSTREAM_TESTS = [
+    "list-big",
+    "gzip-env",
+    "reference",
+    "helin-segv",
+    "help-version",
+    "hufts",
+    "keep",
+    "list",
+    "lzh-lzh-ctable-abuse",
+    "lzw-lzh-abuse",
+    "memcpy-abuse",
+    "mixed",
+    "null-suffix-clobber",
+    "pipe-output",
+    "reproducible",
+    "stdin",
+    "synchronous",
+    "timestamp",
+    "two-files",
+    "trailing-nul",
+    "unpack-invalid",
+    "unpack-valid",
+    "upper-suffix",
+    "unzip-valid",
+    "write-error",
+    "z-suffix",
+    "zdiff",
+    "zdiff-abuse",
+    "zgrep-f",
+    "zgrep-abuse",
+    "zgrep-binary",
+    "zgrep-context",
+    "zgrep-signal",
+    "znew-k",
+]
+
+[
+    gzip_test(
+        name = t,
+        # `list-big` compresses a 4 GiB sparse file with `gzip -1`, which
+        # takes well over the `small` timeout on the slower presubmit runners.
+        size = "medium" if t == "list-big" else "small",
+    )
+    for t in declared_tests(
+        mirror = UPSTREAM_TESTS,
+        present = glob(["*"]),
+    )
+]

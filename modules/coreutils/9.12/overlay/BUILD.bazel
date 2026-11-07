@@ -1,0 +1,82 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load(":autoconf.bzl", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# Hand-written targets appended to the generated BUILD file.
+
+# src/local.mk lines 736-752: the version every program prints.  VERSION is
+# AC_INIT's quoted C literal, so the template's `@VERSION@` becomes `"9.12"`.
+write_file(
+    name = "src_version_h",
+    out = "src/version.h",
+    content = [
+        "extern char const *Version;",
+        "",
+    ],
+)
+
+autoconf_hdr(
+    name = "src_version_c",
+    out = "src/version.c",
+    mode = "subst",
+    template = "src/version.c.in",
+    deps = [":autoconf"],
+)
+
+# src/local.mk lines 754-777: stty's baud-rate table.  Upstream pipes the
+# compiler's macro dump of src/termios.c into src/speedgen when `cc -E -dM`
+# works, and speedgen falls back to its own list of the conventional B*
+# constants otherwise, each emitted under `#ifdef`.  The fallback list covers
+# every rate Linux and macOS define, so it is what every platform gets here.
+# No cmd_bat: the script needs a POSIX shell, like everything else in this
+# module (configure does not support MSVC).
+genrule(
+    name = "src_speedlist_h",
+    srcs = ["src/speedgen"],
+    outs = ["src/speedlist.h"],
+    cmd = "sh $(location src/speedgen) $@ < /dev/null",
+)
+
+# src/local.mk lines 526-531: the NEON line counter is compiled where
+# configure's probe passes, which needs <sys/auxv.h>: Linux on aarch64.
+selects.config_setting_group(
+    name = "linux_aarch64",
+    match_all = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+# Upstream's archive name for the gnulib library.
+alias(
+    name = "libcoreutils",
+    actual = ":lib/coreutils",
+    visibility = ["//visibility:public"],
+)
+
+# Smoke test: a handful of programs run far enough to print their version,
+# which verifies they link and start; the output is a build artifact so
+# `bazel build //...` runs it on every platform.
+SMOKE_PROGRAMS = [
+    "date",
+    "echo",
+    "factor",
+    "seq",
+    "sort",
+    "stty",
+    "wc",
+]
+
+genrule(
+    name = "smoke_test",
+    outs = ["smoke_test.txt"],
+    cmd = " && ".join(["$(execpath :{}) --version >> $@".format(p) for p in SMOKE_PROGRAMS]),
+    tools = [":{}".format(p) for p in SMOKE_PROGRAMS],
+)

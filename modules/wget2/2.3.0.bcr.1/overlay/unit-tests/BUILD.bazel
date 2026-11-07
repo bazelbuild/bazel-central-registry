@@ -1,0 +1,151 @@
+"""Upstream's unit tests (from unit-tests/Makefile.am)."""
+
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+# The upstream suite: the programs `make check` builds and runs
+# (unit-tests/Makefile.am:33 WGET_TESTS).  test-dl is added under
+# PLUGIN_SUPPORT (:41) and is the only one with data beyond `files/`.
+UNIT_TESTS = [
+    "test",
+    "test-parse-html",
+    "test-html-get-urls",
+    "test-cond",
+    "test-decompress",
+    "test-http-parse",
+]
+
+# The two `check_PROGRAMS` that are built but not run (unit-tests/Makefile.am:46).
+PERF_PROGRAMS = [
+    "buffer_printf_perf",
+    "stringmap_perf",
+]
+
+# Just the C dialect and no warnings, as for the shipped code; the flags that
+# matter are the ones `//:libwget` is built with.
+TEST_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/w",
+        "/std:c11",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/std:c11",
+    ],
+    "//conditions:default": [
+        "-w",
+        "-std=gnu11",
+    ],
+})
+
+# unit-tests/Makefile.am:1.  SRCDIR is where `files/` lives; the runner
+# below stages it in the working directory, so "." is exact.
+TEST_DEFINES = [
+    'SRCDIR=\\".\\"',
+    'EXEEXT=\\"\\"',
+]
+
+# unit-tests/Makefile.am:45: every test links the BASE_OBJS from src/ plus
+# libgnu and libwget.  test.c and friends reach into `libwget/private.h` and
+# the src/ headers with relative includes, which is why those two are in
+# `srcs` here rather than coming through a dependency's `hdrs`.
+TEST_DEPS = [
+    "//:gnulib",
+    "//:libwget",
+    "//:wget2_base",
+]
+
+[
+    cc_binary(
+        name = name + "_bin",
+        testonly = True,
+        srcs = [
+            name + ".c",
+            "//:libwget/private.h",
+        ],
+        copts = TEST_COPTS,
+        local_defines = TEST_DEFINES,
+        deps = TEST_DEPS,
+    )
+    for name in UNIT_TESTS + PERF_PROGRAMS
+]
+
+# The dummy plugins test-dl loads (unit-tests/Makefile.am:60-71): the same
+# source built twice, once per PARAM.
+[
+    cc_binary(
+        name = "lib{}.so".format(param),
+        testonly = True,
+        srcs = ["test-dl-dummy.c"],
+        copts = TEST_COPTS,
+        linkshared = True,
+        local_defines = TEST_DEFINES + ["PARAM=" + param],
+        deps = TEST_DEPS,
+    )
+    for param in [
+        "alpha",
+        "beta",
+    ]
+]
+
+cc_binary(
+    name = "test-dl_bin",
+    testonly = True,
+    srcs = [
+        "test-dl.c",
+        "//:libwget/private.h",
+    ],
+    copts = TEST_COPTS,
+    local_defines = TEST_DEFINES,
+    deps = TEST_DEPS,
+)
+
+# An overlay file arrives over `ctx.download`, which does not set the execute
+# bit, and `sh_test` refuses a source that is not executable.
+copy_file(
+    name = "run_unit_test",
+    src = "run_unit_test.sh",
+    out = "run_unit_test_exe.sh",
+    is_executable = True,
+)
+
+# `$(rlocationpath)` rather than `$(rootpath)` because Windows runfiles are a
+# manifest, not a symlink tree, so the relative path is not on disk there.
+[
+    sh_test(
+        name = name,
+        size = "small",
+        srcs = [":run_unit_test"],
+        args = ["$(rlocationpath :{}_bin)".format(name)] + [
+            "$(rlocationpath {})".format(f)
+            for f in glob(["files/*"])
+        ],
+        data = [":{}_bin".format(name)] + glob(["files/*"]),
+        deps = ["@rules_shell//shell/runfiles"],
+    )
+    for name in UNIT_TESTS
+]
+
+sh_test(
+    name = "test-dl",
+    size = "small",
+    srcs = [":run_unit_test"],
+    args = [
+        "$(rlocationpath :test-dl_bin)",
+        "$(rlocationpath :libalpha.so)",
+        "$(rlocationpath :libbeta.so)",
+    ],
+    data = [
+        ":libalpha.so",
+        ":libbeta.so",
+        ":test-dl_bin",
+    ],
+    # unit-tests/Makefile.am:40: only with plugin support, which is what
+    # gives src/dl.c a backend to test.
+    target_compatible_with = select({
+        "//:_with_plugin_support": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = ["@rules_shell//shell/runfiles"],
+)

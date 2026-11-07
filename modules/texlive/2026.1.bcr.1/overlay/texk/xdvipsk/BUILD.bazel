@@ -1,0 +1,57 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:texlive.bzl", "force_include_copts", "texk_program")
+
+# otflib is xdvipsk's bundled OpenType Font library (font subsetting code).
+# Not in BCR — built as part of xdvipsk here. Its .c files do
+# `#include "xdvips.h"` from the parent dir, so we expose that header here
+# and surface the parent dir on the include path.
+cc_library(
+    name = "otflib",
+    srcs = glob(["otflib/*.c"]),
+    hdrs = glob(["otflib/*.h"]) + [
+        "config.h",
+        "debug.h",
+        "paths.h",
+        "protos.h",
+        "protos_add.h",
+        "xdvips.h",
+    ],
+    copts = ["-w"] + force_include_copts("texlive-c-auto.h"),
+    includes = [
+        ".",
+        "otflib",
+    ],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        "XDVIPSK",
+        "UNIX",
+        "KPATHSEA",
+    ],
+    tags = ["manual"],
+    deps = [
+        "//:common_config",
+        "//texk/kpathsea",
+    ],
+)
+
+texk_program(
+    name = "xdvipsk",
+    srcs = glob(["*.c"]),
+    hdrs = glob(["*.h"]),
+    copts = force_include_copts("texlive-c-auto.h"),
+    local_defines = [
+        "XDVIPSK",
+        "SHIFTLOWCHARS",
+    ],
+    tags = ["manual"],  # depends on otflib & has its own TL_VERSION header issues
+    deps = [
+        ":otflib",
+        "//:common_config",
+        "@freetype",
+        "@libjpeg_turbo//:jpeg",
+        "@libpng//:png",
+        "@libtiff//:tiff",
+        "@lua//:liblua",
+        "@zlib",
+    ],
+)
