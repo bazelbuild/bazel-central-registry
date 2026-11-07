@@ -27,7 +27,6 @@ _CONFIG_DEAD_FACTS = {
     "#cmakedefine HAVE_INTTYPES_H 1": "/* #undef HAVE_INTTYPES_H */",  # probed, read by no source
     "#cmakedefine HAVE_STDINT_H 1": "/* #undef HAVE_STDINT_H */",  # never probed
     "#cmakedefine SIZEOF_SIZE_T ${SIZEOF_SIZE_T}": "/* #undef SIZEOF_SIZE_T */",  # probed, read by no source
-    "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "/* #undef _FILE_OFFSET_BITS */",  # set upstream only when off_t needs the LFS macros
 }
 
 # Upstream's probe sets HAVE_EXTERN_TM_GMTOFF, a name the template never reads, so no upstream build defines this.
@@ -113,6 +112,16 @@ _CONFIG_MSVC_FSEEKO = {
     "#cmakedefine HAVE_FSEEKO64 1": "/* #undef HAVE_FSEEKO64 */",
 }
 
+# Upstream's LFS probe defines it where off_t is 32-bit unless it's set: on mingw here, where fseeko and ftello then
+# take a 64-bit offset. 32-bit POSIX targets would need it too, but aren't handled.
+_CONFIG_MINGW_FILE_OFFSET_BITS = {
+    "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "#define _FILE_OFFSET_BITS 64",
+}
+
+_CONFIG_NO_FILE_OFFSET_BITS = {
+    "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "/* #undef _FILE_OFFSET_BITS */",
+}
+
 _CONFIG_LIBC = select({
     "@platforms//os:windows": _CONFIG_UCRT_LOCALTIME_R | _CONFIG_UCRT_RANDOM | _CONFIG_UCRT_TIMEZONE |
                               _CONFIG_UCRT_OPEN_MEMSTREAM,
@@ -126,6 +135,11 @@ _CONFIG_LIBC = select({
     "//:windows_clang_cl": _CONFIG_MSVC_FSEEKO,
     "@platforms//os:windows": _CONFIG_UCRT_FSEEKO,
     "//conditions:default": _CONFIG_POSIX_FSEEKO,
+}) | select({
+    "//:windows_msvc": _CONFIG_NO_FILE_OFFSET_BITS,
+    "//:windows_clang_cl": _CONFIG_NO_FILE_OFFSET_BITS,
+    "@platforms//os:windows": _CONFIG_MINGW_FILE_OFFSET_BITS,
+    "//conditions:default": _CONFIG_NO_FILE_OFFSET_BITS,
 })
 
 expand_template(
