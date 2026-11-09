@@ -1,0 +1,105 @@
+"""AppImage rules for Bazel."""
+
+module(
+    name = "rules_appimage",
+    version = "1.21.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_python", version = "1.9.2")
+bazel_dep(name = "rules_shell", version = "0.7.1")
+bazel_dep(name = "squashfs-tools", version = "4.7.5")
+
+bazel_dep(name = "bazel_lib", version = "3.2.2", dev_dependency = True)
+bazel_dep(name = "container_structure_test", version = "1.22.1", dev_dependency = True)
+bazel_dep(name = "libmagic", version = "5.47", dev_dependency = True)
+bazel_dep(name = "rules_oci", version = "2.3.0", dev_dependency = True)
+bazel_dep(name = "rules_pkg", version = "1.2.0", dev_dependency = True)
+bazel_dep(name = "rules_pycross", version = "0.8.3", dev_dependency = True)
+bazel_dep(name = "rules_testing", version = "0.9.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+bazel_dep(name = "with_cfg.bzl", version = "0.14.6", dev_dependency = True)
+
+single_version_override(
+    module_name = "stardoc",
+    patches = ["//third_party:stardoc.diff"],  # https://github.com/bazelbuild/stardoc/pull/303
+    version = "0.8.1",
+)
+
+rules_appimage = use_extension("//:extensions.bzl", "appimage_ext_dependencies")
+use_repo(
+    rules_appimage,
+    "appimage_runtime_aarch64",
+    "appimage_runtime_armv7",
+    "appimage_runtime_i386",
+    "appimage_runtime_x86_64",
+)
+
+register_toolchains("//appimage:all")
+
+_DEFAULT_PYTHON = "3.14"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = _DEFAULT_PYTHON,
+)
+use_repo(python, "python_" + _DEFAULT_PYTHON.replace(".", "_"), "python_versions", "pythons_hub")
+
+register_toolchains("@pythons_hub//:all")
+
+dev_pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+dev_pip.parse(
+    hub_name = "rules_appimage_py_deps",
+    python_version = _DEFAULT_PYTHON,
+    requirements_lock = "//:requirements.txt",
+)
+use_repo(dev_pip, "rules_appimage_py_deps")
+
+pycross = use_extension("@rules_pycross//pycross/extensions:pycross.bzl", "pycross", dev_dependency = True)
+pycross.configure_environments(
+    platforms = ["x86_64-unknown-linux-gnu"],
+    python_versions = [_DEFAULT_PYTHON],
+)
+
+lock_import = use_extension("@rules_pycross//pycross/extensions:lock_import.bzl", "lock_import", dev_dependency = True)
+lock_import.import_pdm(
+    lock_file = "//tests/rules_pycross:pdm.lock",
+    project_file = "//tests/rules_pycross:pyproject.toml",
+    repo = "pdm_deps",
+)
+
+lock_repos = use_extension("@rules_pycross//pycross/extensions:lock_repos.bzl", "lock_repos", dev_dependency = True)
+use_repo(lock_repos, "pdm_deps")
+
+# Keep in sync with WORKSPACE
+oci = use_extension("@rules_oci//oci:extensions.bzl", "oci", dev_dependency = True)
+oci.pull(
+    name = "python3-slim",
+    digest = "sha256:fb83750094b46fd6b8adaa80f66e2302ecbe45d513f6cece637a841e1025b4ca",  # "3.14-slim" as of 2026-04-03
+    image = "docker.io/library/python",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+)
+oci.pull(
+    name = "distroless-cc",
+    digest = "sha256:d47b319b1047dff7cdee335e3e61468f3610fac20060653aabe3786d6ecba621",  # "debug-nonroot" as of 2026-04-03
+    image = "gcr.io/distroless/cc-debian13",
+    platforms = [
+        "linux/amd64",
+        "linux/arm64/v8",
+    ],
+)
+use_repo(
+    oci,
+    "distroless-cc",
+    "distroless-cc_linux_amd64",
+    "distroless-cc_linux_arm64_v8",
+    "python3-slim",
+    "python3-slim_linux_amd64",
+    "python3-slim_linux_arm64_v8",
+)
