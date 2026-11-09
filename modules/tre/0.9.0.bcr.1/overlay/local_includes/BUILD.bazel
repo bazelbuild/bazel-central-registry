@@ -1,0 +1,49 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+
+# local_includes/Makefile.am is two lines: treincludedir = $(includedir)/tre and
+# treinclude_HEADERS = tre.h regex.h tre-config.h -- the include_prefix and hdrs of :tre_hdrs
+# below, one for one. The third header is generated, which is what the other two targets are.
+
+autoconf_hdr(
+    name = "tre_config_h",
+    # The tarball ships a generated tre-config.h beside its template and the patch set deletes
+    # it: unsandboxed builds would otherwise resolve tre.h's sibling include to the shipped copy.
+    out = "tre-config.h",
+    template = "tre-config.h.in",
+    deps = ["//:configure"],
+)
+
+# tre.h:18 wants a sibling tre-config.h, which being generated lives in bazel-out and not
+# beside it. copts = ["-I$(BINDIR)/local_includes"] is the trap: $(BINDIR) expands without the
+# external/<repo>/ segment, so it works in this module's own workspace and fails for every
+# consumer of @tre//.
+cc_library(
+    name = "tre_config_unprefixed",
+    hdrs = ["tre-config.h"],
+    # Sound here: the empty-include-root defect //:config_h works around bites only in the root
+    # package of the repository.
+    strip_include_prefix = ".",
+    visibility = [
+        "//lib:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
+# USE_LOCAL_TRE_H is deliberately never defined: left undefined, tre.h:18 includes
+# "tre-config.h" as a sibling and regex.h:25 includes <tre/tre.h>, which is the layout
+# published here, so <tre/tre.h> and <tre/regex.h> are what consumers write.
+cc_library(
+    name = "tre_hdrs",
+    hdrs = [
+        "regex.h",
+        "tre.h",
+        "tre-config.h",
+    ],
+    # HAZARD: this directory must never become an -I directory. It holds a bare regex.h, so a
+    # consumer's #include <regex.h> would silently resolve to TRE's macro-remap header instead
+    # of the platform's. include_prefix prevents it: the root published here holds only tre/.
+    include_prefix = "tre",
+    strip_include_prefix = ".",
+    visibility = ["//lib:__pkg__"],
+)
