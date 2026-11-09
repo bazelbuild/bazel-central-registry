@@ -43,6 +43,23 @@ options:
                         to skip the attestations check. This flag can be repeated to skip multiple validations.
 ```
 
+## toolchain_registrations.py
+
+A script that checks that a module's non-dev toolchain registrations are for toolchain types the module owns. It expands the registrations with `bazel mod show_toolchains`, which runs the module's extensions and repo rules and requires a Bazel version that supports this command in the registry's `.bazelversion`. The BCR presubmit runs it in the workspace of one of the module's anonymous module tasks.
+```
+usage: bazel run //tools:toolchain_registrations -- [-h] [--registry REGISTRY] --check MODULE@VERSION [--workspace WORKSPACE] [--bazel_startup_option BAZEL_STARTUP_OPTION]
+
+options:
+  -h, --help            show this help message and exit
+  --registry REGISTRY   Specify the root path of the registry (default: the current working directory).
+  --check MODULE@VERSION
+                        Check the given module version. This flag can be repeated.
+  --workspace WORKSPACE
+                        Run Bazel in this workspace, whose root module depends on the module, instead of creating one. Requires exactly one --check.
+  --bazel_startup_option BAZEL_STARTUP_OPTION
+                        A Bazel startup option to use with --workspace. This flag can be repeated.
+```
+
 ## print_all_src_urls.py
 
 Print the list of source archive URLs of all modules in the BCR.
