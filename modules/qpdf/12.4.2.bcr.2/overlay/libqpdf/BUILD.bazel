@@ -1,0 +1,469 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//licenses/rules:license_kind.bzl", "license_kind")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# No header dependency on purpose: @openssl's headers and archive would let the hermetic libcrypto satisfy qpdf's
+# symbols ahead of -lcrypto. The toolchain must supply the openssl headers.
+cc_library(
+    name = "crypto_system",
+    linkopts = ["-lcrypto"],
+)
+
+# Upstream's defaults; the overlay doesn't expose these.
+_CONFIG_POLICY_DEFAULTS = {
+    "#cmakedefine AVOID_WINDOWS_HANDLE 1": "/* #undef AVOID_WINDOWS_HANDLE */",
+    "#cmakedefine SKIP_OS_SECURE_RANDOM 1": "/* #undef SKIP_OS_SECURE_RANDOM */",
+    "#cmakedefine USE_INSECURE_RANDOM 1": "/* #undef USE_INSECURE_RANDOM */",
+    "#cmakedefine ZOPFLI 1": "/* #undef ZOPFLI */",
+}
+
+_CONFIG_NO_GNUTLS = {
+    "#cmakedefine USE_CRYPTO_GNUTLS 1": "/* #undef USE_CRYPTO_GNUTLS */",
+}
+
+_CONFIG_DEAD_FACTS = {
+    "#cmakedefine HAVE_INTTYPES_H 1": "/* #undef HAVE_INTTYPES_H */",  # probed, read by no source
+    "#cmakedefine HAVE_STDINT_H 1": "/* #undef HAVE_STDINT_H */",  # never probed
+    "#cmakedefine SIZEOF_SIZE_T ${SIZEOF_SIZE_T}": "/* #undef SIZEOF_SIZE_T */",  # probed, read by no source
+}
+
+# Upstream's probe sets HAVE_EXTERN_TM_GMTOFF, a name the template never reads, so no upstream build defines this.
+_CONFIG_NO_TM_GMTOFF = {
+    "#cmakedefine HAVE_TM_GMTOFF 1": "/* #undef HAVE_TM_GMTOFF */",
+}
+
+_CONFIG_CRYPTO = select(
+    {
+        "//:crypto_native": {
+            "#cmakedefine DEFAULT_CRYPTO \"${DEFAULT_CRYPTO}\"": "#define DEFAULT_CRYPTO \"native\"",
+            "#cmakedefine USE_CRYPTO_NATIVE 1": "#define USE_CRYPTO_NATIVE 1",
+            "#cmakedefine USE_CRYPTO_OPENSSL 1": "/* #undef USE_CRYPTO_OPENSSL */",
+        },
+        "//:crypto_openssl": {
+            "#cmakedefine DEFAULT_CRYPTO \"${DEFAULT_CRYPTO}\"": "#define DEFAULT_CRYPTO \"openssl\"",
+            "#cmakedefine USE_CRYPTO_NATIVE 1": "/* #undef USE_CRYPTO_NATIVE */",
+            "#cmakedefine USE_CRYPTO_OPENSSL 1": "#define USE_CRYPTO_OPENSSL 1",
+        },
+        "//:crypto_openssl_system": {
+            "#cmakedefine DEFAULT_CRYPTO \"${DEFAULT_CRYPTO}\"": "#define DEFAULT_CRYPTO \"openssl\"",
+            "#cmakedefine USE_CRYPTO_NATIVE 1": "/* #undef USE_CRYPTO_NATIVE */",
+            "#cmakedefine USE_CRYPTO_OPENSSL 1": "#define USE_CRYPTO_OPENSSL 1",
+        },
+    },
+    no_match_error = "unhandled //:crypto value",
+)
+
+_CONFIG_POSIX_LOCALTIME_R = {
+    "#cmakedefine HAVE_LOCALTIME_R 1": "#define HAVE_LOCALTIME_R 1",
+}
+
+_CONFIG_UCRT_LOCALTIME_R = {
+    "#cmakedefine HAVE_LOCALTIME_R 1": "/* #undef HAVE_LOCALTIME_R */",
+}
+
+_CONFIG_POSIX_RANDOM = {
+    "#cmakedefine HAVE_RANDOM 1": "#define HAVE_RANDOM 1",
+}
+
+_CONFIG_UCRT_RANDOM = {
+    "#cmakedefine HAVE_RANDOM 1": "/* #undef HAVE_RANDOM */",
+}
+
+_CONFIG_POSIX_TIMEZONE = {
+    "#cmakedefine HAVE_EXTERN_LONG_TIMEZONE 1": "#define HAVE_EXTERN_LONG_TIMEZONE 1",
+}
+
+_CONFIG_UCRT_TIMEZONE = {
+    "#cmakedefine HAVE_EXTERN_LONG_TIMEZONE 1": "/* #undef HAVE_EXTERN_LONG_TIMEZONE */",
+}
+
+_CONFIG_POSIX_OPEN_MEMSTREAM = {
+    "#cmakedefine HAVE_OPEN_MEMSTREAM 1": "#define HAVE_OPEN_MEMSTREAM 1",
+}
+
+_CONFIG_UCRT_OPEN_MEMSTREAM = {
+    "#cmakedefine HAVE_OPEN_MEMSTREAM 1": "/* #undef HAVE_OPEN_MEMSTREAM */",
+}
+
+_CONFIG_GLIBC_MALLOC_INFO = {
+    "#cmakedefine HAVE_MALLOC_INFO 1": "#define HAVE_MALLOC_INFO 1",
+}
+
+_CONFIG_NO_MALLOC_INFO = {
+    "#cmakedefine HAVE_MALLOC_INFO 1": "/* #undef HAVE_MALLOC_INFO */",
+}
+
+_CONFIG_POSIX_FSEEKO = {
+    "#cmakedefine HAVE_FSEEKO 1": "#define HAVE_FSEEKO 1",
+    "#cmakedefine HAVE_FSEEKO64 1": "/* #undef HAVE_FSEEKO64 */",
+}
+
+# mingw's stdio.h declares both.
+_CONFIG_UCRT_FSEEKO = {
+    "#cmakedefine HAVE_FSEEKO 1": "#define HAVE_FSEEKO 1",
+    "#cmakedefine HAVE_FSEEKO64 1": "#define HAVE_FSEEKO64 1",
+}
+
+# The MSVC UCRT declares neither; QUtil falls back to _fseeki64.
+_CONFIG_MSVC_FSEEKO = {
+    "#cmakedefine HAVE_FSEEKO 1": "/* #undef HAVE_FSEEKO */",
+    "#cmakedefine HAVE_FSEEKO64 1": "/* #undef HAVE_FSEEKO64 */",
+}
+
+# Upstream's LFS probe defines it where off_t is 32-bit unless it's set: on mingw here, where fseeko and ftello then
+# take a 64-bit offset. 32-bit POSIX targets would need it too, but aren't handled.
+_CONFIG_MINGW_FILE_OFFSET_BITS = {
+    "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "#define _FILE_OFFSET_BITS 64",
+}
+
+_CONFIG_NO_FILE_OFFSET_BITS = {
+    "#cmakedefine _FILE_OFFSET_BITS ${_FILE_OFFSET_BITS}": "/* #undef _FILE_OFFSET_BITS */",
+}
+
+_CONFIG_LIBC = select({
+    "@platforms//os:windows": _CONFIG_UCRT_LOCALTIME_R | _CONFIG_UCRT_RANDOM | _CONFIG_UCRT_TIMEZONE |
+                              _CONFIG_UCRT_OPEN_MEMSTREAM,
+    "//conditions:default": _CONFIG_POSIX_LOCALTIME_R | _CONFIG_POSIX_RANDOM | _CONFIG_POSIX_TIMEZONE |
+                            _CONFIG_POSIX_OPEN_MEMSTREAM,
+}) | select({
+    "//:malloc_info_enabled": _CONFIG_GLIBC_MALLOC_INFO,
+    "//conditions:default": _CONFIG_NO_MALLOC_INFO,
+}) | select({
+    "//:windows_msvc": _CONFIG_MSVC_FSEEKO,
+    "//:windows_clang_cl": _CONFIG_MSVC_FSEEKO,
+    "@platforms//os:windows": _CONFIG_UCRT_FSEEKO,
+    "//conditions:default": _CONFIG_POSIX_FSEEKO,
+}) | select({
+    "//:windows_msvc": _CONFIG_NO_FILE_OFFSET_BITS,
+    "//:windows_clang_cl": _CONFIG_NO_FILE_OFFSET_BITS,
+    "@platforms//os:windows": _CONFIG_MINGW_FILE_OFFSET_BITS,
+    "//conditions:default": _CONFIG_NO_FILE_OFFSET_BITS,
+})
+
+expand_template(
+    name = "qpdf-config",
+    out = "qpdf/qpdf-config.h",
+    # Keyed on the template's exact lines. A new #cmakedefine fails the compile, but a removed one leaves a dead key
+    # silently, so diff the template at each bump.
+    substitutions =
+        _CONFIG_POLICY_DEFAULTS |
+        _CONFIG_NO_GNUTLS |
+        _CONFIG_DEAD_FACTS |
+        _CONFIG_NO_TM_GMTOFF |
+        _CONFIG_CRYPTO |
+        _CONFIG_LIBC,
+    template = "qpdf/qpdf-config.h.in",
+)
+
+cc_library(
+    name = "internal_headers",
+    hdrs = [
+        "qpdf/AES_PDF_native.hh",
+        "qpdf/AcroForm.hh",
+        "qpdf/BitStream.hh",
+        "qpdf/BitWriter.hh",
+        "qpdf/ContentNormalizer.hh",
+        "qpdf/CryptoRandomDataProvider.hh",
+        "qpdf/InputSource_private.hh",
+        "qpdf/InsecureRandomDataProvider.hh",
+        "qpdf/JSONHandler.hh",
+        "qpdf/JSON_writer.hh",
+        "qpdf/MD5.hh",
+        "qpdf/MD5_native.hh",
+        "qpdf/NNTree.hh",
+        "qpdf/ObjTable.hh",
+        "qpdf/OffsetInputSource.hh",
+        "qpdf/Pipeline_private.hh",
+        "qpdf/Pl_AES_PDF.hh",
+        "qpdf/Pl_ASCII85Decoder.hh",
+        "qpdf/Pl_ASCIIHexDecoder.hh",
+        "qpdf/Pl_Base64.hh",
+        "qpdf/Pl_LZWDecoder.hh",
+        "qpdf/Pl_MD5.hh",
+        "qpdf/Pl_PNGFilter.hh",
+        "qpdf/Pl_RC4.hh",
+        "qpdf/Pl_SHA2.hh",
+        "qpdf/Pl_TIFFPredictor.hh",
+        "qpdf/QPDFArgParser.hh",
+        "qpdf/QPDFCrypto_gnutls.hh",
+        "qpdf/QPDFCrypto_native.hh",
+        "qpdf/QPDFCrypto_openssl.hh",
+        "qpdf/QPDFJob_private.hh",
+        "qpdf/QPDFObjectHandle_private.hh",
+        "qpdf/QPDFObject_private.hh",
+        "qpdf/QPDFParser.hh",
+        "qpdf/QPDFTokenizer_private.hh",
+        "qpdf/QPDFWriter_private.hh",
+        "qpdf/QPDF_Name.hh",
+        "qpdf/QPDF_private.hh",
+        "qpdf/RC4.hh",
+        "qpdf/RC4_native.hh",
+        "qpdf/ResourceFinder.hh",
+        "qpdf/SF_ASCII85Decode.hh",
+        "qpdf/SF_ASCIIHexDecode.hh",
+        "qpdf/SF_DCTDecode.hh",
+        "qpdf/SF_FlateLzwDecode.hh",
+        "qpdf/SF_RunLengthDecode.hh",
+        "qpdf/SHA2_native.hh",
+        "qpdf/SecureRandomDataProvider.hh",
+        "qpdf/Util.hh",
+        "qpdf/assert_debug.h",
+        "qpdf/assert_test.h",
+        "qpdf/auto_job_completion_bash.hh",
+        "qpdf/auto_job_completion_zsh.hh",
+        "qpdf/auto_job_decl.hh",
+        "qpdf/auto_job_help.hh",
+        "qpdf/auto_job_init.hh",
+        "qpdf/auto_job_json_decl.hh",
+        "qpdf/auto_job_json_init.hh",
+        "qpdf/auto_job_schema.hh",
+        "qpdf/bits_functions.hh",
+        "qpdf/global_private.hh",
+        "qpdf/qpdf-c_impl.hh",
+        "qpdf/qpdflogger-c_impl.hh",
+        ":qpdf-config",
+    ] + select({
+        "//:crypto_native": [
+            ":rijndael_hdrs",
+            ":sphlib_hdrs",
+        ],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "/libqpdf",
+)
+
+license_kind(
+    name = "public_domain",
+    full_name = "Public domain dedication",
+    identifier = "LicenseRef-PublicDomain",
+)
+
+license(
+    name = "rijndael_license",
+    kind = ":public_domain",
+    text = "LICENSE.rijndael",
+)
+
+package_metadata(
+    name = "rijndael_metadata",
+    attributes = [":rijndael_license"],
+    purl = "pkg:generic/qpdf/rijndael@" + module_version().split(".bcr.")[0],
+)
+
+filegroup(
+    name = "rijndael_srcs",
+    srcs = ["rijndael.cc"],
+    applicable_licenses = [":rijndael_metadata"],
+)
+
+filegroup(
+    name = "rijndael_hdrs",
+    srcs = ["qpdf/rijndael.h"],
+    applicable_licenses = [":rijndael_metadata"],
+)
+
+license(
+    name = "sphlib_license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE.sphlib",
+)
+
+package_metadata(
+    name = "sphlib_metadata",
+    attributes = [":sphlib_license"],
+    purl = "pkg:generic/sphlib@3.0",  # NOTICE.md
+)
+
+filegroup(
+    name = "sphlib_srcs",
+    srcs = [
+        "sha2.c",
+        "sha2big.c",
+    ],
+    applicable_licenses = [":sphlib_metadata"],
+)
+
+filegroup(
+    name = "sphlib_hdrs",
+    srcs = [
+        "sph/sph_sha2.h",
+        "sph/sph_types.h",
+    ],
+    applicable_licenses = [":sphlib_metadata"],
+)
+
+filegroup(
+    name = "sphlib_textual_hdrs",
+    srcs = ["sph/md_helper.c"],
+    applicable_licenses = [":sphlib_metadata"],
+)
+
+license(
+    name = "md5_native_license",
+    kind = "@package_metadata//licenses/spdx:RSA-MD",
+    text = "LICENSE.md5",
+)
+
+package_metadata(
+    name = "md5_native_metadata",
+    attributes = [":md5_native_license"],
+    purl = "pkg:generic/qpdf/md5_native@" + module_version().split(".bcr.")[0],
+)
+
+filegroup(
+    name = "md5_native_srcs",
+    srcs = ["MD5_native.cc"],
+    applicable_licenses = [":md5_native_metadata"],
+)
+
+cc_library(
+    name = "qpdf",
+    # libqpdf_SOURCES in libqpdf/CMakeLists.txt.
+    srcs = [
+        "BitStream.cc",
+        "BitWriter.cc",
+        "Buffer.cc",
+        "BufferInputSource.cc",
+        "ClosedFileInputSource.cc",
+        "ContentNormalizer.cc",
+        "CryptoRandomDataProvider.cc",
+        "FileInputSource.cc",
+        "InputSource.cc",
+        "InsecureRandomDataProvider.cc",
+        "JSON.cc",
+        "JSONHandler.cc",
+        "MD5.cc",
+        "NNTree.cc",
+        "OffsetInputSource.cc",
+        "PDFVersion.cc",
+        "Pipeline.cc",
+        "Pl_AES_PDF.cc",
+        "Pl_ASCII85Decoder.cc",
+        "Pl_ASCIIHexDecoder.cc",
+        "Pl_Base64.cc",
+        "Pl_Buffer.cc",
+        "Pl_Concatenate.cc",
+        "Pl_Count.cc",
+        "Pl_DCT.cc",
+        "Pl_Discard.cc",
+        "Pl_Flate.cc",
+        "Pl_Function.cc",
+        "Pl_LZWDecoder.cc",
+        "Pl_OStream.cc",
+        "Pl_PNGFilter.cc",
+        "Pl_QPDFTokenizer.cc",
+        "Pl_RC4.cc",
+        "Pl_RunLength.cc",
+        "Pl_SHA2.cc",
+        "Pl_StdioFile.cc",
+        "Pl_String.cc",
+        "Pl_TIFFPredictor.cc",
+        "QPDF.cc",
+        "QPDFAcroFormDocumentHelper.cc",
+        "QPDFAnnotationObjectHelper.cc",
+        "QPDFArgParser.cc",
+        "QPDFCryptoProvider.cc",
+        "QPDFDocumentHelper.cc",
+        "QPDFEFStreamObjectHelper.cc",
+        "QPDFEmbeddedFileDocumentHelper.cc",
+        "QPDFExc.cc",
+        "QPDFFileSpecObjectHelper.cc",
+        "QPDFFormFieldObjectHelper.cc",
+        "QPDFJob.cc",
+        "QPDFJob_argv.cc",
+        "QPDFJob_config.cc",
+        "QPDFJob_json.cc",
+        "QPDFLogger.cc",
+        "QPDFMatrix.cc",
+        "QPDFObject.cc",
+        "QPDFObjectHandle.cc",
+        "QPDFObjectHelper.cc",
+        "QPDFOutlineDocumentHelper.cc",
+        "QPDFOutlineObjectHelper.cc",
+        "QPDFPageLabelDocumentHelper.cc",
+        "QPDFPageObjectHelper.cc",
+        "QPDFParser.cc",
+        "QPDFStreamFilter.cc",
+        "QPDFSystemError.cc",
+        "QPDFTokenizer.cc",
+        "QPDFUsage.cc",
+        "QPDFWriter.cc",
+        "QPDF_Array.cc",
+        "QPDF_Dictionary.cc",
+        "QPDF_Stream.cc",
+        "QPDF_String.cc",
+        "QPDF_encryption.cc",
+        "QPDF_json.cc",
+        "QPDF_linearization.cc",
+        "QPDF_objects.cc",
+        "QPDF_pages.cc",
+        "QTC.cc",
+        "QUtil.cc",
+        "RC4.cc",
+        "ResourceFinder.cc",
+        "SF_FlateLzwDecode.cc",
+        "SecureRandomDataProvider.cc",
+        "global.cc",
+        "qpdf-c.cc",
+        "qpdfjob-c.cc",
+        "qpdflogger-c.cc",
+    ] + select(
+        # Compiled into this library, as upstream does: the provider and libqpdf reference each other, so a separate
+        # provider library can't link.
+        {
+            "//:crypto_native": [
+                "AES_PDF_native.cc",
+                "QPDFCrypto_native.cc",
+                "RC4_native.cc",
+                "SHA2_native.cc",
+                ":md5_native_srcs",
+                ":rijndael_srcs",
+                ":sphlib_srcs",
+            ],
+            "//:crypto_openssl": ["QPDFCrypto_openssl.cc"],
+            "//:crypto_openssl_system": ["QPDFCrypto_openssl.cc"],
+        },
+        no_match_error = "unhandled //:crypto value",
+    ),
+    # CMAKE_C/CXX_VISIBILITY_PRESET hidden; QPDF_DLL keeps the public API exported.
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "//conditions:default": ["-fvisibility=hidden"],
+    }),
+    # Not copts: sha2.c and sha2big.c are C.
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++20"],
+        "@rules_cc//cc/compiler:clang-cl": ["/std:c++20"],
+        "//conditions:default": ["-std=c++20"],
+    }),
+    implementation_deps = [":internal_headers"],
+    # SecureRandomDataProvider.cc's CryptGenRandom is in advapi32. link.exe ignores -l.
+    linkopts = select({
+        "//:windows_msvc": ["advapi32.lib"],
+        "//:windows_clang_cl": ["advapi32.lib"],
+        "@platforms//os:windows": ["-ladvapi32"],
+        "//conditions:default": [],
+    }),
+    local_defines = ["QPDF_DISABLE_QTC=1"],  # ENABLE_QTC is off by default
+    # sha2.c and sha2big.c #include md_helper.c; it isn't a translation unit.
+    textual_hdrs = select({
+        "//:crypto_native": [":sphlib_textual_hdrs"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//include:headers",
+        "@libjpeg_turbo//:jpeg",  # the public Pl_DCT.hh includes jpeglib.h
+        "@zlib",
+    ] + select(
+        {
+            "//:crypto_native": [],
+            "//:crypto_openssl": ["@openssl//:crypto"],
+            "//:crypto_openssl_system": [":crypto_system"],
+        },
+        no_match_error = "unhandled //:crypto value",
+    ),
+)
