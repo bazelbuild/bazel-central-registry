@@ -1,0 +1,129 @@
+load("@jemalloc//settings:config.bzl", "jemalloc")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Under the platform's default prefix, plain malloc reaches jemalloc through the replaced symbols, or on macOS through
+# the zone. On Windows the default prefix is je_ and there is no zone to overlay, so plain malloc stays with the C
+# runtime.
+_MALLOC_REPLACED = select({
+    "@platforms//os:windows": ["@platforms//:incompatible"],
+    "//conditions:default": [],
+})
+
+# Case 1: Test libc malloc can be replaced
+cc_test(
+    name = "test_1_basic",
+    size = "small",
+    srcs = ["test_basic.c"],
+    malloc = "@jemalloc",
+)
+
+# Case 2: Test that the jemalloc API can be used under any prefix
+cc_test(
+    name = "test_2_api",
+    size = "small",
+    srcs = ["test_api.c"],
+    malloc = "@jemalloc",
+)
+
+# Case 3: Test convenience rule can modify the library build settings
+jemalloc(
+    name = "jemalloc_custom",
+    cache_oblivious = "False",
+    cxx = "False",
+    log = "True",
+    stats = "False",
+    without_export = "False",
+)
+
+cc_test(
+    name = "test_3_config",
+    size = "small",
+    srcs = ["test_basic.c"],
+    malloc = ":jemalloc_custom",
+)
+
+# Case 4: Optional features are gated by config settings
+cc_test(
+    name = "test_4_requires_stats",
+    size = "small",
+    srcs = ["test_api.c"],
+    args = ["--expect-stats-unavailable"],
+    malloc = ":jemalloc_custom",
+)
+
+# Case 5: On macOS the default prefix is je_, so jemalloc reads JE_MALLOC_CONF
+cc_test(
+    name = "test_5_macos_default_prefix",
+    size = "small",
+    srcs = ["test_conf.c"],
+    env = {"JE_MALLOC_CONF": "narenas:3"},
+    malloc = "@jemalloc",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+# Case 6: jemalloc() keeps the platform's default prefix when its jemalloc_prefix is unset
+cc_test(
+    name = "test_6_macos_default_prefix_config",
+    size = "small",
+    srcs = ["test_conf.c"],
+    env = {"JE_MALLOC_CONF": "narenas:3"},
+    malloc = ":jemalloc_custom",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+# Case 7: An explicit prefix renames the API and the MALLOC_CONF environment variable on every platform
+jemalloc(
+    name = "jemalloc_prefixed",
+    jemalloc_prefix = "my_",
+)
+
+cc_test(
+    name = "test_7_prefix",
+    size = "small",
+    srcs = ["test_conf.c"],
+    env = {"MY_MALLOC_CONF": "narenas:3"},
+    malloc = ":jemalloc_prefixed",
+)
+
+# Case 8: Plain malloc reaches jemalloc under the platform's default prefix, and on macOS through jemalloc_zone
+cc_test(
+    name = "test_8_malloc",
+    size = "small",
+    srcs = ["test_malloc.c"],
+    # On macOS this links the archive, as a cc_binary does by default, which is where the zone was dropped; elsewhere
+    # the test keeps the default link.
+    linkstatic = select({
+        "@platforms//os:macos": True,
+        "//conditions:default": False,
+    }),
+    malloc = "@jemalloc",
+    target_compatible_with = _MALLOC_REPLACED,
+)
+
+# Case 9: The same through a jemalloc() build without stats
+cc_test(
+    name = "test_9_malloc_config",
+    size = "small",
+    srcs = ["test_malloc.c"],
+    # On macOS this links the archive, as a cc_binary does by default, which is where the zone was dropped; elsewhere
+    # the test keeps the default link.
+    linkstatic = select({
+        "@platforms//os:macos": True,
+        "//conditions:default": False,
+    }),
+    malloc = ":jemalloc_custom",
+    target_compatible_with = _MALLOC_REPLACED,
+)
+
+# Case 10: On macOS an application may define its own global operator new/delete, every overload it calls, over
+# jemalloc's zone. Linking the whole archive to keep the zone would also force jemalloc's operators into the link, and
+# fail on duplicate symbols.
+cc_test(
+    name = "test_10_macos_custom_operators",
+    size = "small",
+    srcs = ["test_custom_operators.cc"],
+    # links the archive, as a cc_binary does by default
+    linkstatic = True,
+    malloc = "@jemalloc",
+    target_compatible_with = ["@platforms//os:macos"],
+)

@@ -1,0 +1,290 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:native_binary.bzl", "native_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("//include/jemalloc/internal:private_namespace.bzl", "private_namespace")
+load("//include/jemalloc/internal:public_symbols.bzl", "public_symbols", "public_symbols_header", "symbol_list")
+load("//include/jemalloc/internal:symbols.bzl", "ALL_PUBLIC_SYMBOLS", "ALL_WRAP_SYMBOLS", "OPTIONAL_PUBLIC_SYMBOLS", "OPTIONAL_WRAP_SYMBOLS", "SYM_PREFIX")
+load("//tools:transition.bzl", "CPU", "PLATFORM", "transition_default_constraints")
+load("//tools:version.bzl", "UPSTREAM_VERSION", "VERSION")
+load(":fidelity.bzl", "fidelity_test", "private_namespace_fidelity_test")
+
+write_file(
+    name = "upstream_version",
+    testonly = True,
+    out = "upstream_version.txt",
+    # The trailing "" ends the file with a newline, as the VERSION file does.
+    content = [
+        UPSTREAM_VERSION,
+        "",
+    ],
+    newline = "unix",
+)
+
+diff_test(
+    name = "version_test",
+    file1 = ":upstream_version",
+    file2 = "//:VERSION",
+)
+
+# Each optional symbol's macro, as SYMBOL=MACRO entries
+_PUBLIC_MACROS = ",".join([symbol + "=" + coupling[1] for symbol, coupling in OPTIONAL_PUBLIC_SYMBOLS.items()])
+
+_WRAP_MACROS = ",".join([symbol + "=" + coupling[1] for symbol, coupling in OPTIONAL_WRAP_SYMBOLS.items()])
+
+native_test(
+    name = "configure_symbols_test",
+    size = "small",
+    src = "@gawk",
+    args = [
+        "-f",
+        "$(rootpath :configure_symbols.awk)",
+        "-vgid=" + VERSION.gid,
+        "-vpublic=" + ",".join(ALL_PUBLIC_SYMBOLS),
+        "-vwrap=" + ",".join(ALL_WRAP_SYMBOLS),
+        "-vpublic_macros=" + _PUBLIC_MACROS,
+        "-vwrap_macros=" + _WRAP_MACROS,
+        "$(rootpath //:configure.ac)",
+    ],
+    data = [
+        ":configure_symbols.awk",
+        "//:configure.ac",
+    ],
+)
+
+fidelity_test(
+    name = "jemalloc_mangle_test",
+    srcs = ["//include/jemalloc/internal:public_symbols"],
+    generated = "//include/jemalloc:jemalloc_mangle",
+    script = "//include/jemalloc:jemalloc_mangle.sh",
+    script_args = [
+        "include/jemalloc/internal/public_symbols.txt",
+        "je_",
+    ],
+)
+
+fidelity_test(
+    name = "jemalloc_mangle_jet_test",
+    srcs = ["//include/jemalloc/internal:public_symbols"],
+    generated = "//include/jemalloc:jemalloc_mangle_jet",
+    script = "//include/jemalloc:jemalloc_mangle.sh",
+    script_args = [
+        "include/jemalloc/internal/public_symbols.txt",
+        "jet_",
+    ],
+)
+
+fidelity_test(
+    name = "jemalloc_rename_test",
+    srcs = ["//include/jemalloc/internal:public_symbols"],
+    generated = "//include/jemalloc:jemalloc_rename",
+    script = "//include/jemalloc:jemalloc_rename.sh",
+    script_args = ["include/jemalloc/internal/public_symbols.txt"],
+)
+
+fidelity_test(
+    name = "public_namespace_test",
+    srcs = ["//include/jemalloc/internal:public_symbols"],
+    generated = "//include/jemalloc/internal:public_namespace",
+    script = "//include/jemalloc/internal:public_namespace.sh",
+    script_args = ["include/jemalloc/internal/public_symbols.txt"],
+)
+
+fidelity_test(
+    name = "public_unnamespace_test",
+    srcs = ["//include/jemalloc/internal:public_symbols"],
+    generated = "//include/jemalloc/internal:public_unnamespace",
+    script = "//include/jemalloc/internal:public_unnamespace.sh",
+    script_args = ["include/jemalloc/internal/public_symbols.txt"],
+)
+
+fidelity_test(
+    name = "jemalloc_test",
+    srcs = [
+        "//include/jemalloc:jemalloc_defs",
+        "//include/jemalloc:jemalloc_macros",
+        "//include/jemalloc:jemalloc_mangle",
+        "//include/jemalloc:jemalloc_protos",
+        "//include/jemalloc:jemalloc_rename",
+        "//include/jemalloc:jemalloc_typedefs",
+    ],
+    generated = "//include/jemalloc",
+    script = "//include/jemalloc:jemalloc.sh",
+    script_args = [""],
+)
+
+_MANGLING_MAP = "malloc:my malloc,free:,  unknown:u_x,calloc:a:b,"
+
+_MANGLING_SYMBOLS = [
+    "calloc",
+    "free",
+    "malloc",
+    "mallocx",
+]
+
+symbol_list(
+    name = "public_syms_mangling",
+    testonly = True,
+    out = "public_syms_mangling.txt",
+    symbols = _MANGLING_SYMBOLS,
+    tags = ["manual"],
+)
+
+public_symbols(
+    name = "public_symbols_mangling",
+    testonly = True,
+    out = "public_symbols_mangling.txt",
+    mangling_map = _MANGLING_MAP,
+    symbols = ":public_syms_mangling",
+    tags = ["manual"],
+)
+
+fidelity_test(
+    name = "public_symbols_mangling_test",
+    srcs = ["//:configure.ac"],
+    generated = ":public_symbols_mangling",
+    script = ":configure_commands.sh",
+    script_args = [
+        "configure.ac",
+        "include/jemalloc/internal/public_symbols.txt",
+        "mangling_map=" + _MANGLING_MAP,
+        "public_syms=" + " ".join(_MANGLING_SYMBOLS),
+        "JEMALLOC_PREFIX=:je_",
+    ],
+    settings = {"//settings/flags:jemalloc_prefix": ":je_"},
+)
+
+public_symbols_header(
+    name = "jemalloc_rename_mangling",
+    testonly = True,
+    out = "jemalloc_rename_mangling.h",
+    public_symbols = ":public_symbols_mangling",
+    script = "jemalloc_rename.sh",
+    tags = ["manual"],
+)
+
+fidelity_test(
+    name = "jemalloc_rename_mangling_test",
+    srcs = [":public_symbols_mangling"],
+    generated = ":jemalloc_rename_mangling",
+    script = "//include/jemalloc:jemalloc_rename.sh",
+    script_args = ["tools/fidelity/public_symbols_mangling.txt"],
+    settings = {"//settings/flags:jemalloc_prefix": ":je_"},
+)
+
+private_namespace_fidelity_test(
+    name = "private_namespace_test",
+    namespace = "//include/jemalloc/internal:private_namespace",
+    sym_prefix = SYM_PREFIX,
+)
+
+private_namespace_fidelity_test(
+    name = "private_namespace_jet_test",
+    namespace = "//include/jemalloc/internal:private_namespace_jet",
+    sym_prefix = SYM_PREFIX,
+)
+
+# The fixtures' public_syms and wrap_syms
+symbol_list(
+    name = "malloc_public_syms",
+    testonly = True,
+    out = "malloc_public_syms.txt",
+    symbols = ["malloc"],
+    tags = ["manual"],
+)
+
+symbol_list(
+    name = "pthread_create_wrap_syms",
+    testonly = True,
+    out = "pthread_create_wrap_syms.txt",
+    symbols = ["pthread_create"],
+    tags = ["manual"],
+)
+
+private_namespace(
+    name = "private_namespace_fixture",
+    testonly = True,
+    out = "private_namespace_fixture.h",
+    listing = ":private_namespace_fixture.nm",
+    public_symbols = ":malloc_public_syms",
+    sym_prefix = "",
+    tags = ["manual"],
+    wrap_symbols = ":pthread_create_wrap_syms",
+)
+
+private_namespace_fidelity_test(
+    name = "private_namespace_fixture_test",
+    namespace = ":private_namespace_fixture",
+    # The listing defines the unprefixed malloc.
+    settings = {"//settings/flags:jemalloc_prefix": ""},
+    sym_prefix = "",
+)
+
+private_namespace(
+    name = "private_namespace_fixture_macho",
+    testonly = True,
+    out = "private_namespace_fixture_macho.h",
+    listing = ":private_namespace_fixture_macho.nm",
+    public_symbols = ":malloc_public_syms",
+    sym_prefix = "_",
+    tags = ["manual"],
+    wrap_symbols = ":pthread_create_wrap_syms",
+)
+
+private_namespace_fidelity_test(
+    name = "private_namespace_fixture_macho_test",
+    namespace = ":private_namespace_fixture_macho",
+    # The listing defines the unprefixed malloc.
+    settings = {"//settings/flags:jemalloc_prefix": ""},
+    sym_prefix = "_",
+)
+
+private_namespace(
+    name = "private_namespace_fixture_dumpbin",
+    testonly = True,
+    out = "private_namespace_fixture_dumpbin.h",
+    listing = ":private_namespace_fixture_dumpbin.nm",
+    public_symbols = ":malloc_public_syms",
+    sym_prefix = "",
+    tags = ["manual"],
+    wrap_symbols = ":pthread_create_wrap_syms",
+)
+
+private_namespace_fidelity_test(
+    name = "private_namespace_fixture_dumpbin_test",
+    namespace = ":private_namespace_fixture_dumpbin",
+    # The listing defines the unprefixed malloc, in dumpbin format only.
+    settings = {"//settings/flags:jemalloc_prefix": ""},
+    sym_prefix = "",
+)
+
+filegroup(
+    name = "private_namespace_export_syms",
+    srcs = ["//include/jemalloc/internal:private_namespace"],
+    output_group = "export_syms",
+    tags = ["manual"],
+)
+
+# The generated headers, with public_symbols.txt and export_syms, the symbol lists configure writes
+filegroup(
+    name = "configured_headers",
+    srcs = [
+        ":private_namespace_export_syms",
+        "//include/jemalloc",
+        "//include/jemalloc:jemalloc_mangle",
+        "//include/jemalloc:jemalloc_mangle_jet",
+        "//include/jemalloc:jemalloc_rename",
+        "//include/jemalloc/internal:jemalloc_internal_defs",
+        "//include/jemalloc/internal:private_namespace",
+        "//include/jemalloc/internal:public_namespace",
+        "//include/jemalloc/internal:public_symbols",
+        "//include/jemalloc/internal:public_unnamespace",
+    ],
+    tags = ["manual"],
+)
+
+transition_default_constraints(
+    name = "generated_headers",
+    src = ":configured_headers",
+    cpu = CPU,
+    platform = PLATFORM,
+)

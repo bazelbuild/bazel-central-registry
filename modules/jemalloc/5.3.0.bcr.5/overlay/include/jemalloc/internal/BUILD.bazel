@@ -1,0 +1,1734 @@
+load("@bazel_lib//lib:expand_template.bzl", "expand_template")
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//licenses/rules:license_kind.bzl", "license_kind")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros", "utils")
+load("//tools:cc.bzl", "CONLYOPTS", "CXXOPTS")
+load("//tools:configure_host.bzl", "HOST_CC_DEPS", "HOST_CPPFLAGS", "HOST_LIBS")
+load("//tools:transition.bzl", "CPU", "PLATFORM")
+load(":lg_hugepage.bzl", "checked_lg_hugepage")
+load(":private_namespace.bzl", "jemalloc_private_namespace", "private_namespace", "private_namespace_leak_test")
+load(":public_symbols.bzl", "public_symbols", "public_symbols_header", "symbol_list")
+load(":symbols.bzl", "OPTIONAL_PUBLIC_SYMBOLS", "OPTIONAL_WRAP_SYMBOLS", "PUBLIC_SYMBOLS", "SYM_PREFIX", "WRAP_SYMBOLS")
+
+license_kind(
+    name = "public_domain",
+    full_name = "Public Domain",
+    identifier = "LicenseRef-scancode-public-domain",
+)
+
+license(
+    name = "murmurhash3_license",
+    kind = ":public_domain",
+    text = "LICENSE.murmurhash3",
+)
+
+# hash.h adapts MurmurHash3 and states no upstream version.
+package_metadata(
+    name = "murmurhash3_metadata",
+    attributes = [":murmurhash3_license"],
+    purl = "pkg:github/aappleby/smhasher#src/MurmurHash3.cpp",
+)
+
+exports_files(
+    [
+        "private_namespace.sh",
+        "private_symbols.sh",
+        "public_namespace.sh",
+        "public_unnamespace.sh",
+    ],
+    visibility = ["//tools/fidelity:__pkg__"],
+)
+
+filegroup(
+    name = "murmurhash3_headers",
+    srcs = ["hash.h"],
+    applicable_licenses = [
+        ":murmurhash3_metadata",
+        "//:package_metadata",
+    ],
+)
+
+cc_library(
+    name = "internal",
+    hdrs = [
+        "activity_callback.h",
+        "arena_externs.h",
+        "arena_inlines_a.h",
+        "arena_inlines_b.h",
+        "arena_stats.h",
+        "arena_structs.h",
+        "arena_types.h",
+        "assert.h",
+        "atomic.h",
+        "atomic_c11.h",
+        "atomic_gcc_atomic.h",
+        "atomic_gcc_sync.h",
+        "atomic_msvc.h",
+        "background_thread_externs.h",
+        "background_thread_inlines.h",
+        "background_thread_structs.h",
+        "base.h",
+        "bin.h",
+        "bin_info.h",
+        "bin_stats.h",
+        "bin_types.h",
+        "bit_util.h",
+        "bitmap.h",
+        "buf_writer.h",
+        "cache_bin.h",
+        "ckh.h",
+        "counter.h",
+        "ctl.h",
+        "decay.h",
+        "div.h",
+        "ecache.h",
+        "edata.h",
+        "edata_cache.h",
+        "ehooks.h",
+        "emap.h",
+        "emitter.h",
+        "eset.h",
+        "exp_grow.h",
+        "extent.h",
+        "extent_dss.h",
+        "extent_mmap.h",
+        "fb.h",
+        "fxp.h",
+        "hook.h",
+        "hpa.h",
+        "hpa_hooks.h",
+        "hpa_opts.h",
+        "hpdata.h",
+        "inspect.h",
+        "jemalloc_internal_decls.h",
+        "jemalloc_internal_externs.h",
+        "jemalloc_internal_includes.h",
+        "jemalloc_internal_inlines_a.h",
+        "jemalloc_internal_inlines_b.h",
+        "jemalloc_internal_inlines_c.h",
+        "jemalloc_internal_macros.h",
+        "jemalloc_internal_types.h",
+        "large_externs.h",
+        "lockedint.h",
+        "log.h",
+        "malloc_io.h",
+        "mpsc_queue.h",
+        "mutex.h",
+        "mutex_prof.h",
+        "nstime.h",
+        "pa.h",
+        "pac.h",
+        "pages.h",
+        "pai.h",
+        "peak.h",
+        "peak_event.h",
+        "ph.h",
+        "prng.h",
+        "prof_data.h",
+        "prof_externs.h",
+        "prof_hook.h",
+        "prof_inlines.h",
+        "prof_log.h",
+        "prof_recent.h",
+        "prof_stats.h",
+        "prof_structs.h",
+        "prof_sys.h",
+        "prof_types.h",
+        "psset.h",
+        "ql.h",
+        "qr.h",
+        "quantum.h",
+        "rb.h",
+        "rtree.h",
+        "rtree_tsd.h",
+        "safety_check.h",
+        "san.h",
+        "san_bump.h",
+        "sc.h",
+        "sec.h",
+        "sec_opts.h",
+        "seq.h",
+        "slab_data.h",
+        "smoothstep.h",
+        "spin.h",
+        "stats.h",
+        "sz.h",
+        "tcache_externs.h",
+        "tcache_inlines.h",
+        "tcache_structs.h",
+        "tcache_types.h",
+        "test_hooks.h",
+        "thread_event.h",
+        "ticker.h",
+        "tsd.h",
+        "tsd_generic.h",
+        "tsd_malloc_thread_cleanup.h",
+        "tsd_tls.h",
+        "tsd_types.h",
+        "tsd_win.h",
+        "typed_list.h",
+        "util.h",
+        "witness.h",
+        ":murmurhash3_headers",
+    ] + [
+        ":jemalloc_internal_defs",
+        ":jemalloc_preamble",
+        ":public_namespace",
+    ] + select({
+        "//settings:no_private_namespace": [],
+        "//conditions:default": [":private_namespace"],
+    }) + select({
+        # jemalloc_preamble.h includes private_namespace_jet.h only under JEMALLOC_JET
+        ":jet_private_namespace": [":private_namespace_jet"],
+        "//conditions:default": [],
+    }),
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+)
+
+expand_template(
+    name = "jemalloc_preamble",
+    out = "jemalloc_preamble.h",
+    stamp = 0,
+    substitutions = {
+        "@install_suffix@": "",
+        "@private_namespace@": "$(JEMALLOC_PRIVATE_NAMESPACE)",
+    },
+    template = "jemalloc_preamble.h.in",
+    toolchains = [":jemalloc_private_namespace"],
+)
+
+jemalloc_private_namespace(
+    name = "jemalloc_private_namespace",
+)
+
+checked_lg_hugepage(
+    name = "lg_hugepage",
+)
+
+selects.config_setting_group(
+    name = "jet_private_namespace",
+    match_all = [
+        "//settings:jet",
+        "//settings:with_private_namespace",
+    ],
+)
+
+# configure.ac checks for the glibc hooks only on its glibc host, Linux other than Android, and defines them only without
+# a jemalloc prefix.
+config_setting(
+    name = "override_glibc_allocator",
+    constraint_values = ["@platforms//os:linux"],
+    flag_values = {"//settings/flags:jemalloc_prefix_resolved": ""},
+)
+
+config_setting(
+    name = "windows_lazy_lock",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {"//settings/flags:enable_lazy_lock": "yes"},
+    visibility = ["//visibility:private"],
+)
+
+config_setting(
+    name = "android_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:android",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+config_setting(
+    name = "android_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:android",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+config_setting(
+    name = "linux_x86_32",
+    constraint_values = [
+        "@platforms//cpu:x86_32",
+        "@platforms//os:linux",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+autoconf(
+    name = "jemalloc_internal_defs_checks",
+    build_settings = [
+        checks.AC_BUILD_SETTING(
+            name = "JEMALLOC_PRIVATE_NAMESPACE",
+            define = "JEMALLOC_PRIVATE_NAMESPACE",
+            target = ":jemalloc_private_namespace",
+            unquote = True,
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "config_malloc_conf",
+            define = "JEMALLOC_CONFIG_MALLOC_CONF",
+            target = "//settings/flags:malloc_conf",
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "LG_PAGE",
+            define = "LG_PAGE",
+            target = "//settings/platform:lg_page",
+            unquote = True,
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "je_cv_lg_hugepage",
+            define = "LG_HUGEPAGE",
+            target = ":lg_hugepage",
+            unquote = True,
+        ),
+    ],
+    cc_deps = HOST_CC_DEPS + HOST_LIBS,
+    checks = [
+        checks.AC_TRY_COMPILE(
+            name = "ac_cv_c_compiler_gnu",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "#ifndef __GNUC__",
+                    "       choke me",
+                    "#endif",
+                ],
+            ),
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "je_cv_msvc",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "#ifndef _MSC_VER",
+                    "  int fail[-1];",
+                    "#endif",
+                ],
+            ),
+            requires = ["!ac_cv_c_compiler_gnu"],
+        ),
+        # configure.ac defines it when a GNU compiler accepts -std=gnu11 (or gnu99). Every check here compiles with
+        # CONLYOPTS, the standard jemalloc's sources declare, so a GNU compiler that reaches this point accepted it.
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAS_RESTRICT",
+            condition = "ac_cv_c_compiler_gnu",
+        ),
+    ] + select({
+        # configure.ac's host table defines it for Android whatever the probe finds.
+        "@platforms//os:android": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_C11_ATOMICS", "")],
+        "//conditions:default": [
+            checks.AC_TRY_LINK(
+                name = "je_cv_c11_atomics",
+                code = utils.AC_LANG_PROGRAM(
+                    [
+                        "#include <stdint.h>",
+                        "#if (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__)",
+                        "#include <stdatomic.h>",
+                        "#else",
+                        "#error Atomics not available",
+                        "#endif",
+                    ],
+                    [
+                        "uint64_t *p = (uint64_t *)0;",
+                        "uint64_t x = 1;",
+                        "volatile atomic_uint_least64_t *a = (volatile atomic_uint_least64_t *)p;",
+                        "uint64_t r = atomic_fetch_add(a, x) + x;",
+                        "return r == 0;",
+                    ],
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_C11_ATOMICS",
+                condition = "je_cv_c11_atomics",
+            ),
+        ],
+    }) + [
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_atomic_atomics",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "int x = 0;",
+                    "int val = 1;",
+                    "int y = __atomic_fetch_add(&x, val, __ATOMIC_RELAXED);",
+                    "int after_add = x;",
+                    "return after_add == 1;",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_GCC_ATOMIC_ATOMICS",
+            condition = "je_cv_gcc_atomic_atomics",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_u8_atomic_atomics",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "unsigned char x = 0;",
+                    "int val = 1;",
+                    "int y = __atomic_fetch_add(&x, val, __ATOMIC_RELAXED);",
+                    "int after_add = (int)x;",
+                    "return after_add == 1;",
+                ],
+            ),
+            requires = ["je_cv_gcc_atomic_atomics"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_GCC_U8_ATOMIC_ATOMICS",
+            condition = "je_cv_gcc_u8_atomic_atomics",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_sync_atomics",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "int x = 0;",
+                    "int before_add = __sync_fetch_and_add(&x, 1);",
+                    "int after_add = x;",
+                    "return (before_add == 0) && (after_add == 1);",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_GCC_SYNC_ATOMICS",
+            condition = "je_cv_gcc_sync_atomics",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_u8_sync_atomics",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "unsigned char x = 0;",
+                    "int before_add = __sync_fetch_and_add(&x, 1);",
+                    "int after_add = (int)x;",
+                    "return (before_add == 0) && (after_add == 1);",
+                ],
+            ),
+            requires = ["je_cv_gcc_sync_atomics"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_GCC_U8_SYNC_ATOMICS",
+            condition = "je_cv_gcc_u8_sync_atomics",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_builtin_clz",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "{",
+                    "        unsigned x = 0;",
+                    "        int y = __builtin_clz(x);",
+                    "}",
+                    "{",
+                    "        unsigned long x = 0;",
+                    "        int y = __builtin_clzl(x);",
+                    "}",
+                    "{",
+                    "        unsigned long long x = 0;",
+                    "        int y = __builtin_clzll(x);",
+                    "}",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_BUILTIN_CLZ",
+            condition = "je_cv_builtin_clz",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_builtin_unreachable",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "void foo (void) {",
+                    "  __builtin_unreachable();",
+                    "}",
+                ],
+                [
+                    "{",
+                    "        foo();",
+                    "}",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_INTERNAL_UNREACHABLE",
+            condition = "je_cv_gcc_builtin_unreachable",
+            if_false = "abort",
+            if_true = "__builtin_unreachable",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_builtin_ffsl",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <stdio.h>",
+                    "#include <strings.h>",
+                    "#include <string.h>",
+                ],
+                [
+                    "{",
+                    "        int rv = __builtin_ffsl(0x08);",
+                    "        printf(\"%d\\n\", rv);",
+                    "}",
+                ],
+            ),
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_function_ffsl",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <stdio.h>",
+                    "#include <strings.h>",
+                    "#include <string.h>",
+                ],
+                [
+                    "{",
+                    "        int rv = ffsl(0x08);",
+                    "        printf(\"%d\\n\", rv);",
+                    "}",
+                ],
+            ),
+            requires = ["!je_cv_gcc_builtin_ffsl"],
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "ffsl_available",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "Cannot build without ffsl(3) or __builtin_ffsl()",
+            requires = ["je_cv_gcc_builtin_ffsl || je_cv_function_ffsl"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_INTERNAL_FFSLL",
+            condition = "je_cv_gcc_builtin_ffsl",
+            if_false = "ffsll",
+            if_true = "__builtin_ffsll",
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_INTERNAL_FFSL",
+            condition = "je_cv_gcc_builtin_ffsl",
+            if_false = "ffsl",
+            if_true = "__builtin_ffsl",
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_INTERNAL_FFS",
+            condition = "je_cv_gcc_builtin_ffsl",
+            if_false = "ffs",
+            if_true = "__builtin_ffs",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_gcc_builtin_popcountl",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <stdio.h>",
+                    "#include <strings.h>",
+                    "#include <string.h>",
+                ],
+                [
+                    "{",
+                    "        int rv = __builtin_popcountl(0x08);",
+                    "        printf(\"%d\\n\", rv);",
+                    "}",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_INTERNAL_POPCOUNT",
+            condition = "je_cv_gcc_builtin_popcountl",
+            if_true = "__builtin_popcount",
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_INTERNAL_POPCOUNTL",
+            condition = "je_cv_gcc_builtin_popcountl",
+            if_true = "__builtin_popcountl",
+        ),
+    ] + select({
+        "//settings/flags:no_jemalloc_prefix": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_IS_MALLOC", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:export": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_EXPORT", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:debug": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_DEBUG", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:stats": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_STATS", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:experimental_smallocx_api": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_EXPERIMENTAL_SMALLOCX_API", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:prof_gcc": [
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROF", ""),
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROF_GCC", ""),
+        ],
+        "//settings/flags:prof_libgcc": [
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROF", ""),
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROF_LIBGCC", ""),
+        ],
+        "//settings/flags:prof_libunwind": [
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROF", ""),
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROF_LIBUNWIND", ""),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:fill": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_FILL", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:xmalloc": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_XMALLOC", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:cache_oblivious": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_CACHE_OBLIVIOUS", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:log": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_LOG", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:uaf_detection": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_UAF_DETECTION", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:zone_allocator": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_ZONE", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:cxx": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_ENABLE_CXX", "")],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:lazy_lock": [
+            checks.AC_TRY_COMPILE(
+                name = "lazy_lock_dlsym",
+                code = utils.AC_LANG_PROGRAM("", ""),
+                error = "Missing dlsym support: lazy-lock cannot be enabled.",
+                requires = ["ac_cv_func_dlsym || ac_cv_lib_dl_dlsym"],
+            ),
+            checks.AC_DEFINE_UNQUOTED("JEMALLOC_LAZY_LOCK", ""),
+        ],
+        # configure.ac forces lazy locking off for the pecoff ABI.
+        ":windows_lazy_lock": [],
+        "//conditions:default": [],
+    }) + select({
+        cpu: [
+            checks.AC_DEFINE_UNQUOTED("HAVE_CPU_SPINWAIT", "1"),
+            checks.AC_TRY_LINK(
+                name = "je_cv_isb",
+                code = utils.AC_LANG_PROGRAM("", "__asm__ volatile(\"isb\"); return 0;"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "CPU_SPINWAIT",
+                condition = "je_cv_isb",
+                if_false = "",
+                if_true = "__asm__ volatile(\"isb\")",
+            ),
+        ]
+        for cpu in [
+            "@platforms//cpu:aarch32",
+            "@platforms//cpu:aarch64",
+            "@platforms//cpu:arm64_32",
+            "@platforms//cpu:arm64e",
+            "@platforms//cpu:armv6-m",
+            "@platforms//cpu:armv7",
+            "@platforms//cpu:armv7-m",
+            "@platforms//cpu:armv7e-m",
+            "@platforms//cpu:armv7e-mf",
+            "@platforms//cpu:armv7k",
+            "@platforms//cpu:armv8-m",
+            "@platforms//cpu:cortex-r52",
+            "@platforms//cpu:cortex-r82",
+        ]
+    } | {
+        cpu: [checks.AC_DEFINE_UNQUOTED("HAVE_CPU_SPINWAIT", "1")]
+        for cpu in [
+            "@platforms//cpu:x86_32",
+            "@platforms//cpu:x86_64",
+        ]
+    } | {"//conditions:default": [
+        checks.AC_DEFINE_UNQUOTED("HAVE_CPU_SPINWAIT", "0"),
+        checks.AC_DEFINE_UNQUOTED("CPU_SPINWAIT", ""),
+    ]}) + select({
+        "@platforms//os:android": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_PURGE_MADVISE_DONTNEED_ZEROS", "")],
+        "@platforms//os:linux": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_PURGE_MADVISE_DONTNEED_ZEROS", "")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:android": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_HAS_ALLOCA_H", "")],
+        "@platforms//os:linux": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_HAS_ALLOCA_H", "")],
+        "@platforms//os:qnx": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_HAS_ALLOCA_H", "")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:android": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROC_SYS_VM_OVERCOMMIT_MEMORY", "")],
+        "@platforms//os:linux": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_PROC_SYS_VM_OVERCOMMIT_MEMORY", "")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:freebsd": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_SYSCTL_VM_OVERCOMMIT", "")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:android": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_THREADED_INIT", "")],
+        "@platforms//os:linux": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_THREADED_INIT", "")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_MAPS_COALESCE", "")],
+    }) + select({
+        # configure.ac's host table retains where LG_SIZEOF_PTR is 3, which an MSVC compiler's LG_SIZEOF_PTR_WIN is not.
+        os: [
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_RETAIN",
+                condition = "ac_cv_sizeof_void_p==8 && !je_cv_msvc",
+            ),
+        ]
+        for os in [
+            "@platforms//os:android",
+            "@platforms//os:linux",
+            "@platforms//os:windows",
+        ]
+    } | {
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:android": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_ZERO_REALLOC_DEFAULT_FREE", "")],
+        "@platforms//os:linux": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_ZERO_REALLOC_DEFAULT_FREE", "")],
+        "@platforms//os:windows": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_ZERO_REALLOC_DEFAULT_FREE", "")],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_HAVE_PTHREAD", "")],
+    }) + [
+        checks.AC_TRY_LINK(
+            name = "je_cv_os_unfair_lock",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <os/lock.h>",
+                    "#include <AvailabilityMacros.h>",
+                ],
+                [
+                    "\t#if MAC_OS_X_VERSION_MIN_REQUIRED < 101200",
+                    "\t#error \"os_unfair_lock is not supported\"",
+                    "\t#else",
+                    "\tos_unfair_lock lock = OS_UNFAIR_LOCK_INIT;",
+                    "\tos_unfair_lock_lock(&lock);",
+                    "\tos_unfair_lock_unlock(&lock);",
+                    "\t#endif",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_OS_UNFAIR_LOCK",
+            condition = "je_cv_os_unfair_lock",
+        ),
+    ] + select({
+        "@platforms//os:ios": [],
+        "@platforms//os:macos": [],
+        "@platforms//os:tvos": [],
+        "@platforms//os:visionos": [],
+        "@platforms//os:watchos": [],
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_BACKGROUND_THREAD",
+                condition = "!je_cv_os_unfair_lock",
+            ),
+        ],
+    }) + [
+        checks.AC_CHECK_FUNC(
+            "_malloc_thread_cleanup",
+            code = utils.AC_LANG_FUNC_LINK_TRY("_malloc_thread_cleanup"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_MALLOC_THREAD_CLEANUP",
+            condition = "ac_cv_func__malloc_thread_cleanup",
+        ),
+        checks.AC_CHECK_FUNC(
+            "_pthread_mutex_init_calloc_cb",
+            code = utils.AC_LANG_FUNC_LINK_TRY("_pthread_mutex_init_calloc_cb"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_MUTEX_INIT_CB",
+            condition = "ac_cv_func__pthread_mutex_init_calloc_cb",
+        ),
+    ] + select({
+        # configure.ac's host table sets force_tls=0 for these, and _malloc_thread_cleanup overrides it with force_tls=1.
+        os: [
+            checks.AC_TRY_COMPILE(
+                name = "enable_tls",
+                code = utils.AC_LANG_PROGRAM(
+                    "    __thread int x;",
+                    [
+                        "    x = 42;",
+                        "",
+                        "    return 0;",
+                    ],
+                ),
+                requires = ["ac_cv_func__malloc_thread_cleanup"],
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_TLS",
+                condition = "enable_tls",
+            ),
+        ]
+        for os in [
+            "@platforms//os:android",
+            "@platforms//os:ios",
+            "@platforms//os:macos",
+            "@platforms//os:openbsd",
+            "@platforms//os:qnx",
+            "@platforms//os:tvos",
+            "@platforms//os:visionos",
+            "@platforms//os:watchos",
+            "@platforms//os:windows",
+        ]
+    } | {"//conditions:default": [
+        checks.AC_TRY_COMPILE(
+            name = "enable_tls",
+            code = utils.AC_LANG_PROGRAM(
+                "    __thread int x;",
+                [
+                    "    x = 42;",
+                    "",
+                    "    return 0;",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_TLS",
+            condition = "enable_tls",
+        ),
+    ]}) + [
+        checks.AC_CHECK_FUNC(
+            "sbrk",
+            code = utils.AC_LANG_FUNC_LINK_TRY("sbrk"),
+        ),
+    ] + select({
+        # configure.ac's host table sets sbrk_deprecated for these.
+        "@platforms//os:ios": [],
+        "@platforms//os:macos": [],
+        "@platforms//os:tvos": [],
+        "@platforms//os:visionos": [],
+        "@platforms//os:watchos": [],
+        "//conditions:default": [
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_DSS",
+                condition = "ac_cv_func_sbrk",
+            ),
+        ],
+    }) + select({
+        "//settings/flags:no_jemalloc_prefix": [
+            checks.AC_CHECK_FUNC(
+                "__libc_calloc",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__libc_calloc"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___LIBC_CALLOC",
+                condition = "ac_cv_func___libc_calloc",
+            ),
+            checks.AC_CHECK_FUNC(
+                "__libc_free",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__libc_free"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___LIBC_FREE",
+                condition = "ac_cv_func___libc_free",
+            ),
+            checks.AC_CHECK_FUNC(
+                "__libc_malloc",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__libc_malloc"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___LIBC_MALLOC",
+                condition = "ac_cv_func___libc_malloc",
+            ),
+            checks.AC_CHECK_FUNC(
+                "__libc_memalign",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__libc_memalign"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___LIBC_MEMALIGN",
+                condition = "ac_cv_func___libc_memalign",
+            ),
+            checks.AC_CHECK_FUNC(
+                "__libc_realloc",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__libc_realloc"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___LIBC_REALLOC",
+                condition = "ac_cv_func___libc_realloc",
+            ),
+            checks.AC_CHECK_FUNC(
+                "__libc_valloc",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__libc_valloc"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___LIBC_VALLOC",
+                condition = "ac_cv_func___libc_valloc",
+            ),
+            checks.AC_CHECK_FUNC(
+                "__posix_memalign",
+                code = utils.AC_LANG_FUNC_LINK_TRY("__posix_memalign"),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_OVERRIDE___POSIX_MEMALIGN",
+                condition = "ac_cv_func___posix_memalign",
+            ),
+        ],
+        "//conditions:default": [],
+    }) + select({
+        # configure.ac checks the hooks only for its glibc host, which is Linux other than Android.
+        ":override_glibc_allocator": [
+            checks.AC_TRY_LINK(
+                name = "je_cv_glibc_malloc_hook",
+                code = utils.AC_LANG_PROGRAM(
+                    [
+                        "  #include <stddef.h>",
+                        "",
+                        "  extern void (* __free_hook)(void *ptr);",
+                        "  extern void *(* __malloc_hook)(size_t size);",
+                        "  extern void *(* __realloc_hook)(void *ptr, size_t size);",
+                    ],
+                    [
+                        "    void *ptr = 0L;",
+                        "    if (__malloc_hook) ptr = __malloc_hook(1);",
+                        "    if (__realloc_hook) ptr = __realloc_hook(ptr, 2);",
+                        "    if (__free_hook && ptr) __free_hook(ptr);",
+                    ],
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_GLIBC_MALLOC_HOOK",
+                condition = "je_cv_glibc_malloc_hook",
+            ),
+            checks.AC_TRY_LINK(
+                name = "je_cv_glibc_memalign_hook",
+                code = utils.AC_LANG_PROGRAM(
+                    [
+                        "  #include <stddef.h>",
+                        "",
+                        "  extern void *(* __memalign_hook)(size_t alignment, size_t size);",
+                    ],
+                    [
+                        "    void *ptr = 0L;",
+                        "    if (__memalign_hook) ptr = __memalign_hook(16, 7);",
+                    ],
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_GLIBC_MEMALIGN_HOOK",
+                condition = "je_cv_glibc_memalign_hook",
+            ),
+        ],
+        "//conditions:default": [],
+    }) + [
+        checks.AC_CHECK_FUNC(
+            "secure_getenv",
+            code = utils.AC_LANG_FUNC_LINK_TRY("secure_getenv"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_SECURE_GETENV",
+            condition = "ac_cv_func_secure_getenv",
+        ),
+        checks.AC_CHECK_FUNC(
+            "sched_getcpu",
+            code = utils.AC_LANG_FUNC_LINK_TRY("sched_getcpu"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_SCHED_GETCPU",
+            condition = "ac_cv_func_sched_getcpu",
+        ),
+        checks.AC_CHECK_FUNC(
+            "sched_setaffinity",
+            code = utils.AC_LANG_FUNC_LINK_TRY("sched_setaffinity"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_SCHED_SETAFFINITY",
+            condition = "ac_cv_func_sched_setaffinity",
+        ),
+        checks.AC_CHECK_FUNC(
+            "issetugid",
+            code = utils.AC_LANG_FUNC_LINK_TRY("issetugid"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ISSETUGID",
+            condition = "ac_cv_func_issetugid",
+        ),
+        checks.AC_CHECK_FUNC(
+            "memcntl",
+            code = utils.AC_LANG_FUNC_LINK_TRY("memcntl"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_MEMCNTL",
+            condition = "ac_cv_func_memcntl",
+        ),
+    ] + select({
+        "@platforms//os:windows": [],
+        "//conditions:default": macros.AC_CHECK_HEADERS(["dlfcn.h"]) + [
+            checks.AC_CHECK_FUNC(
+                "dlsym",
+                code = utils.AC_LANG_FUNC_LINK_TRY("dlsym"),
+                requires = ["ac_cv_header_dlfcn_h"],
+            ),
+            checks.AC_CHECK_LIB(
+                "dl",
+                "dlsym",
+                requires = [
+                    "ac_cv_header_dlfcn_h",
+                    "!ac_cv_func_dlsym",
+                ],
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_HAVE_DLSYM",
+                condition = "ac_cv_func_dlsym || ac_cv_lib_dl_dlsym",
+            ),
+            checks.AC_TRY_LINK(
+                name = "je_cv_pthread_atfork",
+                code = utils.AC_LANG_PROGRAM(
+                    "#include <pthread.h>",
+                    "  pthread_atfork((void *)0, (void *)0, (void *)0);",
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_HAVE_PTHREAD_ATFORK",
+                condition = "je_cv_pthread_atfork",
+            ),
+            checks.AC_TRY_LINK(
+                name = "je_cv_pthread_setname_np",
+                code = utils.AC_LANG_PROGRAM(
+                    "#include <pthread.h>",
+                    "  pthread_setname_np(pthread_self(), \"setname_test\");",
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_HAVE_PTHREAD_SETNAME_NP",
+                condition = "je_cv_pthread_setname_np",
+            ),
+            checks.AC_TRY_LINK(
+                name = "je_cv_pthread_getname_np",
+                code = utils.AC_LANG_PROGRAM(
+                    [
+                        "#include <pthread.h>",
+                        "#include <stdlib.h>",
+                    ],
+                    [
+                        "  {",
+                        "  \tchar *name = malloc(16);",
+                        "  \tpthread_getname_np(pthread_self(), name, 16);",
+                        "\tfree(name);",
+                        "  }",
+                    ],
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_HAVE_PTHREAD_GETNAME_NP",
+                condition = "je_cv_pthread_getname_np",
+            ),
+            checks.AC_TRY_LINK(
+                name = "je_cv_pthread_get_name_np",
+                code = utils.AC_LANG_PROGRAM(
+                    [
+                        "#include <pthread.h>",
+                        "#include <pthread_np.h>",
+                        "#include <stdlib.h>",
+                    ],
+                    [
+                        "  {",
+                        "  \tchar *name = malloc(16);",
+                        "  \tpthread_get_name_np(pthread_self(), name, 16);",
+                        "\tfree(name);",
+                        "  }",
+                    ],
+                ),
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_HAVE_PTHREAD_GET_NAME_NP",
+                condition = "je_cv_pthread_get_name_np",
+            ),
+        ],
+    }) + [
+        checks.AC_TRY_LINK(
+            name = "je_cv_clock_monotonic_coarse",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <time.h>",
+                [
+                    "\tstruct timespec ts;",
+                    "",
+                    "\tclock_gettime(CLOCK_MONOTONIC_COARSE, &ts);",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE",
+            condition = "je_cv_clock_monotonic_coarse",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_clock_monotonic",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <unistd.h>",
+                    "#include <time.h>",
+                ],
+                [
+                    "\tstruct timespec ts;",
+                    "",
+                    "\tclock_gettime(CLOCK_MONOTONIC, &ts);",
+                    "#if !defined(_POSIX_MONOTONIC_CLOCK) || _POSIX_MONOTONIC_CLOCK < 0",
+                    "#  error _POSIX_MONOTONIC_CLOCK missing/invalid",
+                    "#endif",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_CLOCK_MONOTONIC",
+            condition = "je_cv_clock_monotonic",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_mach_absolute_time",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <mach/mach_time.h>",
+                "\tmach_absolute_time();",
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_MACH_ABSOLUTE_TIME",
+            condition = "je_cv_mach_absolute_time",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_clock_realtime",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <time.h>",
+                [
+                    "\tstruct timespec ts;",
+                    "",
+                    "\tclock_gettime(CLOCK_REALTIME, &ts);",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_CLOCK_REALTIME",
+            condition = "je_cv_clock_realtime",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_madvise",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                "\tmadvise((void *)0, 0, 0);",
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_MADVISE",
+            condition = "je_cv_madvise",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_madv_free",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                "\tmadvise((void *)0, 0, MADV_FREE);",
+            ),
+            requires = ["je_cv_madvise"],
+        ),
+    ] + select({
+        # configure.ac's fallback matches the host *-*-linux*, which includes Android.
+        setting: [
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_PURGE_MADVISE_FREE",
+                condition = "je_cv_madv_free || je_cv_madvise",
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "JEMALLOC_DEFINE_MADVISE_FREE",
+                condition = "je_cv_madvise && !je_cv_madv_free",
+            ),
+        ]
+        for setting in [
+            ":android_x86_32",
+            ":android_x86_64",
+            ":linux_x86_32",
+            ":linux_x86_64",
+        ]
+    } | {"//conditions:default": [
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_PURGE_MADVISE_FREE",
+            condition = "je_cv_madv_free",
+        ),
+    ]}) + [
+        checks.AC_TRY_LINK(
+            name = "je_cv_madv_dontneed",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                "\tmadvise((void *)0, 0, MADV_DONTNEED);",
+            ),
+            requires = ["je_cv_madvise"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_PURGE_MADVISE_DONTNEED",
+            condition = "je_cv_madv_dontneed",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_madv_dontdump",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                [
+                    "\tmadvise((void *)0, 0, MADV_DONTDUMP);",
+                    "\tmadvise((void *)0, 0, MADV_DODUMP);",
+                ],
+            ),
+            requires = ["je_cv_madvise"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_MADVISE_DONTDUMP",
+            condition = "je_cv_madv_dontdump",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_thp",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                [
+                    "\tmadvise((void *)0, 0, MADV_HUGEPAGE);",
+                    "\tmadvise((void *)0, 0, MADV_NOHUGEPAGE);",
+                ],
+            ),
+            requires = ["je_cv_madvise"],
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_madv_nocore",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                [
+                    "\tmadvise((void *)0, 0, MADV_NOCORE);",
+                    "\tmadvise((void *)0, 0, MADV_CORE);",
+                ],
+            ),
+            requires = ["je_cv_madvise"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_MADVISE_NOCORE",
+            condition = "je_cv_madv_nocore",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_posix_madvise",
+            code = utils.AC_LANG_PROGRAM(
+                "  #include <sys/mman.h>",
+                "    posix_madvise((void *)0, 0, 0);",
+            ),
+            requires = ["!je_cv_madvise"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_POSIX_MADVISE",
+            condition = "je_cv_posix_madvise",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_posix_madv_dontneed",
+            code = utils.AC_LANG_PROGRAM(
+                "  #include <sys/mman.h>",
+                "    posix_madvise((void *)0, 0, POSIX_MADV_DONTNEED);",
+            ),
+            requires = ["je_cv_posix_madvise"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_PURGE_POSIX_MADVISE_DONTNEED",
+            condition = "je_cv_posix_madv_dontneed",
+        ),
+    ] + select({
+        # configure.ac skips it for the host_cpu arm*, which names only 32-bit ARM because config.sub turns arm64 into
+        # aarch64.
+        cpu: []
+        for cpu in [
+            "@platforms//cpu:aarch32",
+            "@platforms//cpu:armv6-m",
+            "@platforms//cpu:armv7",
+            "@platforms//cpu:armv7-m",
+            "@platforms//cpu:armv7e-m",
+            "@platforms//cpu:armv7e-mf",
+            "@platforms//cpu:armv7k",
+            "@platforms//cpu:armv8-m",
+            "@platforms//cpu:cortex-r52",
+        ]
+    } | {"//conditions:default": [
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_MADVISE_HUGE",
+            condition = "je_cv_thp",
+        ),
+    ]}) + [
+        checks.AC_TRY_LINK(
+            name = "je_cv_mprotect",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <sys/mman.h>",
+                "\tmprotect((void *)0, 0, PROT_NONE);",
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_MPROTECT",
+            condition = "je_cv_mprotect",
+        ),
+        checks.AC_CHECK_FUNC(
+            "malloc_size",
+            code = utils.AC_LANG_FUNC_LINK_TRY("malloc_size"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_MALLOC_SIZE",
+            condition = "ac_cv_func_malloc_size",
+        ),
+        # configure.ac's AC_C_BIGENDIAN tries <sys/param.h>, then <limits.h>. Where neither names the byte order it
+        # runs a program, or greps an object file when cross-compiling; the compiler's predefined macros stand in.
+        checks.AC_TRY_COMPILE(
+            name = "byte_order_in_sys_param",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <sys/types.h>",
+                    "#include <sys/param.h>",
+                ],
+                [
+                    "#if ! (defined BYTE_ORDER && defined BIG_ENDIAN \\",
+                    "       && defined LITTLE_ENDIAN && BYTE_ORDER && BIG_ENDIAN \\",
+                    "       && LITTLE_ENDIAN)",
+                    " bogus endian macros",
+                    "#endif",
+                ],
+            ),
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "big_endian_in_sys_param",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <sys/types.h>",
+                    "#include <sys/param.h>",
+                ],
+                [
+                    "#if BYTE_ORDER != BIG_ENDIAN",
+                    " not big endian",
+                    "#endif",
+                ],
+            ),
+            requires = ["byte_order_in_sys_param"],
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "byte_order_in_limits",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <limits.h>",
+                [
+                    "#if ! (defined _LITTLE_ENDIAN || defined _BIG_ENDIAN)",
+                    " bogus endian macros",
+                    "#endif",
+                ],
+            ),
+            requires = ["!byte_order_in_sys_param"],
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "big_endian_in_limits",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <limits.h>",
+                [
+                    "#ifndef _BIG_ENDIAN",
+                    " not big endian",
+                    "#endif",
+                ],
+            ),
+            requires = ["byte_order_in_limits"],
+        ),
+        # Every MSVC target is little-endian.
+        checks.AC_TRY_COMPILE(
+            name = "byte_order_predefined",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "#if ! ((defined __BYTE_ORDER__ && defined __ORDER_BIG_ENDIAN__) || defined _MSC_VER)",
+                    " unknown endianness",
+                    "#endif",
+                ],
+            ),
+            requires = ["!byte_order_in_sys_param && !byte_order_in_limits"],
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "byte_order_known",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "unknown endianness: neither <sys/param.h>, <limits.h> nor the compiler's predefined macros name the byte order",
+            requires = ["byte_order_in_sys_param || byte_order_in_limits || byte_order_predefined"],
+        ),
+        checks.AC_TRY_COMPILE(
+            name = "big_endian_predefined",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "#if ! (defined __BYTE_ORDER__ && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)",
+                    " not big endian",
+                    "#endif",
+                ],
+            ),
+            requires = ["byte_order_predefined"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_BIG_ENDIAN",
+            condition = "big_endian_in_sys_param || big_endian_in_limits || big_endian_predefined",
+        ),
+        # AC_CHECK_SIZEOF bisects at compile time, so it is cross-safe; the define is the log of the size.
+        checks.AC_CHECK_SIZEOF("int"),
+        checks.AC_TRY_COMPILE(
+            name = "int_size_supported",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "Unsupported int size: sizeof(int) is neither 8 nor 4",
+            requires = ["ac_cv_sizeof_int==8 || ac_cv_sizeof_int==4"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "LG_SIZEOF_INT",
+            condition = "ac_cv_sizeof_int==8",
+            if_false = "2",
+            if_true = "3",
+        ),
+        checks.AC_CHECK_SIZEOF("long"),
+        checks.AC_TRY_COMPILE(
+            name = "long_size_supported",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "Unsupported long size: sizeof(long) is neither 8 nor 4",
+            requires = ["ac_cv_sizeof_long==8 || ac_cv_sizeof_long==4"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "LG_SIZEOF_LONG",
+            condition = "ac_cv_sizeof_long==8",
+            if_false = "2",
+            if_true = "3",
+        ),
+        checks.AC_CHECK_SIZEOF("long long"),
+        checks.AC_TRY_COMPILE(
+            name = "long_long_size_supported",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "Unsupported long long size: sizeof(long long) is neither 8 nor 4",
+            requires = ["ac_cv_sizeof_long_long==8 || ac_cv_sizeof_long_long==4"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "LG_SIZEOF_LONG_LONG",
+            condition = "ac_cv_sizeof_long_long==8",
+            if_false = "2",
+            if_true = "3",
+        ),
+        checks.AC_CHECK_SIZEOF("intmax_t"),
+        # configure.ac also maps 4 to 2, but C99 makes intmax_t at least as wide as long long (64 bits), and a define
+        # takes one of two values.
+        checks.AC_TRY_COMPILE(
+            name = "intmax_t_size_supported",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "Unsupported intmax_t size: sizeof(intmax_t) is neither 16 nor 8",
+            requires = ["ac_cv_sizeof_intmax_t==16 || ac_cv_sizeof_intmax_t==8"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "LG_SIZEOF_INTMAX_T",
+            condition = "ac_cv_sizeof_intmax_t==16",
+            if_false = "3",
+            if_true = "4",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_pthread_mutex_adaptive_np",
+            code = utils.AC_LANG_PROGRAM(
+                "#include <pthread.h>",
+                [
+                    "  pthread_mutexattr_t attr;",
+                    "  pthread_mutexattr_init(&attr);",
+                    "  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ADAPTIVE_NP);",
+                    "  pthread_mutexattr_destroy(&attr);",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_PTHREAD_MUTEX_ADAPTIVE_NP",
+            condition = "je_cv_pthread_mutex_adaptive_np",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_vm_make_tag",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <sys/mman.h>",
+                    "\t       #include <mach/vm_statistics.h>",
+                ],
+                [
+                    "void *p;",
+                    "\t       p = mmap(0, 16, PROT_READ, MAP_ANON|MAP_PRIVATE, VM_MAKE_TAG(1), 0);",
+                    "\t       munmap(p, 16);",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_VM_MAKE_TAG",
+            condition = "je_cv_vm_make_tag",
+        ),
+    ],
+    conlyopts = CONLYOPTS,
+    copts = HOST_CPPFLAGS,
+    cxxopts = CXXOPTS,
+    tags = ["manual"],
+    deps = ["//include/jemalloc:jemalloc_defs_checks"],
+)
+
+# A define takes one of two values, so CPU_SPINWAIT reads je_cv_pause_msvc or je_cv_pause by compiler, and a check
+# fails the build if that choice disagrees with configure.ac's je_cv_msvc probe.
+autoconf(
+    name = "jemalloc_internal_defs_x86_spinwait_checks",
+    cc_deps = HOST_CC_DEPS + HOST_LIBS,
+    checks = [
+        checks.AC_TRY_LINK(
+            name = "je_cv_pause_msvc",
+            code = utils.AC_LANG_PROGRAM("", "_mm_pause(); return 0;"),
+            requires = ["je_cv_msvc"],
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_pause",
+            code = utils.AC_LANG_PROGRAM("", "__asm__ volatile(\"pause\"); return 0;"),
+            requires = ["!je_cv_msvc"],
+        ),
+    ] + select({
+        compiler: [
+            checks.AC_TRY_COMPILE(
+                name = "msvc_compiler_consistent",
+                code = utils.AC_LANG_PROGRAM("", ""),
+                error = "The compiler does not define _MSC_VER, but rules_cc identifies it as an MSVC-compatible compiler",
+                requires = ["je_cv_msvc"],
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "CPU_SPINWAIT",
+                condition = "je_cv_pause_msvc",
+                if_false = "",
+                if_true = "_mm_pause()",
+            ),
+        ]
+        for compiler in [
+            "@rules_cc//cc/compiler:clang-cl",
+            "@rules_cc//cc/compiler:msvc-cl",
+        ]
+    } | {"//conditions:default": [
+        checks.AC_TRY_COMPILE(
+            name = "msvc_compiler_consistent",
+            code = utils.AC_LANG_PROGRAM("", ""),
+            error = "The compiler defines _MSC_VER, but rules_cc does not identify it as msvc-cl or clang-cl",
+            requires = ["!je_cv_msvc"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "CPU_SPINWAIT",
+            condition = "je_cv_pause",
+            if_false = "",
+            if_true = "__asm__ volatile(\"pause\")",
+        ),
+    ]}),
+    conlyopts = CONLYOPTS,
+    copts = HOST_CPPFLAGS,
+    tags = ["manual"],
+    deps = [":jemalloc_internal_defs_checks"],
+)
+
+# configure.ac adds -Werror only around these probes (JE_CFLAGS_SAVE/JE_CFLAGS_RESTORE), so a construct the compiler
+# merely warns about counts as unsupported. Each check carries the flag in its own copts: rules_cc_autoconf strips
+# -Werror from the target's copts. cl ignores -Werror with a warning, as it does under configure.
+autoconf(
+    name = "jemalloc_internal_defs_warnings_as_errors_checks",
+    cc_deps = HOST_CC_DEPS + HOST_LIBS,
+    checks = [
+        checks.AC_TRY_LINK(
+            name = "je_cv_tls_model",
+            code = utils.AC_LANG_PROGRAM(
+                "",
+                [
+                    "static __thread int",
+                    "               __attribute__((tls_model(\"initial-exec\"), unused)) foo;",
+                    "               foo = 0;",
+                ],
+            ),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_TLS_MODEL",
+            condition = "je_cv_tls_model",
+            if_false = "",
+            if_true = "__attribute__((tls_model(\"initial-exec\")))",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_syscall",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <sys/syscall.h>",
+                    "#include <unistd.h>",
+                ],
+                "\tsyscall(SYS_write, 2, \"hello\", 5);",
+            ),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_USE_SYSCALL",
+            condition = "je_cv_syscall",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_strerror_r_returns_char_with_gnu_source",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <errno.h>",
+                    "#include <stdio.h>",
+                    "#include <stdlib.h>",
+                    "#include <string.h>",
+                ],
+                [
+                    "  char *buffer = (char *) malloc(100);",
+                    "  char *error = strerror_r(EINVAL, buffer, 100);",
+                    "  printf(\"%s\\n\", error);",
+                ],
+            ),
+            copts = [
+                "-D_GNU_SOURCE",
+                "-Werror",
+            ],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_STRERROR_R_RETURNS_CHAR_WITH_GNU_SOURCE",
+            condition = "je_cv_strerror_r_returns_char_with_gnu_source",
+        ),
+    ],
+    conlyopts = CONLYOPTS,
+    copts = HOST_CPPFLAGS,
+    tags = ["manual"],
+)
+
+autoconf(
+    name = "jemalloc_internal_defs_prefix",
+    build_settings = [
+        checks.AC_BUILD_SETTING(
+            name = "JEMALLOC_PREFIX",
+            define = "JEMALLOC_PREFIX",
+            target = "//settings/flags:jemalloc_prefix_resolved",
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "JEMALLOC_CPREFIX",
+            define = "JEMALLOC_CPREFIX",
+            target = "//settings/flags:jemalloc_cprefix",
+        ),
+    ],
+    tags = ["manual"],
+)
+
+autoconf(
+    name = "jemalloc_internal_defs_lg_vaddr",
+    build_settings = [
+        checks.AC_BUILD_SETTING(
+            name = "LG_VADDR",
+            define = "LG_VADDR",
+            target = "//settings/platform:lg_vaddr",
+            unquote = True,
+        ),
+    ],
+    tags = ["manual"],
+)
+
+autoconf(
+    name = "jemalloc_internal_defs_lg_quantum",
+    build_settings = [
+        checks.AC_BUILD_SETTING(
+            name = "with_lg_quantum",
+            define = "LG_QUANTUM",
+            target = "//settings/flags:lg_quantum",
+            unquote = True,
+        ),
+    ],
+    tags = ["manual"],
+)
+
+autoconf_hdr(
+    name = "jemalloc_internal_defs",
+    out = "jemalloc_internal_defs.h",
+    tags = ["manual"],
+    template = "jemalloc_internal_defs.h.in",
+    visibility = ["//tools/fidelity:__pkg__"],
+    deps = [
+        ":jemalloc_internal_defs_checks",
+        ":jemalloc_internal_defs_lg_vaddr",
+        ":jemalloc_internal_defs_warnings_as_errors_checks",
+    ] + select({
+        "//settings/flags:no_jemalloc_prefix": [],
+        "//conditions:default": [":jemalloc_internal_defs_prefix"],
+    }) + select({
+        "//settings/flags:no_lg_quantum": [],
+        "//conditions:default": [":jemalloc_internal_defs_lg_quantum"],
+    }) + select({
+        "@platforms//cpu:x86_32": [":jemalloc_internal_defs_x86_spinwait_checks"],
+        "@platforms//cpu:x86_64": [":jemalloc_internal_defs_x86_spinwait_checks"],
+        "//conditions:default": [],
+    }),
+)
+
+symbol_list(
+    name = "public_syms",
+    out = "public_syms.txt",
+    headers = [
+        ":jemalloc_internal_defs",
+        "//include/jemalloc:jemalloc_defs",
+    ],
+    optional_symbols = OPTIONAL_PUBLIC_SYMBOLS,
+    symbols = PUBLIC_SYMBOLS,
+    tags = ["manual"],
+)
+
+symbol_list(
+    name = "wrap_syms",
+    out = "wrap_syms.txt",
+    headers = [":jemalloc_internal_defs"],
+    optional_symbols = OPTIONAL_WRAP_SYMBOLS,
+    symbols = WRAP_SYMBOLS,
+    tags = ["manual"],
+)
+
+public_symbols(
+    name = "public_symbols",
+    out = "public_symbols.txt",
+    symbols = ":public_syms",
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+)
+
+private_namespace(
+    name = "private_namespace",
+    out = "private_namespace.h",
+    input = "//:lib/jemalloc",
+    public_symbols = ":public_syms",
+    sym_prefix = SYM_PREFIX,
+    tags = ["manual"],
+    visibility = ["//tools/fidelity:__pkg__"],
+    wrap_symbols = ":wrap_syms",
+)
+
+private_namespace_leak_test(
+    name = "private_namespace_leak_test",
+    size = "small",
+    cpu = CPU,
+    library = "//:jemalloc",
+    namespace = ":private_namespace",
+    platform = PLATFORM,
+    sym_prefix = SYM_PREFIX,
+)
+
+private_namespace(
+    name = "private_namespace_jet",
+    out = "private_namespace_jet.h",
+    enable_jet = True,
+    input = "//:lib/jemalloc",
+    prefix = "jet_",
+    public_symbols = ":public_syms",
+    sym_prefix = SYM_PREFIX,
+    tags = ["manual"],
+    visibility = ["//tools/fidelity:__pkg__"],
+    wrap_symbols = ":wrap_syms",
+)
+
+public_symbols_header(
+    name = "public_namespace",
+    out = "public_namespace.h",
+    public_symbols = ":public_symbols",
+    script = "public_namespace.sh",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+public_symbols_header(
+    name = "public_unnamespace",
+    out = "public_unnamespace.h",
+    public_symbols = ":public_symbols",
+    script = "public_unnamespace.sh",
+    tags = ["manual"],
+    visibility = ["//tools/fidelity:__pkg__"],
+)
