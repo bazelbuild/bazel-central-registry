@@ -71,6 +71,19 @@ py_test(
     deps = [":bcr_validation"],
 )
 
+py_binary(
+    name = "toolchain_registrations",
+    srcs = ["toolchain_registrations.py"],
+    legacy_create_init = 0,
+)
+
+py_test(
+    name = "toolchain_registrations_test",
+    srcs = ["toolchain_registrations_test.py"],
+    legacy_create_init = 0,
+    deps = [":toolchain_registrations"],
+)
+
 py_library(
     name = "verify_stable_archives",
     srcs = ["verify_stable_archives.py"],
