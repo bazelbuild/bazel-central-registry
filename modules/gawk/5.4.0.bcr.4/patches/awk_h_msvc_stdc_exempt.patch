@@ -1,0 +1,25 @@
+Exempt MSVC from awk.h's `__STDC__` hard-error.
+
+Upstream `awk.h:55-58` `#error`s out if `__STDC__` isn't defined as `>= 1`,
+mirroring an existing exemption for SunPro. MSVC's `cl.exe` only defines
+`__STDC__` under the `/Za` strict-ANSI option (which disables MS
+extensions we need), so out of the box gawk refuses to compile under
+MSVC. Adding `&& !defined(_MSC_VER)` to the outer guard mirrors the
+SunPro carve-out and lets the build proceed.
+
+Without this patch we would have to predefine `__STDC__=1` for MSVC,
+which in turn makes MSVC's `<sys/stat.h>` hide its POSIX `struct stat`
+alias — forcing further `#define stat _stat` shimming. This one-line
+patch eliminates that whole chain.
+
+--- awk.h
++++ awk.h
+@@ -52,7 +52,7 @@
+ #endif /* LOCALEDIR */
+ #endif
+
+-#if !defined(__SUNPRO_C)
++#if !defined(__SUNPRO_C) && !defined(_MSC_VER)
+ #if !defined(__STDC__) || __STDC__ < 1
+ #error "gawk no longer supports non-C89 environments (no __STDC__ or __STDC__ < 1)"
+ #endif

@@ -51,6 +51,16 @@ class TestBcrValidation(unittest.TestCase):
             in str(e.exception)
         )
 
+    def test_fail_module_dot_bazel_strip_prefix_not_in_archive(self):
+        self.bcr_validator.registry.get_source = MagicMock(return_value=dict(strip_prefix="missing"))
+        self.bcr_validator._download_source_archive = MagicMock(
+            side_effect=lambda _source, output_dir: (output_dir / "actual").mkdir(parents=True)
+        )
+        self.bcr_validator.verify_module_dot_bazel(module_name="foobar", version="0.0.0")
+        self.assertEqual(1, self.bcr_validator.getValidationReturnCode())
+        _, message = self.bcr_validator.validation_results[-1]
+        self.assertIn("strip_prefix 'missing' may not match the archive layout", message)
+
     def test_is_ref_in_original_repo_rejects_pull_request_refs(self):
         # Pull-request refs (refs/pull/N/head and refs/pull/N/merge) are created by
         # GitHub for any opened PR, including from forks, and point at commits that

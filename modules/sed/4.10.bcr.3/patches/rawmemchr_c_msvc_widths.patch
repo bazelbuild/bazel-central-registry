@@ -1,0 +1,30 @@
+Polyfill C23 UINTPTR_WIDTH / UCHAR_WIDTH inside lib/rawmemchr.c for MSVC.
+
+gnulib's lib/rawmemchr.c uses C23's UINTPTR_WIDTH and UCHAR_WIDTH in a
+static_assert.  On Linux/macOS the generated lib/stdint.h / lib/limits.h
+polyfill these via gnulib's templates; on MSVC the gnulib stdint
+template mis-parses there (we deliberately skip generating it -- see the
+BUILD.bazel comment on lib_hdrs_nonmsvc), and the MSVC SDK does not
+define the macros either, leading to C2065/C2057 errors.
+
+Define both macros directly in rawmemchr.c as constant expressions in
+terms of CHAR_BIT (from <limits.h>) and sizeof (uintptr_t).  Guarded by
+`#ifndef` so platforms with the real C23 macros are unaffected.
+
+--- a/lib/rawmemchr.c
++++ b/lib/rawmemchr.c
+@@ -43,6 +43,14 @@
+ 
+   /* You can change this typedef to experiment with performance.  */
+   typedef uintptr_t longword;
++  /* MSVC's <stdint.h>/<limits.h> don't yet define these C23 macros; the
++     equivalents below are constant expressions valid in static_assert.  */
++# ifndef UINTPTR_WIDTH
++#  define UINTPTR_WIDTH (sizeof (uintptr_t) * CHAR_BIT)
++# endif
++# ifndef UCHAR_WIDTH
++#  define UCHAR_WIDTH CHAR_BIT
++# endif
+   /* Verify that the longword type lacks padding bits.  */
+   static_assert (UINTPTR_WIDTH == UCHAR_WIDTH * sizeof (uintptr_t));
+ 

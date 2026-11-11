@@ -1,0 +1,411 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:run_binary.bzl", "run_binary")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":buildvm.bzl", "buildvm")
+
+exports_files([
+    "COPYRIGHT",
+    "src/jit/bcsave.lua",
+])
+
+bool_flag(
+    name = "gc64",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "macos_arm64",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:macos",
+    ],
+)
+
+config_setting(
+    name = "macos_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:macos",
+    ],
+)
+
+config_setting(
+    name = "gc64_enabled",
+    flag_values = {":gc64": "True"},
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_64_gc64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    flag_values = {":gc64": "True"},
+)
+
+config_setting(
+    name = "linux_arm64_gc64",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:linux",
+    ],
+    flag_values = {":gc64": "True"},
+)
+
+LJLIB_SRCS = [
+    "src/lib_base.c",
+    "src/lib_math.c",
+    "src/lib_bit.c",
+    "src/lib_string.c",
+    "src/lib_table.c",
+    "src/lib_io.c",
+    "src/lib_os.c",
+    "src/lib_package.c",
+    "src/lib_debug.c",
+    "src/lib_jit.c",
+    "src/lib_ffi.c",
+    "src/lib_buffer.c",
+]
+
+LJCORE_SRCS = [
+    "src/lj_assert.c",
+    "src/lj_gc.c",
+    "src/lj_err.c",
+    "src/lj_char.c",
+    "src/lj_bc.c",
+    "src/lj_obj.c",
+    "src/lj_buf.c",
+    "src/lj_str.c",
+    "src/lj_tab.c",
+    "src/lj_func.c",
+    "src/lj_udata.c",
+    "src/lj_meta.c",
+    "src/lj_debug.c",
+    "src/lj_prng.c",
+    "src/lj_state.c",
+    "src/lj_dispatch.c",
+    "src/lj_vmevent.c",
+    "src/lj_vmmath.c",
+    "src/lj_strscan.c",
+    "src/lj_strfmt.c",
+    "src/lj_strfmt_num.c",
+    "src/lj_serialize.c",
+    "src/lj_api.c",
+    "src/lj_profile.c",
+    "src/lj_lex.c",
+    "src/lj_parse.c",
+    "src/lj_bcread.c",
+    "src/lj_bcwrite.c",
+    "src/lj_load.c",
+    "src/lj_ir.c",
+    "src/lj_opt_mem.c",
+    "src/lj_opt_fold.c",
+    "src/lj_opt_narrow.c",
+    "src/lj_opt_dce.c",
+    "src/lj_opt_loop.c",
+    "src/lj_opt_split.c",
+    "src/lj_opt_sink.c",
+    "src/lj_mcode.c",
+    "src/lj_snap.c",
+    "src/lj_record.c",
+    "src/lj_crecord.c",
+    "src/lj_ffrecord.c",
+    "src/lj_asm.c",
+    "src/lj_trace.c",
+    "src/lj_gdbjit.c",
+    "src/lj_ctype.c",
+    "src/lj_cdata.c",
+    "src/lj_cconv.c",
+    "src/lj_ccall.c",
+    "src/lj_ccallback.c",
+    "src/lj_carith.c",
+    "src/lj_clib.c",
+    "src/lj_cparse.c",
+    "src/lj_lib.c",
+    "src/lj_alloc.c",
+    "src/lib_aux.c",
+] + LJLIB_SRCS + [
+    "src/lib_init.c",
+]
+
+cc_binary(
+    name = "minilua",
+    srcs = ["src/host/minilua.c"],
+    copts = ["-w"],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+)
+
+# The source archive records the commit timestamp in .relver. Use LuaJIT's
+# own generator so the CLI and the installed header report its release version.
+run_binary(
+    name = "luajit_h",
+    srcs = [
+        ".relver",
+        "src/host/genversion.lua",
+        "src/luajit_rolling.h",
+    ],
+    outs = ["src/luajit.h"],
+    args = [
+        "$(execpath src/host/genversion.lua)",
+        "$(execpath src/luajit_rolling.h)",
+        "$(execpath .relver)",
+        "$(execpath src/luajit.h)",
+    ],
+    tool = ":minilua",
+)
+
+# Select the VM architecture and x64 reference format before the tool's exec
+# transition. Its C compiler still builds an executable for the actual host.
+buildvm(name = "buildvm")
+
+buildvm(
+    name = "buildvm_nogc64",
+    gc64 = False,
+)
+
+buildvm(
+    name = "buildvm_linux_x64",
+    target = "x64",
+)
+
+buildvm(
+    name = "buildvm_linux_x64_nogc64",
+    gc64 = False,
+    target = "x64",
+)
+
+buildvm(
+    name = "buildvm_linux_arm64",
+    target = "arm64",
+)
+
+_BUILDVM = select({
+    ":linux_x86_64_gc64": ":buildvm_linux_x64",
+    ":linux_x86_64": ":buildvm_linux_x64_nogc64",
+    ":linux_arm64_gc64": ":buildvm_linux_arm64",
+    ":linux_arm64": ":buildvm_linux_arm64",
+    ":gc64_enabled": ":buildvm",
+    "//conditions:default": ":buildvm_nogc64",
+})
+
+run_binary(
+    name = "lj_vm_s",
+    outs = ["src/lj_vm.S"],
+    args = ["-m"] + select({
+        "@platforms//os:ios": ["machasm"],
+        "@platforms//os:macos": ["machasm"],
+        "//conditions:default": ["elfasm"],
+    }) + [
+        "-o",
+        "$(execpath src/lj_vm.S)",
+    ],
+    tool = _BUILDVM,
+)
+
+# On Windows, buildvm -m peobj emits a raw COFF object, not assembly text.
+run_binary(
+    name = "lj_vm_obj",
+    outs = ["src/lj_vm.obj"],
+    args = [
+        "-m",
+        "peobj",
+        "-o",
+        "$(execpath src/lj_vm.obj)",
+    ],
+    target_compatible_with = ["@platforms//os:windows"],
+    tool = _BUILDVM,
+)
+
+run_binary(
+    name = "lj_bcdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_bcdef.h"],
+    args = [
+        "-m",
+        "bcdef",
+        "-o",
+        "$(execpath src/lj_bcdef.h)",
+    ] + ["$(execpath " + source + ")" for source in LJLIB_SRCS],
+    tool = _BUILDVM,
+)
+
+run_binary(
+    name = "lj_ffdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_ffdef.h"],
+    args = [
+        "-m",
+        "ffdef",
+        "-o",
+        "$(execpath src/lj_ffdef.h)",
+    ] + ["$(execpath " + source + ")" for source in LJLIB_SRCS],
+    tool = _BUILDVM,
+)
+
+run_binary(
+    name = "lj_libdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_libdef.h"],
+    args = [
+        "-m",
+        "libdef",
+        "-o",
+        "$(execpath src/lj_libdef.h)",
+    ] + ["$(execpath " + source + ")" for source in LJLIB_SRCS],
+    tool = _BUILDVM,
+)
+
+run_binary(
+    name = "lj_recdef_h",
+    srcs = LJLIB_SRCS,
+    outs = ["src/lj_recdef.h"],
+    args = [
+        "-m",
+        "recdef",
+        "-o",
+        "$(execpath src/lj_recdef.h)",
+    ] + ["$(execpath " + source + ")" for source in LJLIB_SRCS],
+    tool = _BUILDVM,
+)
+
+run_binary(
+    name = "lj_folddef_h",
+    srcs = ["src/lj_opt_fold.c"],
+    outs = ["src/lj_folddef.h"],
+    args = [
+        "-m",
+        "folddef",
+        "-o",
+        "$(execpath src/lj_folddef.h)",
+        "$(execpath src/lj_opt_fold.c)",
+    ],
+    tool = _BUILDVM,
+)
+
+run_binary(
+    name = "jit_vmdef_lua",
+    srcs = LJLIB_SRCS,
+    outs = ["src/jit/vmdef.lua"],
+    args = [
+        "-m",
+        "vmdef",
+        "-o",
+        "$(execpath src/jit/vmdef.lua)",
+    ] + ["$(execpath " + source + ")" for source in LJLIB_SRCS],
+    tool = _BUILDVM,
+)
+
+cc_library(
+    name = "luajit",
+    srcs = LJCORE_SRCS + select({
+        "@platforms//os:windows": [":lj_vm_obj"],
+        "//conditions:default": [":lj_vm_s"],
+    }),
+    hdrs = glob(["src/*.h"]) + [
+        "src/lua.hpp",
+        ":luajit_h",
+        ":lj_bcdef_h",
+        ":lj_ffdef_h",
+        ":lj_folddef_h",
+        ":lj_libdef_h",
+        ":lj_recdef_h",
+    ],
+    copts = [
+        "-w",
+        "-U_FORTIFY_SOURCE",
+    ] + select({
+        ":macos_arm64": ["-fno-omit-frame-pointer"],
+        "//conditions:default": ["-fomit-frame-pointer"],
+    }) + select({
+        "@platforms//cpu:arm64": [],
+        "@platforms//cpu:x86_32": [
+            "-march=i686",
+            "-msse",
+            "-msse2",
+            "-mfpmath=sse",
+        ],
+        "@platforms//cpu:x86_64": [],
+        "//conditions:default": [],
+    }) + select({
+        "@platforms//os:windows": [],
+        "@platforms//os:linux": [
+            "-fno-stack-protector",
+            "-funwind-tables",
+        ],
+        "//conditions:default": ["-fno-stack-protector"],
+    }),
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lm",
+            "-Wl,-E",
+        ],
+        "@platforms//os:macos": ["-lm"],
+        "//conditions:default": ["-lm"],
+    }),
+    local_defines = [
+        "LUA_CORE",
+        "_FILE_OFFSET_BITS=64",
+        "_LARGEFILE_SOURCE",
+    ] + select({
+        ":gc64_enabled": ["LUAJIT_ENABLE_GC64"],
+        "//conditions:default": ["LUAJIT_DISABLE_GC64"],
+    }) + select({
+        ":macos_arm64": [
+            "LUAJIT_OS=LUAJIT_OS_OSX",
+            "LUAJIT_ENABLE_JIT",
+            "LUAJIT_UNWIND_EXTERNAL",
+        ],
+        "@platforms//os:linux": [
+            "LUAJIT_OS=LUAJIT_OS_LINUX",
+            "LUAJIT_UNWIND_EXTERNAL",
+        ],
+        "@platforms//os:macos": [
+            "LUAJIT_OS=LUAJIT_OS_OSX",
+            "LUAJIT_UNWIND_EXTERNAL",
+        ],
+        "@platforms//os:windows": ["LUAJIT_OS=LUAJIT_OS_WINDOWS"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "bin/luajit",
+    srcs = ["src/luajit.c"],
+    copts = ["-w"],
+    defines = select({
+        "@platforms//os:linux": ["LUAJIT_OS=LUAJIT_OS_LINUX"],
+        "@platforms//os:macos": ["LUAJIT_OS=LUAJIT_OS_OSX"],
+        "@platforms//os:windows": ["LUAJIT_OS=LUAJIT_OS_WINDOWS"],
+        "//conditions:default": [],
+    }),
+    includes = ["src"],
+    linkopts = select({
+        "@platforms//os:linux": ["-Wl,-E"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":luajit"],
+)

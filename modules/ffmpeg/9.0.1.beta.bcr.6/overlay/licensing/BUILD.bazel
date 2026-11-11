@@ -1,0 +1,39 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("//:component_config.bzl", "GPL_EXTERNAL_CODECS")
+
+# The settings //:package_metadata picks FFmpeg's license on. They live apart
+# from the root package with no metadata of their own: metadata here would
+# point back at the target that selects on them.
+package(
+    default_package_metadata = [],
+    default_visibility = ["//:__pkg__"],
+)
+
+# The components whose enablement makes the build GPL: FFmpeg's gplv3
+# switch and the encoders that wrap GPL libraries.
+_GPL_COMPONENTS = ["gplv3"] + GPL_EXTERNAL_CODECS
+
+[
+    config_setting(
+        name = "enable_{}".format(comp),
+        flag_values = {"//:enable_{}".format(comp): "True"},
+    )
+    for comp in _GPL_COMPONENTS
+]
+
+selects.config_setting_group(
+    name = "gpl",
+    match_any = [":enable_{}".format(comp) for comp in _GPL_COMPONENTS],
+)
+
+# lgplv3 with none of the GPL switches on, so it never ties with :gpl.
+config_setting(
+    name = "lgplv3",
+    flag_values = dict(
+        [("//:enable_lgplv3", "True")] +
+        [(
+            "//:enable_{}".format(comp),
+            "False",
+        ) for comp in _GPL_COMPONENTS],
+    ),
+)
