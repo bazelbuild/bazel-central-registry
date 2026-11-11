@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:common_settings.bzl", "int_flag", "string_flag")
+load("//settings:platform_defaults.bzl", "resolved_setting")
 
 ### Bazel-ification of platform feature detection performed by ./configure ###
 
@@ -17,16 +18,45 @@ int_flag(
 string_flag(
     name = "lg_page",
     build_setting_default = "__auto__",
-    make_variable = "LG_PAGE",
     visibility = ["//visibility:public"],
 )
 
 # LG_VADDR Number of significant virtual address bits, can be explicitly set --with-lg-vaddr
-# "__auto__" follows configure, resolved by the transition: 48 on aarch64, 57 (its cross-compiling answer) on x86_64,
-# and the pointer width on any other CPU. A CPU of unknown width must set it.
 string_flag(
     name = "lg_vaddr",
     build_setting_default = "__auto__",
-    make_variable = "LG_VADDR",
     visibility = ["//visibility:public"],
+)
+
+# 64K pages on aarch64 Linux and Android and ppc64le Linux: LG_PAGE must be at least the kernel's page size or
+# pages_boot fails, and aarch64 kernels use 4K, 16K or 64K pages, ppc64le kernels 4K or 64K. configure.ac's
+# cross-compiling answer is 12; Debian and Fedora build their jemalloc packages for these CPUs with --with-lg-page=16.
+resolved_setting(
+    name = "lg_page_resolved",
+    defaults = {
+        "android-aarch64": "16",
+        "darwin": "14",
+        "linux-aarch64": "16",
+        "linux-ppc64le": "16",
+        "default": "12",
+    },
+    make_variable = "LG_PAGE",
+    setting = ":lg_page",
+    visibility = ["//:__subpackages__"],
+)
+
+# configure.ac's LG_VADDR: 48 on aarch64, 57 on x86_64 (its cross-compiling answer; natively it runs CPUID), and the
+# pointer width on any other CPU. A CPU of unknown width has no default, as the value is a fact about the target.
+resolved_setting(
+    name = "lg_vaddr_resolved",
+    defaults = {
+        "*-aarch64": "48",
+        "*-other_32_bit": "32",
+        "*-other_64_bit": "64",
+        "*-ppc64le": "64",
+        "*-x86_64": "57",
+    },
+    make_variable = "LG_VADDR",
+    setting = ":lg_vaddr",
+    visibility = ["//:__subpackages__"],
 )

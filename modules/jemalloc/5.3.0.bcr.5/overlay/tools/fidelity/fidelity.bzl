@@ -2,12 +2,12 @@
 
 Consumers build the Bazel target, which needs no host tools. This test, run only in this repository, executes the
 unmodified upstream script in a build action and compares the two with skylib's diff_test, so the Starlark port cannot
-drift from the upstream contract. Both sides build through the same platform transition, so a `settings` value reaches
+drift from the upstream contract. Both sides build through the same settings transition, so a `settings` value reaches
 the script's inputs and the target alike.
 """
 
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
-load("//tools:transition.bzl", "CPU", "PLATFORM", "platform_constraints_transition", "transition_default_constraints")
+load("//tools:transition.bzl", "settings_transition", "with_settings")
 
 _COREUTILS = "@bazel_lib//lib:coreutils_toolchain_type"
 
@@ -59,11 +59,6 @@ _upstream_output = rule(
           "(uutils coreutils), grep and sed (GNU); /bin/sh is the host's.",
     implementation = _upstream_output_impl,
     attrs = {
-        "cpu": attr.string(doc = "Read by the transition; see transition_default_constraints.", mandatory = True),
-        "platform": attr.string(
-            doc = "Read by the transition; see transition_default_constraints.",
-            mandatory = True,
-        ),
         "script": attr.label(
             doc = "The upstream generator script, executed directly so its shebang applies.",
             allow_single_file = True,
@@ -73,7 +68,7 @@ _upstream_output = rule(
             doc = "configure's invocation of `script` with `${objroot}` empty; it runs from the objroot.",
         ),
         "settings": attr.label_keyed_string_dict(
-            doc = "Read by the transition; see transition_default_constraints.",
+            doc = "Read by the transition; see with_settings.",
         ),
         "setup": attr.string(
             doc = "Shell commands run first in the objroot with the same PATH, for upstream recipe steps before `script`.",
@@ -81,7 +76,7 @@ _upstream_output = rule(
         "srcs": attr.label_list(
             doc = "Inputs, staged in the objroot at their paths relative to the module root.",
             allow_files = True,
-            cfg = platform_constraints_transition,
+            cfg = settings_transition,
         ),
         "_awk": attr.label(
             default = Label("@gawk//:gawk"),
@@ -105,7 +100,7 @@ _upstream_output = rule(
 def fidelity_test(name, generated, srcs = [], script = None, script_args = [], setup = "", settings = {}, size = "small"):
     """Compares `generated` with what upstream's `script` writes to stdout from the same `srcs`.
 
-    Both build through the platform transition with `settings`.
+    Both build through the settings transition with `settings`.
 
     Args:
       name: The diff_test's name; the helper targets are `<name>.upstream` and `<name>.generated`.
@@ -114,7 +109,7 @@ def fidelity_test(name, generated, srcs = [], script = None, script_args = [], s
       script: The upstream generator script.
       script_args: configure's invocation of `script` with `${objroot}` empty.
       setup: Shell commands run first, for upstream recipe steps before `script`.
-      settings: Settings to transition to; see transition_default_constraints.
+      settings: Settings to transition to; see with_settings.
       size: The test size.
     """
     upstream = name + ".upstream"
@@ -124,8 +119,6 @@ def fidelity_test(name, generated, srcs = [], script = None, script_args = [], s
         name = upstream,
         testonly = True,
         srcs = srcs,
-        cpu = CPU,
-        platform = PLATFORM,
         script = script,
         script_args = script_args,
         settings = settings,
@@ -133,12 +126,10 @@ def fidelity_test(name, generated, srcs = [], script = None, script_args = [], s
         tags = ["manual"],
     )
 
-    transition_default_constraints(
+    with_settings(
         name = generated_out,
         testonly = True,
         src = generated,
-        cpu = CPU,
-        platform = PLATFORM,
         settings = settings,
         tags = ["manual"],
     )
@@ -160,7 +151,7 @@ def private_namespace_fidelity_test(name, namespace, sym_prefix, settings = {}):
       name: The test's name.
       namespace: The private_namespace target.
       sym_prefix: configure's SYM_PREFIX; may be a select.
-      settings: Settings to transition to; see transition_default_constraints.
+      settings: Settings to transition to; see with_settings.
     """
     label = native.package_relative_label(namespace)
     stem = label.package + "/" + label.name

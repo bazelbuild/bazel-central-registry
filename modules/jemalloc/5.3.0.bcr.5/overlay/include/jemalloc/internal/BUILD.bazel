@@ -9,9 +9,8 @@ load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
 load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros", "utils")
 load("//tools:cc.bzl", "CONLYOPTS", "CXXOPTS")
 load("//tools:configure_host.bzl", "HOST_CC_DEPS", "HOST_CPPFLAGS", "HOST_LIBS")
-load("//tools:transition.bzl", "CPU", "PLATFORM")
 load(":lg_hugepage.bzl", "checked_lg_hugepage")
-load(":private_namespace.bzl", "jemalloc_private_namespace", "private_namespace", "private_namespace_leak_test")
+load(":private_namespace.bzl", "JET_PREFIX", "jemalloc_private_namespace", "private_namespace", "private_namespace_leak_test")
 load(":public_symbols.bzl", "public_symbols", "public_symbols_header", "symbol_list")
 load(":symbols.bzl", "OPTIONAL_PUBLIC_SYMBOLS", "OPTIONAL_WRAP_SYMBOLS", "PUBLIC_SYMBOLS", "SYM_PREFIX", "WRAP_SYMBOLS")
 
@@ -205,6 +204,7 @@ expand_template(
 
 jemalloc_private_namespace(
     name = "jemalloc_private_namespace",
+    visibility = ["//:__pkg__"],
 )
 
 checked_lg_hugepage(
@@ -221,17 +221,12 @@ selects.config_setting_group(
 
 # configure.ac checks for the glibc hooks only on its glibc host, Linux other than Android, and defines them only without
 # a jemalloc prefix.
-config_setting(
+selects.config_setting_group(
     name = "override_glibc_allocator",
-    constraint_values = ["@platforms//os:linux"],
-    flag_values = {"//settings/flags:jemalloc_prefix_resolved": ""},
-)
-
-config_setting(
-    name = "windows_lazy_lock",
-    constraint_values = ["@platforms//os:windows"],
-    flag_values = {"//settings/flags:enable_lazy_lock": "yes"},
-    visibility = ["//visibility:private"],
+    match_all = [
+        "@platforms//os:linux",
+        "//settings/flags:no_jemalloc_prefix",
+    ],
 )
 
 config_setting(
@@ -287,7 +282,7 @@ autoconf(
         checks.AC_BUILD_SETTING(
             name = "LG_PAGE",
             define = "LG_PAGE",
-            target = "//settings/platform:lg_page",
+            target = "//settings/platform:lg_page_resolved",
             unquote = True,
         ),
         checks.AC_BUILD_SETTING(
@@ -614,8 +609,8 @@ autoconf(
             ),
             checks.AC_DEFINE_UNQUOTED("JEMALLOC_LAZY_LOCK", ""),
         ],
-        # configure.ac forces lazy locking off for the pecoff ABI.
-        ":windows_lazy_lock": [],
+        # configure.ac forces lazy locking off for the pecoff ABI. This specializes the setting :lazy_lock resolves to.
+        "//settings/flags:enable_lazy_lock_is_yes_windows": [],
         "//conditions:default": [],
     }) + select({
         cpu: [
@@ -1609,7 +1604,7 @@ autoconf(
         checks.AC_BUILD_SETTING(
             name = "LG_VADDR",
             define = "LG_VADDR",
-            target = "//settings/platform:lg_vaddr",
+            target = "//settings/platform:lg_vaddr_resolved",
             unquote = True,
         ),
     ],
@@ -1684,7 +1679,7 @@ public_symbols(
 private_namespace(
     name = "private_namespace",
     out = "private_namespace.h",
-    input = "//:lib/jemalloc",
+    input = "//:jemalloc",
     public_symbols = ":public_syms",
     sym_prefix = SYM_PREFIX,
     tags = ["manual"],
@@ -1695,10 +1690,8 @@ private_namespace(
 private_namespace_leak_test(
     name = "private_namespace_leak_test",
     size = "small",
-    cpu = CPU,
     library = "//:jemalloc",
     namespace = ":private_namespace",
-    platform = PLATFORM,
     sym_prefix = SYM_PREFIX,
 )
 
@@ -1706,8 +1699,8 @@ private_namespace(
     name = "private_namespace_jet",
     out = "private_namespace_jet.h",
     enable_jet = True,
-    input = "//:lib/jemalloc",
-    prefix = "jet_",
+    input = "//:jemalloc",
+    prefix = JET_PREFIX,
     public_symbols = ":public_syms",
     sym_prefix = SYM_PREFIX,
     tags = ["manual"],

@@ -4,7 +4,6 @@ JEMALLOC_PRIVATE_NAMESPACE."""
 load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
-load("//tools:transition.bzl", "platform_constraints_transition")
 
 # This repository, as the owner of the library's own linker inputs, so that a dependency's archive (libunwind) is not
 # read as jemalloc's.
@@ -13,15 +12,13 @@ _REPO = Label("//:BUILD.bazel").repo_name
 # The unset value of //settings/flags:nm.
 _TOOLCHAIN_NM = Label("//settings/flags:toolchain_nm")
 
-def _static_archives(target):
-    """The static archives target links, from its CcInfo: every archive the library is made of, whatever its extension.
+# The private namespace of private_namespace_jet.h, under JEMALLOC_JET
+JET_PREFIX = "jet_"
 
-    An alwayslink archive is named .lo, so matching on ".a" silently drops it. The archives come dependencies first, the
-    reverse of link order, so the core precedes the zone and its symbols are listed in upstream's order (zone.o last in
-    C_SYM_OBJS), which keeps private_namespace.h byte-identical to a single-archive build.
-    """
+def _static_archives(target):
+    """The static archives of this repository's linker inputs in target's CcInfo."""
     archives = []
-    for linker_input in reversed(target[CcInfo].linking_context.linker_inputs.to_list()):
+    for linker_input in target[CcInfo].linking_context.linker_inputs.to_list():
         if linker_input.owner.repo_name != _REPO:
             continue
         for library in linker_input.libraries:
@@ -59,16 +56,31 @@ def _linker_input_owners(target):
 def _jemalloc_private_namespace_impl(ctx):
     # Equivalent of JEMALLOC_PRIVATE_NAMESPACE="${with_private_namespace}je_"
     value = ctx.attr._private_namespace[BuildSettingInfo].value + "je_"
+
+    # The prefix jemalloc's internal symbols carry: private_namespace_jet.h's under JEMALLOC_JET, and none without a
+    # private namespace
+    if ctx.attr._no_private_namespace[BuildSettingInfo].value:
+        internal_prefix = ""
+    elif ctx.attr._jet[BuildSettingInfo].value:
+        internal_prefix = JET_PREFIX
+    else:
+        internal_prefix = value
     return [
         BuildSettingInfo(value = value),
-        platform_common.TemplateVariableInfo({"JEMALLOC_PRIVATE_NAMESPACE": value}),
+        platform_common.TemplateVariableInfo({
+            "JEMALLOC_INTERNAL_PREFIX": internal_prefix,
+            "JEMALLOC_PRIVATE_NAMESPACE": value,
+        }),
     ]
 
 jemalloc_private_namespace = rule(
     doc = "JEMALLOC_PRIVATE_NAMESPACE, the private_namespace flag followed by \"je_\", as a BuildSettingInfo for " +
-          "rules_cc_autoconf's AC_BUILD_SETTING and as the $(JEMALLOC_PRIVATE_NAMESPACE) make variable.",
+          "rules_cc_autoconf's AC_BUILD_SETTING and as the $(JEMALLOC_PRIVATE_NAMESPACE) make variable, and the prefix " +
+          "of jemalloc's internal symbols in this configuration as $(JEMALLOC_INTERNAL_PREFIX).",
     implementation = _jemalloc_private_namespace_impl,
     attrs = {
+        "_jet": attr.label(default = "//settings:enable_jet"),
+        "_no_private_namespace": attr.label(default = "//settings:enable_no_private_namespace"),
         "_private_namespace": attr.label(default = "//settings/flags:private_namespace"),
     },
 )
@@ -202,7 +214,7 @@ def _private_namespace_leak_test_impl(ctx):
     archives = _static_archives(ctx.attr.library)
     if not archives:
         fail("expected a static archive from {}; its linker inputs are owned by {}".format(ctx.attr.library.label, _linker_input_owners(ctx.attr.library)))
-    namespace = ctx.attr.namespace[0]
+    namespace = ctx.attr.namespace
     export_syms = namespace[OutputGroupInfo].export_syms.to_list()[0]
     header = namespace[DefaultInfo].files.to_list()[0]
 
@@ -245,11 +257,7 @@ private_namespace_leak_test = rule(
         "namespace": attr.label(
             doc = "The private_namespace target that names the exported and private symbols.",
             mandatory = True,
-            cfg = platform_constraints_transition,
         ),
-        "cpu": attr.string(doc = "Read by the transition; see transition_default_constraints.", mandatory = True),
-        "platform": attr.string(doc = "Read by the transition; see transition_default_constraints.", mandatory = True),
-        "settings": attr.label_keyed_string_dict(doc = "Read by the transition; see transition_default_constraints."),
         "sym_prefix": attr.string(doc = "configure's SYM_PREFIX for the target platform.", mandatory = True, values = ["", "_"]),
         "_cc_toolchain": attr.label(default = Label("@rules_cc//cc:current_cc_toolchain")),
         "_nm": attr.label(

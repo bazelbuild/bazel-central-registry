@@ -1,15 +1,39 @@
 """Public API for configuring jemalloc build settings."""
 
+load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 
 # The empty string is a real prefix (none), so an unset jemalloc_prefix needs its own value.
 _UNSET = "__unset__"
 
+_REPO = Label("//:BUILD.bazel").repo_name
+
+def _owned_by(owner, cc_info):
+    """cc_info with this repository's linker inputs owned by owner instead of jemalloc's internal targets."""
+    linker_inputs = [
+        cc_common.create_linker_input(
+            owner = owner,
+            libraries = depset(linker_input.libraries),
+            user_link_flags = linker_input.user_link_flags,
+            additional_inputs = depset(linker_input.additional_inputs),
+        ) if linker_input.owner.repo_name == _REPO else linker_input
+        for linker_input in cc_info.linking_context.linker_inputs.to_list()
+    ]
+
+    # CcInfo has no public accessor for its debug context, the .dwo files of a fission build. rules_cc's Starlark CcInfo
+    # (Bazel 9 and later) keeps it in _debug_context; Bazel's native CcInfo exposes nothing, so there it is dropped.
+    debug_context = getattr(cc_info, "_debug_context", None)
+    return CcInfo(
+        compilation_context = cc_info.compilation_context,
+        linking_context = cc_common.create_linking_context(linker_inputs = depset(linker_inputs, order = "topological")),
+        **({"debug_context": debug_context} if debug_context else {})
+    )
+
 def _jemalloc_config_impl(ctx):
     target = ctx.attr._target[0]
-    providers = [DefaultInfo, CcInfo, InstrumentedFilesInfo, OutputGroupInfo]
+    providers = [DefaultInfo, InstrumentedFilesInfo, OutputGroupInfo]
 
-    return [target[provider] for provider in providers if provider in target]
+    return [target[provider] for provider in providers if provider in target] + [_owned_by(ctx.label, target[CcInfo])]
 
 def _jemalloc_transition_impl(settings, attr):
     """Transition implementation that applies user-provided settings."""

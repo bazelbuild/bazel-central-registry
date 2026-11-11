@@ -9,9 +9,9 @@ itself belong upstream.
 The upstream jemalloc build performs a number of feature detection steps in the configure script. Here the checks
 that ask the toolchain (functions and their signatures, MADV_* constants, builtins, attributes, atomics, type sizes and
 byte order) are copies of configure.ac's test programs, compiled or linked by rules_cc_autoconf with the target's
-toolchain. configure's host table is expressed as platform selects and transition defaults. What configure learns by
-running a program on the build machine (page size, virtual address bits, huge page size) is set by flags under
-//settings/platform; lg_page and lg_vaddr have per-platform defaults.
+toolchain. configure's host table is expressed as platform selects. What configure learns by running a program on the
+build machine (page size, virtual address bits, huge page size) is set by flags under //settings/platform; lg_page and
+lg_vaddr have per-platform defaults.
 
 ## Usage
 
@@ -26,19 +26,19 @@ See the [examples/host_toolchain/BUILD.bazel](examples/host_toolchain/BUILD.baze
  public API, malloc_conf, /etc/malloc.conf and MALLOC_CONF as INSTALL.md's --with-jemalloc-prefix describes. To call
  the API by its je_* names (je_mallctl, je_mallocx, ...) under any prefix, define JEMALLOC_NO_DEMANGLE before including
  jemalloc/jemalloc.h. Set the flag, or jemalloc()'s jemalloc_prefix, to choose a prefix explicitly. The flag defaults
- to "__auto__", which only jemalloc's own transition resolves, so a select() on the flag outside it sees "__auto__",
- and the flag provides no $(JEMALLOC_PREFIX). Set the prefix explicitly where a consumer needs to know it.
+ to "__auto__", which jemalloc resolves for the target platform, so a select() on the flag sees "__auto__", and the
+ flag provides no $(JEMALLOC_PREFIX). Set the prefix explicitly where a consumer needs to know it.
 - **//settings/flags:enable_zone_allocator (--disable-zone-allocator):** As in the make build, this is on for Darwin
  and off elsewhere, and turning it on for any other platform fails the build. With it on, jemalloc registers a malloc
  zone from a constructor in src/zone.c, so plain malloc reaches jemalloc in every binary that links @jemalloc,
  statically or not; this includes binaries that call jemalloc only through a prefixed API. Turn it off to keep jemalloc
- private to that API. Unlike the make build's static libjemalloc.a, this build links src/zone.c whole (alwayslink), but
- only in links Bazel performs: an archive exported to another build system would need -force_load. An application that
- defines its own global operator new and delete must define every overload it calls, or jemalloc's are linked as well
- and the duplicates fail the link.
-- **Library targets:** @jemalloc//:jemalloc is the target to depend on, through deps or the malloc attribute; it
- provides CcInfo and builds no file of its own. Inside, the archives are lib/libjemalloc_core.a and, with the zone
- allocator, lib/libjemalloc_zone.lo; their names are not part of the interface.
+ private to that API. Unlike the make build's static libjemalloc.a, the library links with -u
+ <private namespace>zone_register on Darwin, which keeps src/zone.c in a static link; an archive exported to another
+ build system needs the same option. An application that defines its own global operator new and delete must define
+ every overload it calls, or jemalloc's are linked as well and the duplicates fail the link.
+- **Library targets:** @jemalloc//:jemalloc is the cc_library to depend on, through deps or the malloc attribute. It
+ builds libjemalloc.a and no shared library of its own (linkstatic). Each jemalloc() target is a library of its own,
+ built with its attributes' settings.
 - **//settings/flags:nm (NM):** The nm that lists the library's symbols for private_namespace.h, as configure's NM
  does. Unset, it is the C++ toolchain's nm (CcToolchainInfo.nm_executable). rules_cc's rule-based toolchains supply
  that only through a cc_legacy_tool, so with one that declares none, such as the hermetic LLVM toolchain (the `llvm`
@@ -47,9 +47,9 @@ See the [examples/host_toolchain/BUILD.bazel](examples/host_toolchain/BUILD.baze
 - **//settings/platform:lg_vaddr (--with-lg-vaddr):** Defaults as configure does: 48 on aarch64, 57 on x86_64 (the
  configure script's cross compilation value; a native configure runs CPUID instead, which gives 48 on a CPU without
  5-level paging), and the pointer width on any other CPU whose width @platforms makes clear. Any other CPU, such as
- ppc, must set it, or the build fails. Set it explicitly to override. The flag defaults to "__auto__", which only
- jemalloc's own transition resolves, so a select() on the flag or $(LG_VADDR) outside it sees "__auto__". Any value is
- written into the header as is, without checking that it is a number.
+ ppc, must set it, or the build fails. Set it explicitly to override. The flag defaults to "__auto__", which jemalloc
+ resolves for the target platform, so a select() on the flag sees "__auto__". Any value is written into the header as
+ is, without checking that it is a number.
 - **//settings/platform:lg_page (--with-lg-page):** Defaults to 16 (64 KiB) on aarch64 Linux and Android and on ppc64le
  Linux, so one build runs on kernels with 4K, 16K or 64K pages, at the cost of a coarser page granularity on 4K
  kernels (configure's cross compilation value is 12, which fails at startup on a 16K or 64K kernel). Darwin defaults
@@ -63,7 +63,7 @@ See the [examples/host_toolchain/BUILD.bazel](examples/host_toolchain/BUILD.baze
  __libc_* functions and __posix_memalign, only where the malloc hooks link on glibc; elsewhere, as with configure,
  these names are listed but not defined.
 
-Platform configurations that have defaults that are applied via transition.
+Settings whose "__auto__" default jemalloc resolves for the target platform:
 - //settings/flags:enable_lazy_lock
 - //settings/flags:enable_zone_allocator
 - //settings/flags:jemalloc_prefix

@@ -19,11 +19,10 @@ def _checked_lg_hugepage_impl(ctx):
 
 checked_lg_hugepage = rule(
     doc = "The lg_hugepage flag, as a BuildSettingInfo for rules_cc_autoconf's AC_BUILD_SETTING, after checking at " +
-          "analysis time that it is at least lg_page. LG_HUGEPAGE reaches the header only through this rule, so the " +
-          "check holds with or without jemalloc's transition.",
+          "analysis time that it is at least lg_page. LG_HUGEPAGE reaches the header only through this rule.",
     implementation = _checked_lg_hugepage_impl,
     attrs = {
         "_lg_hugepage": attr.label(default = "//settings/platform:lg_hugepage"),
-        "_lg_page": attr.label(default = "//settings/platform:lg_page"),
+        "_lg_page": attr.label(default = "//settings/platform:lg_page_resolved"),
     },
 )

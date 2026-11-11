@@ -1,5 +1,6 @@
 load("@bazel_skylib//lib:selects.bzl", "selects")
-load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "int_flag", "string_flag", "string_setting")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "int_flag", "string_flag")
+load("//settings:platform_defaults.bzl", "DARWIN_OSES", "JE_PREFIX_OSES", "resolved_setting")
 
 package(default_visibility = ["//:__subpackages__"])
 
@@ -72,7 +73,28 @@ string_flag(
 )
 
 config_setting(
+    name = "enable_lazy_lock_is_yes",
+    flag_values = {":enable_lazy_lock": "yes"},
+)
+
+# configure.ac's default enables lazy locking on FreeBSD only
+config_setting(
+    name = "enable_lazy_lock_is_auto_freebsd",
+    constraint_values = ["@platforms//os:freebsd"],
+    flag_values = {":enable_lazy_lock": "__auto__"},
+)
+
+selects.config_setting_group(
     name = "lazy_lock",
+    match_any = [
+        ":enable_lazy_lock_is_auto_freebsd",
+        ":enable_lazy_lock_is_yes",
+    ],
+)
+
+config_setting(
+    name = "enable_lazy_lock_is_yes_windows",
+    constraint_values = ["@platforms//os:windows"],
     flag_values = {":enable_lazy_lock": "yes"},
 )
 
@@ -124,34 +146,71 @@ config_setting(
     flag_values = {":enable_xmalloc": "True"},
 )
 
-# --with-jemalloc-prefix. __auto__ takes configure's default for the target platform, which //tools:transition.bzl
-# resolves into :jemalloc_prefix_resolved. C reserves identifiers that begin with two underscores (C11 7.1.3), so no
-# real prefix is __auto__.
+# --with-jemalloc-prefix. __auto__ takes configure's default for the target platform, as :jemalloc_prefix_resolved and
+# :no_jemalloc_prefix resolve it. C reserves identifiers that begin with two underscores (C11 7.1.3), so no real
+# prefix is __auto__.
 string_flag(
     name = "jemalloc_prefix",
     build_setting_default = "__auto__",
     visibility = ["//visibility:public"],
 )
 
-# JEMALLOC_PREFIX: :jemalloc_prefix with __auto__ resolved to the platform default by //tools:transition.bzl. It is not
-# a flag, so a user cannot set it to __auto__.
-string_setting(
+# JEMALLOC_PREFIX: :jemalloc_prefix with __auto__ resolved to configure's default, "je_" for the macho and pecoff ABIs
+resolved_setting(
     name = "jemalloc_prefix_resolved",
-    build_setting_default = "",
+    defaults = select({
+        ":jemalloc_prefix_is_auto_je": {"default": "je_"},
+        "//conditions:default": {"default": ""},
+    }),
     make_variable = "JEMALLOC_PREFIX",
+    setting = ":jemalloc_prefix",
+)
+
+# JEMALLOC_CPREFIX: JEMALLOC_PREFIX uppercased
+resolved_setting(
+    name = "jemalloc_cprefix",
+    make_variable = "JEMALLOC_CPREFIX",
+    setting = ":jemalloc_prefix_resolved",
+    upper = True,
 )
 
 config_setting(
-    name = "no_jemalloc_prefix",
-    flag_values = {":jemalloc_prefix_resolved": ""},
+    name = "jemalloc_prefix_is_empty",
+    flag_values = {":jemalloc_prefix": ""},
 )
 
-# JEMALLOC_CPREFIX Uppercase version of JEMALLOC_PREFIX but can't easily be set during templating so uses a separate
-# setting to handle it so string manipulation can be stored when the configurable prefix is processed.
-string_setting(
-    name = "jemalloc_cprefix",
-    build_setting_default = "",
-    make_variable = "JEMALLOC_CPREFIX",
+config_setting(
+    name = "jemalloc_prefix_is_auto",
+    flag_values = {":jemalloc_prefix": "__auto__"},
+)
+
+[
+    config_setting(
+        name = "jemalloc_prefix_is_auto_" + os,
+        constraint_values = ["@platforms//os:" + os],
+        flag_values = {":jemalloc_prefix": "__auto__"},
+    )
+    for os in JE_PREFIX_OSES
+]
+
+# __auto__ where configure's default prefix is je_: the macho and pecoff ABIs. It matches as the per-OS setting it
+# resolves to, which specializes :jemalloc_prefix_is_auto.
+selects.config_setting_group(
+    name = "jemalloc_prefix_is_auto_je",
+    match_any = [":jemalloc_prefix_is_auto_" + os for os in JE_PREFIX_OSES],
+)
+
+# JEMALLOC_PREFIX is empty: "", or __auto__ outside :jemalloc_prefix_is_auto_je. The negation has no config_setting, so
+# this resolves, as selects.config_setting_group does, to a setting that matches where it holds and to
+# :jemalloc_prefix_is_empty, which cannot match there, where it does not. :jemalloc_prefix_is_auto_je specializes
+# :jemalloc_prefix_is_auto.
+alias(
+    name = "no_jemalloc_prefix",
+    actual = select({
+        ":jemalloc_prefix_is_auto": ":jemalloc_prefix_is_auto",
+        ":jemalloc_prefix_is_auto_je": ":jemalloc_prefix_is_empty",
+        "//conditions:default": ":jemalloc_prefix_is_empty",
+    }),
 )
 
 # LG_QUANTUM Base 2 log of minimum allocation alignment (--with-lg-quantum), -1 is undefined for resolution internal
@@ -209,8 +268,40 @@ string_flag(
 )
 
 config_setting(
+    name = "enable_zone_allocator_is_no",
+    flag_values = {":enable_zone_allocator": "no"},
+)
+
+config_setting(
+    name = "enable_zone_allocator_is_auto",
+    flag_values = {":enable_zone_allocator": "__auto__"},
+)
+
+[
+    config_setting(
+        name = "enable_zone_allocator_is_{}_{}".format(value, os),
+        constraint_values = ["@platforms//os:" + os],
+        flag_values = {":enable_zone_allocator": flag_value},
+    )
+    for value, flag_value in [
+        ("auto", "__auto__"),
+        ("yes", "yes"),
+    ]
+    for os in DARWIN_OSES
+]
+
+# The zone allocator is on: "yes" or configure's default on Darwin. It matches as the per-OS setting it resolves to,
+# which specializes :enable_zone_allocator_is_auto.
+selects.config_setting_group(
     name = "zone_allocator",
-    flag_values = {":enable_zone_allocator": "yes"},
+    match_any = [
+        ":enable_zone_allocator_is_{}_{}".format(value, os)
+        for value in [
+            "auto",
+            "yes",
+        ]
+        for os in DARWIN_OSES
+    ],
 )
 
 # JEMALLOC_PROF Enable allocation profiling with specified backtracing implementation
