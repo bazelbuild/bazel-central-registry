@@ -1,0 +1,104 @@
+# SPDX-License-Identifier: Apache-2.0
+module(
+    name = "hdlf_rules_brep",
+    version = "0.0.1",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+# This module's helpers (the launcher, the stub and checker of swap_test)
+# and its development tools are Go, built from source. They are pure Go,
+# so a user of the module needs no C++ toolchain for them; rules_go brings
+# its own Go SDK.
+bazel_dep(name = "rules_go", version = "0.64.2")
+
+# The CAD runner (issue #7) is Python, because build123d and OCCT are: the
+# hermetic interpreter of rules_python, and wheels locked with their hashes
+# in requirements_lock.txt (`bazel run //tools:requirements.update` writes
+# it from requirements.in). pip.parse takes binary wheels only, so a missing
+# wheel fails the fetch instead of compiling on the host.
+bazel_dep(name = "rules_python", version = "2.4.6")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    # Registers the 3.12 interpreter. Not the default: that is the root
+    # module's choice. The runner picks 3.12 by its python_version.
+    is_default = False,
+    python_version = "3.12",
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    download_only = True,
+    hub_name = "brep_pip",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_lock.txt",
+)
+
+# CadQuery part scripts (issue #15) need cadquery-ocp below 8.0, which
+# build123d's lock cannot hold, so they have a hub of their own, locked in
+# requirements_cadquery_lock.txt (`bazel run
+# //tools:requirements_cadquery.update`). Its wheels (467 MB, VTK among
+# them) are fetched only when a cad_part sets library = "cadquery".
+pip.parse(
+    download_only = True,
+    hub_name = "brep_pip_cadquery",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_cadquery_lock.txt",
+)
+use_repo(pip, "brep_pip", "brep_pip_cadquery")
+
+# The GL and X11 libraries OCP loads that its wheel leaves to the host,
+# from Debian 11 packages pinned by sha256 (brep/private/gl_libs.bzl).
+gl_libs = use_extension("//brep/private:gl_libs.bzl", "gl_libs")
+use_repo(gl_libs, "brep_gl_libs")
+
+# The helpers toolchain, which every rule that runs a tool needs.
+register_toolchains(
+    "//brep/toolchains:cad",
+    "//brep/toolchains:cad_cadquery",
+    "//brep/toolchains:cad_stub",
+    "//brep/toolchains:helpers",
+    # Last, so they are picked only off Linux x86_64 (spec P1).
+    "//brep/toolchains:cad_unsupported",
+    "//brep/toolchains:unsupported",
+)
+
+# The demonstration tools of the swap test template
+# (brep/private/swapdemo) and of determinism_test's own tests
+# (brep/private/detdemo).
+register_toolchains(
+    "//brep/private/swapdemo:all",
+    "//brep/private/detdemo:all",
+    dev_dependency = True,
+)
+
+# stardoc renders through Java and protobuf. Protobuf 34.1 and later bring a
+# prebuilt protoc (enabled in .bazelrc), so the documentation build compiles
+# no C++ and needs no C++ toolchain. Dev only: it raises the version stardoc
+# would otherwise pick.
+bazel_dep(name = "protobuf", version = "36.2", dev_dependency = True)
+
+# Bazel's Java launcher (used by stardoc) asks for a C++ toolchain even when
+# nothing compiles C++, and .bazelrc turns off host toolchain detection. zig's
+# toolchain is one self-contained binary, so it reads nothing from the host.
+# Dev only: a user of the module brings its own C++ toolchain if it needs one.
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0", dev_dependency = True)
+
+zig_toolchains = use_extension(
+    "@hermetic_cc_toolchain//toolchain:ext.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+use_repo(zig_toolchains, "zig_sdk")
+
+register_toolchains(
+    "@zig_sdk//toolchain:linux_amd64_gnu.2.31",
+    dev_dependency = True,
+)
+
+bazel_dep(name = "bazel_lib", version = "3.7.2", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "10.1.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
