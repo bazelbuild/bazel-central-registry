@@ -246,6 +246,66 @@ class PrepareContextTest(unittest.TestCase):
             self.assertEqual(prepare_context.main(), 0)
             self.assertIn("should_run=false", out_file.read_text(encoding="utf-8"))
 
+    def test_render_review_prompt_expands_styleguide_before_context(self):
+        tpl_dir = self.root / ".github" / "actions" / "gemini-review"
+        tpl_dir.mkdir(parents=True)
+        (tpl_dir / "prompt_template.md").write_text(
+            "Context:\n" "@{.gemini/context.json}\n" "Guide:\n" "@{.gemini/styleguide.md}\n",
+            encoding="utf-8",
+        )
+        (self.root / ".gemini").mkdir(exist_ok=True)
+        (self.root / ".gemini" / "styleguide.md").write_text("# BCR Style Guide", encoding="utf-8")
+        # Ensure @{.gemini/styleguide.md} inside context.json is not expanded.
+        ctx_str = '{"note": "@{.gemini/styleguide.md}"}'
+        self.assertTrue(prepare_context.render_review_prompt(ctx_str))
+        rendered = (self.root / ".gemini" / "prompt.md").read_text(encoding="utf-8")
+        self.assertIn('{"note": "@{.gemini/styleguide.md}"}', rendered)
+        self.assertIn("Guide:\n# BCR Style Guide", rendered)
+
+    def test_stage_pr_files_reconstructs_added_files_and_flags_symlinks(self):
+        pr_files = [
+            {
+                "filename": "modules/foo/1.1.0/MODULE.bazel",
+                "status": "added",
+                "additions": 2,
+                "deletions": 0,
+                "patch": '@@ -0,0 +1,2 @@\n+module(name = "foo", version = "1.1.0")\n+bazel_dep(name = "rules_cc", version = "0.1.0")',
+            },
+            {
+                "filename": "modules/foo/1.1.0/overlay/MODULE.bazel",
+                "status": "added",
+                "additions": 1,
+                "deletions": 0,
+                "patch": "@@ -0,0 +1 @@\n+../MODULE.bazel\n\\ No newline at end of file",
+            },
+        ]
+        reasons = []
+
+        def fake_gh_api(endpoint, paginate=False, slurp=False):
+            if "overlay/MODULE.bazel" in endpoint:
+                return {"type": "symlink", "target": "../MODULE.bazel"}
+            raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+        with patch.object(prepare_context, "gh_api", side_effect=fake_gh_api):
+            diff_path, head_root, changed_info = prepare_context.stage_pr_files(
+                repo="bazelbuild/bazel-central-registry",
+                head_sha="a" * 40,
+                pr_files=pr_files,
+                fetched_head_files={},
+                reasons=reasons,
+            )
+
+        self.assertTrue(pathlib.Path(diff_path).is_file())
+        staged_mod = pathlib.Path(head_root) / "modules/foo/1.1.0/MODULE.bazel"
+        self.assertTrue(staged_mod.is_file())
+        self.assertEqual(
+            staged_mod.read_text(encoding="utf-8"),
+            'module(name = "foo", version = "1.1.0")\nbazel_dep(name = "rules_cc", version = "0.1.0")\n',
+        )
+        self.assertEqual(changed_info[0]["head_file_path"], str(staged_mod.resolve()))
+        self.assertIsNone(changed_info[1]["head_file_path"])
+        self.assertTrue(any("Symlink detected" in r for r in reasons))
+
 
 if __name__ == "__main__":
     unittest.main()

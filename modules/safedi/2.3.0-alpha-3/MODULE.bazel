@@ -1,0 +1,48 @@
+"""Bazel module for SafeDI.
+
+Provides the SafeDI library and its macros, SafeDITool, and the
+`safedi_compile` rule (`//bazel:safedi.bzl`), which runs SafeDI's code
+generation as a Bazel action.
+"""
+
+module(
+    name = "safedi",
+    version = "2.3.0-alpha-3",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "rules_swift", version = "3.6.1", repo_name = "build_bazel_rules_swift")
+bazel_dep(name = "apple_support", version = "2.5.4", repo_name = "build_bazel_apple_support")
+
+# These match the versions Package.resolved pins for SwiftPM, apart from
+# a Bazel Central Registry `.bcr.N` suffix.
+# Scripts/check-version-consistency.sh checks it.
+bazel_dep(name = "swift-syntax", version = "603.0.0.bcr.1")
+bazel_dep(name = "swift_argument_parser", version = "1.7.1")
+
+# `bazel/safedi.bzl` reads rules_swift's `copt` build setting through
+# skylib's `BuildSettingInfo`, and `bazel/BUILD.bazel` declares
+# `prefer_prebuilt_safeditool` with skylib's `bool_flag`. Its `scope`
+# attribute needs skylib 1.8.0 or later on Bazel 7 and 8, which do not
+# know the attribute themselves. 1.9.0 is the version the module graph
+# already resolves (protobuf 34.0.bcr.1, through rules_swift, requires
+# it), so this adds no new module to the resolved graph.
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+
+# The prebuilt SafeDITool toolchains name the execution platform each
+# binary runs on with `@platforms` constraints. 1.0.0 is the version the
+# module graph already resolves, so this adds no new module to it.
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# `safedi_compile` takes SafeDITool from a toolchain. The `safeditool`
+# extension declares one toolchain per prebuilt SafeDITool that
+# `bazel/private/prebuilt_safeditool.bzl` names (none, outside a release's
+# source archive), registered first and gated on
+# `--@safedi//bazel:prefer_prebuilt_safeditool`. SafeDITool built from this
+# source tree is the fallback. See `bazel/extensions.bzl`.
+safeditool = use_extension("//bazel:extensions.bzl", "safeditool")
+use_repo(safeditool, "safeditool_toolchains")
+
+register_toolchains("@safeditool_toolchains//:all")
+
+register_toolchains("//bazel:safeditool_from_source_toolchain")
