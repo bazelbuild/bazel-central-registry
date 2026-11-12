@@ -478,7 +478,7 @@ class RegistryClient:
         if module.presubmit_yml:
             shutil.copy(module.presubmit_yml, presubmit_yml)
         else:
-            DEFAULT_PLATFORMS = ["debian11", "ubuntu2204", "macos", "macos_arm64", "windows"]
+            DEFAULT_PLATFORMS = ["debian13", "ubuntu2404", "macos", "macos_arm64", "windows"]
             DEFAULT_BAZEL_VERSIONS = ["9.x", "8.x", "7.x"]
             platforms = module.matrix_platforms or DEFAULT_PLATFORMS
             bazel_versions = module.matrix_bazel_versions or DEFAULT_BAZEL_VERSIONS
