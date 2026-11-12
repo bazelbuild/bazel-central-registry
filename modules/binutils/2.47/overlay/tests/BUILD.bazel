@@ -1,0 +1,89 @@
+"""Tests for the programs this module builds.
+
+Upstream's testsuites (binutils/testsuite, gas/testsuite, ld/testsuite, ...)
+are DejaGnu and need runtest, expect and a C compiler for the target, so
+they are not wired up; smoke_test.cc covers what can be checked on every
+platform instead.
+"""
+
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("//:platforms.bzl", "platform_setting")
+load("//:targets.bzl", "PLATFORMS")
+
+# The programs every platform builds, and the three the top level leaves
+# out for Darwin (configure.ac:1103-1131), which join in per platform.
+INSPECTION_TOOLS = [
+    "addr2line",
+    "ar",
+    "c++filt",
+    "nm",
+    "objcopy",
+    "objdump",
+    "ranlib",
+    "readelf",
+    "size",
+    "strings",
+    "strip",
+]
+
+TOOLCHAIN_TOOLS = {
+    platform_setting(key): [
+        tool
+        for tool, built in [
+            (
+                "as",
+                data["gas"],
+            ),
+            (
+                "ld",
+                data["ld"],
+            ),
+            (
+                "gprof",
+                data["gprof"],
+            ),
+        ]
+        if built
+    ]
+    for key, data in PLATFORMS.items()
+}
+
+# `smoke_test.cc` uses <filesystem>, so it needs C++17 rather than whatever
+# the toolchain defaults to.  clang-cl takes the MSVC spellings, not the GNU
+# ones.
+TEST_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/std:c++17",
+        "/w",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/std:c++17",
+        "/w",
+    ],
+    "//conditions:default": [
+        "-std=c++17",
+        "-w",
+    ],
+})
+
+# The programs are in `data`, not `tools`, so they are built once in the
+# target configuration.  `$(rlocationpath)` rather than `$(rootpath)` because
+# Windows runfiles are a manifest, not a symlink tree.
+cc_test(
+    name = "smoke_test",
+    size = "small",
+    srcs = ["smoke_test.cc"],
+    args = [
+        "{}=$(rlocationpath //:{})".format(tool, tool)
+        for tool in INSPECTION_TOOLS
+    ] + select({
+        setting: ["{}=$(rlocationpath //:{})".format(tool, tool) for tool in tools]
+        for setting, tools in TOOLCHAIN_TOOLS.items()
+    }),
+    copts = TEST_COPTS,
+    data = ["//:" + tool for tool in INSPECTION_TOOLS] + select({
+        setting: ["//:" + tool for tool in tools]
+        for setting, tools in TOOLCHAIN_TOOLS.items()
+    }),
+    deps = ["@rules_cc//cc/runfiles"],
+)

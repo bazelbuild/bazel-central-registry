@@ -1,0 +1,91 @@
+"""xml2pmx - convert MusicXML to PMX."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+
+# config.h generated from upstream's autoheader template. HAVE_* probes
+# resolve against the root //:configure rule. Project-policy slots that
+# upstream's configure.ac sets via AC_DEFINE (MAGIC/SIG/PRELOAD/etc.)
+# are passed as local_defines on the cc_binary below — those values
+# describe the bytecode image format we ship, not anything we can probe.
+autoconf_hdr(
+    name = "config_h_gen",
+    out = "xml2pmx-src/config.h",
+    template = "config.h.in",
+    deps = ["//:configure"],
+)
+
+cc_library(
+    name = "xml2pmx_config",
+    hdrs = [":config_h_gen"],
+    includes = ["xml2pmx-src"],
+)
+
+cc_binary(
+    name = "xml2pmx",
+    srcs = glob(
+        [
+            "xml2pmx-src/*.c",
+            "xml2pmx-src/*.h",
+        ],
+        # action.c is textually included from interp.c, not compiled separately.
+        exclude = ["xml2pmx-src/action.c"],
+    ),
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    # Project-policy defines mirroring upstream xml2pmx-src/configure.ac
+    # AC_DEFINE entries — these describe the preloaded bytecode image
+    # format, not host capabilities. Earlier values ('OBJ', 0xD0BECCu,
+    # missing PRELOAD) silently put xml2pmx into load-from-disk mode
+    # and the magic-number check rejected the bundled image at runtime.
+    #
+    # NORETURN/UNUSED/USED need per-compiler dispatch because MSVC uses
+    # __declspec syntax instead of GCC's __attribute__.
+    #
+    # KPATHSEA routes wrapper.c's `#include <getopt.h>` through
+    # <kpathsea/getopt.h> on Windows (no POSIX <getopt.h> on MSVC).
+    local_defines = [
+        "DEBUG=1",
+        "KPATHSEA",
+        "LOG_PAGESIZE=12",
+        "MAGIC=\\\"OBCX\\\"",
+        "PAGESIZE=4096",
+        "PRELOAD=1",
+        "REVID=\\\"texlive\\\"",
+        "SEGMEM=1",
+        "SIG=0x00030290",
+        "SIZEOF_INT_P=8",
+    ] + select({
+        "@rules_cc//cc/compiler:clang-cl": [
+            "NORETURN=__declspec(noreturn)",
+            "UNUSED=",
+            "USED=",
+        ],
+        "@rules_cc//cc/compiler:msvc-cl": [
+            "NORETURN=__declspec(noreturn)",
+            "UNUSED=",
+            "USED=",
+        ],
+        "//conditions:default": [
+            "NORETURN=__attribute__((noreturn))",
+            "UNUSED=__attribute__((unused))",
+            "USED=__attribute__((used))",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":xml2pmx_action",
+        ":xml2pmx_config",
+        "//texk/kpathsea",
+    ],
+)
+
+cc_library(
+    name = "xml2pmx_action",
+    includes = ["xml2pmx-src"],
+    textual_hdrs = ["xml2pmx-src/action.c"],
+)

@@ -1,0 +1,53 @@
+Make config.h.W32 accurate for MSVC/clang-cl.
+
+Upstream's `src/config.h.W32` was calibrated for MinGW-GCC and TinyCC;
+two of its guards leave MSVC/clang-cl in an inconsistent state that
+happens to compile against older UCRT SDKs but breaks against modern
+ones (Windows 10 SDK >= 10.0.20000):
+
+  1. `HAVE_UMASK 1` is restricted to `__MINGW32__ || __TINYC__`. That was
+     accurate when MSVC's `<io.h>` only exposed `_umask`, but modern UCRT
+     (`<corecrt_io.h>`) declares POSIX-compat `_ACRTIMP int umask(int)`.
+     With HAVE_UMASK left undefined, `src/makeint.h`/`src/misc.c` fall
+     back to `extern mode_t umask(mode_t)` + a stub definition — the
+     linkage mismatch against UCRT's `dllimport` decl then fails with
+     `error C2375: 'umask': redefinition; different linkage`.
+
+  2. Once HAVE_UMASK is set for MSVC, the `typedef int mode_t` tucked
+     inside the same guarded block in `src/makeint.h` no longer fires.
+     MinGW's `<sys/types.h>` supplies `mode_t`, but MSVC's does not, so
+     unrelated call sites like `src/misc.c:685` (`mode_t mask;` in
+     `get_tmpfd`) then fail with `error C2065: 'mode_t': undeclared
+     identifier`. Add `#define mode_t int` for `_MSC_VER` (which covers
+     clang-cl too), matching the shape upstream uses for `gid_t`/`uid_t`
+     immediately below.
+
+The sibling HAVE_STRCASECMP / HAVE_STRNCASECMP guards are intentionally
+left alone: MSVC ships `_stricmp` / `_strnicmp` (already surfaced via
+HAVE_STRCMPI / HAVE_STRICMP / ... elsewhere in the file), not the POSIX
+spellings, so widening those would set a false positive.
+
+diff --git a/src/config.h.W32 b/src/config.h.W32
+--- a/src/config.h.W32
++++ b/src/config.h.W32
+@@ -415,7 +415,7 @@
+ #define HAVE_UINTMAX_T 1
+
+ /* Define to 1 if you have the `umask' function. */
+-#if defined(__MINGW32__) || defined(__TINYC__)
++#if defined(__MINGW32__) || defined(__TINYC__) || defined(_MSC_VER)
+ # define HAVE_UMASK 1
+ #endif
+
+@@ -563,6 +563,11 @@
+ /* Define to 'int' if <sys/types.h> doesn't define. */
+ #define gid_t int
+
++/* MSVC and clang-cl don't declare `mode_t` in <sys/types.h>; MinGW does. */
++#ifdef _MSC_VER
++#define mode_t int
++#endif
++
+ /* Define to 'int' if <sys/types.h> does not define. */
+ /* GCC 4.x reportedly defines pid_t.  */
+ #ifndef _PID_T_

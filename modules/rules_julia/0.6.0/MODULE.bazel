@@ -1,0 +1,62 @@
+"""rules_julia"""
+
+module(
+    name = "rules_julia",
+    version = "0.6.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_batch", version = "0.1.1")
+bazel_dep(name = "rules_shell", version = "0.7.1")
+bazel_dep(name = "rules_cc", version = "0.2.4")
+
+# TODO: Replace with Bazel's builtin `toml` module should
+# https://github.com/bazelbuild/bazel/pull/27659 land.
+bazel_dep(name = "toml.bzl", version = "0.5.0")
+
+# Register Julia toolchains for development
+julia = use_extension("//julia:extensions.bzl", "julia")
+use_repo(julia, "julia_toolchains")
+
+register_toolchains(
+    "@julia_toolchains//:all",
+)
+
+# Additional Julia versions exercised by CI.
+julia_dev = use_extension("//julia:extensions.bzl", "julia", dev_dependency = True)
+julia_dev.toolchain(version = "1.10.10")
+
+# Julia package dependencies for formatting
+fmt_deps = use_extension("//julia/pkg:extensions.bzl", "pkg")
+fmt_deps.install(
+    name = "rules_julia_fmt",
+    lockfile = "//julia/private/format:Manifest.bazel.json",
+)
+fmt_deps.pkg_annotation(
+    dep = "Preferences",
+    patch_args = ["-p1"],
+    patches = ["@//julia/private/format/3rdparty/patches:Preferences.patch"],
+)
+use_repo(
+    fmt_deps,
+    "rules_julia_fmt",
+)
+
+# Julia package dependencies resolved from plain `Manifest.toml` files. Exercises
+# `pkg.install(manifest = ...)` and the facts persisted in `MODULE.bazel.lock`.
+test_deps = use_extension("//julia/pkg:extensions.bzl", "pkg", dev_dependency = True)
+test_deps.install(
+    name = "rules_julia_test_pkg",
+    manifests = [
+        "//julia/private/tests/pkg_manifest:Manifest-v1.10.toml",
+        "//julia/private/tests/pkg_manifest:Manifest-v1.12.toml",
+    ],
+)
+use_repo(
+    test_deps,
+    "rules_julia_test_pkg",
+)
+
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True, repo_name = "io_bazel_stardoc")
+bazel_dep(name = "rules_rust_mdbook", version = "0.69.0", dev_dependency = True)

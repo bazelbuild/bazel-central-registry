@@ -1,0 +1,288 @@
+# Unless explicitly stated otherwise all files in this repository are licensed under
+# the Apache 2.0 License.
+#
+# This product includes software developed at Datadog
+# (https://www.datadoghq.com/) Copyright 2025-Present Datadog, Inc.
+
+module(
+    name = "datadog-rules-test-optimization",
+    version = "2.0.0",
+)
+
+# Platforms is needed for cross-platform test execution detection
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# Test utilities for Starlark unit tests
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+
+# Dev-only dependency for shell-based unit tests in this repository.
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = True)
+
+# Dev-only dependency for in-repo example builds that compile Go targets.
+# Consumer-facing core usage remains rules_go-free.
+# The Go companion, which the root loads as a local repository, and the SDK
+# repositories that go_wrap_sdk writes load rules_go as @io_bazel_rules_go.
+bazel_dep(name = "rules_go", version = "0.60.0", dev_dependency = True, repo_name = "io_bazel_rules_go")
+
+# Dev-only dependency for in-repo Python companion/example builds.
+bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
+
+# Dev-only dependency for in-repo Java companion/example builds.
+bazel_dep(name = "rules_java", version = "8.14.0", dev_dependency = True)
+
+# Dev-only dependencies for in-repo NodeJS/.NET/Ruby companion/example builds.
+bazel_dep(name = "aspect_rules_js", version = "3.0.0-rc5", dev_dependency = True)
+bazel_dep(name = "rules_nodejs", version = "6.7.3", dev_dependency = True)
+bazel_dep(name = "rules_dotnet", version = "0.21.5", dev_dependency = True)
+bazel_dep(name = "rules_ruby", version = "0.21.1", dev_dependency = True)
+
+# Dev-only local wiring for companion module loads from this repository root.
+go_bootstrap = use_extension(
+    "//tools/dev:go_bootstrap.bzl",
+    "go_bootstrap_extension",
+    dev_dependency = True,
+)
+go_bootstrap.local_go_companion(
+    name = "datadog-rules-test-optimization-go",
+    path = "modules/go",
+)
+use_repo(go_bootstrap, "datadog-rules-test-optimization-go")
+
+python_bootstrap = use_extension(
+    "//tools/dev:python_bootstrap.bzl",
+    "python_bootstrap_extension",
+    dev_dependency = True,
+)
+python_bootstrap.local_python_companion(
+    name = "datadog-rules-test-optimization-python",
+    path = "modules/python",
+)
+use_repo(python_bootstrap, "datadog-rules-test-optimization-python")
+
+java_bootstrap = use_extension(
+    "//tools/dev:java_bootstrap.bzl",
+    "java_bootstrap_extension",
+    dev_dependency = True,
+)
+java_bootstrap.local_java_companion(
+    name = "datadog-rules-test-optimization-java",
+    path = "modules/java",
+)
+use_repo(java_bootstrap, "datadog-rules-test-optimization-java")
+
+nodejs_bootstrap = use_extension(
+    "//tools/dev:nodejs_bootstrap.bzl",
+    "nodejs_bootstrap_extension",
+    dev_dependency = True,
+)
+nodejs_bootstrap.local_nodejs_companion(
+    name = "datadog-rules-test-optimization-nodejs",
+    path = "modules/nodejs",
+)
+use_repo(nodejs_bootstrap, "datadog-rules-test-optimization-nodejs")
+
+dotnet_bootstrap = use_extension(
+    "//tools/dev:dotnet_bootstrap.bzl",
+    "dotnet_bootstrap_extension",
+    dev_dependency = True,
+)
+dotnet_bootstrap.local_dotnet_companion(
+    name = "datadog-rules-test-optimization-dotnet",
+    path = "modules/dotnet",
+)
+use_repo(dotnet_bootstrap, "datadog-rules-test-optimization-dotnet")
+
+ruby_bootstrap = use_extension(
+    "//tools/dev:ruby_bootstrap.bzl",
+    "ruby_bootstrap_extension",
+    dev_dependency = True,
+)
+ruby_bootstrap.local_ruby_companion(
+    name = "datadog-rules-test-optimization-ruby",
+    path = "modules/ruby",
+)
+use_repo(ruby_bootstrap, "datadog-rules-test-optimization-ruby")
+
+# Dev-only toolchain wiring so //examples/... can run from this repository root.
+node = use_extension(
+    "@rules_nodejs//nodejs:extensions.bzl",
+    "node",
+    dev_dependency = True,
+)
+node.toolchain(node_version = "22.22.0")
+use_repo(node, "nodejs", "nodejs_host", "nodejs_toolchains")
+
+register_toolchains(
+    "@nodejs_toolchains//:all",
+    dev_dependency = True,
+)
+
+dotnet = use_extension(
+    "@rules_dotnet//dotnet:extensions.bzl",
+    "dotnet",
+    dev_dependency = True,
+)
+dotnet.toolchain(
+    name = "dotnet",
+    dotnet_version = "8.0.100",
+)
+use_repo(dotnet, "dotnet_toolchains")
+
+register_toolchains(
+    "@dotnet_toolchains//:all",
+    dev_dependency = True,
+)
+
+ruby = use_extension(
+    "@rules_ruby//ruby:extensions.bzl",
+    "ruby",
+    dev_dependency = True,
+)
+ruby.toolchain(
+    name = "ruby",
+    version = "3.3.9",
+)
+use_repo(ruby, "ruby", "ruby_toolchains")
+
+register_toolchains(
+    "@ruby_toolchains//:all",
+    dev_dependency = True,
+)
+
+# Dev-only Python toolchain and pip dependencies for //examples/... pytest targets.
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.toolchain(python_version = "3.12")
+
+pip = use_extension(
+    "@rules_python//python/extensions:pip.bzl",
+    "pip",
+    dev_dependency = True,
+)
+pip.parse(
+    experimental_index_url = "https://pypi.org/simple",
+    hub_name = "example_pip",
+    python_version = "3.12",
+    requirements_lock = "//examples/single_service/src/python-project:requirements_lock.txt",
+)
+use_repo(pip, "example_pip")
+
+# Dev-only: dd-java-agent master build for the Java example. No sha256 pin —
+# the S3 object tracks the branch head.
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_file(
+    name = "dd_java_agent",
+    downloaded_file_path = "dd-java-agent.jar",
+    urls = ["https://s3.us-east-1.amazonaws.com/dd-trace-java-builds/master/dd-java-agent.jar"],
+)
+
+# Dev-only stub repository so //examples/... can be analyzed from this root
+# workspace without fetching real Datadog data.
+example_stub_repo = use_extension(
+    "//tools/tests:example_stub_repo.bzl",
+    "example_stub_repo_extension",
+    dev_dependency = True,
+)
+
+_EXAMPLE_STUB_LABELS = [
+    "apps_ruby_example",
+    "company_product_example",
+    "example_nodejs_project",
+    "example_python_modules_python_tests",
+    "example_python_pkg",
+    "example_python_tests",
+]
+
+_EXAMPLE_STUB_SERVICE_KEYS = [
+    "go_service",
+    "go_service_a",
+    "go_service_b",
+    "python_service",
+    "java_service",
+    "nodejs_service",
+    "dotnet_service",
+    "ruby_service",
+]
+
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_keys = _EXAMPLE_STUB_SERVICE_KEYS,
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_go",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_name = "go-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_python",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_name = "go-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_java",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_name = "go-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_nodejs",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_name = "go-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_dotnet",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_name = "go-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_ruby",
+    enabled = False,
+    labels = _EXAMPLE_STUB_LABELS,
+    service_name = "go-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_static",
+    service_name = "static-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_static_module",
+    go_module_path = "github.com/DataDog/dd-source",
+    go_sanitized_module_path = "github_com_datadog_dd_source",
+    labels = [
+        "example_com_embed_pkg",
+        "example_com_other_pkg",
+    ],
+    module_group_by_identifier = {
+        "example.com/embed/pkg": "module_example_com_embed_pkg",
+        "example.com/other/pkg": "module_example_com_other_pkg",
+    },
+    service_name = "static-module-service",
+)
+example_stub_repo.example_stub_repo(
+    name = "test_optimization_data_static_disabled",
+    enabled = False,
+    service_name = "static-disabled-service",
+)
+use_repo(
+    example_stub_repo,
+    "test_optimization_data",
+    "test_optimization_data_dotnet",
+    "test_optimization_data_go",
+    "test_optimization_data_java",
+    "test_optimization_data_nodejs",
+    "test_optimization_data_python",
+    "test_optimization_data_ruby",
+    "test_optimization_data_static",
+    "test_optimization_data_static_disabled",
+    "test_optimization_data_static_module",
+)
