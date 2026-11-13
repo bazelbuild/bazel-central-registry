@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Prepares .gemini/context.json and .gemini/prompt.md for BCR Gemini PR reviews."""
+"""Prepares gemini-artifacts/context.json and gemini-artifacts/prompt.md for BCR Gemini PR reviews."""
 
 import base64
 import copy
@@ -141,23 +141,17 @@ def presubmit_changed_beyond_platforms_or_bazel(prev_doc, curr_doc):
 def render_review_prompt(
     context_json_str,
     template_path=pathlib.Path(".github/actions/gemini-review/prompt_template.md"),
-    styleguide_path=pathlib.Path(".gemini/styleguide.md"),
-    out_path=pathlib.Path(".gemini/prompt.md"),
+    out_path=pathlib.Path("gemini-artifacts/prompt.md"),
 ):
-    """Renders .gemini/prompt.md by expanding styleguide and context into prompt_template.md."""
+    """Renders gemini-artifacts/prompt.md by expanding context into prompt_template.md."""
     if not template_path.is_file():
         fallback = pathlib.Path(__file__).resolve().parent / "prompt_template.md"
         if fallback.is_file():
             template_path = fallback
-    if not template_path.is_file() or not styleguide_path.is_file():
+    if not template_path.is_file():
         return False
     prompt_template = template_path.read_text(encoding="utf-8")
-    styleguide = styleguide_path.read_text(encoding="utf-8").strip()
-    # Expand trusted styleguide.md first, then context.json second so untrusted
-    # fields in context.json can never trigger template expansion.
-    rendered = prompt_template.replace("@{.gemini/styleguide.md}", styleguide).replace(
-        "@{.gemini/context.json}", context_json_str.strip()
-    )
+    rendered = prompt_template.replace("{{CONTEXT_JSON}}", context_json_str.strip())
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rendered, encoding="utf-8")
     return True
@@ -301,7 +295,7 @@ def main():
     additional_context = input_context
     if not additional_context and comment_body:
         additional_context = re.sub(
-            r"^(@bazel-io\s+gemini-review|@gemini-cli\s+/review)\s*",
+            r"^@bazel-io\s+gemini-review\s*",
             "",
             comment_body,
         ).strip()
@@ -627,14 +621,14 @@ def main():
         "changed_files": changed_files_info,
     }
 
-    os.makedirs(".gemini", exist_ok=True)
+    os.makedirs("gemini-artifacts", exist_ok=True)
     context_json_str = json.dumps(context_data, indent=2)
-    with open(".gemini/context.json", "w", encoding="utf-8") as f:
+    with open("gemini-artifacts/context.json", "w", encoding="utf-8") as f:
         f.write(context_json_str)
 
     render_review_prompt(context_json_str)
 
-    print("Generated .gemini/context.json:")
+    print("Generated gemini-artifacts/context.json:")
     print(context_json_str)
 
     with open(github_output, "a", encoding="utf-8") as out:
