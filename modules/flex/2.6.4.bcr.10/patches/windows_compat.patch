@@ -1,0 +1,700 @@
+Build and run flex 2.6.4 on Windows (MSVC).
+
+Upstream flex has no Windows port: as of master (4fcc714, 2026-07) src/filter.c
+still runs the output pipeline as forked child processes, and configure.ac's
+AC_FUNC_FORK has no fallback behind it.  This patch adds the support the registry
+module needs, keeping the generated scanners byte for byte what the POSIX build
+produces.
+
+src/filter.c
+  The output pipeline without fork().  Upstream feeds the generated scanner text
+  through a chain of children: the tee filter copies it to a second m4 for the
+  --header-file, m4 expands the skeleton macros, and a last filter renumbers the
+  #line directives.  Here the text is kept in a temporary file while flex runs;
+  filter_finish() then spawns m4 (_spawnvp, _P_WAIT) over it once for the scanner
+  and once more for the header, with the same preamble and footer the tee writes,
+  and runs the #line fix-up in this process.  The preamble/footer writers and the
+  fix-up loop are factored out of filter_tee_header / filter_fix_linedirs so both
+  paths share them; the POSIX path is otherwise unchanged.  The one difference from
+  upstream: with -t (scanner to stdout) the #line directives are not renumbered,
+  since a terminal cannot be rewritten; rules_flex always passes -o.  Temporary
+  files are created with _O_CREAT|_O_EXCL|_O_TEMPORARY on names from _tempnam,
+  retrying while the name exists: tmpfile() wants the drive's root directory,
+  and _tempnam's names repeat across processes, so concurrent flex actions
+  sharing %TEMP% would otherwise truncate each other's files.
+  The regex-based blank-line test becomes is_blank_line(): MSVC has no <regex.h>
+  for that pattern (see src/regex.c).
+
+src/main.c
+  flex_main calls filter_finish() before the output file is closed; the earlier
+  Windows preamble written from main is gone (each m4 pass writes its own).  The
+  $PATH walk for m4 splits on ';'.  program_name is argv[0] as given and
+  --version prints "flex"/"flex++" rather than the executable's name.
+
+src/flexdef.h, src/regex.c, src/scanopt.c
+  Declarations for the above; <regex.h>-free implementations of the two regexes
+  flex compiles; MSVC-compatible option scanning.
+
+Regenerate with: apply hardcode_int_max_log10.patch to a pristine flex-2.6.4
+as flex-2.6.4-orig, edit the five files in a copy flex-2.6.4-mod, then
+`diff -ruN flex-2.6.4-orig flex-2.6.4-mod` over those files.  Keep the
+`diff -ruN` lines: Bazel's patch applier needs them to tell the files apart.
+
+diff -ruN flex-2.6.4-orig/src/filter.c flex-2.6.4-mod/src/filter.c
+--- flex-2.6.4-orig/src/filter.c	2026-10-23 23:51:22.896708147 -0700
++++ flex-2.6.4-mod/src/filter.c	2026-10-24 00:15:25.481414202 -0700
+@@ -22,6 +22,172 @@
+ /*  PURPOSE. */
+ 
+ #include "flexdef.h"
++
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <io.h>
++#include <process.h>
++
++static intptr_t filter_child_pid = -1;
++
++void filter_wait_for_children (void)
++{
++	if (filter_child_pid != -1) {
++		_cwait (NULL, filter_child_pid, 0);
++		filter_child_pid = -1;
++	}
++}
++
++/* The fork-free output pipeline.  Without fork(), the filter chain cannot
++ * run as child processes, so the generated scanner text is kept in a
++ * temporary file while flex runs; filter_finish() then runs m4 over it, once
++ * for the scanner and once more for the header file (the two copies
++ * filter_tee_header would have fed to two m4 children), and fixes the #line
++ * directives of each result in this process.
++ */
++static FILE        *tee_buf = NULL;          /* the scanner text, before m4 */
++static const char  *tee_header = NULL;       /* --header-file, or NULL */
++static int          tee_saved_stdout = -1;   /* the scanner output stdout pointed at */
++static const char **tee_m4_argv = NULL;      /* the m4 command of the chain */
++static bool         tee_fix_linedirs = false;
++
++static void write_m4_preamble (FILE *out, bool header);
++static void write_header_footer (FILE *out);
++static void fix_linedirs (FILE *in, FILE *out);
++
++/* A temporary file that is deleted on close.  tmpfile() wants the drive's
++ * root directory, which an ordinary user cannot write to, and _tempnam()
++ * only picks a name: its counter restarts in every process, so flex
++ * processes running at the same time under one %TEMP% (as Bazel's actions
++ * do) are handed the same name.  Create the file with _O_EXCL so a name
++ * that exists fails, and ask for another one. */
++static FILE *win_tmpfile (void)
++{
++	int tries;
++
++	for (tries = 0; tries < 256; tries++) {
++		char *name = _tempnam (NULL, "flex");
++		int fd;
++
++		if (name == NULL)
++			break;
++		fd = _open (name,
++			    _O_RDWR | _O_CREAT | _O_EXCL | _O_TEMPORARY |
++			    _O_BINARY, _S_IREAD | _S_IWRITE);
++		free (name);
++		if (fd >= 0) {
++			FILE *f = _fdopen (fd, "w+b");
++
++			if (f == NULL)
++				_close (fd);
++			else
++				return f;
++			break;
++		}
++		if (errno != EEXIST && errno != EACCES)
++			break;
++	}
++	flexfatal (_("could not create a temporary file"));
++	return NULL;
++}
++
++static void copy_stream (FILE *in, FILE *out)
++{
++	char buf[4096];
++	size_t n;
++
++	while ((n = fread (buf, 1, sizeof buf, in)) > 0)
++		fwrite (buf, 1, n, out);
++}
++
++/* One m4 pass over the buffered scanner text, into `out`: the preamble
++ * filter_tee_header writes for the scanner or the header, the text, the
++ * header's footer, then m4, then the #line fix-up. */
++static void run_m4_pass (bool header, FILE *out)
++{
++	FILE *m4_in = win_tmpfile ();
++	FILE *m4_out = win_tmpfile ();
++	int saved_in, saved_out, status;
++
++	write_m4_preamble (m4_in, header);
++	rewind (tee_buf);
++	copy_stream (tee_buf, m4_in);
++	if (header)
++		write_header_footer (m4_in);
++	fflush (m4_in);
++	rewind (m4_in);
++
++	fflush (stdout);
++	fflush (stderr);
++	saved_in = dup (0);
++	saved_out = dup (1);
++	if (dup2 (fileno (m4_in), 0) == -1 || dup2 (fileno (m4_out), 1) == -1)
++		flexfatal (_("dup2 failed"));
++	status = (int) _spawnvp (_P_WAIT, tee_m4_argv[0],
++				 (const char *const *) tee_m4_argv);
++	dup2 (saved_in, 0);
++	dup2 (saved_out, 1);
++	close (saved_in);
++	close (saved_out);
++	if (status != 0)
++		lerr_fatal (_("%s exited with status %d"), tee_m4_argv[0], status);
++
++	fflush (m4_out);
++	rewind (m4_out);
++	if (tee_fix_linedirs)
++		fix_linedirs (m4_out, out);
++	else
++		copy_stream (m4_out, out);
++	fclose (m4_in);
++	fclose (m4_out);
++}
++
++/* Finish the output: called once the scanner text is complete, before the
++ * output file is closed.  On a failed run the buffered text is dropped. */
++void filter_finish (int exit_status)
++{
++	if (tee_buf == NULL) {
++		filter_wait_for_children ();
++		return;
++	}
++	if (exit_status != 0) {
++		/* flexend has closed and removed the output file already. */
++		if (tee_saved_stdout != -1)
++			close (tee_saved_stdout);
++		fclose (tee_buf);
++		tee_buf = NULL;
++		return;
++	}
++	if (tee_saved_stdout != -1) {
++		fflush (stdout);
++		dup2 (tee_saved_stdout, fileno (stdout));
++		close (tee_saved_stdout);
++		tee_saved_stdout = -1;
++	}
++	if (tee_m4_argv != NULL) {
++		run_m4_pass (false, stdout);
++		if (tee_header != NULL) {
++			FILE *h = fopen (tee_header, "w");
++
++			if (h == NULL)
++				lerr (_("could not create %s"), tee_header);
++			else {
++				run_m4_pass (true, h);
++				if (ferror (h) || fclose (h))
++					lerr (_("error writing output file %s"),
++					      tee_header);
++			}
++		}
++		fflush (stdout);
++	}
++	fclose (tee_buf);
++	tee_buf = NULL;
++}
++#endif
++
+ static const char * check_4_gnu_m4 =
+     "m4_dnl ifdef(`__gnu__', ,"
+     "`errprint(Flex requires GNU M4. Set the PATH or set the M4 environment variable to its path name.)"
+@@ -127,6 +293,38 @@
+  */
+ bool filter_apply_chain (struct filter * chain)
+ {
++#ifdef _WIN32
++	/*
++	 * Windows implementation: no fork(), so the chain cannot run as
++	 * child processes.  The tee filter becomes a temporary file that
++	 * collects the scanner text, the m4 command is remembered, and the
++	 * #line fix-up is noted; filter_finish() runs them once flex is done.
++	 */
++	if (chain)
++		filter_apply_chain (chain->next);
++	else
++		return true;
++
++	if (chain->filter_func == filter_tee_header) {
++		tee_header = (const char *) chain->extra;
++		tee_buf = win_tmpfile ();
++		fflush (stdout);
++		if ((tee_saved_stdout = dup (fileno (stdout))) == -1)
++			flexfatal (_("dup(stdout) failed"));
++		if (dup2 (fileno (tee_buf), fileno (stdout)) == -1)
++			flexfatal (_("dup2(tee_buf, stdout) failed"));
++		return true;
++	}
++	if (chain->filter_func == filter_fix_linedirs) {
++		tee_fix_linedirs = true;
++		return true;
++	}
++	if (chain->filter_func)
++		return true;	/* no other internal filter exists */
++
++	tee_m4_argv = chain->argv;
++	return true;
++#else
+ 	int     pid, pipes[2];
+ 
+ 
+@@ -196,6 +394,7 @@
+     fseek (stdout, 0, SEEK_CUR);
+ 
+ 	return true;
++#endif
+ }
+ 
+ /** Truncate the chain to max_len number of filters.
+@@ -219,6 +418,42 @@
+ 	return len;
+ }
+ 
++/** The m4 preamble of the scanner (or, with `header`, of the header file):
++ *  what the tee filter writes ahead of the generated text. */
++static void write_m4_preamble (FILE *out, bool header)
++{
++	fputs (check_4_gnu_m4, out);
++	fputs ("m4_changecom`'m4_dnl\n", out);
++	fputs ("m4_changequote`'m4_dnl\n", out);
++	fputs ("m4_changequote([[,]])[[]]m4_dnl\n", out);
++	fputs ("m4_define([[M4_YY_NOOP]])[[]]m4_dnl\n", out);
++	if (header) {
++		fputs ("m4_define( [[M4_YY_IN_HEADER]],[[]])m4_dnl\n", out);
++		fprintf (out, "#ifndef %sHEADER_H\n", prefix);
++		fprintf (out, "#define %sHEADER_H 1\n", prefix);
++		fprintf (out, "#define %sIN_HEADER 1\n\n", prefix);
++		fprintf (out, "m4_define( [[M4_YY_OUTFILE_NAME]],[[%s]])m4_dnl\n",
++			 headerfilename ? headerfilename : "<stdout>");
++	}
++	else
++		fprintf (out, "m4_define( [[M4_YY_OUTFILE_NAME]],[[%s]])m4_dnl\n",
++			 outfilename ? outfilename : "<stdout>");
++}
++
++/** What the tee filter writes after the generated text of the header file. */
++static void write_header_footer (FILE *out)
++{
++	fprintf (out, "\n");
++
++	/* write a fake line number. It will get fixed by the linedir filter. */
++	if (gen_line_dirs)
++		fprintf (out, "#line 4000 \"M4_YY_OUTFILE_NAME\"\n");
++
++	fprintf (out, "#undef %sIN_HEADER\n", prefix);
++	fprintf (out, "#endif /* %sHEADER_H */\n", prefix);
++	fputs ("m4_undefine( [[M4_YY_IN_HEADER]])m4_dnl\n", out);
++}
++
+ /** Splits the chain in order to write to a header file.
+  *  Similar in spirit to the 'tee' program.
+  *  The header file name is in extra.
+@@ -258,30 +493,9 @@
+ 	/* Now to_c is a pipe to the C branch, and to_h is a pipe to the H branch.
+ 	 */
+ 
+-	if (write_header) {
+-        fputs (check_4_gnu_m4, to_h);
+-		fputs ("m4_changecom`'m4_dnl\n", to_h);
+-		fputs ("m4_changequote`'m4_dnl\n", to_h);
+-		fputs ("m4_changequote([[,]])[[]]m4_dnl\n", to_h);
+-	    fputs ("m4_define([[M4_YY_NOOP]])[[]]m4_dnl\n", to_h);
+-		fputs ("m4_define( [[M4_YY_IN_HEADER]],[[]])m4_dnl\n",
+-		       to_h);
+-		fprintf (to_h, "#ifndef %sHEADER_H\n", prefix);
+-		fprintf (to_h, "#define %sHEADER_H 1\n", prefix);
+-		fprintf (to_h, "#define %sIN_HEADER 1\n\n", prefix);
+-		fprintf (to_h,
+-			 "m4_define( [[M4_YY_OUTFILE_NAME]],[[%s]])m4_dnl\n",
+-			 headerfilename ? headerfilename : "<stdout>");
+-
+-	}
+-
+-    fputs (check_4_gnu_m4, to_c);
+-	fputs ("m4_changecom`'m4_dnl\n", to_c);
+-	fputs ("m4_changequote`'m4_dnl\n", to_c);
+-	fputs ("m4_changequote([[,]])[[]]m4_dnl\n", to_c);
+-	fputs ("m4_define([[M4_YY_NOOP]])[[]]m4_dnl\n", to_c);
+-	fprintf (to_c, "m4_define( [[M4_YY_OUTFILE_NAME]],[[%s]])m4_dnl\n",
+-		 outfilename ? outfilename : "<stdout>");
++	if (write_header)
++		write_m4_preamble (to_h, true);
++	write_m4_preamble (to_c, false);
+ 
+ 	buf = malloc((size_t) readsz);
+ 	if (!buf)
+@@ -293,15 +507,7 @@
+ 	}
+ 
+ 	if (write_header) {
+-		fprintf (to_h, "\n");
+-
+-		/* write a fake line number. It will get fixed by the linedir filter. */
+-		if (gen_line_dirs)
+-			fprintf (to_h, "#line 4000 \"M4_YY_OUTFILE_NAME\"\n");
+-
+-		fprintf (to_h, "#undef %sIN_HEADER\n", prefix);
+-		fprintf (to_h, "#endif /* %sHEADER_H */\n", prefix);
+-		fputs ("m4_undefine( [[M4_YY_IN_HEADER]])m4_dnl\n", to_h);
++		write_header_footer (to_h);
+ 
+ 		fflush (to_h);
+ 		if (ferror (to_h))
+@@ -322,19 +528,29 @@
+ 		lerr (_("error closing output file %s"),
+ 			outfilename ? outfilename : "<stdout>");
+ 
++#ifdef HAVE_SYS_WAIT_H
+ 	while (wait (0) > 0) ;
++#endif
+ 
+ 	FLEX_EXIT (0);
+ 	return 0;
+ }
+ 
++static bool is_blank_line (const char *str)
++{
++	while (isspace((unsigned char)*str))
++		str++;
++	return (*str == '\0');
++}
++
+ /** Adjust the line numbers in the #line directives of the generated scanner.
+  * After the m4 expansion, the line numbers are incorrect since the m4 macros
+  * can add or remove lines.  This only adjusts line numbers for generated code,
+  * not user code. This also happens to be a good place to squeeze multiple
+  * blank lines into a single blank line.
+  */
+-int filter_fix_linedirs (struct filter *chain)
++/** The #line fix-up over one stream, see filter_fix_linedirs. */
++static void fix_linedirs (FILE *in, FILE *out)
+ {
+ 	char   *buf;
+ 	const size_t readsz = 512;
+@@ -342,14 +558,11 @@
+ 	bool    in_gen = true;	/* in generated code */
+ 	bool    last_was_blank = false;
+ 
+-	if (!chain)
+-		return 0;
+-
+ 	buf = malloc(readsz);
+ 	if (!buf)
+ 		flexerror(_("malloc failed in filter_fix_linedirs"));
+ 
+-	while (fgets (buf, (int) readsz, stdin)) {
++	while (fgets (buf, (int) readsz, in)) {
+ 
+ 		regmatch_t m[10];
+ 
+@@ -403,9 +616,7 @@
+ 		}
+ 
+ 		/* squeeze blank lines from generated code */
+-		else if (in_gen
+-			 && regexec (&regex_blank_line, buf, 0, NULL,
+-				     0) == 0) {
++		else if (in_gen && is_blank_line(buf)) {
+ 			if (last_was_blank)
+ 				continue;
+ 			else
+@@ -417,9 +628,18 @@
+ 			last_was_blank = false;
+ 		}
+ 
+-		fputs (buf, stdout);
++		fputs (buf, out);
+ 		lineno++;
+ 	}
++	free (buf);
++}
++
++int filter_fix_linedirs (struct filter *chain)
++{
++	if (!chain)
++		return 0;
++
++	fix_linedirs (stdin, stdout);
+ 	fflush (stdout);
+ 	if (ferror (stdout))
+ 		lerr (_("error writing output file %s"),
+diff -ruN flex-2.6.4-orig/src/flexdef.h flex-2.6.4-mod/src/flexdef.h
+--- flex-2.6.4-orig/src/flexdef.h	2026-10-23 23:51:22.898326946 -0700
++++ flex-2.6.4-mod/src/flexdef.h	2026-10-23 23:51:22.899075816 -0700
+@@ -44,7 +44,6 @@
+ #include <stdarg.h>
+ #include <setjmp.h>
+ #include <ctype.h>
+-#include <libgen.h> /* for XPG version of basename(3) */
+ #include <string.h>
+ #include <math.h>
+ 
+@@ -57,26 +56,75 @@
+ #ifdef HAVE_LIMITS_H
+ #include <limits.h>
+ #endif
+-/* Required: dup() and dup2() in <unistd.h> */
++#ifdef HAVE_UNISTD_H
+ #include <unistd.h>
++#endif
+ #ifdef HAVE_NETINET_IN_H
+ #include <netinet/in.h>
+ #endif
+ #ifdef HAVE_SYS_PARAMS_H
+ #include <sys/params.h>
+ #endif
+-/* Required: stat() in <sys/stat.h> */
+ #include <sys/stat.h>
+-/* Required: wait() in <sys/wait.h> */
++#ifdef HAVE_SYS_WAIT_H
+ #include <sys/wait.h>
++#endif
+ #include <stdbool.h>
+ #include <stdarg.h>
+-/* Required: regcomp(), regexec() and regerror() in <regex.h> */
++#ifdef HAVE_REGEX_H
+ #include <regex.h>
+-/* Required: strcasecmp() in <strings.h> */
++#endif
++#ifdef HAVE_STRINGS_H
+ #include <strings.h>
++#endif
+ #include "flexint.h"
+ 
++#ifdef _WIN32
++#include <io.h>
++#include <fcntl.h>
++#include <process.h>
++#include <direct.h>
++#define YY_NO_UNISTD_H 1
++#ifndef S_ISREG
++#define S_ISREG(m) (((m) & _S_IFMT) == _S_IFREG)
++#endif
++#ifndef S_IXUSR
++#define S_IXUSR _S_IEXEC
++#endif
++#ifdef _MSC_VER
++#define dup _dup
++#define dup2 _dup2
++#define fileno _fileno
++#define isatty _isatty
++#define popen _popen
++#define pclose _pclose
++#define fdopen _fdopen
++#define strcasecmp _stricmp
++#define close _close
++#define read _read
++#endif
++#define htonl(x) _byteswap_ulong(x)
++#define htons(x) _byteswap_ushort(x)
++void filter_wait_for_children(void);
++void filter_finish(int exit_status);
++#endif /* _WIN32 */
++
++#ifndef HAVE_REGEX_H
++typedef struct { int unused; } regex_t;
++typedef struct { int rm_so; int rm_eo; } regmatch_t;
++#define REG_EXTENDED 1
++int flex_regcomp_stub(regex_t *preg, const char *pattern, int cflags);
++int flex_regexec_stub(const regex_t *preg, const char *string,
++                      size_t nmatch, regmatch_t pmatch[], int eflags);
++size_t flex_regerror_stub(int errcode, const regex_t *preg,
++                          char *errbuf, size_t errbuf_size);
++void flex_regfree_stub(regex_t *preg);
++#define regcomp flex_regcomp_stub
++#define regexec flex_regexec_stub
++#define regerror flex_regerror_stub
++#define regfree flex_regfree_stub
++#endif
++
+ /* We use gettext. So, when we write strings which should be translated, we mark them with _() */
+ #ifdef ENABLE_NLS
+ #ifdef HAVE_LOCALE_H
+@@ -1131,7 +1179,7 @@
+  * From "regex.c"
+  */
+ 
+-extern regex_t regex_linedir, regex_blank_line;
++extern regex_t regex_linedir;
+ bool flex_init_regex(void);
+ void flex_regcomp(regex_t *preg, const char *regex, int cflags);
+ char   *regmatch_dup (regmatch_t * m, const char *src);
+diff -ruN flex-2.6.4-orig/src/main.c flex-2.6.4-mod/src/main.c
+--- flex-2.6.4-orig/src/main.c	2026-10-23 23:51:22.899794946 -0700
++++ flex-2.6.4-mod/src/main.c	2026-10-23 23:51:22.900500455 -0700
+@@ -148,20 +148,25 @@
+ 	 */
+ 	exit_status = setjmp (flex_main_jmp_buf);
+ 	if (exit_status){
++#ifdef _WIN32
++        /* The scanner text is complete: run m4 over it (and write the
++         * header file) before the output file is closed. */
++        filter_finish(exit_status - 1);
++#endif
+         if (stdout && !_stdout_closed && !ferror(stdout)){
+             fflush(stdout);
+             fclose(stdout);
+         }
++#ifdef HAVE_SYS_WAIT_H
+         while (wait(&child_status) > 0){
+             if (!WIFEXITED (child_status)
+                 || WEXITSTATUS (child_status) != 0){
+-                /* report an error of a child
+-                 */
+                 if( exit_status <= 1 )
+                     exit_status = 2;
+ 
+             }
+         }
++#endif
+         return exit_status - 1;
+     }
+ 
+@@ -356,7 +361,11 @@
+ 					size_t length = strlen(path);
+ 					struct stat sbuf;
+ 
++#ifdef _WIN32
++					const char *endOfDir = strchr(path, ';');
++#else
+ 					const char *endOfDir = strchr(path, ':');
++#endif
+ 					if (!endOfDir)
+ 						endOfDir = path+length;
+ 
+@@ -994,7 +1003,7 @@
+     flex_init_regex();
+ 
+ 	/* Enable C++ if program name ends with '+'. */
+-	program_name = basename (argv[0]);
++	program_name = argv[0];
+ 
+ 	if (program_name != NULL &&
+ 	    program_name[strlen (program_name) - 1] == '+')
+@@ -1201,7 +1210,7 @@
+ 			break;
+ 
+ 		case OPT_VERSION:
+-			printf (_("%s %s\n"), program_name, flex_version);
++			printf (_("%s %s\n"), (C_plus_plus ? "flex++" : "flex"), flex_version);
+ 			FLEX_EXIT (0);
+ 
+ 		case OPT_WARN:
+diff -ruN flex-2.6.4-orig/src/regex.c flex-2.6.4-mod/src/regex.c
+--- flex-2.6.4-orig/src/regex.c	2026-10-23 23:51:22.901215863 -0700
++++ flex-2.6.4-mod/src/regex.c	2026-10-23 23:51:22.901909473 -0700
+@@ -23,12 +23,62 @@
+ 
+ #include "flexdef.h"
+ 
++#ifndef HAVE_REGEX_H
++int flex_regcomp_stub(regex_t *preg, const char *pattern, int cflags)
++{
++	(void)preg; (void)pattern; (void)cflags;
++	return 0;
++}
++
++static int match_linedir(const char *s, size_t nmatch, regmatch_t pmatch[])
++{
++	const char *p = s;
++	if (*p++ != '#') return -1;
++	if (strncmp(p, "line ", 5) != 0) return -1;
++	p += 5;
++	while (*p == ' ') p++;
++	if (!(*p >= '0' && *p <= '9')) return -1;
++	const char *num_start = p;
++	while (*p >= '0' && *p <= '9') p++;
++	const char *num_end = p;
++	if (*p++ != ' ') return -1;
++	if (*p++ != '"') return -1;
++	const char *fname_start = p;
++	while (*p && *p != '"' && *p != '\n') p++;
++	const char *fname_end = p;
++	if (*p != '"') return -1;
++
++	if (nmatch > 0) { pmatch[0].rm_so = 0; pmatch[0].rm_eo = (int)(p + 1 - s); }
++	if (nmatch > 1) { pmatch[1].rm_so = (int)(num_start - s); pmatch[1].rm_eo = (int)(num_end - s); }
++	if (nmatch > 2) { pmatch[2].rm_so = (int)(fname_start - s); pmatch[2].rm_eo = (int)(fname_end - s); }
++	return 0;
++}
++
++int flex_regexec_stub(const regex_t *preg, const char *string,
++                      size_t nmatch, regmatch_t pmatch[], int eflags)
++{
++	(void)preg; (void)eflags;
++	return match_linedir(string, nmatch, pmatch);
++}
++
++size_t flex_regerror_stub(int errcode, const regex_t *preg,
++                          char *errbuf, size_t errbuf_size)
++{
++	(void)errcode; (void)preg;
++	if (errbuf && errbuf_size > 0)
++		snprintf(errbuf, errbuf_size, "regex error");
++	return 12;
++}
++
++void flex_regfree_stub(regex_t *preg)
++{
++	(void)preg;
++}
++#endif /* !HAVE_REGEX_H */
+ 
+ static const char* REGEXP_LINEDIR = "^#line ([[:digit:]]+) \"(.*)\"";
+-static const char* REGEXP_BLANK_LINE = "^[[:space:]]*$";
+ 
+ regex_t regex_linedir; /**< matches line directives */
+-regex_t regex_blank_line; /**< matches blank lines */
+ 
+ 
+ /** Initialize the regular expressions.
+@@ -36,9 +86,9 @@
+  */
+ bool flex_init_regex(void)
+ {
++#ifdef HAVE_REGEX_H
+     flex_regcomp(&regex_linedir, REGEXP_LINEDIR, REG_EXTENDED);
+-    flex_regcomp(&regex_blank_line, REGEXP_BLANK_LINE, REG_EXTENDED);
+-
++#endif
+     return true;
+ }
+ 
+diff -ruN flex-2.6.4-orig/src/scanopt.c flex-2.6.4-mod/src/scanopt.c
+--- flex-2.6.4-orig/src/scanopt.c	2026-10-23 23:51:22.902551059 -0700
++++ flex-2.6.4-mod/src/scanopt.c	2026-10-23 23:51:22.903038256 -0700
+@@ -247,16 +247,7 @@
+ 		fprintf (fp, "%s\n", usage);
+ 	}
+ 	else {
+-		/* Find the basename of argv[0] */
+-		const char *p;
+-
+-		p = s->argv[0] + strlen (s->argv[0]);
+-		while (p != s->argv[0] && *p != '/')
+-			--p;
+-		if (*p == '/')
+-			p++;
+-
+-		fprintf (fp, _("Usage: %s [OPTIONS]...\n"), p);
++		fprintf (fp, _("Usage: %s [OPTIONS]...\n"), s->argv[0]);
+ 	}
+ 	fprintf (fp, "\n");
+ 

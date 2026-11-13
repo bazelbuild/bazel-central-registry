@@ -1,0 +1,138 @@
+load("@bazel_lib//lib:expand_template.bzl", "expand_template")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//tools:cc.bzl", "CONLYOPTS", "COPTS", "CXXOPTS")
+
+license(
+    name = "sfmt_license",
+    kind = "@package_metadata//licenses/spdx:BSD-3-Clause",
+    text = "LICENSE.sfmt",
+)
+
+# jemalloc's copy derives from SFMT 1.3.3 ("This file derives from SFMT 1.3.3", src/SFMT.c), adapted to a re-entrant
+# API.
+package_metadata(
+    name = "sfmt_metadata",
+    attributes = [":sfmt_license"],
+    purl = "pkg:generic/sfmt@1.3.3",
+    visibility = ["//test/unit:__pkg__"],
+)
+
+filegroup(
+    name = "sfmt_sources",
+    srcs = ["src/SFMT.c"],
+    applicable_licenses = [
+        ":sfmt_metadata",
+        "//:package_metadata",
+    ],
+)
+
+filegroup(
+    name = "sfmt_headers",
+    srcs = [
+        "include/test/SFMT.h",
+        "include/test/SFMT-alti.h",
+        "include/test/SFMT-params.h",
+        "include/test/SFMT-params11213.h",
+        "include/test/SFMT-params1279.h",
+        "include/test/SFMT-params132049.h",
+        "include/test/SFMT-params19937.h",
+        "include/test/SFMT-params216091.h",
+        "include/test/SFMT-params2281.h",
+        "include/test/SFMT-params4253.h",
+        "include/test/SFMT-params44497.h",
+        "include/test/SFMT-params607.h",
+        "include/test/SFMT-params86243.h",
+        "include/test/SFMT-sse2.h",
+    ],
+    applicable_licenses = [
+        ":sfmt_metadata",
+        "//:package_metadata",
+    ],
+)
+
+expand_template(
+    name = "jemalloc_test",
+    testonly = True,
+    out = "include/test/jemalloc_test.h",
+    stamp = 0,
+    substitutions = {
+        "@install_suffix@": "",
+        "@je_@": "je_",
+        "@private_namespace@": "$(PRIVATE_NAMESPACE)je_",
+    },
+    template = "include/test/jemalloc_test.h.in",
+    toolchains = ["//settings/flags:private_namespace"],
+)
+
+expand_template(
+    name = "jemalloc_test_defs",
+    testonly = True,
+    out = "include/test/jemalloc_test_defs.h",
+    stamp = 0,
+    substitutions = {
+        "#undef HAVE_SSE2": "/* #undef HAVE_SSE2 */",
+        "#undef HAVE_ALTIVEC": "/* #undef HAVE_ALTIVEC */",
+    },
+    template = "include/test/jemalloc_test_defs.h.in",
+)
+
+cc_library(
+    name = "testlib",
+    testonly = True,
+    srcs = [
+        "src/btalloc.c",
+        "src/btalloc_0.c",
+        "src/btalloc_1.c",
+        "src/math.c",
+        "src/mtx.c",
+        "src/sleep.c",
+        "src/test.c",
+        "src/thd.c",
+        "src/timer.c",
+        ":sfmt_sources",
+    ],
+    hdrs = [
+        "include/test/arena_util.h",
+        "include/test/bench.h",
+        "include/test/bgthd.h",
+        "include/test/btalloc.h",
+        "include/test/extent_hooks.h",
+        "include/test/jemalloc_test.h",
+        "include/test/jemalloc_test_defs.h",
+        "include/test/math.h",
+        "include/test/mq.h",
+        "include/test/mtx.h",
+        "include/test/nbits.h",
+        "include/test/san.h",
+        "include/test/sleep.h",
+        "include/test/test.h",
+        "include/test/thd.h",
+        "include/test/timer.h",
+        ":sfmt_headers",
+        "//include/jemalloc:jemalloc_macros",
+    ],
+    conlyopts = CONLYOPTS,
+    copts = COPTS,
+    cxxopts = CXXOPTS,
+    includes = ["include"],
+    linkstatic = True,
+    local_defines = select(
+        {
+            "//settings:unit_test": ["JEMALLOC_UNIT_TEST"],
+            "//settings:integration_test": ["JEMALLOC_INTEGRATION_TEST"],
+            "//settings:integration_cpp_test": ["JEMALLOC_INTEGRATION_CPP_TEST"],
+        },
+        no_match_error = "Explicit test setting must be configured //settings:with_test",
+    ),
+    tags = ["manual"],
+    visibility = ["//test:__subpackages__"],
+    deps = ["//:jemalloc"] + select(
+        {
+            "//settings:integration_test": ["//:utils"],
+            "//settings:integration_cpp_test": ["//:utils"],
+            "//conditions:default": [],
+        },
+    ),
+)

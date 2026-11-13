@@ -32,7 +32,3 @@ bazel run //tools:update_integrity -- {module_name} --version={version}
 - **patches/**: Modify existing upstream source files using `.patch` files.
 - **README.md**: Add a README.md if the purpose of overlay or patch files are
   not obvious.
-
-### 4. Consistency Check
-- If the source archive doesn't contain a MODULE.bazel, `modules/{module_name}/{version}/MODULE.bazel` should not exist.
-- Otherwise, ensure that `modules/{module_name}/{version}/MODULE.bazel` matches the source archive's version exactly. Use an overlay or patch if they differ.

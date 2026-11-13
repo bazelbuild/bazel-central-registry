@@ -1,0 +1,132 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:private"],
+)
+
+# Drop a trailing ".bcr.N" so the library reports the upstream release.
+_VERSION_PARTS = module_version().split(".")[:3]
+
+_NGHTTP2_VERSION_STRING = ".".join(_VERSION_PARTS)
+
+# NGHTTP2_VERSION_NUM = major × 65536 + minor × 256 + patch
+_NGHTTP2_VERSION_NUMBER = str(int(_VERSION_PARTS[0]) * 65536 + int(_VERSION_PARTS[1]) * 256 + int(_VERSION_PARTS[2]))
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "COPYING",
+    visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["COPYING"])
+
+# To enable nghttp2 debug output, specify:
+# bazel build --@nghttp2//:debug
+bool_flag(
+    name = "debug",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "debug_setting",
+    flag_values = {
+        ":debug": "True",
+    },
+)
+
+cc_library(
+    name = "nghttp2",
+    hdrs = [
+        "lib/includes/nghttp2/nghttp2.h",
+        "lib/includes/nghttp2/nghttp2ver.h",
+    ],
+    defines = [
+        "NGHTTP2_STATICLIB",
+    ],
+    strip_include_prefix = "lib/includes",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":nghttp2_impl",
+    ],
+)
+
+cc_library(
+    name = "nghttp2_impl",
+    srcs = glob(["lib/*.c"]),
+    hdrs = glob(["lib/*.h"]),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": [
+            "-Wno-string-plus-int",
+        ],
+    }),
+    local_defines = [
+        "BUILDING_NGHTTP2",
+        "HAVE_CONFIG_H",
+    ] + select(
+        {
+            ":debug_setting": ["DEBUGBUILD"],
+            "//conditions:default": [],
+        },
+    ),
+    deps = [
+        ":nghttp2_config",
+        ":nghttp2_headers",
+    ],
+)
+
+cc_library(
+    name = "nghttp2_headers",
+    hdrs = [
+        "lib/includes/nghttp2/nghttp2.h",
+        "lib/includes/nghttp2/nghttp2ver.h",
+    ],
+    defines = [
+        "NGHTTP2_STATICLIB",
+    ],
+    strip_include_prefix = "lib/includes",
+)
+
+cc_library(
+    name = "nghttp2_config",
+    hdrs = [
+        "lib/config.h",
+    ],
+    strip_include_prefix = "lib",
+)
+
+expand_template(
+    name = "nghttp2ver_h",
+    out = "lib/includes/nghttp2/nghttp2ver.h",
+    substitutions = {
+        "@PACKAGE_VERSION@": _NGHTTP2_VERSION_STRING,
+        "@PACKAGE_VERSION_NUM@": _NGHTTP2_VERSION_NUMBER,
+    },
+    template = "lib/includes/nghttp2/nghttp2ver.h.in",
+)
+
+# Generated based on running configure on several platforms.
+copy_file(
+    name = "config_h",
+    src = "config/config.h",
+    out = "lib/config.h",
+)
