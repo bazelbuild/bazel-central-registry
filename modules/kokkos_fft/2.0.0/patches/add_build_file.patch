@@ -1,0 +1,85 @@
+diff --git BUILD.bazel BUILD.bazel
+new file mode 100644
+index 0000000..f6272c1
+--- /dev/null
++++ BUILD.bazel
+@@ -0,0 +1,41 @@
++load("@rules_cc//cc:cc_library.bzl", "cc_library")
++
++package(default_visibility = ["//visibility:public"])
++
++# KokkosFFT_config.hpp, which KokkosFFT's CMake build generates from
++# cmake/KokkosFFT_config.hpp.in. The default enables only the FFTW TPL
++# (host FFTs). A consumer that uses a device TPL (cuFFT, rocFFT, ...) points
++# --@kokkos_fft//:config at its own cc_library that provides
++# KokkosFFT_config.hpp and depends on that TPL.
++#
++# FFTW's OpenMP/threads library is not linked: @fftw does not build one. A
++# plan on Kokkos::OpenMP calls fftw_init_threads and would fail to link, so
++# host FFTs must use Kokkos::Serial.
++label_flag(
++    name = "config",
++    build_setting_default = ":default_config",
++)
++
++# Host-only default: FFTW, no device backends.
++cc_library(
++    name = "default_config",
++    hdrs = ["default_config/KokkosFFT_config.hpp"],
++    strip_include_prefix = "default_config",
++)
++
++cc_library(
++    name = "kokkos_fft",
++    hdrs = glob([
++        "common/src/**/*.hpp",
++        "fft/src/**/*.hpp",
++    ]),
++    includes = [
++        "common/src",
++        "fft/src",
++    ],
++    deps = [
++        ":config",
++        "@fftw",
++        "@kokkos",
++    ],
++)
+diff --git default_config/KokkosFFT_config.hpp default_config/KokkosFFT_config.hpp
+new file mode 100644
+index 0000000..7c5c723
+--- /dev/null
++++ default_config/KokkosFFT_config.hpp
+@@ -0,0 +1,32 @@
++// SPDX-FileCopyrightText: (C) The Kokkos-FFT development team, see COPYRIGHT.md file
++//
++// SPDX-License-Identifier: MIT OR Apache-2.0 WITH LLVM-exception
++
++// cmake/KokkosFFT_config.hpp.in configured with KokkosFFT_ENABLE_FFTW=ON
++// and no device TPL. Override with --@kokkos_fft//:config.
++
++#ifndef KOKKOSFFT_CONFIG_HPP
++#define KOKKOSFFT_CONFIG_HPP
++
++/* Define the current version of Kokkos Kernels */
++#define KOKKOSFFT_VERSION 20000
++#define KOKKOSFFT_VERSION_MAJOR 2
++#define KOKKOSFFT_VERSION_MINOR 0
++#define KOKKOSFFT_VERSION_PATCH 0
++
++/* FFTW */
++#define KOKKOSFFT_ENABLE_TPL_FFTW
++
++/* CUFFT */
++/* #undef KOKKOSFFT_ENABLE_TPL_CUFFT */
++
++/* ROCFFT */
++/* #undef KOKKOSFFT_ENABLE_TPL_ROCFFT */
++
++/* HIPFFT */
++/* #undef KOKKOSFFT_ENABLE_TPL_HIPFFT */
++
++/* ONEMKL */
++/* #undef KOKKOSFFT_ENABLE_TPL_ONEMKL */
++
++#endif
