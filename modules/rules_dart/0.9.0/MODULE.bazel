@@ -1,0 +1,235 @@
+"Bazel dependencies"
+
+# NOTE: The version field is intentionally omitted. Leaving it unset (the
+# default "") prevents issues when the module is used via non-registry
+# overrides (e.g. https://github.com/bazel-contrib/rules_go/issues/4380).
+# The publish-to-bcr GitHub Action patches in the release version when
+# submitting to the Bazel Central Registry.
+#
+# NOTE: compatibility_level is omitted (defaults to 0). Bumping it is very
+# disruptive — as soon as a module is requested at two different compatibility
+# levels in the dependency tree, users see an error. Only bump it when the
+# breaking change affects most use cases and isn't easy to work around, and
+# in the same commit that introduces the incompatible change.
+module(
+    name = "rules_dart",
+    bazel_compatibility = [">=9.0.0"],
+    version = "0.9.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "package_metadata", version = "0.0.15")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "yaml.bzl", version = "0.1.2")
+
+# Native code-asset support under //dart/ext/<package> (e.g. //dart/ext/sqlite3)
+# builds a cc_shared_library, so its BUILD loads @rules_cc and wraps a BCR
+# native module. These are regular (not dev) deps so the
+# `//dart/ext/sqlite3:code_asset` target is usable from downstream modules.
+# The native libraries are only built if a target referencing them is built;
+# they are not fetched for normal Dart-only usage.
+bazel_dep(name = "rules_cc", version = "0.2.28")
+bazel_dep(name = "sqlite3", version = "3.53.4")
+
+# Pub package archives are extracted at fetch time with tar.bzl's prebuilt
+# bsdtar, never the host's `tar`. A repository rule cannot resolve a toolchain,
+# so fetch_pub_archive names the host's binary repository itself; only that
+# one is downloaded.
+bazel_dep(name = "tar.bzl", version = "0.10.9")
+
+bsdtar = use_extension("@tar.bzl//tar:extensions.bzl", "toolchains")
+use_repo(
+    bsdtar,
+    "bsd_tar_toolchains_darwin_amd64",
+    "bsd_tar_toolchains_darwin_arm64",
+    "bsd_tar_toolchains_linux_amd64",
+    "bsd_tar_toolchains_linux_arm64",
+    "bsd_tar_toolchains_windows_amd64",
+    "bsd_tar_toolchains_windows_arm64",
+)
+
+# Sources for //dart/ext/webcrypto: the pub archive itself, for its C glue and
+# the BoringSSL revision it vendors and generated its Dart bindings against.
+# Fetched only when that code asset is built.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "webcrypto_pub_archive",
+    build_file = "//dart/ext/webcrypto:webcrypto.BUILD",
+    sha256 = "9885ed99a846191542dd6ca820c83a098117df56be57453832233a3fef68f3f2",
+    urls = ["https://pub.dev/api/archives/webcrypto-0.6.1.tar.gz"],
+)
+
+# The open-source codebase //tools/bench builds: dart-lang/pub at a fixed
+# commit. Fetched only when the bench is built. Runfiles cannot hold the few
+# golden files with a space in their names, which no benchmarked test reads.
+http_archive(
+    name = "bench_pub_source",
+    build_file_content = """
+exports_files(["pubspec.yaml"])
+
+filegroup(
+    name = "files",
+    srcs = glob(["**"], exclude = ["**/* *"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    dev_dependency = True,
+    sha256 = "d7ab16bd3a5dab31b0de228a69ebbf241426e39cc2fb5e8e077b403e158bcf2b",
+    strip_prefix = "pub-fe190660d68a4dd3070fe33fc406ff58d754dccc",
+    urls = ["https://github.com/dart-lang/pub/archive/fe190660d68a4dd3070fe33fc406ff58d754dccc.tar.gz"],
+)
+
+# On macOS, rules_cc leaves C++ to apple_support's toolchain. 2.9.0 builds that
+# toolchain's helper tools for macOS 11, the oldest Xcode 27's libc++ accepts
+# without a warning. Dev-only: the C++ toolchain is the consuming module's call.
+bazel_dep(name = "apple_support", version = "2.10.1", dev_dependency = True)
+
+# A hermetic C++ toolchain for Linux, so this repository's own native targets
+# (code assets, link-hook fixtures) compile the same on a CI runner (x86_64), a
+# Linux arm64 worker and a developer's machine, not with whatever the host has.
+# hermetic-llvm's toolchain is one static binary with its own C library, so the
+# machine needs no headers or shared libraries. Only Linux exec and Linux target
+# toolchains are registered: Mac builds keep the host's Xcode toolchain.
+bazel_dep(name = "llvm", version = "0.8.26", dev_dependency = True)
+
+llvm_tc = use_extension("@llvm//extensions:toolchain.bzl", "toolchain", dev_dependency = True)
+llvm_tc.exec(
+    arch = "aarch64",
+    os = "linux",
+)
+llvm_tc.exec(
+    arch = "x86_64",
+    os = "linux",
+)
+llvm_tc.target(
+    arch = "aarch64",
+    os = "linux",
+)
+llvm_tc.target(
+    arch = "x86_64",
+    os = "linux",
+)
+use_repo(llvm_tc, "llvm_toolchains")
+
+register_toolchains(
+    "@llvm_toolchains//:all",
+    dev_dependency = True,
+)
+
+# Used by rules_dart to assemble generated + hand-written
+# sources into one directory (copy_to_directory). Regular (not dev) dep so
+# downstream modules get it; self-registers its copy toolchains.
+bazel_dep(name = "bazel_lib", version = "3.7.2")
+
+# `bazel run @rules_dart//dart/unused_deps` removes deps from BUILD files with
+# buildozer, prebuilt for each host. A regular dep, since downstream modules
+# run the tool.
+bazel_dep(name = "buildozer", version = "10.1.0.bcr.1")
+
+buildozer_binary = use_extension("@buildozer//:buildozer_binary.bzl", "buildozer_binary")
+use_repo(buildozer_binary, "buildozer_binary")
+
+# The development tooling rules_dart shares with the repositories built on it
+# (the commit policy, release notes, tool pins, lock checks): overhead/, a
+# module of its own that REPO.bazel keeps out of this one's packages.
+# `bazel run @overhead//changelog:check`, say.
+bazel_dep(name = "overhead", version = "0.0.0", dev_dependency = True)
+local_path_override(
+    module_name = "overhead",
+    path = "overhead",
+)
+
+# The Gazelle plugin, a module of its own (gazelle/) so that rules_dart brings
+# no Go dependency, released with this one. REPO.bazel keeps it out of this
+# module's packages. `bazel test @rules_dart_gazelle_plugin//...`.
+bazel_dep(name = "rules_dart_gazelle_plugin", version = "0.0.0", dev_dependency = True)
+local_path_override(
+    module_name = "rules_dart_gazelle_plugin",
+    path = "gazelle",
+)
+
+# rules_dart's own Gazelle and the Gazelle plugin's tests, in dev/: they load
+# repos only development has. `bazel test @rules_dart_dev//...`.
+bazel_dep(name = "rules_dart_dev", version = "0.0.0", dev_dependency = True)
+local_path_override(
+    module_name = "rules_dart_dev",
+    path = "dev",
+)
+
+dart = use_extension("//dart:extensions.bzl", "dart")
+dart.toolchain(dart_version = "3.13.7")
+use_repo(
+    dart,
+    # The pinned SDK's summary analyzer and outline stripper, for their own
+    # tests.
+    "dart_analyzer_source",
+    "dart_kernel_source",
+    "dart_toolchains",
+    # Each host's SDK, which compiles that host's pubspec reader.
+    "dart_linux-arm64",
+    "dart_linux-x64",
+    "dart_macos-arm64",
+    "dart_macos-x64",
+    "dart_windows-x64",
+)
+
+# A Dart SDK source checkout on disk and the outline stripper and summary
+# analyzer built on it (`dart_kernel_source(path = ...)`,
+# `dart_analyzer_source(path = ...)`), and the same through
+# `fetch_dart_kernel_source` and `fetch_dart_analyzer_source` with a prefix,
+# for their own tests.
+kernel_checkout_files = use_repo_rule("//dart/tests:kernel_checkout.bzl", "kernel_checkout_files")
+
+kernel_checkout_files(name = "kernel_checkout_files")
+
+kernel_checkout = use_extension("//dart/tests:kernel_checkout.bzl", "kernel_checkout", dev_dependency = True)
+use_repo(kernel_checkout, "analyzer_checkout_source", "analyzer_prefixed_source", "kernel_checkout_source", "kernel_prefixed_source")
+
+register_toolchains("@dart_toolchains//:all")
+
+# rules_dart reads pubspecs with Dart's own package:yaml, compiled once per host
+# (dart/pub/pubspec.bzl). Only the host's reader is fetched.
+pubspec_reader = use_extension("//dart/pub/private/pubspec_reader:extension.bzl", "pubspec_reader")
+use_repo(
+    pubspec_reader,
+    "pubspec_reader_linux-arm64",
+    "pubspec_reader_linux-x64",
+    "pubspec_reader_macos-arm64",
+    "pubspec_reader_macos-x64",
+    "pubspec_reader_windows-x64",
+)
+
+# The reader's results on hand-written pubspecs, for its test.
+pubspec_reader_cases = use_extension(
+    "//dart/pub/private/pubspec_reader/tests:cases.bzl",
+    "pubspec_reader_cases",
+    dev_dependency = True,
+)
+use_repo(pubspec_reader_cases, "pubspec_reader_cases")
+
+# A toolchain supplying a Dart library, for the kernel module aspect's test.
+register_toolchains(
+    "//dart/tests/toolchain_dep_fixture:runtime_toolchain",
+    dev_dependency = True,
+)
+
+# Pub deps for the //dart/ext/* shim binaries (build_runner replacement).
+# Pinned by //dart/ext:pubspec.lock; resolved into @ext_pub_deps so per-builder
+# shims can depend on packages like json_serializable, freezed, mockito, …
+pub = use_extension("//dart/pub:extensions.bzl", "pub")
+pub.from_lock(
+    name = "ext_pub_deps",
+    lock = "//dart/ext:pubspec.lock",
+)
+use_repo(pub, "ext_pub_deps")
+
+# The lint ruleset this repository's own Dart code is analyzed under
+# (//:analysis_options). It is not a dependency of any target.
+dev_pub = use_extension("//dart/pub:extensions.bzl", "pub", dev_dependency = True)
+dev_pub.package(
+    name = "lints",
+    sha256 = "12f842a479589fea194fe5c5a3095abc7be0c1f2ddfa9a0e76aed1dbd26a87df",
+    version = "6.1.0",
+)
+use_repo(dev_pub, "lints")
