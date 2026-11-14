@@ -1,0 +1,125 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//perl:nginx.bzl", "nginx_perl_module")
+load(":dynamic_modules.bzl", "nginx_dynamic_modules", "nginx_module_table")
+load(":nginx_sources.bzl", "BUILTIN_MODULES", "nginx_sources")
+
+package(default_visibility = ["//visibility:private"])
+
+exports_files([
+    "dynamic/geoip.BUILD.bazel",
+    "dynamic/libxslt.BUILD.bazel",
+])
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_aarch64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+cc_library(
+    name = "nginx_headers",
+    hdrs = glob([
+        "config/*.h",
+        "src/**/*.h",
+    ]),
+    includes = [
+        "config",
+        "src/core",
+        "src/event",
+        "src/event/modules",
+        "src/event/quic",
+        "src/http",
+        "src/http/modules",
+        "src/http/v2",
+        "src/http/v3",
+        "src/mail",
+        "src/os/unix",
+        "src/stream",
+    ],
+    target_compatible_with = select({
+        ":linux_x86_64": [],
+        ":linux_aarch64": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libxcrypt",
+        "@openssl//:ssl",
+        "@pcre2",
+        "@zlib",
+    ],
+)
+
+nginx_module_table(
+    name = "ngx_modules",
+    modules = BUILTIN_MODULES,
+)
+
+cc_library(
+    name = "nginx_server",
+    srcs = nginx_sources() + [":ngx_modules"],
+    linkopts = [
+        "-pthread",
+        "-ldl",
+        "-lm",
+    ],
+    deps = [":nginx_headers"],
+    # Keep symbols referenced only by a loadable nginx module.
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "nginx",
+    srcs = ["src/core/nginx.c"],
+    linkopts = ["-Wl,--export-dynamic"],
+    linkstatic = True,
+    visibility = ["//visibility:public"],
+    deps = [":nginx_server"],
+)
+
+nginx_dynamic_modules()
+
+nginx_perl_module()
+
+filegroup(
+    name = "dynamic_modules",
+    srcs = [
+        ":ngx_http_geoip_module.so",
+        ":ngx_http_image_filter_module.so",
+        ":ngx_http_perl_module.so",
+        ":ngx_http_xslt_filter_module.so",
+        ":ngx_mail_module.so",
+        ":ngx_stream_geoip_module.so",
+        ":ngx_stream_module.so",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "conf",
+    srcs = glob(["conf/*"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "html",
+    srcs = glob(["html/*"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "man",
+    srcs = ["man/nginx.8"],
+    visibility = ["//visibility:public"],
+)

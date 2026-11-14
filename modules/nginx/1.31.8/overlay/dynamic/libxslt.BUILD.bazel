@@ -1,0 +1,79 @@
+"""libxslt and libexslt for ngx_http_xslt_filter_module on Linux."""
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+expand_template(
+    name = "xsltconfig",
+    out = "libxslt/xsltconfig.h",
+    substitutions = {
+        "@LIBXSLT_DEFAULT_PLUGINS_PATH@": "",
+        "@LIBXSLT_VERSION_EXTRA@": "",
+        "@LIBXSLT_VERSION_NUMBER@": "10145",
+        "@VERSION@": "1.1.45",
+        "@WITH_DEBUGGER@": "0",
+        "@WITH_MODULES@": "0",
+        "@WITH_PROFILER@": "1",
+        "@WITH_TRIO@": "0",
+        "@WITH_XSLT_DEBUG@": "0",
+    },
+    template = "libxslt/xsltconfig.h.in",
+)
+
+expand_template(
+    name = "exsltconfig",
+    out = "libexslt/exsltconfig.h",
+    substitutions = {
+        "@LIBEXSLT_VERSION@": "0.8.25",
+        "@LIBEXSLT_VERSION_EXTRA@": "",
+        "@LIBEXSLT_VERSION_NUMBER@": "825",
+        "@WITH_CRYPTO@": "0",
+    },
+    template = "libexslt/exsltconfig.h.in",
+)
+
+write_file(
+    name = "linux_config",
+    out = "config.h",
+    content = ["#define %s 1" % feature for feature in [
+        "_GNU_SOURCE",
+        "HAVE_CLOCK_GETTIME",
+        "HAVE_GETTIMEOFDAY",
+        "HAVE_GMTIME_R",
+        "HAVE_LOCALE_H",
+        "HAVE_LOCALTIME_R",
+        "HAVE_SNPRINTF",
+        "HAVE_STAT",
+        "HAVE_STRXFRM_L",
+        "HAVE_SYS_SELECT_H",
+        "HAVE_SYS_STAT_H",
+        "HAVE_SYS_TIME_H",
+        "HAVE_SYS_TYPES_H",
+        "HAVE_UNISTD_H",
+        "HAVE_VSNPRINTF",
+    ]] + [""],
+    newline = "unix",
+)
+
+cc_library(
+    name = "xslt",
+    srcs = glob(["libxslt/*.c"]) + [":linux_config"],
+    hdrs = glob(["libxslt/*.h"]) + [":xsltconfig"],
+    includes = ["."],
+    linkopts = ["-lm"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = ["@libxml2"],
+)
+
+cc_library(
+    name = "exslt",
+    srcs = glob(["libexslt/*.c"]) + [":linux_config"],
+    hdrs = glob(["libexslt/*.h"]) + [":exsltconfig"],
+    includes = ["."],
+    linkopts = ["-lm"],
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = [":xslt", "@libxml2"],
+)
