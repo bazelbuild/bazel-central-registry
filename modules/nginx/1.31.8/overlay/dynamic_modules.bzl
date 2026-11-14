@@ -2,9 +2,9 @@
 
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
-load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 load("@with_cfg.bzl", "with_cfg")
+load(":nginx_sources.bzl", "HTTP_FILTER_MODULES")
 
 # ngx_module_order in auto/modules determines the HTTP filter execution order.
 NGINX_HTTP_MODULE_ORDER = [
@@ -16,28 +16,7 @@ NGINX_HTTP_MODULE_ORDER = [
     "ngx_http_random_index_module",
     "ngx_http_access_module",
     "ngx_http_realip_module",
-    "ngx_http_write_filter_module",
-    "ngx_http_header_filter_module",
-    "ngx_http_chunked_filter_module",
-    "ngx_http_v2_filter_module",
-    "ngx_http_v3_filter_module",
-    "ngx_http_range_header_filter_module",
-    "ngx_http_gzip_filter_module",
-    "ngx_http_postpone_filter_module",
-    "ngx_http_ssi_filter_module",
-    "ngx_http_charset_filter_module",
-    "ngx_http_xslt_filter_module",
-    "ngx_http_image_filter_module",
-    "ngx_http_sub_filter_module",
-    "ngx_http_addition_filter_module",
-    "ngx_http_gunzip_filter_module",
-    "ngx_http_userid_filter_module",
-    "ngx_http_headers_filter_module",
-    "ngx_http_copy_filter_module",
-    "ngx_http_range_body_filter_module",
-    "ngx_http_not_modified_filter_module",
-    "ngx_http_slice_filter_module",
-]
+] + HTTP_FILTER_MODULES
 
 _MAIL_MODULES = [
     "ngx_mail_module",
@@ -76,6 +55,9 @@ _STREAM_MODULES = [
     "ngx_stream_ssl_preread_module",
 ]
 
+def _module_array(declaration, values):
+    return [declaration + "[] = {"] + ["    %s," % value for value in values] + ["    NULL", "};", ""]
+
 def nginx_module_table(name, modules, order = None):
     """Write the ngx_module_t pointers and names exported by nginx or a module.
 
@@ -88,28 +70,14 @@ def nginx_module_table(name, modules, order = None):
         "#include <ngx_config.h>",
         "#include <ngx_core.h>",
         "",
-    ] + ["extern ngx_module_t %s;" % m for m in modules] + [
-        "",
-        "ngx_module_t *ngx_modules[] = {",
-    ] + ["    &%s," % m for m in modules] + [
-        "    NULL",
-        "};",
-        "",
-        "char *ngx_module_names[] = {",
-    ] + ['    "%s",' % m for m in modules] + [
-        "    NULL",
-        "};",
-        "",
-    ]
+    ] + ["extern ngx_module_t %s;" % m for m in modules] + [""]
+    content += _module_array("ngx_module_t *ngx_modules", ["&" + m for m in modules])
+    content += _module_array("char *ngx_module_names", ['"%s"' % m for m in modules])
     if order != None:
-        content += ["char *ngx_module_order[] = {"] + ['    "%s",' % m for m in order] + [
-            "    NULL",
-            "};",
-            "",
-        ]
+        content += _module_array("char *ngx_module_order", ['"%s"' % m for m in order])
     write_file(name = name, out = name + ".c", content = content, newline = "unix")
 
-def nginx_dynamic_module(name, srcs, modules = None, order = [], deps = [], local_defines = []):
+def nginx_dynamic_module(name, srcs, modules = None, order = [], deps = []):
     """Build a shared object that nginx can load with the load_module directive.
 
     Args:
@@ -118,21 +86,12 @@ def nginx_dynamic_module(name, srcs, modules = None, order = [], deps = [], loca
         modules: ngx_module_t symbols exported by the shared object. Defaults to [name].
         order: ngx_module_order entries used by ngx_add_module().
         deps: Additional libraries used by the module.
-        local_defines: Feature macros required by the module's C sources.
     """
     nginx_module_table(name + "_modules", modules or [name], order)
-    cc_library(
-        name = name,
-        srcs = srcs,
-        deps = [":nginx_headers"] + deps,
-        local_defines = local_defines,
-        linkstatic = True,
-        visibility = ["//visibility:private"],
-    )
     cc_binary(
         name = name + ".so",
-        srcs = [name + "_modules.c"],
-        deps = [":" + name, ":nginx_headers"],
+        srcs = srcs + [":" + name + "_modules"],
+        deps = [":nginx_headers"] + deps,
         linkshared = True,
         linkstatic = True,
         visibility = ["//visibility:public"],
@@ -171,13 +130,11 @@ def nginx_dynamic_modules():
         name = "ngx_http_geoip_module",
         srcs = ["src/http/modules/ngx_http_geoip_module.c"],
         order = NGINX_HTTP_MODULE_ORDER,
-        local_defines = ["NGX_HAVE_GEOIP=1", "NGX_HAVE_GEOIP_V6=1"],
         deps = ["@nginx_geoip//:geoip"],
     )
     nginx_dynamic_module(
         name = "ngx_stream_geoip_module",
         srcs = ["src/stream/ngx_stream_geoip_module.c"],
-        local_defines = ["NGX_HAVE_GEOIP=1", "NGX_HAVE_GEOIP_V6=1"],
         deps = ["@nginx_geoip//:geoip"],
     )
     _image_filter_gd(name = "image_filter_gd", actual = "@libgd")
@@ -185,13 +142,11 @@ def nginx_dynamic_modules():
         name = "ngx_http_image_filter_module",
         srcs = ["src/http/modules/ngx_http_image_filter_module.c"],
         order = NGINX_HTTP_MODULE_ORDER,
-        local_defines = ["NGX_HAVE_GD_WEBP=1"],
         deps = [":image_filter_gd"],
     )
     nginx_dynamic_module(
         name = "ngx_http_xslt_filter_module",
         srcs = ["src/http/modules/ngx_http_xslt_filter_module.c"],
         order = NGINX_HTTP_MODULE_ORDER,
-        local_defines = ["NGX_HAVE_EXSLT=1"],
         deps = ["@libxml2", "@libxslt//libexslt", "@libxslt//libxslt"],
     )

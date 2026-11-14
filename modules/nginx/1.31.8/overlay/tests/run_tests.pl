@@ -5,7 +5,7 @@ use File::Spec;
 use TAP::Harness;
 
 # nginx-tests changes directory before reading TEST_NGINX_BINARY.
-my ($nginx, $test_nginx_pm, $nginx_pm, $strict_pm, $config_pm, $openssl, @tests) =
+my ($nginx, $test_nginx_pm, $nginx_pm, $strict_pm, $openssl, @tests) =
     map { File::Spec->rel2abs($_) } @ARGV;
 $ENV{TEST_NGINX_BINARY} = $nginx;
 $ENV{TEST_NGINX_MODULES} = dirname($nginx);
@@ -13,7 +13,7 @@ $ENV{TMPDIR} = $ENV{TEST_TMPDIR};
 $ENV{TEST_OPENSSL} = $openssl;
 
 # nginx initializes the embedded interpreter when it loads ngx_http_perl_module.
-my $perl5lib = join(':', map { dirname($_) } ($nginx_pm, $strict_pm, $config_pm));
+my $perl5lib = join(':', dirname($nginx_pm), dirname($strict_pm));
 $ENV{TEST_NGINX_GLOBALS} = qq{env PERL5LIB=$perl5lib;\n};
 
 # A root worker would drop privileges before opening the test's private files.

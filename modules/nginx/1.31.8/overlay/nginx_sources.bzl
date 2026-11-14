@@ -1,5 +1,30 @@
 """Sources and built-in module order for nginx on Linux."""
 
+# auto/modules uses this order for built-in and dynamically loaded HTTP filters.
+HTTP_FILTER_MODULES = [
+    "ngx_http_write_filter_module",
+    "ngx_http_header_filter_module",
+    "ngx_http_chunked_filter_module",
+    "ngx_http_v2_filter_module",
+    "ngx_http_v3_filter_module",
+    "ngx_http_range_header_filter_module",
+    "ngx_http_gzip_filter_module",
+    "ngx_http_postpone_filter_module",
+    "ngx_http_ssi_filter_module",
+    "ngx_http_charset_filter_module",
+    "ngx_http_xslt_filter_module",
+    "ngx_http_image_filter_module",
+    "ngx_http_sub_filter_module",
+    "ngx_http_addition_filter_module",
+    "ngx_http_gunzip_filter_module",
+    "ngx_http_userid_filter_module",
+    "ngx_http_headers_filter_module",
+    "ngx_http_copy_filter_module",
+    "ngx_http_range_body_filter_module",
+    "ngx_http_not_modified_filter_module",
+    "ngx_http_slice_filter_module",
+]
+
 # auto/modules registers the thread pool after the event modules and the HTTP
 # filters after the HTTP handlers. nginx uses this order to install its filters.
 BUILTIN_MODULES = [
@@ -63,25 +88,10 @@ BUILTIN_MODULES = [
     "ngx_http_upstream_zone_module",
     "ngx_http_upstream_sticky_module",
     "ngx_http_stub_status_module",
-    "ngx_http_write_filter_module",
-    "ngx_http_header_filter_module",
-    "ngx_http_chunked_filter_module",
-    "ngx_http_v2_filter_module",
-    "ngx_http_v3_filter_module",
-    "ngx_http_range_header_filter_module",
-    "ngx_http_gzip_filter_module",
-    "ngx_http_postpone_filter_module",
-    "ngx_http_ssi_filter_module",
-    "ngx_http_charset_filter_module",
-    "ngx_http_sub_filter_module",
-    "ngx_http_addition_filter_module",
-    "ngx_http_gunzip_filter_module",
-    "ngx_http_userid_filter_module",
-    "ngx_http_headers_filter_module",
-    "ngx_http_copy_filter_module",
-    "ngx_http_range_body_filter_module",
-    "ngx_http_not_modified_filter_module",
-    "ngx_http_slice_filter_module",
+] + [
+    module
+    for module in HTTP_FILTER_MODULES
+    if module not in ["ngx_http_xslt_filter_module", "ngx_http_image_filter_module"]
 ]
 
 def nginx_sources():

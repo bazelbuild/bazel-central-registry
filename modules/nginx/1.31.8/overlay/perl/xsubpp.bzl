@@ -5,22 +5,14 @@ def _xsubpp_impl(ctx):
     out = ctx.actions.declare_file(ctx.label.name + ".c")
     args = ctx.actions.args()
 
-    # ParseXS changes directory. Resolve @INC and typemaps before it does so.
-    args.add("-e")
-    args.add("""BEGIN { use File::Spec; @INC = map { ref($_) ? $_ : File::Spec->rel2abs($_) } @INC }
-use ExtUtils::ParseXS;
-my ($xs, $out, @map) = @ARGV;
-my $xspp = ExtUtils::ParseXS->new;
-$xspp->process_file(filename => $xs, output => $out,
-    prototypes => 0, linenumbers => 0, typemap => [map { File::Spec->rel2abs($_) } @map]);
-exit($xspp->report_error_count ? 1 : 0);""")
+    args.add(ctx.file._xsubpp)
+    args.add_all(ctx.files.typemaps, before_each = "--typemap")
+    args.add("--output", out)
     args.add(ctx.file.src)
-    args.add(out)
-    args.add_all(ctx.files.typemaps)
     ctx.actions.run(
         executable = perl.interpreter,
         arguments = [args],
-        inputs = depset([ctx.file.src] + ctx.files.typemaps, transitive = [perl.runtime]),
+        inputs = depset([ctx.file._xsubpp, ctx.file.src] + ctx.files.typemaps, transitive = [perl.runtime]),
         outputs = [out],
         mnemonic = "PerlXS",
         toolchain = "@rules_perl//perl:exec_toolchain_type",
@@ -32,6 +24,11 @@ perl_xsubpp = rule(
     attrs = {
         "src": attr.label(allow_single_file = [".xs"], mandatory = True),
         "typemaps": attr.label_list(allow_files = True),
+        "_xsubpp": attr.label(
+            default = Label("@rules_perl//perl/private:xsubpp"),
+            allow_single_file = True,
+            cfg = "exec",
+        ),
     },
     toolchains = ["@rules_perl//perl:exec_toolchain_type"],
 )

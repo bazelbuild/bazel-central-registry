@@ -16,16 +16,16 @@ def _perl_impl(ctx):
     # portable-perl builds libperl.a without -fPIC. Compile libperl from the
     # matching CPAN release for linking into ngx_http_perl_module.so.
     cpu = ctx.attr.cpu
-    archive = "perl-5.44.0-{}-linux-gnu".format(cpu)
+    archive = "perl-5.44.0-%s-linux-gnu" % cpu
     ctx.download_and_extract(
-        "https://github.com/bazel-contrib/portable-perl/releases/download/20260929/{}.tar.xz".format(archive),
+        "https://github.com/bazel-contrib/portable-perl/releases/download/20260929/%s.tar.xz" % archive,
         output = "portable",
         integrity = _PORTABLE[cpu],
         stripPrefix = archive,
     )
-    core = "portable/lib/5.44.0/{}-linux-thread-multi/CORE/".format(cpu)
+    core = "portable/lib/5.44.0/%s-linux-thread-multi/CORE/" % cpu
     for header in ["bitcount.h", "git_version.h", "mg_data.h", "uudmap.h"]:
-        ctx.symlink(core + header, header)
+        ctx.template(header, core + header, executable = False)
 
     # The portable interpreter resolves standard library paths relative to its
     # executable. The embedding executable is nginx at /usr/sbin/nginx.
@@ -36,8 +36,12 @@ def _perl_impl(ctx):
     }, executable = False)
 
     # libxcrypt exports crypt.h on the quoted include search path.
-    ctx.file("reentr.h", ctx.read("reentr.h").replace("<crypt.h>", '"crypt.h"'), executable = False)
-    ctx.template("BUILD.bazel", ctx.attr._build, {"{ARCH}": cpu}, executable = False)
+    ctx.template("reentr.h", "reentr.h", {"<crypt.h>": '"crypt.h"'}, executable = False)
+    ctx.template("BUILD.bazel", ctx.attr._build, executable = False)
+
+    if hasattr(ctx, "repo_metadata"):
+        return ctx.repo_metadata(reproducible = True)
+    return None
 
 perl_for_nginx = repository_rule(
     implementation = _perl_impl,

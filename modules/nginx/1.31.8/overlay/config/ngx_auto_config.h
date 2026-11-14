@@ -172,6 +172,11 @@
 #define NGX_COMPAT 1
 #define NGX_CRYPT 1
 #define NGX_DEBUG 1
+#define NGX_HAVE_EXSLT 1
+#define NGX_HAVE_GD_WEBP 1
+#define NGX_HAVE_GEOIP 1
+#define NGX_HAVE_GEOIP_V6 1
+#define NGX_HAVE_PERL_MULTIPLICITY 1
 #define NGX_HTTP_CACHE 1
 #define NGX_HTTP_DAV 1
 #define NGX_HTTP_GZIP 1
