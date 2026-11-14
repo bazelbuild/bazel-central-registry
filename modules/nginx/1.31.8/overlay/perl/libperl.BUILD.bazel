@@ -1,0 +1,105 @@
+load("@nginx//perl:xsubpp.bzl", "perl_xsubpp")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+# Files compiled into libperl by Perl's Makefile.SH.
+_PERL_SRCS = [
+    "av.c",
+    "builtin.c",
+    "caretx.c",
+    "class.c",
+    "deb.c",
+    "doio.c",
+    "doop.c",
+    "dquote.c",
+    "dump.c",
+    "globals.c",
+    "gv.c",
+    "hv.c",
+    "keywords.c",
+    "locale.c",
+    "long_names.c",
+    "mathoms.c",
+    "mg.c",
+    "mro_core.c",
+    "numeric.c",
+    "op.c",
+    "pad.c",
+    "peep.c",
+    "perl.c",
+    "perlio.c",
+    "perly.c",
+    "pp.c",
+    "pp_ctl.c",
+    "pp_hot.c",
+    "pp_pack.c",
+    "pp_sort.c",
+    "pp_sys.c",
+    "reentr.c",
+    "regcomp.c",
+    "regcomp_debug.c",
+    "regcomp_invlist.c",
+    "regcomp_study.c",
+    "regcomp_trie.c",
+    "regexec.c",
+    "run.c",
+    "scope.c",
+    "sv.c",
+    "taint.c",
+    "time64.c",
+    "toke.c",
+    "universal.c",
+    "utf8.c",
+    "util.c",
+]
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    defines = [
+        "_FILE_OFFSET_BITS=64",
+        "_GNU_SOURCE",
+        "_LARGEFILE_SOURCE",
+        "_REENTRANT",
+    ],
+    includes = ["."],
+    deps = ["@libxcrypt"],
+)
+
+perl_xsubpp(
+    name = "DynaLoader",
+    src = "ext/DynaLoader/dl_dlopen.xs",
+)
+
+cc_library(
+    name = "dynaloader",
+    srcs = [":DynaLoader"],
+    textual_hdrs = ["ext/DynaLoader/dlutils.c"],
+    includes = ["ext/DynaLoader"],
+    local_defines = ['XS_VERSION=\\"1.57\\"'],
+    deps = [":headers"],
+)
+
+cc_library(
+    name = "libperl",
+    srcs = _PERL_SRCS,
+    textual_hdrs = glob(["*.inc"]) + ["perly.act", "perly.tab", "vutil.c"],
+    copts = ["-fno-strict-aliasing", "-fwrapv"],
+    local_defines = ["PERL_CORE"],
+    linkopts = ["-ldl", "-lm", "-lpthread"],
+    deps = [":dynaloader", ":headers"],
+    # XS modules loaded later can reference any public libperl symbol.
+    alwayslink = True,
+)
+
+filegroup(
+    name = "stdlib",
+    srcs = glob(
+        ["portable/lib/5.44.0/**"],
+        exclude = ["**/CORE/**", "**/.packlist", "**/*.pod"],
+    ),
+)
+
+alias(name = "strict_pm", actual = "portable/lib/5.44.0/strict.pm")
+alias(name = "config_pm", actual = "portable/lib/5.44.0/{ARCH}-linux-thread-multi/Config.pm")
