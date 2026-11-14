@@ -193,5 +193,5 @@ def nginx_dynamic_modules():
         srcs = ["src/http/modules/ngx_http_xslt_filter_module.c"],
         order = NGINX_HTTP_MODULE_ORDER,
         local_defines = ["NGX_HAVE_EXSLT=1"],
-        deps = ["@libxml2", "@nginx_libxslt//:exslt", "@nginx_libxslt//:xslt"],
+        deps = ["@libxml2", "@libxslt//libexslt", "@libxslt//libxslt"],
     )

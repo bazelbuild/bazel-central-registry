@@ -8,7 +8,7 @@ load(":xsubpp.bzl", "perl_xsubpp")
 
 def _perl_target(name):
     return select({
-        ":linux_aarch64": "@nginx_perl_aarch64//:" + name,
+        "@platforms//cpu:aarch64": "@nginx_perl_aarch64//:" + name,
         "//conditions:default": "@nginx_perl_x86_64//:" + name,
     })
 
