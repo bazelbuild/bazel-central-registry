@@ -1,0 +1,189 @@
+--- Source/FreeImage/PluginG3.cpp
++++ Source/FreeImage/PluginG3.cpp
+@@ -20,8 +20,6 @@
+ // Use at your own risk!
+ // ==========================================================
+ 
+-#include "../LibTIFF4/tiffiop.h"
+-
+ #include "FreeImage.h"
+ #include "Utilities.h"
+ 
+@@ -31,6 +29,7 @@
+ 
+ static int s_format_id;
+ 
++#if 0
+ // ==========================================================
+ //   Constant/Macro declarations
+ // ==========================================================
+@@ -192,6 +191,7 @@
+ 
+ 	return (row);
+ }
++#endif
+ 
+ 
+ // ==========================================================
+@@ -230,6 +230,7 @@
+ 
+ // ----------------------------------------------------------
+ 
++#if 0
+ static FIBITMAP * DLL_CALLCONV
+ Load(FreeImageIO *io, fi_handle handle, int page, int flags, void *data) {
+ 	TIFF *faxTIFF = NULL;
+@@ -406,6 +407,7 @@
+ 	return dib;
+ 
+ }
++#endif
+ 
+ // ==========================================================
+ //   Init
+@@ -423,7 +425,7 @@
+ 	plugin->close_proc = NULL;
+ 	plugin->pagecount_proc = NULL;
+ 	plugin->pagecapability_proc = NULL;
+-	plugin->load_proc = Load;
++	plugin->load_proc = NULL;
+ 	plugin->save_proc = NULL;
+ 	plugin->validate_proc = NULL;
+ 	plugin->mime_proc = MimeType;
+
+--- Source/FreeImage/PluginTIFF.cpp
++++ Source/FreeImage/PluginTIFF.cpp
+@@ -37,7 +37,7 @@
+ 
+ #include "FreeImage.h"
+ #include "Utilities.h"
+-#include "../LibTIFF4/tiffiop.h"
++#include <tiffio.h>
+ #include "../Metadata/FreeImageTag.h"
+ #include "../OpenEXR/Half/half.h"
+ 
+@@ -197,6 +197,8 @@
+ 	return tif;
+ }
+ 
++#if 0
++
+ // ----------------------------------------------------------
+ //   TIFF library FreeImage-specific routines.
+ // ----------------------------------------------------------
+@@ -267,6 +269,7 @@
+ 
+ TIFFErrorHandler _TIFFerrorHandler = msdosErrorHandler;
+ #endif // ndef _WIN32
++#endif
+ // ----------------------------------------------------------
+ 
+ #define CVT(x)      (((x) * 255L) / ((1L<<16)-1))
+
+--- Source/Metadata/XTIFF.cpp
++++ Source/Metadata/XTIFF.cpp
+@@ -29,7 +29,7 @@
+ #pragma warning (disable : 4786) // identifier was truncated to 'number' characters
+ #endif
+ 
+-#include "../LibTIFF4/tiffiop.h"
++#include <tiffio.h>
+ 
+ #include "FreeImage.h"
+ #include "Utilities.h"
+@@ -573,48 +573,6 @@
+ 
+ 	// we want to know values of standard tags too!!
+ 
+-	// loop over all Core Directory Tags
+-	// ### uses private data, but there is no other way
+-	if(md_model == TagLib::EXIF_MAIN) {
+-		const TIFFDirectory *td = &tif->tif_dir;
+-
+-		uint32_t lastTag = 0;	//<- used to prevent reading some tags twice (as stored in tif_fieldinfo)
+-
+-		for (int fi = 0, nfi = (int)tif->tif_nfields; nfi > 0; nfi--, fi++) {
+-			const TIFFField *fld = tif->tif_fields[fi];
+-
+-			const uint32_t tag_id = TIFFFieldTag(fld);
+-
+-			if(tag_id == lastTag) {
+-				continue;
+-			}
+-
+-			// test if tag value is set
+-			// (lifted directly from LibTiff _TIFFWriteDirectory)
+-
+-			if( fld->field_bit == FIELD_CUSTOM ) {
+-				int is_set = FALSE;
+-
+-				for(int ci = 0; ci < td->td_customValueCount; ci++ ) {
+-					is_set |= (td->td_customValues[ci].info == fld);
+-				}
+-
+-				if( !is_set ) {
+-					continue;
+-				}
+-
+-			} else if(!TIFFFieldSet(tif, fld->field_bit)) {
+-				continue;
+-			}
+-
+-			// process *all* other tags (some will be ignored)
+-
+-			tiff_read_exif_tag(tif, tag_id, dib, md_model);
+-
+-			lastTag = tag_id;
+-		}
+-
+-	}
+ 
+ 	return TRUE;
+ }
+@@ -721,23 +679,21 @@
+ 		return FALSE;
+ 	}
+ 	
+-	TagLib& tag_lib = TagLib::instance();
+-	
+-	for (int fi = 0, nfi = (int)tif->tif_nfields; nfi > 0; nfi--, fi++) {
+-		const TIFFField *fld = tif->tif_fields[fi];
+-		
+-		const uint32_t tag_id = TIFFFieldTag(fld);
++	FITAG *tag = NULL;
++	FIMETADATA *mdhandle = FreeImage_FindFirstMetadata(FIMD_EXIF_MAIN, dib, &tag);
++	if(mdhandle) {
++		do {
++			const uint32_t tag_id = FreeImage_GetTagID(tag);
+ 
+-		if(skip_write_field(tif, tag_id)) {
+-			// skip tags that are already handled by the LibTIFF writing process
+-			continue;
+-		}
+-
+-		FITAG *tag = NULL;
+-		// get the tag key
+-		const char *key = tag_lib.getTagFieldName(TagLib::EXIF_MAIN, (WORD)tag_id, defaultKey);
++			if(skip_write_field(tif, tag_id)) {
++				// skip tags that are already handled by the LibTIFF writing process
++				continue;
++			}
+ 
+-		if(FreeImage_GetMetadata(FIMD_EXIF_MAIN, dib, key, &tag)) {
++			const TIFFField *fld = TIFFFindField(tif, tag_id, TIFF_ANY);
++			if(fld == NULL) {
++				continue;
++			}
+ 			FREE_IMAGE_MDTYPE tag_type = FreeImage_GetTagType(tag);
+ 			TIFFDataType tif_tag_type = TIFFFieldDataType(fld);
+ 			
+@@ -759,7 +715,8 @@
+ 			} else {
+ 				TIFFSetField(tif, tag_id, FreeImage_GetTagCount(tag), FreeImage_GetTagValue(tag));
+ 			}
+-		}
++		} while(FreeImage_FindNextMetadata(mdhandle, &tag));
++		FreeImage_FindCloseMetadata(mdhandle);
+ 	}
+ 
+ 	return TRUE;
