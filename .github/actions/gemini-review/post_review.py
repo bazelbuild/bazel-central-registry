@@ -61,9 +61,8 @@ def load_gemini_output():
         if isinstance(data, dict) and isinstance(data.get("response"), str):
             return data["response"], data
     except json.JSONDecodeError:
-        # When gemini_debug is enabled, non-JSON log lines may precede the CLI's
-        # JSON envelope in stdout.log. Scan backwards for the outer JSON object
-        # containing a string "response" field.
+        # Non-JSON log lines may precede the CLI's JSON envelope in stdout.log.
+        # Scan backwards for the outer JSON object containing a string "response" field.
         decoder = json.JSONDecoder(strict=False)
         for idx in range(len(raw) - 1, -1, -1):
             if raw[idx] == "{":
@@ -337,9 +336,9 @@ def append_fallback_comments(body, fallback_comments):
 
 
 def main():
-    context_path = pathlib.Path(".gemini/context.json")
+    context_path = pathlib.Path("gemini-artifacts/context.json")
     if not context_path.is_file():
-        raise FileNotFoundError(".gemini/context.json not found")
+        raise FileNotFoundError("gemini-artifacts/context.json not found")
 
     context = json.loads(context_path.read_text(encoding="utf-8"))
     repo = str(context.get("repository") or "").strip()

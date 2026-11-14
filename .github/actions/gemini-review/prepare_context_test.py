@@ -161,7 +161,7 @@ class PrepareContextTest(unittest.TestCase):
             rc = prepare_context.main()
             self.assertEqual(rc, 0)
 
-        ctx = json.loads((self.root / ".gemini" / "context.json").read_text(encoding="utf-8"))
+        ctx = json.loads((self.root / "gemini-artifacts" / "context.json").read_text(encoding="utf-8"))
         self.assertFalse(ctx["needs_bcr_maintainer_review"])
         self.assertEqual(ctx["bcr_maintainer_review_reasons"], [])
         self.assertEqual(ctx["non_module_files"], [])
@@ -217,7 +217,7 @@ class PrepareContextTest(unittest.TestCase):
             rc = prepare_context.main()
             self.assertEqual(rc, 0)
 
-        ctx = json.loads((self.root / ".gemini" / "context.json").read_text(encoding="utf-8"))
+        ctx = json.loads((self.root / "gemini-artifacts" / "context.json").read_text(encoding="utf-8"))
         self.assertTrue(ctx["needs_bcr_maintainer_review"])
         # Only MODULE.bazel is flagged as violating the add-only policy, not presubmit.yml.
         self.assertEqual(ctx["mutated_existing_version_files"], ["modules/foo/1.0.0/MODULE.bazel"])
@@ -246,21 +246,17 @@ class PrepareContextTest(unittest.TestCase):
             self.assertEqual(prepare_context.main(), 0)
             self.assertIn("should_run=false", out_file.read_text(encoding="utf-8"))
 
-    def test_render_review_prompt_expands_styleguide_before_context(self):
+    def test_render_review_prompt_expands_context_json(self):
         tpl_dir = self.root / ".github" / "actions" / "gemini-review"
         tpl_dir.mkdir(parents=True)
         (tpl_dir / "prompt_template.md").write_text(
-            "Context:\n" "@{.gemini/context.json}\n" "Guide:\n" "@{.gemini/styleguide.md}\n",
+            "Context:\n{{CONTEXT_JSON}}\n",
             encoding="utf-8",
         )
-        (self.root / ".gemini").mkdir(exist_ok=True)
-        (self.root / ".gemini" / "styleguide.md").write_text("# BCR Style Guide", encoding="utf-8")
-        # Ensure @{.gemini/styleguide.md} inside context.json is not expanded.
-        ctx_str = '{"note": "@{.gemini/styleguide.md}"}'
+        ctx_str = '{"pull_request_number": 42}'
         self.assertTrue(prepare_context.render_review_prompt(ctx_str))
-        rendered = (self.root / ".gemini" / "prompt.md").read_text(encoding="utf-8")
-        self.assertIn('{"note": "@{.gemini/styleguide.md}"}', rendered)
-        self.assertIn("Guide:\n# BCR Style Guide", rendered)
+        rendered = (self.root / "gemini-artifacts" / "prompt.md").read_text(encoding="utf-8")
+        self.assertIn('{"pull_request_number": 42}', rendered)
 
     def test_stage_pr_files_reconstructs_added_files_and_flags_symlinks(self):
         pr_files = [
