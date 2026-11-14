@@ -30,5 +30,9 @@ the module order in `objs/ngx_modules.c` and `objs/*_modules.c` with
 affects how nginx processes responses.
 
 The nginx root module registers the LLVM development toolchain. To exercise
-the build on an x86-64 Linux host, run
-`bazel test --platforms=@llvm//platforms:linux_x86_64 //tests:upstream`.
+the build on an x86-64 Linux host, run the following command.
+
+```sh
+bazel test --platforms=@llvm//platforms:linux_x86_64 \
+    --extra_execution_platforms=@llvm//platforms:linux_x86_64 //tests:upstream
+```

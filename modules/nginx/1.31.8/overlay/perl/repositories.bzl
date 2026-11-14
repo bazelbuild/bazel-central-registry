@@ -34,6 +34,9 @@ def _perl_impl(ctx):
         # glibc 2.27 removed _LIB_VERSION and defaults to IEEE math.
         "#define LIBM_LIB_VERSION": "/* #undef LIBM_LIB_VERSION */",
     }, executable = False)
+
+    # libxcrypt exports crypt.h on the quoted include search path.
+    ctx.file("reentr.h", ctx.read("reentr.h").replace("<crypt.h>", '"crypt.h"'), executable = False)
     ctx.template("BUILD.bazel", ctx.attr._build, {"{ARCH}": cpu}, executable = False)
 
 perl_for_nginx = repository_rule(
