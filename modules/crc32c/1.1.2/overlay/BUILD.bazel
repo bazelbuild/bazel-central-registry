@@ -1,0 +1,87 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(
+    default_visibility = ["//visibility:public"],
+    features = ["header_modules"],
+)
+
+licenses(["notice"])
+
+crc32c_arm64_HDRS = [
+    "src/crc32c_arm64.h",
+]
+
+crc32c_arm64_SRCS = [
+    "src/crc32c_arm64.cc",
+]
+
+crc32c_HDRS = [
+    "src/crc32c_arm64.h",
+    "src/crc32c_arm64_check.h",
+    "src/crc32c_internal.h",
+    "src/crc32c_prefetch.h",
+    "src/crc32c_read_le.h",
+    "src/crc32c_round_up.h",
+    "src/crc32c_sse42.h",
+    "src/crc32c_sse42_check.h",
+    "include/crc32c/crc32c.h",
+]
+
+crc32c_SRCS = [
+    "src/crc32c_portable.cc",
+    "src/crc32c.cc",
+]
+
+_GENERATE_CONFIG_CMD = """
+sed -e 's/#cmakedefine01/#define/' \\
+    -e 's/ BYTE_ORDER_BIG_ENDIAN/ BYTE_ORDER_BIG_ENDIAN 0/' \\
+    -e 's/ HAVE_BUILTIN_PREFETCH/ HAVE_BUILTIN_PREFETCH 0/' \\
+    -e 's/ HAVE_MM_PREFETCH/ HAVE_MM_PREFETCH 0/' \\
+    -e 's/ HAVE_SSE42/ HAVE_SSE42 {have_sse42}/' \\
+    -e 's/ HAVE_ARM64_CRC32C/ HAVE_ARM64_CRC32C 0/' \\
+    -e 's/ HAVE_STRONG_GETAUXVAL/ HAVE_STRONG_GETAUXVAL 0/' \\
+    -e 's/ HAVE_WEAK_GETAUXVAL/ HAVE_WEAK_GETAUXVAL 0/' \\
+    -e 's/ CRC32C_TESTS_BUILT_WITH_GLOG/ CRC32C_TESTS_BUILT_WITH_GLOG 0/' \\
+    < $< > $@
+"""
+
+genrule(
+    name = "generate_config",
+    srcs = ["src/crc32c_config.h.in"],
+    outs = ["crc32c/crc32c_config.h"],
+    cmd = select({
+        "@platforms//cpu:x86_64": _GENERATE_CONFIG_CMD.format(have_sse42 = "1"),
+        "//conditions:default": _GENERATE_CONFIG_CMD.format(have_sse42 = "0"),
+    }),
+)
+
+# Like upstream's CMake build, only the SSE4.2 code is compiled with SSE4.2
+# enabled. crc32c.cc checks at runtime whether the CPU supports it.
+cc_library(
+    name = "crc32c_sse42",
+    srcs = [
+        "crc32c/crc32c_config.h",
+        "src/crc32c_internal.h",
+        "src/crc32c_prefetch.h",
+        "src/crc32c_read_le.h",
+        "src/crc32c_round_up.h",
+        "src/crc32c_sse42.cc",
+        "src/crc32c_sse42.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/arch:AVX"],
+        "//conditions:default": ["-msse4.2"],
+    }),
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "crc32c",
+    srcs = crc32c_SRCS + crc32c_arm64_SRCS,
+    hdrs = crc32c_HDRS + ["crc32c/crc32c_config.h"],
+    includes = ["include"],
+    deps = select({
+        "@platforms//cpu:x86_64": [":crc32c_sse42"],
+        "//conditions:default": [],
+    }),
+)
