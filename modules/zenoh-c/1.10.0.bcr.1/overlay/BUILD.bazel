@@ -68,9 +68,10 @@ rust_shared_library(
 )
 
 # A static counterpart to :zenohc, matching Cargo.toml's "staticlib" crate-type
-# (alongside "cdylib"). Combined with :zenohc via cc_import so that linkstatic
-# consumers (cc_binary, go_binary cdeps, --dynamic_mode=off) link statically
-# while non-linkstatic consumers (cc_test) can link libzenohc.so dynamically.
+# (alongside "cdylib"). Combined with :zenohc via cc_import (see :zenoh-c) so
+# that linkstatic consumers (cc_binary, go_binary cdeps, --dynamic_mode=off)
+# link statically, while non-linkstatic consumers (e.g. a default cc_test) link
+# libzenohc.so only if the C++ toolchain declares supports_dynamic_linker.
 
 rust_static_library(
     name = "zenohc_static",
@@ -148,7 +149,10 @@ filegroup(
     ]
 ]
 
-# Package up the rust library and c headers as a cc_library
+# Package up the rust library and c headers as cc_library targets, mirroring the
+# upstream CMake targets:
+#   :zenoh-c        ~ zenohc::lib    (static or shared, chosen by Bazel per consumer)
+#   :zenohc_shared  ~ zenohc::shared (always libzenohc.so, defines ZENOHC_DYN_LIB)
 
 cc_import(
     name = "zenohc_import",
@@ -178,4 +182,34 @@ cc_library(
     }),
     visibility = ["//visibility:public"],
     deps = [":zenohc_import"],
+)
+
+cc_import(
+    name = "zenohc_shared_import",
+    shared_library = ":zenohc",
+)
+
+cc_library(
+    name = "zenohc_shared",
+    hdrs = [
+        "include/zenoh.h",
+        "include/zenoh_commons.h",
+        "include/zenoh_concrete.h",
+        "include/zenoh_configure.h",
+        "include/zenoh_constants.h",
+        "include/zenoh_macros.h",
+        "include/zenoh_memory.h",
+        "include/zenoh_opaque.h",
+    ],
+    defines = ["ZENOHC_DYN_LIB"],
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:linux": [
+            "-lpthread",
+            "-lrt",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":zenohc_shared_import"],
 )
