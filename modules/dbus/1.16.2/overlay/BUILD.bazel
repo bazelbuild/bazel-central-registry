@@ -1,0 +1,150 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_license//rules:license.bzl", "license")
+load(":dbus_config_checks.bzl", "DBUS_CONFIG_CHECKS")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:AFL-2.1",
+        "@rules_license//licenses/spdx:GPL-2.0-or-later",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+autoconf(
+    name = "config_checks",
+    checks = DBUS_CONFIG_CHECKS,
+)
+
+# Upstream only ships cmake/config.h.cmake (#cmakedefine), which
+# rules_cc_autoconf cannot consume, so the overlay carries an equivalent
+# autoheader-style template.
+autoconf_hdr(
+    name = "config_h",
+    out = "generated/config.h",
+    template = "config.h.in",
+    deps = [
+        ":config_checks",
+        "@rules_cc_autoconf//autoconf/macros/AC_C_BIGENDIAN",
+    ],
+)
+
+PUBLIC_HDRS = [
+    "dbus/dbus.h",
+    "dbus/dbus-address.h",
+    "dbus/dbus-arch-deps.h",
+    "dbus/dbus-bus.h",
+    "dbus/dbus-connection.h",
+    "dbus/dbus-errors.h",
+    "dbus/dbus-macros.h",
+    "dbus/dbus-memory.h",
+    "dbus/dbus-message.h",
+    "dbus/dbus-misc.h",
+    "dbus/dbus-pending-call.h",
+    "dbus/dbus-protocol.h",
+    "dbus/dbus-server.h",
+    "dbus/dbus-shared.h",
+    "dbus/dbus-signature.h",
+    "dbus/dbus-syntax.h",
+    "dbus/dbus-threads.h",
+    "dbus/dbus-types.h",
+]
+
+COMMON_SRCS = [
+    ":config_h",
+    "dbus/dbus-address.c",
+    "dbus/dbus-auth.c",
+    "dbus/dbus-bus.c",
+    "dbus/dbus-connection.c",
+    "dbus/dbus-credentials.c",
+    "dbus/dbus-dataslot.c",
+    "dbus/dbus-errors.c",
+    "dbus/dbus-file.c",
+    "dbus/dbus-hash.c",
+    "dbus/dbus-internals.c",
+    "dbus/dbus-keyring.c",
+    "dbus/dbus-list.c",
+    "dbus/dbus-marshal-basic.c",
+    "dbus/dbus-marshal-byteswap.c",
+    "dbus/dbus-marshal-header.c",
+    "dbus/dbus-marshal-recursive.c",
+    "dbus/dbus-marshal-validate.c",
+    "dbus/dbus-memory.c",
+    "dbus/dbus-mempool.c",
+    "dbus/dbus-message.c",
+    "dbus/dbus-misc.c",
+    "dbus/dbus-nonce.c",
+    "dbus/dbus-object-tree.c",
+    "dbus/dbus-pending-call.c",
+    "dbus/dbus-pipe.c",
+    "dbus/dbus-resources.c",
+    "dbus/dbus-server.c",
+    "dbus/dbus-server-debug-pipe.c",
+    "dbus/dbus-server-socket.c",
+    "dbus/dbus-sha.c",
+    "dbus/dbus-signature.c",
+    "dbus/dbus-string.c",
+    "dbus/dbus-syntax.c",
+    "dbus/dbus-sysdeps.c",
+    "dbus/dbus-threads.c",
+    "dbus/dbus-timeout.c",
+    "dbus/dbus-transport.c",
+    "dbus/dbus-transport-socket.c",
+    "dbus/dbus-watch.c",
+]
+
+UNIX_SRCS = [
+    "dbus/dbus-file-unix.c",
+    "dbus/dbus-pipe-unix.c",
+    "dbus/dbus-server-unix.c",
+    "dbus/dbus-sysdeps-pthread.c",
+    "dbus/dbus-sysdeps-unix.c",
+    "dbus/dbus-transport-unix.c",
+    "dbus/dbus-userdb.c",
+    "dbus/dbus-uuidgen.c",
+]
+
+cc_library(
+    name = "dbus",
+    srcs = COMMON_SRCS + UNIX_SRCS + glob(["dbus/*.h"]),
+    hdrs = PUBLIC_HDRS,
+    copts = [
+        "-Wno-unused-parameter",
+        "-Wno-missing-field-initializers",
+    ],
+    includes = [
+        ".",
+        "generated",
+    ],
+    linkopts = ["-lpthread"],
+    local_defines = [
+        "DBUS_COMPILATION",
+        "HAVE_CONFIG_H",
+    ],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+)
+
+cc_shared_library(
+    name = "dbus_shared",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [":dbus"],
+)
