@@ -1,0 +1,50 @@
+matrix:
+  bazel:
+    - 9.2.0
+    - 9.x
+tasks:
+  verify_targets_linux:
+    name: Verify build targets with Clang 23 and libc++ 23
+    platform: ubuntu2404
+    bazel: ${{ bazel }}
+    # Neither default compiler/library in Ubuntu 24.04 meets mbo's C++23 baseline.
+    environment:
+      CC: clang-23
+      CXX: clang++-23
+      BAZEL_CXXOPTS: -stdlib=libc++
+      BAZEL_LINKOPTS: -stdlib=libc++
+      BAZEL_LINKLIBS: -lc++:-lm
+    shell_commands:
+      - >-
+        sudo curl --fail --silent --show-error --location --retry 3
+        --output /usr/share/keyrings/apt.llvm.org.asc https://apt.llvm.org/llvm-snapshot.gpg.key
+      - >-
+        printf '%s\n'
+        'deb [signed-by=/usr/share/keyrings/apt.llvm.org.asc] https://apt.llvm.org/noble/ llvm-toolchain-noble-23 main'
+        | sudo tee /etc/apt/sources.list.d/apt.llvm.org.list
+      - sudo apt-get update -o Acquire::Retries=3
+      - sudo apt-get install --yes clang-23 libc++-23-dev libc++abi-23-dev
+    build_flags:
+      - "--cxxopt=-std=c++23"
+      - "--host_cxxopt=-std=c++23"
+    build_targets: &build_targets
+      - "@mboworks_mbo//mbo/container:container_readme_test"
+      - "@mboworks_mbo//mbo/strings:string_interner_readme_test"
+      - "@mboworks_mbo//mbo/container/experimental/hamt/tests/public_api:hamt_maps_test"
+      - "@mboworks_mbo//mbo/container/experimental/hamt/tests/public_api:hamt_sets_test"
+      - "@mboworks_mbo//mbo/container:limited_set_benchmark"
+      - "@mboworks_mbo//mbo/diff:diff"
+      - "@mboworks_mbo//mbo/digest:digest"
+      - "@mboworks_mbo//mbo/file:glob"
+      - "@mboworks_mbo//mbo/hash:hash_tool"
+      - "@mboworks_mbo//mbo/mope:mope"
+  verify_targets_macos:
+    name: Verify build targets with Apple Clang
+    platform: macos_arm64
+    bazel: ${{ bazel }}
+    build_flags:
+      - "--cxxopt=-std=c++23"
+      - "--host_cxxopt=-std=c++23"
+      - "--macos_minimum_os=11.0"
+      - "--host_macos_minimum_os=11.0"
+    build_targets: *build_targets

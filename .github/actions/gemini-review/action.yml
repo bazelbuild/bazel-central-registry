@@ -1,12 +1,12 @@
 name: 'BCR Gemini PR Reviewer'
-description: 'Prepares BCR PR context, runs Gemini CLI analysis (read-only), and deterministically posts the review.'
+description: 'Prepares BCR PR context, runs Antigravity CLI analysis (read-only), and deterministically posts the review.'
 
 inputs:
   github_token:
-    description: 'Read-only GitHub token used to read PR metadata and passed to the read-only GitHub MCP server'
+    description: 'Read-only GitHub token used to read PR metadata and stage PR files'
     required: true
   review_token:
-    description: 'Privileged GitHub token used only in deterministic steps to post reactions and submit the PR review (never passed to Gemini CLI)'
+    description: 'Privileged GitHub token used only in deterministic steps to post reactions and submit the PR review (never passed to Antigravity CLI)'
     required: false
     default: ''
   pr_number:
@@ -24,14 +24,6 @@ inputs:
     description: 'Gemini model name'
     required: false
     default: 'gemini-4-argon'
-  gemini_cli_version:
-    description: 'Gemini CLI version to install'
-    required: false
-    default: ''
-  gemini_debug:
-    description: 'Enable Gemini CLI debug logging'
-    required: false
-    default: 'false'
 
 runs:
   using: 'composite'
@@ -62,91 +54,85 @@ runs:
       run: |-
         if [[ "${GEMINI_API_KEY_SET}" != "true" ]]; then
           echo "Skipping Gemini PR review: GEMINI_API_KEY is not configured."
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            printf '### 🤖 Gemini BCR PR Review\n\n- **Outcome:** ⏭️ Skipped (`GEMINI_API_KEY` is not configured)\n' >> "${GITHUB_STEP_SUMMARY}"
+          fi
           echo "should_run=false" >> "${GITHUB_OUTPUT}"
           exit 0
         fi
-        umask 077
-        printf 'GITHUB_PERSONAL_ACCESS_TOKEN=%s\n' "${GITHUB_TOKEN}" > /tmp/github-mcp.env
         python3 "${{ github.action_path }}/prepare_context.py"
 
     - name: Run Gemini pull request review
       if: steps.prepare_context.outputs.should_run == 'true'
-      uses: google-github-actions/run-gemini-cli@f77273f4c914e4bf38440cf36a0369cb64a37489 # v0.1.22
       id: gemini_pr_review
+      shell: bash
       env:
-        GEMINI_CLI_TRUST_WORKSPACE: 'true'
-        GEMINI_CLI_GITHUB_TOKEN: ${{ inputs.github_token }}
-      with:
-        gemini_api_key: ${{ inputs.gemini_api_key }}
-        gemini_cli_version: ${{ inputs.gemini_cli_version }}
-        gemini_debug: ${{ inputs.gemini_debug }}
-        gemini_model: ${{ inputs.gemini_model }}
-        workflow_name: 'bcr-gemini-review'
-        github_pr_number: ${{ steps.prepare_context.outputs.pr_number }}
-        settings: |-
-          {
-            "model": {
-              "maxSessionTurns": 50
-            },
-            "telemetry": {
-              "enabled": false,
-              "target": "gcp"
-            },
-            "mcp": {
-              "allowed": [
-                "github"
-              ]
-            },
-            "mcpServers": {
-              "github": {
-                "command": "docker",
-                "args": [
-                  "run",
-                  "-i",
-                  "--rm",
-                  "--env-file",
-                  "/tmp/github-mcp.env",
-                  "-e",
-                  "GITHUB_PERSONAL_ACCESS_TOKEN",
-                  "-e",
-                  "GITHUB_READ_ONLY=1",
-                  "-e",
-                  "GITHUB_TOOLSETS=repos,issues,pull_requests",
-                  "ghcr.io/github/github-mcp-server:v0.27.0"
-                ],
-                "includeTools": [
-                  "get_commit",
-                  "get_file_contents",
-                  "issue_read",
-                  "pull_request_read",
-                  "search_code"
-                ],
-                "env": {
-                  "GITHUB_PERSONAL_ACCESS_TOKEN": "${GEMINI_CLI_GITHUB_TOKEN}"
-                },
-                "trust": true
-              }
-            },
-            "tools": {
-              "allowed": [
-                "mcp_github_*",
-                "read_file",
-                "glob",
-                "grep_search",
-                "list_directory"
-              ],
-              "exclude": [
-                "run_shell_command",
-                "write_file",
-                "replace",
-                "web_fetch",
-                "google_web_search"
-              ]
-            }
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        GEMINI_MODEL: ${{ inputs.gemini_model }}
+        AGY_CLI_NONINTERACTIVE_HEADLESS: '1'
+        AGY_CLI_MODEL_API_MAX_RETRIES: '10'
+      run: |-
+        set -euo pipefail
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        export PATH="${HOME}/.local/bin:${PATH}"
+        agy --version
+
+        mkdir -p gemini-artifacts
+        cat <<'EOF' > /tmp/agy-settings.json
+        {
+          "modelProvider": "gemini",
+          "permissions": {
+            "allow": [
+              "read_file(*)"
+            ],
+            "deny": [
+              "write_file(*)",
+              "command(*)"
+            ]
           }
-        # Named bcr-review rather than gemini-review because run-gemini-cli copies
-        # its own default commands (including gemini-review.toml) into .gemini/commands/.
-        prompt: '/bcr-review'
+        }
+        EOF
+
+        if ! agy \
+          --output-format json \
+          --model "${GEMINI_MODEL}" \
+          --disable-slash-commands \
+          --settings /tmp/agy-settings.json \
+          --log-file gemini-artifacts/cli.log \
+          < .gemini/prompt.md \
+          > gemini-artifacts/stdout.log \
+          2> gemini-artifacts/stderr.log; then
+          echo "::error::Antigravity CLI exited with an error."
+          cat gemini-artifacts/stderr.log >&2 || true
+          tail -n 100 gemini-artifacts/cli.log >&2 || true
+          if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+            {
+              echo "### 🤖 Gemini BCR PR Review"
+              echo ""
+              echo "- **Outcome:** ❌ Antigravity CLI exited with an error"
+              echo ""
+              if [[ -s gemini-artifacts/stderr.log ]]; then
+                echo "<details open><summary><strong>stderr.log</strong></summary>"
+                echo ""
+                echo '```text'
+                tail -n 100 gemini-artifacts/stderr.log
+                echo '```'
+                echo "</details>"
+                echo ""
+              fi
+              if [[ -s gemini-artifacts/cli.log ]]; then
+                echo "<details><summary><strong>cli.log (last 100 lines)</strong></summary>"
+                echo ""
+                echo '```text'
+                tail -n 100 gemini-artifacts/cli.log
+                echo '```'
+                echo "</details>"
+                echo ""
+              fi
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          exit 1
+        fi
 
     - name: Post Gemini pull request review
       if: steps.prepare_context.outputs.should_run == 'true'
@@ -160,4 +146,4 @@ runs:
       if: always()
       shell: bash
       run: |-
-        rm -rf /tmp/github-mcp.env .gemini/context.json gemini-artifacts
+        rm -rf /tmp/agy-settings.json .gemini/context.json .gemini/prompt.md gemini-artifacts

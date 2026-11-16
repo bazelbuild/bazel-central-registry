@@ -15,6 +15,7 @@
 """Deterministically validates and posts Gemini's BCR PR review output."""
 
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -47,17 +48,18 @@ def gh_api_post(endpoint, payload):
     )
 
 
-def load_gemini_response_text():
+def load_gemini_output():
+    """Returns (response_text, envelope_dict) from gemini-artifacts/stdout.log."""
     stdout_log = pathlib.Path("gemini-artifacts/stdout.log")
     if not stdout_log.is_file():
         raise FileNotFoundError("gemini-artifacts/stdout.log not found")
     raw = stdout_log.read_text(encoding="utf-8", errors="replace").strip()
     if not raw:
-        return ""
+        return "", {}
     try:
         data = json.loads(raw, strict=False)
         if isinstance(data, dict) and isinstance(data.get("response"), str):
-            return data["response"]
+            return data["response"], data
     except json.JSONDecodeError:
         # When gemini_debug is enabled, non-JSON log lines may precede the CLI's
         # JSON envelope in stdout.log. Scan backwards for the outer JSON object
@@ -68,19 +70,156 @@ def load_gemini_response_text():
                 try:
                     parsed, _ = decoder.raw_decode(raw[idx:])
                     if isinstance(parsed, dict) and isinstance(parsed.get("response"), str):
-                        return parsed["response"]
+                        return parsed["response"], parsed
                 except json.JSONDecodeError:
                     continue
-    return raw
+    return raw, {}
+
+
+def load_gemini_response_text():
+    response_text, _ = load_gemini_output()
+    return response_text
+
+
+def format_cli_stats(envelope):
+    """Formats a single-line summary of Antigravity CLI execution statistics."""
+    if not isinstance(envelope, dict) or not envelope:
+        return ""
+    parts = []
+    status = envelope.get("status")
+    if status:
+        parts.append(f"status={status}")
+    duration = envelope.get("duration_seconds")
+    if isinstance(duration, (int, float)) and not isinstance(duration, bool):
+        parts.append(f"duration={duration:.1f}s")
+    num_turns = envelope.get("num_turns")
+    if isinstance(num_turns, int) and not isinstance(num_turns, bool):
+        parts.append(f"turns={num_turns}")
+    usage = envelope.get("usage")
+    if isinstance(usage, dict) and usage:
+        token_parts = []
+        for key, label in (
+            ("input_tokens", "in"),
+            ("output_tokens", "out"),
+            ("thinking_tokens", "thinking"),
+            ("cache_read_tokens", "cached"),
+            ("total_tokens", "total"),
+        ):
+            val = usage.get(key)
+            if isinstance(val, int) and not isinstance(val, bool):
+                token_parts.append(f"{label}={val}")
+        if token_parts:
+            parts.append(f"tokens({', '.join(token_parts)})")
+    denied = envelope.get("denied_actions")
+    if isinstance(denied, list) and denied:
+        parts.append(f"denied_actions={len(denied)}")
+    return ", ".join(parts)
+
+
+def print_cli_debug_logs(envelope, response_text):
+    """Prints CLI stats and collapsible debug groups to stdout for GitHub Actions logs."""
+    stats_line = format_cli_stats(envelope)
+    if stats_line:
+        print(f"Antigravity CLI stats: {stats_line}")
+
+    if response_text:
+        print("::group::Gemini model response")
+        print(response_text)
+        print("::endgroup::")
+
+    for log_name, title in (
+        ("gemini-artifacts/stderr.log", "Antigravity CLI stderr.log"),
+        ("gemini-artifacts/cli.log", "Antigravity CLI cli.log (tail)"),
+    ):
+        log_path = pathlib.Path(log_name)
+        if log_path.is_file():
+            log_text = log_path.read_text(encoding="utf-8", errors="replace").strip()
+            if log_text:
+                lines = log_text.splitlines()
+                tail = "\n".join(lines[-100:])
+                print(f"::group::{title}")
+                print(tail)
+                print("::endgroup::")
+
+
+def write_step_summary(
+    *,
+    outcome_line,
+    skip_reason="",
+    review_body="",
+    inline_comments=None,
+    envelope=None,
+    response_text="",
+):
+    """Appends a Markdown summary of the Gemini review run to GITHUB_STEP_SUMMARY."""
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+    if not summary_path:
+        return
+
+    lines = ["### 🤖 Gemini BCR PR Review", "", f"- **Outcome:** {outcome_line}"]
+    if skip_reason:
+        lines.append(f"- **Reason:** {skip_reason}")
+    stats_line = format_cli_stats(envelope or {})
+    if stats_line:
+        lines.append(f"- **CLI Stats:** `{stats_line}`")
+    lines.append("")
+
+    if review_body:
+        lines.extend(
+            [
+                "<details open>",
+                "<summary><strong>Review Summary</strong></summary>",
+                "",
+                review_body,
+                "",
+                "</details>",
+                "",
+            ]
+        )
+
+    if inline_comments:
+        lines.extend(
+            [
+                "<details>",
+                f"<summary><strong>Inline Comments ({len(inline_comments)})</strong></summary>",
+                "",
+                "\n\n".join(format_fallback_comment(c) for c in inline_comments),
+                "",
+                "</details>",
+                "",
+            ]
+        )
+
+    if response_text:
+        fence = "````"
+        while fence in response_text:
+            fence += "`"
+        lines.extend(
+            [
+                "<details>",
+                "<summary><strong>Raw Model Output</strong></summary>",
+                "",
+                f"{fence}text",
+                response_text,
+                fence,
+                "",
+                "</details>",
+                "",
+            ]
+        )
+
+    with open(summary_path, "a", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 def dump_gemini_diagnostics(response_text):
-    """Logs Gemini stdout/stderr diagnostics to stderr when output parsing fails."""
-    stderr_log = pathlib.Path("gemini-artifacts/stderr.log")
-    if stderr_log.is_file():
-        stderr_text = stderr_log.read_text(encoding="utf-8", errors="replace").strip()
-        if stderr_text:
-            sys.stderr.write(f"=== gemini-artifacts/stderr.log ===\n{stderr_text[-4000:]}\n")
+    """Logs Gemini stdout/stderr/CLI log diagnostics to stderr when output parsing fails."""
+    for log_name in ("gemini-artifacts/stderr.log", "gemini-artifacts/cli.log"):
+        log_path = pathlib.Path(log_name)
+        if log_path.is_file():
+            log_text = log_path.read_text(encoding="utf-8", errors="replace").strip()
+            if log_text:
+                sys.stderr.write(f"=== {log_name} ===\n{log_text[-4000:]}\n")
     sys.stderr.write(f"=== Gemini response_text (len={len(response_text)}) ===\n{response_text[-4000:]}\n")
 
 
@@ -165,8 +304,18 @@ def extract_review_json(text):
     raise ValueError("Could not find valid review JSON object with 'should_post' in Gemini output")
 
 
+def normalize_comment_path(raw_path):
+    """Normalizes a comment file path to a repository-relative path."""
+    path = str(raw_path or "").strip()
+    marker = "gemini-artifacts/pr/head/"
+    idx = path.find(marker)
+    if idx != -1:
+        path = path[idx + len(marker) :]
+    return path.lstrip("/")
+
+
 def format_fallback_comment(comment):
-    path = str(comment.get("path") or "<unknown>").strip()
+    path = normalize_comment_path(comment.get("path")) or "<unknown>"
     line = comment.get("line")
     start_line = comment.get("start_line")
     loc = f"`{path}`"
@@ -204,8 +353,17 @@ def main():
     if not SHA_RE.fullmatch(head_sha):
         raise ValueError(f"Invalid head_sha in context.json: {head_sha!r}")
 
-    response_text = load_gemini_response_text()
-    review_data = extract_review_json(response_text)
+    response_text, envelope = load_gemini_output()
+    print_cli_debug_logs(envelope, response_text)
+    try:
+        review_data = extract_review_json(response_text)
+    except ValueError as exc:
+        write_step_summary(
+            outcome_line=f"❌ Failed to parse review JSON (`{exc}`)",
+            envelope=envelope,
+            response_text=response_text,
+        )
+        raise
 
     should_post = review_data.get("should_post") is True
     skip_reason = str(review_data.get("skip_reason") or "").strip()
@@ -214,19 +372,34 @@ def main():
 
     if not should_post:
         print(f"Gemini decided not to post a review (skip_reason={skip_reason or 'none'}).")
+        write_step_summary(
+            outcome_line="⏭️ Skipped posting review (`should_post: false`)",
+            skip_reason=skip_reason or "No issues or notable changes found.",
+            review_body=body,
+            envelope=envelope,
+            response_text=response_text,
+        )
         return 0
 
-    pages = gh_api_get(
-        f"repos/{repo}/pulls/{pr_number}/files?per_page=100",
-        paginate=True,
-        slurp=True,
-    )
-    pr_filenames = {
-        item.get("filename")
-        for page in pages
-        for item in page
-        if isinstance(item, dict) and isinstance(item.get("filename"), str)
-    }
+    changed_files_ctx = context.get("changed_files")
+    if isinstance(changed_files_ctx, list) and changed_files_ctx:
+        pr_filenames = {
+            item.get("path")
+            for item in changed_files_ctx
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        }
+    else:
+        pages = gh_api_get(
+            f"repos/{repo}/pulls/{pr_number}/files?per_page=100",
+            paginate=True,
+            slurp=True,
+        )
+        pr_filenames = {
+            item.get("filename")
+            for page in pages
+            for item in page
+            if isinstance(item, dict) and isinstance(item.get("filename"), str)
+        }
 
     valid_inline_comments = []
     fallback_comments = []
@@ -235,7 +408,7 @@ def main():
         for item in raw_comments:
             if not isinstance(item, dict):
                 continue
-            path = str(item.get("path") or "").strip()
+            path = normalize_comment_path(item.get("path"))
             c_body = str(item.get("body") or "").strip()
             line = item.get("line")
             start_line = item.get("start_line")
@@ -274,6 +447,11 @@ def main():
     final_body = append_fallback_comments(body, fallback_comments)
     if not final_body and not valid_inline_comments:
         print("should_post=true but both review body and comments are empty; skipping.")
+        write_step_summary(
+            outcome_line="⏭️ Skipped posting review (`should_post: true`, but review body and comments were empty)",
+            envelope=envelope,
+            response_text=response_text,
+        )
         return 0
 
     # SECURITY: Always hardcode event="COMMENT" so Gemini can never approve or request changes.
@@ -288,9 +466,20 @@ def main():
     res = gh_api_post(endpoint, payload)
     if res.returncode == 0:
         review_resp = json.loads(res.stdout)
+        review_url = review_resp.get("html_url")
         print(
             f"Posted Gemini review on PR #{pr_number} "
-            f"(inline_comments={len(valid_inline_comments)}, url={review_resp.get('html_url')})"
+            f"(inline_comments={len(valid_inline_comments)}, url={review_url})"
+        )
+        outcome = f"💬 Posted PR review ([view review]({review_url}))" if review_url else "💬 Posted PR review"
+        if valid_inline_comments:
+            outcome += f" with {len(valid_inline_comments)} inline comment(s)"
+        write_step_summary(
+            outcome_line=outcome,
+            review_body=final_body,
+            inline_comments=valid_inline_comments,
+            envelope=envelope,
+            response_text=response_text,
         )
         return 0
 
@@ -311,12 +500,37 @@ def main():
         retry_res = gh_api_post(endpoint, retry_payload)
         if retry_res.returncode == 0:
             review_resp = json.loads(retry_res.stdout)
-            print(f"Posted fallback Gemini review on PR #{pr_number} (url={review_resp.get('html_url')})")
+            review_url = review_resp.get("html_url")
+            print(f"Posted fallback Gemini review on PR #{pr_number} (url={review_url})")
+            outcome = (
+                f"💬 Posted fallback PR review ([view review]({review_url}))"
+                if review_url
+                else "💬 Posted fallback PR review"
+            )
+            write_step_summary(
+                outcome_line=outcome,
+                review_body=retry_body,
+                envelope=envelope,
+                response_text=response_text,
+            )
             return 0
         sys.stderr.write(f"{retry_res.stderr}\n{retry_res.stdout}")
+        write_step_summary(
+            outcome_line=f"❌ Failed to post fallback PR review (exit code {retry_res.returncode})",
+            review_body=retry_body,
+            envelope=envelope,
+            response_text=response_text,
+        )
         return retry_res.returncode
 
     sys.stderr.write(f"{res.stderr}\n{res.stdout}")
+    write_step_summary(
+        outcome_line=f"❌ Failed to post PR review (exit code {res.returncode})",
+        review_body=final_body,
+        inline_comments=valid_inline_comments,
+        envelope=envelope,
+        response_text=response_text,
+    )
     return res.returncode
 
 

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Prepares .gemini/context.json for BCR Gemini PR reviews."""
+"""Prepares .gemini/context.json and .gemini/prompt.md for BCR Gemini PR reviews."""
 
 import base64
 import copy
@@ -43,7 +43,7 @@ def sanitize_untrusted_str(value, max_len=120):
     """Sanitizes untrusted strings before embedding in context.json.
 
     Strips backticks (preventing markdown code-fence breakout when context.json
-    is injected into bcr-review.toml), neutralizes '@' (preventing unintended
+    is injected into prompt_template.md), neutralizes '@' (preventing unintended
     GitHub user/team mentions in @bazel-io's review summary), and collapses
     control characters.
     """
@@ -138,6 +138,128 @@ def presubmit_changed_beyond_platforms_or_bazel(prev_doc, curr_doc):
     return curr_scrubbed != prev_scrubbed
 
 
+def render_review_prompt(
+    context_json_str,
+    template_path=pathlib.Path(".github/actions/gemini-review/prompt_template.md"),
+    styleguide_path=pathlib.Path(".gemini/styleguide.md"),
+    out_path=pathlib.Path(".gemini/prompt.md"),
+):
+    """Renders .gemini/prompt.md by expanding styleguide and context into prompt_template.md."""
+    if not template_path.is_file():
+        fallback = pathlib.Path(__file__).resolve().parent / "prompt_template.md"
+        if fallback.is_file():
+            template_path = fallback
+    if not template_path.is_file() or not styleguide_path.is_file():
+        return False
+    prompt_template = template_path.read_text(encoding="utf-8")
+    styleguide = styleguide_path.read_text(encoding="utf-8").strip()
+    # Expand trusted styleguide.md first, then context.json second so untrusted
+    # fields in context.json can never trigger template expansion.
+    rendered = prompt_template.replace("@{.gemini/styleguide.md}", styleguide).replace(
+        "@{.gemini/context.json}", context_json_str.strip()
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(rendered, encoding="utf-8")
+    return True
+
+
+def reconstruct_added_file_from_patch(patch_text):
+    """Reconstructs a newly added file's content from a single-hunk unified diff patch."""
+    if not isinstance(patch_text, str) or not patch_text:
+        return None
+    lines = patch_text.split("\n")
+    if not re.match(r"^@@ -0,0 \+1(?:,\d+)? @@", lines[0]):
+        return None
+    out_lines = []
+    trailing_newline = True
+    for line in lines[1:]:
+        if line.startswith("@@"):
+            return None
+        if line.startswith("+"):
+            out_lines.append(line[1:])
+        elif line.startswith("\\ No newline at end of file"):
+            trailing_newline = False
+        else:
+            return None
+    content = "\n".join(out_lines)
+    if trailing_newline and out_lines:
+        content += "\n"
+    return content
+
+
+def stage_pr_files(
+    repo,
+    head_sha,
+    pr_files,
+    fetched_head_files,
+    reasons,
+    stage_dir=pathlib.Path("gemini-artifacts/pr"),
+):
+    """Stages the PR unified diff and added/modified head files onto local disk for read_file."""
+    head_root = stage_dir / "head"
+    head_root.mkdir(parents=True, exist_ok=True)
+    diff_path = stage_dir / "diff.patch"
+
+    diff_chunks = []
+    changed_files_info = []
+    for idx, f in enumerate(pr_files):
+        raw_filename = str(f.get("filename") or "")
+        safe_path = sanitize_untrusted_str(raw_filename, max_len=200)
+        status = sanitize_untrusted_str(f.get("status") or "", max_len=40)
+        additions = int(f.get("additions") or 0)
+        deletions = int(f.get("deletions") or 0)
+        patch_text = f.get("patch")
+
+        prev_name = sanitize_untrusted_str(f.get("previous_filename") or raw_filename, max_len=200)
+        header = f"diff --git a/{prev_name} b/{safe_path}\nstatus: {status} (+{additions}/-{deletions})"
+        if isinstance(patch_text, str) and patch_text:
+            diff_chunks.append(f"{header}\n--- a/{prev_name}\n+++ b/{safe_path}\n{patch_text}")
+        else:
+            diff_chunks.append(f"{header}\n(no text patch returned by GitHub API)")
+
+        head_file_path_str = None
+        if status != "removed" and idx < 100:
+            dest_path = resolve_path_within(head_root, raw_filename)
+            if dest_path is not None:
+                content_str = fetched_head_files.get(raw_filename)
+                maybe_symlink = (
+                    status == "added"
+                    and additions == 1
+                    and isinstance(patch_text, str)
+                    and "\\ No newline at end of file" in patch_text
+                )
+                if content_str is None and status == "added" and not maybe_symlink:
+                    content_str = reconstruct_added_file_from_patch(patch_text)
+                if content_str is None:
+                    try:
+                        resp = gh_api(f"repos/{repo}/contents/{raw_filename}?ref={head_sha}")
+                        if isinstance(resp, dict) and resp.get("type") == "symlink":
+                            reasons.append(
+                                f"Symlink detected in PR at '{safe_path}' (violates BCR no-symlinks policy)."
+                            )
+                        else:
+                            content_str = decode_github_file_content(resp)
+                    except Exception:
+                        content_str = reconstruct_added_file_from_patch(patch_text) if status == "added" else None
+                if content_str is not None:
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    dest_path.write_text(content_str, encoding="utf-8")
+                    head_file_path_str = str(dest_path.resolve())
+
+        changed_files_info.append(
+            {
+                "path": safe_path,
+                "status": status,
+                "additions": additions,
+                "deletions": deletions,
+                "head_file_path": head_file_path_str,
+            }
+        )
+
+    diff_path.write_text("\n\n".join(diff_chunks) + ("\n" if diff_chunks else ""), encoding="utf-8")
+    return str(diff_path.resolve()), str(head_root.resolve()), changed_files_info
+
+
 def main():
     repo = os.environ["REPOSITORY"].strip()
     event_name = os.environ["EVENT_NAME"].strip()
@@ -165,6 +287,13 @@ def main():
 
     if pr_state != "open" or (is_draft and not is_manual):
         print(f"Skipping PR #{pr_number} (state={pr_state}, draft={is_draft}, trigger={trigger_type})")
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+        if summary_path:
+            with open(summary_path, "a", encoding="utf-8") as sf:
+                sf.write(
+                    f"### 🤖 Gemini BCR PR Review\n\n"
+                    f"- **Outcome:** ⏭️ Skipped PR #{pr_number} (`state={pr_state}`, `draft={is_draft}`, `trigger={trigger_type}`)\n"
+                )
         with open(github_output, "a", encoding="utf-8") as out:
             out.write("should_run=false\n")
         return 0
@@ -272,6 +401,7 @@ def main():
         )
 
     head_meta_by_module = {}
+    fetched_head_files = {}
     modified_module_versions_info = []
     for mod_name in sorted(modified_modules_set):
         mod_dir = resolve_module_dir(modules_root, mod_name)
@@ -302,8 +432,10 @@ def main():
         head_meta = None
         if mod_name in metadata_changed_modules:
             try:
-                meta_resp = gh_api(f"repos/{repo}/contents/modules/{mod_name}/metadata.json?ref={head_sha}")
+                meta_rel_path = f"modules/{mod_name}/metadata.json"
+                meta_resp = gh_api(f"repos/{repo}/contents/{meta_rel_path}?ref={head_sha}")
                 head_meta_raw = decode_github_file_content(meta_resp)
+                fetched_head_files[meta_rel_path] = head_meta_raw
                 parsed_meta = json.loads(head_meta_raw)
                 if not isinstance(parsed_meta, dict):
                     raise ValueError("metadata.json root must be a JSON object")
@@ -421,10 +553,10 @@ def main():
                 if baseline_dirs:
                     curr_doc = None
                     try:
-                        presubmit_resp = gh_api(
-                            f"repos/{repo}/contents/modules/{mod_name}/{ver_name}/presubmit.yml?ref={head_sha}"
-                        )
+                        presubmit_rel_path = f"modules/{mod_name}/{ver_name}/presubmit.yml"
+                        presubmit_resp = gh_api(f"repos/{repo}/contents/{presubmit_rel_path}?ref={head_sha}")
                         curr_raw = decode_github_file_content(presubmit_resp)
+                        fetched_head_files[presubmit_rel_path] = curr_raw
                         curr_doc = yaml.safe_load(curr_raw) or {}
                     except Exception as e:
                         presubmit_changed = True
@@ -460,14 +592,27 @@ def main():
             }
         )
 
+    pr_diff_path, pr_head_root, changed_files_info = stage_pr_files(
+        repo=repo,
+        head_sha=head_sha,
+        pr_files=pr_files,
+        fetched_head_files=fetched_head_files,
+        reasons=reasons,
+    )
+
     needs_bcr_maintainer_review = len(reasons) > 0
+    pr_title = sanitize_untrusted_str(pr_info.get("title") or "", max_len=200)
+    pr_body = sanitize_untrusted_str(pr_info.get("body") or "", max_len=1000)
 
     owner, repo_name = repo.split("/", 1)
     context_data = {
         "repository": repo,
         "owner": owner,
         "repo": repo_name,
+        "workspace_root": str(pathlib.Path.cwd().resolve()),
         "pull_request_number": int(pr_number),
+        "pr_title": pr_title,
+        "pr_body": pr_body,
         "pr_author": pr_author,
         "head_sha": head_sha,
         "trigger_type": trigger_type,
@@ -477,14 +622,20 @@ def main():
         "modified_module_versions": modified_module_versions_info,
         "non_module_files": non_module_files,
         "mutated_existing_version_files": mutated_existing_version_files,
+        "pr_diff_path": pr_diff_path,
+        "pr_head_root": pr_head_root,
+        "changed_files": changed_files_info,
     }
 
     os.makedirs(".gemini", exist_ok=True)
+    context_json_str = json.dumps(context_data, indent=2)
     with open(".gemini/context.json", "w", encoding="utf-8") as f:
-        json.dump(context_data, f, indent=2)
+        f.write(context_json_str)
+
+    render_review_prompt(context_json_str)
 
     print("Generated .gemini/context.json:")
-    print(json.dumps(context_data, indent=2))
+    print(context_json_str)
 
     with open(github_output, "a", encoding="utf-8") as out:
         out.write("should_run=true\n")

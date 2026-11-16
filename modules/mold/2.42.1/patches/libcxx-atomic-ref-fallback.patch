@@ -1,0 +1,27 @@
+Fall back to __atomic builtins when std::atomic_ref is unavailable.
+
+libc++ before LLVM 19 (e.g. Xcode 16.2 on macOS) does not provide
+std::atomic_ref, which src/passes.cc uses to select COMDAT owners.
+
+--- a/src/passes.cc
++++ b/src/passes.cc
+@@ -322,11 +322,19 @@
+   // Symbol resolution is clear while COMDAT groups are selected, so sym_idx
+   // can temporarily hold the winning file priority.
+   i32 priority = file.priority;
++#ifdef __cpp_lib_atomic_ref
+   std::atomic_ref<i32> owner(sig.sym_idx);
+   i32 old = owner.load(std::memory_order_relaxed);
+   while ((old == -1 || priority < old) &&
+          !owner.compare_exchange_weak(old, priority,
+                                       std::memory_order_relaxed));
++#else
++  // libc++ before LLVM 19 (e.g. Xcode 16.2) lacks std::atomic_ref.
++  i32 old = __atomic_load_n(&sig.sym_idx, __ATOMIC_RELAXED);
++  while ((old == -1 || priority < old) &&
++         !__atomic_compare_exchange_n(&sig.sym_idx, &old, priority, true,
++                                      __ATOMIC_RELAXED, __ATOMIC_RELAXED));
++#endif
+ }
+
+ // Select COMDAT groups and construct input sections. If LTO will run,

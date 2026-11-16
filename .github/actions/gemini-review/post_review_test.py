@@ -192,6 +192,149 @@ class PostReviewTest(unittest.TestCase):
         self.assertEqual(posted_payloads[1]["comments"], [])
         self.assertIn("Context line comment", posted_payloads[1]["body"])
 
+    def test_writes_step_summary_when_skipped_for_trivial_pr(self):
+        summary_file = self.root / "step_summary.md"
+        review_obj = {
+            "should_post": False,
+            "skip_reason": "Routine version bump for foo@1.2.3 with no issues or notable changes.",
+            "body": "",
+            "comments": [],
+        }
+        envelope = {
+            "status": "SUCCESS",
+            "response": json.dumps(review_obj),
+            "duration_seconds": 38.4,
+            "num_turns": 5,
+            "usage": {
+                "input_tokens": 12000,
+                "output_tokens": 350,
+                "thinking_tokens": 800,
+                "cache_read_tokens": 4000,
+                "total_tokens": 17150,
+            },
+        }
+        (self.root / "gemini-artifacts" / "stdout.log").write_text(json.dumps(envelope), encoding="utf-8")
+        with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary_file)}), patch.object(
+            post_review, "gh_api_post"
+        ) as mock_post:
+            self.assertEqual(post_review.main(), 0)
+            mock_post.assert_not_called()
+
+        summary_text = summary_file.read_text(encoding="utf-8")
+        self.assertIn("### 🤖 Gemini BCR PR Review", summary_text)
+        self.assertIn("⏭️ Skipped posting review (`should_post: false`)", summary_text)
+        self.assertIn("Routine version bump for foo@1.2.3 with no issues or notable changes.", summary_text)
+        self.assertIn(
+            "status=SUCCESS, duration=38.4s, turns=5, tokens(in=12000, out=350, thinking=800, cached=4000, total=17150)",
+            summary_text,
+        )
+        self.assertIn("<summary><strong>Raw Model Output</strong></summary>", summary_text)
+
+    def test_writes_step_summary_when_review_posted(self):
+        summary_file = self.root / "step_summary.md"
+        review_obj = {
+            "should_post": True,
+            "skip_reason": "",
+            "body": "## 📋 Gemini BCR Review Summary\nLooks good overall.",
+            "comments": [
+                {
+                    "path": "modules/foo/1.0.0/MODULE.bazel",
+                    "line": 3,
+                    "side": "RIGHT",
+                    "body": "🟡 Consider pinning dep version.",
+                }
+            ],
+        }
+        envelope = {
+            "status": "SUCCESS",
+            "response": json.dumps(review_obj),
+            "duration_seconds": 42.0,
+            "num_turns": 6,
+            "usage": {
+                "input_tokens": 15000,
+                "output_tokens": 500,
+                "thinking_tokens": 900,
+                "cache_read_tokens": 5000,
+                "total_tokens": 21400,
+            },
+        }
+        (self.root / "gemini-artifacts" / "stdout.log").write_text(json.dumps(envelope), encoding="utf-8")
+
+        def fake_get(endpoint, paginate=False, slurp=False):
+            return [[{"filename": "modules/foo/1.0.0/MODULE.bazel"}]]
+
+        def fake_post(endpoint, payload):
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = json.dumps({"html_url": "https://github.com/example/bcr/pull/42#pullrequestreview-99"})
+            res.stderr = ""
+            return res
+
+        with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary_file)}), patch.object(
+            post_review, "gh_api_get", side_effect=fake_get
+        ), patch.object(post_review, "gh_api_post", side_effect=fake_post):
+            self.assertEqual(post_review.main(), 0)
+
+        summary_text = summary_file.read_text(encoding="utf-8")
+        self.assertIn(
+            "💬 Posted PR review ([view review](https://github.com/example/bcr/pull/42#pullrequestreview-99)) with 1 inline comment(s)",
+            summary_text,
+        )
+        self.assertIn("## 📋 Gemini BCR Review Summary", summary_text)
+        self.assertIn("Inline Comments (1)", summary_text)
+        self.assertIn("🟡 Consider pinning dep version.", summary_text)
+
+    def test_normalizes_head_file_path_prefix_and_reuses_context_changed_files(self):
+        (self.root / ".gemini" / "context.json").write_text(
+            json.dumps(
+                {
+                    "repository": "bazelbuild/bazel-central-registry",
+                    "owner": "bazelbuild",
+                    "repo": "bazel-central-registry",
+                    "pull_request_number": 42,
+                    "head_sha": "d" * 40,
+                    "changed_files": [{"path": "modules/foo/1.0.0/MODULE.bazel", "status": "added"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        review_obj = {
+            "should_post": True,
+            "skip_reason": "",
+            "body": "## Summary",
+            "comments": [
+                {
+                    "path": "gemini-artifacts/pr/head/modules/foo/1.0.0/MODULE.bazel",
+                    "line": 2,
+                    "side": "RIGHT",
+                    "body": "Normalized path comment",
+                }
+            ],
+        }
+        (self.root / "gemini-artifacts" / "stdout.log").write_text(
+            json.dumps({"response": json.dumps(review_obj)}), encoding="utf-8"
+        )
+
+        posted_payloads = []
+
+        def fake_post(endpoint, payload):
+            posted_payloads.append(payload)
+            res = MagicMock()
+            res.returncode = 0
+            res.stdout = json.dumps({"html_url": "https://example.com/review/3"})
+            res.stderr = ""
+            return res
+
+        with patch.object(post_review, "gh_api_get") as mock_get, patch.object(
+            post_review, "gh_api_post", side_effect=fake_post
+        ):
+            self.assertEqual(post_review.main(), 0)
+            mock_get.assert_not_called()
+
+        self.assertEqual(len(posted_payloads), 1)
+        self.assertEqual(len(posted_payloads[0]["comments"]), 1)
+        self.assertEqual(posted_payloads[0]["comments"][0]["path"], "modules/foo/1.0.0/MODULE.bazel")
+
 
 if __name__ == "__main__":
     unittest.main()
