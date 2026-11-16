@@ -306,6 +306,44 @@ class PrepareContextTest(unittest.TestCase):
         self.assertIsNone(changed_info[1]["head_file_path"])
         self.assertTrue(any("Symlink detected" in r for r in reasons))
 
+    def test_new_rules_module_adds_explicit_warning_reason(self):
+        def fake_gh_api(endpoint, paginate=False, slurp=False):
+            if endpoint == "repos/bazelbuild/bazel-central-registry/pulls/20":
+                return {
+                    "state": "open",
+                    "draft": False,
+                    "changed_files": 2,
+                    "user": {"login": "alice"},
+                    "head": {"sha": "f" * 40},
+                }
+            if "pulls/20/files" in endpoint:
+                return [
+                    [
+                        {"filename": "modules/rules_foo/metadata.json", "status": "added"},
+                        {"filename": "modules/rules_foo/0.1.0/MODULE.bazel", "status": "added"},
+                    ]
+                ]
+            if "contents/modules/rules_foo/metadata.json" in endpoint:
+                return _b64_content(json.dumps({"versions": ["0.1.0"], "maintainers": []}))
+            raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+        env = {
+            "REPOSITORY": "bazelbuild/bazel-central-registry",
+            "EVENT_NAME": "pull_request_target",
+            "EVENT_ACTION": "opened",
+            "PR_NUMBER": "20",
+            "GITHUB_OUTPUT": str(self.root / "output.txt"),
+        }
+        with patch.dict(os.environ, env, clear=False), patch.object(prepare_context, "gh_api", side_effect=fake_gh_api):
+            self.assertEqual(prepare_context.main(), 0)
+
+        ctx = json.loads((self.root / ".gemini" / "context.json").read_text(encoding="utf-8"))
+        self.assertTrue(ctx["needs_bcr_maintainer_review"])
+        self.assertTrue(
+            any("starts with the 'rules_' prefix" in r for r in ctx["bcr_maintainer_review_reasons"]),
+            ctx["bcr_maintainer_review_reasons"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
