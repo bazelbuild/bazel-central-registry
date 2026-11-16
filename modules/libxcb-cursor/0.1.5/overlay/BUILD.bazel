@@ -1,0 +1,80 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+HDRS = ["cursor/xcb_cursor.h"]
+
+cc_library(
+    name = "cursor_prefixed_hdrs",
+    hdrs = HDRS,
+    include_prefix = "xcb",
+    strip_include_prefix = "cursor",
+    target_compatible_with = _UNIX_COMPATIBLE,
+)
+
+cc_library(
+    name = "xcb-cursor",
+    srcs = [
+        "cursor/cursor.c",
+        "cursor/cursor.h",
+        "cursor/load_cursor.c",
+        "cursor/parse_cursor_file.c",
+        "cursor/shape_to_id.c",
+    ],
+    hdrs = HDRS,
+    copts = [
+        # Upstream configure.ac DEF_CURSORPATH default (runtime search path).
+        '-DXCURSORPATH=\\"~/.icons:/usr/share/icons:/usr/share/pixmaps:/usr/X11R6/lib/X11/icons\\"',
+        # Upstream configure.ac uses AC_USE_SYSTEM_EXTENSIONS. cursor.c calls
+        # asprintf(), which glibc < 2.38 only declares under _GNU_SOURCE.
+        "-D_GNU_SOURCE",
+    ] + select({
+        "@platforms//os:macos": ["-DHAVE_LIBKERN_OSBYTEORDER_H=1"],
+        "//conditions:default": [
+            "-DHAVE_ENDIAN_H=1",
+            "-DHAVE_LE32TOH=1",
+        ],
+    }),
+    includes = ["cursor"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cursor_prefixed_hdrs",
+        "@libxcb",
+        "@libxcb-image",
+        "@libxcb-render-util",
+    ],
+)
+
+alias(
+    name = "libxcb-cursor",
+    actual = ":xcb-cursor",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "cursor",
+    actual = ":xcb-cursor",
+    visibility = ["//visibility:public"],
+)
