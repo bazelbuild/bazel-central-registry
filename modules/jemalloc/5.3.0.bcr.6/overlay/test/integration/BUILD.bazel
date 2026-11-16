@@ -1,0 +1,190 @@
+load("//tools:test.bzl", "cc_test", "join_conf", "test_name")
+load("//tools:transition.bzl", "with_settings")
+
+INTEGRATION_TESTS = [
+    {"src": "aligned_alloc.c"},
+    {"src": "allocated.c"},
+    {"src": "malloc.c"},
+    {"src": "MALLOCX_ARENA.c"},
+    {"src": "overflow.c"},
+    {"src": "posix_memalign.c"},
+    {"src": "rallocx.c"},
+    {"src": "sdallocx.c"},
+    {
+        "src": "slab_sizes.c",
+        "conf": "slab_sizes:1-4096:17|100-200:1|128-128:2",
+    },
+    {"src": "thread_arena.c"},
+    {"src": "thread_tcache_enabled.c"},
+]
+
+# extent.sh, mallocx.sh, smallocx.sh and xallocx.sh set junk:false only if enable_fill.
+INTEGRATION_FILL_TESTS = [
+    {"src": "extent.c"},
+    {"src": "mallocx.c"},
+    {"src": "xallocx.c"},
+    # Makefile.in adds this test only with --enable-experimental-smallocx.
+    {
+        "src": "smallocx.c",
+        "target_compatible_with": select({
+            "//settings/flags:experimental_smallocx_api": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+    },
+]
+
+# Makefile.in's check_integration, check_integration_decay and check_integration_prof, for the C tests.
+VARIANTS = [
+    {
+        "suffix": None,
+        "conf": None,
+    },
+    {
+        "suffix": "decay_minus_one",
+        "conf": "dirty_decay_ms:-1,muzzy_decay_ms:-1",
+    },
+    {
+        "suffix": "decay_zero",
+        "conf": "dirty_decay_ms:0,muzzy_decay_ms:0",
+    },
+    {
+        "suffix": "prof",
+        "conf": "prof:true",
+        "target_compatible_with": select({
+            "//settings/flags:prof": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+    },
+    {
+        "suffix": "prof_active_false",
+        "conf": "prof:true,prof_active:false",
+        "target_compatible_with": select({
+            "//settings/flags:prof": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+    },
+]
+
+TESTLIB_SETTINGS = {
+    "//settings:with_test": "integration",
+    # This needs to be pinned for testing. The MALLOC_CONF ENV depends on it. The make build allows for it to be
+    # set dynamically via templating and generates a test harness around it. By requiring a value that cannot be
+    # set internally by accident, this exercises the same functionality.
+    "//settings/flags:jemalloc_prefix": "je_test_",
+}
+
+with_settings(
+    name = "testlib",
+    testonly = True,
+    src = "//test:testlib",
+    settings = TESTLIB_SETTINGS,
+    visibility = ["//:__subpackages__"],
+)
+
+[cc_test(
+    name = test_name(test, variant["suffix"]),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(test.get("conf"), variant["conf"]) or ""},
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = variant.get("target_compatible_with", []),
+    deps = [":testlib"],
+) for test in INTEGRATION_TESTS for variant in VARIANTS]
+
+[cc_test(
+    name = test_name(test, variant["suffix"]),
+    src = test["src"],
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": join_conf("junk:false", variant["conf"])},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": variant["conf"] or ""},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = test.get("target_compatible_with", []) + variant.get("target_compatible_with", []),
+    deps = [":testlib"],
+) for test in INTEGRATION_FILL_TESTS for variant in VARIANTS]
+
+INTEGRATION_CPP_TESTS = [
+    {"src": "cpp/basic.cpp"},
+    {
+        "src": "cpp/infallible_new_true.cpp",
+        "conf": "experimental_infallible_new:true",
+    },
+    {
+        "src": "cpp/infallible_new_false.cpp",
+        "conf": "experimental_infallible_new:false",
+    },
+]
+
+INTEGRATION_CPP_DECAY_TESTS = [
+    {
+        "name": test_name(
+            test,
+            config["suffix"],
+        ),
+        "src": test["src"],
+        "conf": join_conf(
+            test.get("conf"),
+            config["conf"],
+        ),
+    }
+    for config in [
+        {
+            "suffix": "decay_minus_one",
+            "conf": "dirty_decay_ms:-1,muzzy_decay_ms:-1",
+        },
+        {
+            "suffix": "decay_zero",
+            "conf": "dirty_decay_ms:0,muzzy_decay_ms:0",
+        },
+    ]
+    for test in INTEGRATION_CPP_TESTS
+]
+
+INTEGRATION_CPP_PROF_TESTS = [
+    {
+        "name": test_name(
+            test,
+            config["suffix"],
+        ),
+        "src": test["src"],
+        "conf": join_conf(
+            test.get("conf"),
+            config["conf"],
+        ),
+        "target_compatible_with": select({
+            "//settings/flags:prof": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
+    }
+    for config in [
+        {
+            "suffix": "prof",
+            "conf": "prof:true",
+        },
+        {
+            "suffix": "prof_active_false",
+            "conf": "prof:true,prof_active:false",
+        },
+    ]
+    for test in INTEGRATION_CPP_TESTS
+]
+
+with_settings(
+    name = "testlib_cpp",
+    testonly = True,
+    src = "//test:testlib",
+    settings = TESTLIB_SETTINGS | {"//settings:with_test": "integration_cpp"},
+    visibility = ["//:__subpackages__"],
+)
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": test.get("conf", "")},
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    # Makefile.in empties TESTS_INTEGRATION_CPP unless @enable_cxx@ (on by default; --disable-cxx turns it off).
+    target_compatible_with = test.get("target_compatible_with", []) + select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib_cpp"],
+) for test in INTEGRATION_CPP_TESTS + INTEGRATION_CPP_DECAY_TESTS + INTEGRATION_CPP_PROF_TESTS]
