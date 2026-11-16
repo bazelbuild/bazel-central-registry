@@ -1,0 +1,40 @@
+# Bazel build for Hegel for C++, shipped as a registry overlay because the
+# upstream release includes only a CMake build. The module is the source
+# tarball of the frontend's release in the hegeldev/hegel monorepo (the
+# frontend plus the libhegel engine sources); the build mirrors the CMake
+# `hegel` library in frontends/cpp: reflection on (reflect-cpp, C++20) and
+# the libhegel engine built from its Rust sources. Keep dependency
+# versions in sync with frontends/cpp/CMakeLists.txt.
+
+module(
+    name = "hegel-cpp",
+    version = "0.17.6",
+    # Registry overlays require Bazel 7.2.1 or newer.
+    bazel_compatibility = [">=7.2.1"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.22")
+bazel_dep(name = "rules_rust", version = "0.75.0")
+
+# The reflect-cpp release frontends/cpp/CMakeLists.txt fetches (v0.22.0).
+# hegel uses only reflection, so it depends on the module's :core target and
+# not on any serialization format.
+bazel_dep(name = "reflect-cpp", version = "0.22.0.bcr.1")
+
+# libhegel (Hegel's native engine) is built from the in-tree Rust crate by
+# //libhegel. Its Cargo dependencies are the ones the release's Cargo.lock
+# pins, fetched from crates.io by crate_universe. cargo-bazel-lock.json is
+# crate_universe's own lockfile, which a module that is not the root
+# module must ship (bzlmod cannot repin across a module boundary); the
+# README says how to regenerate it.
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "hegel_cpp_crates",
+    cargo_lockfile = "//:Cargo.lock",
+    lockfile = "//:cargo-bazel-lock.json",
+    # The workspace manifest; crate_universe finds the libhegel member itself.
+    manifests = ["//:Cargo.toml"],
+)
+use_repo(crate, "hegel_cpp_crates")
