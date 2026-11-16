@@ -1,0 +1,76 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_license//rules:license.bzl", "license")
+load(":libice_config_checks.bzl", "LIBICE_CONFIG_CHECKS")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT-open-group",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+autoconf(
+    name = "config_checks",
+    checks = LIBICE_CONFIG_CHECKS,
+)
+
+# config.h.in is shipped in the upstream release tarball (autoheader output).
+# Unlike libSM, libICE's configure.ac calls AC_USE_SYSTEM_EXTENSIONS, so the
+# template has slots for _GNU_SOURCE & co. and the stock macro target fills them.
+autoconf_hdr(
+    name = "config_h",
+    out = "generated/config.h",
+    template = "config.h.in",
+    deps = [
+        ":config_checks",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+cc_library(
+    name = "libice",
+    srcs = glob([
+        "src/*.c",
+        "src/*.h",
+    ]) + [":config_h"],
+    hdrs = glob(["include/X11/ICE/*.h"]),
+    copts = [
+        "-DHAVE_CONFIG_H",
+        "-Wno-unused-parameter",
+    ],
+    includes = [
+        "generated",
+        "include",
+        "src",
+    ],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libxtrans",
+        "@xorgproto",
+    ],
+)
+
+alias(
+    name = "ice",
+    actual = ":libice",
+    visibility = ["//visibility:public"],
+)
