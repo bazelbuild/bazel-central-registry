@@ -1,0 +1,74 @@
+"""llm-cpp: single-header C++17 libraries for LLM features.
+
+Written by hand to mirror upstream's CMakeLists.txt, which defines one
+header-only INTERFACE target llm::<name> per library and llm::llm for all of
+them. Here each library is one header, include/llm/llm_<name>.hpp, exposed as
+@mattbusel-llm-cpp//:<name>, so a project that only needs, say, the cache does not pull
+in libcurl. @mattbusel-llm-cpp (that is, @mattbusel-llm-cpp//:mattbusel-llm-cpp) is all of them plus the
+umbrella header llm.hpp. Both include styles work:
+
+    #include <llm/llm_cache.hpp>
+    #include "llm_cache.hpp"
+
+The headers are stb-style: in exactly one .cc file, define the library's
+implementation macro (for example LLM_CACHE_IMPLEMENTATION) before including it.
+Compile as C++17.
+"""
+
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":libraries.bzl", "CURL_LIBRARIES", "PLAIN_LIBRARIES", "THREAD_LIBRARIES")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+exports_files(["LICENSE"])
+
+_PTHREAD = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": ["-pthread"],
+})
+
+[
+    cc_library(
+        name = name,
+        hdrs = ["include/llm/llm_%s.hpp" % name],
+        # Both spellings, as upstream's CMake targets do.
+        includes = [
+            "include",
+            "include/llm",
+        ],
+        linkopts = _PTHREAD if name in THREAD_LIBRARIES else [],
+        deps = ["@curl"] if name in CURL_LIBRARIES else [],
+    )
+    for name in PLAIN_LIBRARIES + CURL_LIBRARIES
+]
+
+cc_library(
+    name = "mattbusel-llm-cpp",
+    hdrs = ["include/llm/llm.hpp"],
+    includes = [
+        "include",
+        "include/llm",
+    ],
+    deps = [":" + name for name in PLAIN_LIBRARIES + CURL_LIBRARIES],
+)
