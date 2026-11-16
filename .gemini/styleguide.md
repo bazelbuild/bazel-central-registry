@@ -80,7 +80,7 @@ modules/
 
 - Each maintainer entry in `metadata.json.maintainers` with a `github` handle must also include `github_user_id`; optional fields are fine (name, email, website, do_not_notify).
 - When a PR adds to a module with no existing maintainers (including when the module is new), encourage the PR author to take on module maintainership in `metadata.json.maintainers` (since modules with no maintainers always require BCR maintainer review, adding to response times and toil).
-- Gemini should ping @bazelbuild/bcr-maintainers for a manual review if there are any significant changes (ignoring reformatting) to the `maintainers` or `repository` fields in `metadata.json` files.
+- Gemini should flag for manual review by BCR maintainers (without `@`-mentioning `bazelbuild/bcr-maintainers`) if there are any significant changes (ignoring reformatting) to the `maintainers` or `repository` fields in `metadata.json` files.
 
 ### MODULE.bazel
 
