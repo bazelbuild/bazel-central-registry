@@ -1,0 +1,73 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(":tables.bzl", "audit_table")
+
+# Upstream lib/Makefile.am generates these lookup tables with a build-host tool.
+_TABLES = [
+    ("actiontabs", "gen_tables", "actiontab.h", "--lowercase --i2s --s2i action"),
+    ("arm_tables", "gen_tables", "arm_table.h", "--lowercase --i2s --s2i arm_syscall"),
+    ("aarch64_tables", "gen_tables", "aarch64_table.h", "--lowercase --i2s --s2i aarch64_syscall"),
+    ("riscv64_tables", "gen_tables", "riscv64_table.h", "--lowercase --i2s --s2i riscv64_syscall"),
+    ("riscv32_tables", "gen_tables", "riscv32_table.h", "--lowercase --i2s --s2i riscv32_syscall"),
+    ("errtabs", "gen_tables", "errtab.h", "--duplicate-ints --uppercase --i2s --s2i err"),
+    ("fieldtabs", "gen_tables", "fieldtab.h", "--duplicate-ints --lowercase --i2s --s2i field"),
+    ("flagtabs", "gen_tables", "flagtab.h", "--lowercase --i2s --s2i flag"),
+    ("fstypetabs", "gen_tables", "fstypetab.h", "--lowercase --i2s --s2i fstype"),
+    ("ftypetabs", "gen_tables", "ftypetab.h", "--lowercase --i2s --s2i ftype"),
+    ("i386_tables", "gen_tables", "i386_table.h", "--duplicate-ints --lowercase --i2s --s2i i386_syscall"),
+    ("machinetabs", "gen_tables", "machinetab.h", "--duplicate-ints --lowercase --i2s --s2i machine"),
+    ("msg_typetabs", "gen_tables", "msg_typetab.h", "--uppercase --i2s --s2i msg_type"),
+    ("optabs", "gen_tables", "optab.h", "--i2s op"),
+    ("permtabs", "gen_tables", "permtab.h", "--lowercase --i2s --s2i perm"),
+    ("ppc_tables", "gen_tables", "ppc_table.h", "--lowercase --i2s --s2i ppc_syscall"),
+    ("s390_tables", "gen_tables", "s390_table.h", "--lowercase --i2s --s2i s390_syscall"),
+    ("s390x_tables", "gen_tables", "s390x_table.h", "--lowercase --i2s --s2i s390x_syscall"),
+    ("uringop_tables", "gen_tables", "uringop_table.h", "--lowercase --i2s --s2i uringop"),
+    ("x86_64_tables", "gen_tables", "x86_64_table.h", "--lowercase --i2s --s2i x86_64_syscall"),
+]
+
+[audit_table(name, tool, table, arguments) for name, tool, table, arguments in _TABLES]
+
+cc_library(
+    name = "audit-userspace",
+    srcs = [
+        "auparse/auparse-defs.h",
+        "config.h",
+        "gcc-attributes.h",
+        "lib/audit_logging.c",
+        "lib/deprecated.c",
+        "lib/libaudit.c",
+        "lib/lookup_table.c",
+        "lib/netlink.c",
+    ] + glob([
+        "common/*.c",
+        "common/*.h",
+        "lib/*.h",
+    ]) + [name + ".h" for name, _, _, _ in _TABLES],
+    hdrs = [
+        "lib/audit-records.h",
+        "lib/audit_logging.h",
+        "lib/libaudit.h",
+    ],
+    includes = [
+        "auparse",
+        "common",
+        "lib",
+    ],
+    linkstatic = True,
+    target_compatible_with = ["@platforms//os:linux"],
+    visibility = ["//visibility:public"],
+    deps = ["@libcap-ng"],
+)
+
+cc_test(
+    name = "lookup_test",
+    srcs = [
+        "config.h",
+        "lib/test/lookup_test.c",
+    ] + glob([
+        "lib/*tab.h",
+        "lib/*_table.h",
+    ]),
+    deps = [":audit-userspace"],
+)
