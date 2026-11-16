@@ -1,0 +1,95 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_license//rules:license.bzl", "license")
+
+# xkbcommon-x11 is built from the same source tree as @xkbcommon, so reuse the
+# BCR module's check list verbatim: both libraries must agree on config.h.
+load("@xkbcommon//:xkbcommon_config_checks.bzl", "XKBCOMMON_CONFIG_CHECKS")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:DEC-3-Clause",
+        "@rules_license//licenses/spdx:HPND",
+        "@rules_license//licenses/spdx:HPND-sell-variant",
+        "@rules_license//licenses/spdx:MIT",
+        "@rules_license//licenses/spdx:MIT-open-group",
+    ],
+    license_text = "LICENSE",
+)
+
+exports_files(["LICENSE"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+autoconf(
+    name = "config_checks",
+    checks = XKBCOMMON_CONFIG_CHECKS,
+)
+
+# config.h.in is a copy of @xkbcommon's (the project itself is Meson-based and
+# ships no autoheader template). @xkbcommon//:config_h is private, hence the
+# local re-generation.
+autoconf_hdr(
+    name = "config_h",
+    out = "generated/config.h",
+    # Upstream Meson only defines PATH_MAX when the platform headers do not.
+    # Its fallback is 260 on Windows and 4096 everywhere else.
+    substitutions = select({
+        "@platforms//os:windows": {
+            "@PATH_MAX_VALUE@": "260",
+        },
+        "//conditions:default": {
+            "@PATH_MAX_VALUE@": "4096",
+        },
+    }),
+    template = "config.h.in",
+    deps = [":config_checks"],
+)
+
+cc_library(
+    name = "xkbcommon-x11",
+    srcs = [
+        "src/atom.c",
+        "src/context-priv.c",
+        "src/keymap-priv.c",
+        "src/x11/keymap.c",
+        "src/x11/state.c",
+        "src/x11/util.c",
+        "src/x11/x11-priv.h",
+        ":config_h",
+    ] + glob(["src/*.h"]),
+    hdrs = [
+        "include/xkbcommon/xkbcommon-x11.h",
+    ],
+    copts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": [
+            "-fno-strict-aliasing",
+            "-Wno-unused-parameter",
+            "-Wno-missing-field-initializers",
+        ],
+    }),
+    includes = [
+        "generated",
+        "include",
+        "src",
+    ],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libxcb",
+        "@xkbcommon",
+    ],
+)
