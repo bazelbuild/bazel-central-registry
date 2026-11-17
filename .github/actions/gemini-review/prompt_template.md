@@ -63,7 +63,7 @@ Complete **Step 1 (Analysis)**, **Step 2 (Severity Classification & Selective Po
      - **Valid `presubmit.yml` structure:** Anonymous-module tasks must be under top-level `tasks`; test-module tasks under `bcr_test_module.tasks`. Each task must specify at least one of `build_targets` or `test_targets`.
      - **Security & Starlark/Python correctness:** Flag command injection, suspicious URLs/patches, secrets, or bugs in Starlark (`BUILD.bazel`, `MODULE.bazel`, `.bzl`) or repo tooling (`tools/`, `.github/workflows/`).
    - **BCR Maintainer Playbook Checks (`🟠` High when violated or glaring, `🟡` Medium when advisory):**
-     - **New module naming & duplication sanity check (`🟠`):** When `is_new_module` is `true`, use `find_by_name` or `list_dir` on `<workspace_root>/modules` to check for existing modules with similar names or scope. Flag overly generic names (e.g., `package-utils` -> suggest `<user_or_org>-package-utils`) or official-sounding prefixes (`rules_*`, `toolchains_*`) that wrap or duplicate well-established official rulesets (e.g., `rules_objc` wrapping `rules_cc` -> suggest `<user_or_org>_rules_objc`).
+     - **New module naming & duplication sanity check (`🟠`):** When `is_new_module` is `true`, use `find_by_name` or `list_dir` on `<workspace_root>/modules` to check for existing modules with similar names or scope. Flag overly generic names (e.g., `package-utils` -> suggest `<user_or_org>-package-utils`) or official-sounding prefixes (`rules_*`, `toolchains_*`) that wrap or duplicate well-established official rulesets (e.g., `rules_objc` wrapping `rules_cc` -> suggest `<user_or_org>_rules_objc`). In addition, **any** new module starting with `rules_` must always surface an explicit warning to the reviewer in the top-level summary so they verify whether claiming a top-level `rules_*` name is warranted.
      - **Module maintainership (`🟠` / `🟡`):** When a PR adds a new module or updates a module with no existing GitHub maintainers in `metadata.json`, encourage the PR author to add themselves as a maintainer in `metadata.json.maintainers`.
      - **Overlay `bazel_compatibility` (`🟠`):** If `overlay/` is used, `MODULE.bazel` must specify `bazel_compatibility` `>=7.2.1`. `overlay/MODULE.bazel` is optional (newer Bazel versions copy `<version>/MODULE.bazel` automatically), but if `overlay/MODULE.bazel` is present it must be a regular file identical to `<version>/MODULE.bazel`.
      - **C++ patches/overlays — target naming & `lib*` alias (`🟠` / `🟡`):** Ensure a primary build target with the same name as the module is exposed (enabling `@foo` shorthand for `@foo//:foo`). For modules whose name starts with `lib` (e.g., `libfoo`), ask for a target named `foo` with an `alias` named `libfoo` pointing to `foo`.
@@ -124,6 +124,10 @@ End your response with a single fenced ` ```json ` block matching the schema bel
 
 **Verdict:** [One crisp sentence, e.g., "Ready for BCR maintainer review; no blocking issues found." or "Blocking BCR policy issues found—see inline comments."]
 
+[If any entry in `modified_module_versions` has `is_new_module: true` and `module` starting with `rules_`, include:]
+> [!WARNING]
+> **New `rules_*` module (`<module_name>`):** Please explicitly verify that claiming the top-level `rules_` prefix is appropriate (e.g., well-known/canonical ruleset), or ask the author to prepend a user/org prefix (e.g., `<user_or_org>_<module_name>`).
+
 [If `bcr_maintainer_review_reasons` is non-empty, include:]
 **Why manual review is needed:**
 - [List each reason from `bcr_maintainer_review_reasons`. Do not `@`-mention `bazelbuild/bcr-maintainers` or any GitHub team.]
@@ -137,7 +141,7 @@ End your response with a single fenced ` ```json ` block matching the schema bel
 | :--- | :--- | :--- |
 | Add-only policy | [✅ / ❌] | [Brief note] |
 | Required files, `metadata.json` & maintainership | [✅ / ⚠️ / ❌] | [Brief note, including maintainer coverage] |
-| Module naming (new modules) | [✅ / ⚠️ / ❌ / N/A] | [Specificity, `rules_`/`toolchains_` prefix check] |
+| Module naming (new modules) | [✅ / ⚠️ / ❌ / N/A] | [Specificity, `rules_`/`toolchains_` prefix check; use `⚠️` or `❌` for any new `rules_*` module] |
 | `MODULE.bazel`, overlays & C++ `BUILD` targets/visibility | [✅ / ⚠️ / ❌] | [Brief note, including `@<module>` / `lib*` alias, `//visibility:public`, `bazel_compatibility >=7.2.1`, and diff vs `previous_version`] |
 | `presubmit.yml` & `presubmit-auto-run` readiness | [✅ / ⚠️ / ❌] | [Brief note on diff vs `previous_version` and LTS track] |
 

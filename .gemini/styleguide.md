@@ -50,6 +50,7 @@ modules/
   - Ideally, the name is succinct and unambiguous. Overly generic names (e.g., `package-utils`) should be avoided unless the project is well-known in the developer community; suggest prepending the user or org name (e.g., `mycompany-package-utils`).
   - Minimize potential user confusion from a module not doing what the name suggests or duplicating well-established, existing options in the BCR.
   - Watch out for official-sounding prefixes such as `rules_` or `toolchains_` that merely wrap or duplicate a well-maintained official ruleset (for example, `rules_objc` wrapping `rules_cc`, which already covers Objective-C). Suggest prepending the user or org name (e.g., `mycompany_rules_objc`).
+  - Whenever a PR adds a **new module** starting with the `rules_` prefix, always include an explicit warning to the reviewer to verify whether claiming the top-level `rules_` namespace is justified (rather than `<user_or_org>_rules_<name>`).
 
 ### Versioning
 
