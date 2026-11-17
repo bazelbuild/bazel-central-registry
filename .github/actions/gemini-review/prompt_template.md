@@ -27,8 +27,8 @@ Key fields in this context:
 - `workspace_root`: Absolute path of the local `main` checkout.
 - `pull_request_number`, `pr_title`, `pr_body`: The PR number, title, and description.
 - `trigger_type`: `"automatic"` (triggered on PR open/reopen/ready) or `"manual"` (triggered via `@bazel-io gemini-review`, `@gemini-cli /review`, `gemini-review` label, or `workflow_dispatch`).
-- `needs_bcr_maintainer_review`: `true` if this PR cannot be auto-merged solely by existing module maintainers and requires `@bazelbuild/bcr-maintainers` review (see `bcr_maintainer_review_reasons`).
-- `bcr_maintainer_review_reasons`: Specific reasons why `@bazelbuild/bcr-maintainers` review is required (e.g., new module, sensitive `metadata.json` changes outside `versions`, module with no GitHub maintainers, non-module files modified, or existing published version mutated).
+- `needs_bcr_maintainer_review`: `true` if this PR cannot be auto-merged solely by existing module maintainers and requires BCR maintainer review (see `bcr_maintainer_review_reasons`).
+- `bcr_maintainer_review_reasons`: Specific reasons why BCR maintainer review is required (e.g., new module, sensitive `metadata.json` changes outside `versions`, module with no GitHub maintainers, non-module files modified, or existing published version mutated).
 - `modified_module_versions`: Each `module@version` touched by the PR, including `previous_version_path` on the local `main` checkout (`<workspace_root>/<previous_version_path>`) so you can compare the new version against the previous published version.
 - `mutated_existing_version_files`: Any files in the PR that modify or delete an already-published module version on `main` (a critical violation of the BCR add-only policy).
 - `pr_diff_path`: Absolute path to the unified diff of the PR (`gemini-artifacts/pr/diff.patch`).
@@ -63,7 +63,7 @@ Complete **Step 1 (Analysis)**, **Step 2 (Severity Classification & Selective Po
      - **Valid `presubmit.yml` structure:** Anonymous-module tasks must be under top-level `tasks`; test-module tasks under `bcr_test_module.tasks`. Each task must specify at least one of `build_targets` or `test_targets`.
      - **Security & Starlark/Python correctness:** Flag command injection, suspicious URLs/patches, secrets, or bugs in Starlark (`BUILD.bazel`, `MODULE.bazel`, `.bzl`) or repo tooling (`tools/`, `.github/workflows/`).
    - **BCR Maintainer Playbook Checks (`🟠` High when violated or glaring, `🟡` Medium when advisory):**
-     - **New module naming & duplication sanity check (`🟠`):** When `is_new_module` is `true`, use `find_by_name` or `list_dir` on `<workspace_root>/modules` to check for existing modules with similar names or scope. Flag overly generic names (e.g., `package-utils` -> suggest `<user_or_org>-package-utils`) or official-sounding prefixes (`rules_*`, `toolchains_*`) that wrap or duplicate well-established official rulesets (e.g., `rules_objc` wrapping `rules_cc` -> suggest `<user_or_org>_rules_objc`).
+     - **New module naming & duplication sanity check (`🟠`):** When `is_new_module` is `true`, use `find_by_name` or `list_dir` on `<workspace_root>/modules` to check for existing modules with similar names or scope. Flag overly generic names (e.g., `package-utils` -> suggest `<user_or_org>-package-utils`) or official-sounding prefixes (`rules_*`, `toolchains_*`) that wrap or duplicate well-established official rulesets (e.g., `rules_objc` wrapping `rules_cc` -> suggest `<user_or_org>_rules_objc`). In addition, **any** new module starting with `rules_` must always surface an explicit warning to the reviewer in the top-level summary so they verify whether claiming a top-level `rules_*` name is warranted.
      - **Module maintainership (`🟠` / `🟡`):** When a PR adds a new module or updates a module with no existing GitHub maintainers in `metadata.json`, encourage the PR author to add themselves as a maintainer in `metadata.json.maintainers`.
      - **Overlay `bazel_compatibility` (`🟠`):** If `overlay/` is used, `MODULE.bazel` must specify `bazel_compatibility` `>=7.2.1`. `overlay/MODULE.bazel` is optional (newer Bazel versions copy `<version>/MODULE.bazel` automatically), but if `overlay/MODULE.bazel` is present it must be a regular file identical to `<version>/MODULE.bazel`.
      - **C++ patches/overlays — target naming & `lib*` alias (`🟠` / `🟡`):** Ensure a primary build target with the same name as the module is exposed (enabling `@foo` shorthand for `@foo//:foo`). For modules whose name starts with `lib` (e.g., `libfoo`), ask for a target named `foo` with an `alias` named `libfoo` pointing to `foo`.
@@ -124,9 +124,13 @@ End your response with a single fenced ` ```json ` block matching the schema bel
 
 **Verdict:** [One crisp sentence, e.g., "Ready for BCR maintainer review; no blocking issues found." or "Blocking BCR policy issues found—see inline comments."]
 
+[If any entry in `modified_module_versions` has `is_new_module: true` and `module` starting with `rules_`, include:]
+> [!WARNING]
+> **New `rules_*` module (`<module_name>`):** Please explicitly verify that claiming the top-level `rules_` prefix is appropriate (e.g., well-known/canonical ruleset), or ask the author to prepend a user/org prefix (e.g., `<user_or_org>_<module_name>`).
+
 [If `bcr_maintainer_review_reasons` is non-empty, include:]
 **Why manual review is needed:**
-- [List each reason from `bcr_maintainer_review_reasons`. If there are significant changes (ignoring reformatting) to `maintainers` or `repository` in `metadata.json`, include `@bazelbuild/bcr-maintainers` here.]
+- [List each reason from `bcr_maintainer_review_reasons`. Do not `@`-mention `bazelbuild/bcr-maintainers` or any GitHub team.]
 
 [If there are `🔴`, `🟠`, or notable `🟡` findings not already fully explained or that warrant a top-level callout, list at most 5 under `**Key findings:**`. Omit `**Key findings:**` if there are no issues.]
 
@@ -137,7 +141,7 @@ End your response with a single fenced ` ```json ` block matching the schema bel
 | :--- | :--- | :--- |
 | Add-only policy | [✅ / ❌] | [Brief note] |
 | Required files, `metadata.json` & maintainership | [✅ / ⚠️ / ❌] | [Brief note, including maintainer coverage] |
-| Module naming (new modules) | [✅ / ⚠️ / ❌ / N/A] | [Specificity, `rules_`/`toolchains_` prefix check] |
+| Module naming (new modules) | [✅ / ⚠️ / ❌ / N/A] | [Specificity, `rules_`/`toolchains_` prefix check; use `⚠️` or `❌` for any new `rules_*` module] |
 | `MODULE.bazel`, overlays & C++ `BUILD` targets/visibility | [✅ / ⚠️ / ❌] | [Brief note, including `@<module>` / `lib*` alias, `//visibility:public`, `bazel_compatibility >=7.2.1`, and diff vs `previous_version`] |
 | `presubmit.yml` & `presubmit-auto-run` readiness | [✅ / ⚠️ / ❌] | [Brief note on diff vs `previous_version` and LTS track] |
 

@@ -50,6 +50,7 @@ modules/
   - Ideally, the name is succinct and unambiguous. Overly generic names (e.g., `package-utils`) should be avoided unless the project is well-known in the developer community; suggest prepending the user or org name (e.g., `mycompany-package-utils`).
   - Minimize potential user confusion from a module not doing what the name suggests or duplicating well-established, existing options in the BCR.
   - Watch out for official-sounding prefixes such as `rules_` or `toolchains_` that merely wrap or duplicate a well-maintained official ruleset (for example, `rules_objc` wrapping `rules_cc`, which already covers Objective-C). Suggest prepending the user or org name (e.g., `mycompany_rules_objc`).
+  - Whenever a PR adds a **new module** starting with the `rules_` prefix, always include an explicit warning to the reviewer to verify whether claiming the top-level `rules_` namespace is justified (rather than `<user_or_org>_rules_<name>`).
 
 ### Versioning
 
@@ -80,7 +81,7 @@ modules/
 
 - Each maintainer entry in `metadata.json.maintainers` with a `github` handle must also include `github_user_id`; optional fields are fine (name, email, website, do_not_notify).
 - When a PR adds to a module with no existing maintainers (including when the module is new), encourage the PR author to take on module maintainership in `metadata.json.maintainers` (since modules with no maintainers always require BCR maintainer review, adding to response times and toil).
-- Gemini should ping @bazelbuild/bcr-maintainers for a manual review if there are any significant changes (ignoring reformatting) to the `maintainers` or `repository` fields in `metadata.json` files.
+- Gemini should flag for manual review by BCR maintainers (without `@`-mentioning `bazelbuild/bcr-maintainers`) if there are any significant changes (ignoring reformatting) to the `maintainers` or `repository` fields in `metadata.json` files.
 
 ### MODULE.bazel
 

@@ -416,6 +416,10 @@ def main():
 
         if is_new_module:
             reasons.append(f"Adds a new module '{mod_name}'.")
+            if mod_name.startswith("rules_"):
+                reasons.append(
+                    f"⚠️ New module '{mod_name}' starts with the 'rules_' prefix — explicitly verify whether claiming a top-level 'rules_*' name is warranted or if it should be user/org-prefixed (e.g., '<user_or_org>_{mod_name}')."
+                )
         else:
             maintainers = (main_meta or {}).get("maintainers") or []
             gh_maintainers = [m for m in maintainers if isinstance(m, dict) and m.get("github")]
