@@ -1,9 +1,26 @@
-"""Builds link-time-only libglvnd stub shared libraries (libGL.so.1, libGLX.so.0, libOpenGL.so.0, libEGL.so.1)."""
+"""Link-time-only libglvnd stub shared libraries.
+
+Each stub exports exactly the symbols listed in upstream's src/<lib>/*.symbols
+file and carries the real library's SONAME, so binaries linked against it get
+the same DT_NEEDED entry they would get from a system libglvnd. The stub is
+passed to the linker as an interface library, so it is never added to runfiles
+or to the binary's RUNPATH: at runtime the dynamic loader finds the system
+libglvnd and the installed vendor driver.
+"""
 
 load("@rules_cc//cc:defs.bzl", "CcInfo", "cc_common")
 load("@rules_cc//cc:find_cc_toolchain.bzl", "find_cc_toolchain", "use_cc_toolchain")
 
-def _glvnd_stubs_impl(ctx):
+GlvndStubInfo = provider(
+    doc = "A libglvnd stub shared library.",
+    fields = {
+        "library": "File: the stub shared library.",
+        "link_name": "Unversioned library name, e.g. 'GL' for -lGL.",
+        "soname": "SONAME of the real library, e.g. 'libGL.so.1'.",
+    },
+)
+
+def _glvnd_stub_library_impl(ctx):
     cc_toolchain = find_cc_toolchain(ctx)
     feature_configuration = cc_common.configure_features(
         ctx = ctx,
@@ -12,111 +29,65 @@ def _glvnd_stubs_impl(ctx):
         unsupported_features = ctx.disabled_features,
     )
 
-    out_gl_c = ctx.actions.declare_file(ctx.label.name + "_gl.c")
-    out_glx_c = ctx.actions.declare_file(ctx.label.name + "_glx.c")
-    out_opengl_c = ctx.actions.declare_file(ctx.label.name + "_opengl.c")
-    out_egl_c = ctx.actions.declare_file(ctx.label.name + "_egl.c")
-
-    hdr_depsets = []
-    for dep in ctx.attr.hdr_deps:
-        if CcInfo in dep:
-            hdr_depsets.append(dep[CcInfo].compilation_context.headers)
-        else:
-            hdr_depsets.append(dep[DefaultInfo].files)
-    all_hdrs = depset(transitive = hdr_depsets)
-    hdr_args = [
-        f.path
-        for f in all_hdrs.to_list()
-        if f.path.endswith(".h") and "wgl" not in f.basename
-    ]
-
+    src = ctx.actions.declare_file(ctx.label.name + ".c")
     ctx.actions.run(
         executable = ctx.executable._stub_gen,
-        arguments = [
-            out_gl_c.path,
-            out_glx_c.path,
-            out_opengl_c.path,
-            out_egl_c.path,
-        ] + hdr_args,
-        inputs = all_hdrs,
-        outputs = [out_gl_c, out_glx_c, out_opengl_c, out_egl_c],
+        arguments = [ctx.file.symbols.path, src.path],
+        inputs = [ctx.file.symbols],
+        outputs = [src],
         mnemonic = "GlvndStubGen",
-        progress_message = "Generating Khronos libglvnd stub sources",
+        progress_message = "Generating libglvnd stub source for " + ctx.attr.soname,
     )
 
-    stub_specs = [
-        ("GL", "libGL.so.1", out_gl_c),
-        ("GLX", "libGLX.so.0", out_glx_c),
-        ("OpenGL", "libOpenGL.so.0", out_opengl_c),
-        ("EGL", "libEGL.so.1", out_egl_c),
-    ]
-
-    libraries_to_link = []
-    so_files = []
-    for lib_short, soname, src_c in stub_specs:
-        (_, comp_outputs) = cc_common.compile(
-            name = ctx.label.name + "_" + lib_short,
-            actions = ctx.actions,
-            feature_configuration = feature_configuration,
-            cc_toolchain = cc_toolchain,
-            srcs = [src_c],
-            user_compile_flags = ["-fPIC", "-O2", "-w"],
-        )
-        link_outputs = cc_common.link(
-            name = ctx.label.name + "_" + lib_short,
-            actions = ctx.actions,
-            feature_configuration = feature_configuration,
-            cc_toolchain = cc_toolchain,
-            compilation_outputs = comp_outputs,
-            output_type = "dynamic_library",
-            user_link_flags = ["-Wl,-soname," + soname],
-        )
-        so_file = link_outputs.library_to_link.resolved_symlink_dynamic_library or link_outputs.library_to_link.dynamic_library
-        so_files.append((lib_short, soname, so_file))
-        libraries_to_link.append(
-            cc_common.create_library_to_link(
-                actions = ctx.actions,
-                feature_configuration = feature_configuration,
-                cc_toolchain = cc_toolchain,
-                dynamic_library = so_file,
-            ),
-        )
-
-    # A single directory holding every stub under both its SONAME and its
-    # unversioned link name (libGL.so, libEGL.so, ...), for consumers whose
-    # upstream linkopts hard-code -lGL/-lEGL and need a -L search path.
-    libdir = ctx.actions.declare_directory(ctx.label.name + "_libdir")
-    copy_cmds = ["mkdir -p {}".format(libdir.path)]
-    for lib_short, soname, so_file in so_files:
-        copy_cmds.append("cp {} {}/{}".format(so_file.path, libdir.path, soname))
-        copy_cmds.append("cp {} {}/lib{}.so".format(so_file.path, libdir.path, lib_short))
-    ctx.actions.run_shell(
-        inputs = [f for _, _, f in so_files],
-        outputs = [libdir],
-        command = " && ".join(copy_cmds),
-        mnemonic = "GlvndStubLibdir",
-        progress_message = "Assembling libglvnd stub library directory",
+    (_, compilation_outputs) = cc_common.compile(
+        name = ctx.label.name,
+        actions = ctx.actions,
+        feature_configuration = feature_configuration,
+        cc_toolchain = cc_toolchain,
+        srcs = [src],
+        user_compile_flags = ["-fPIC", "-w"],
     )
+    link_outputs = cc_common.link(
+        name = ctx.label.name,
+        actions = ctx.actions,
+        feature_configuration = feature_configuration,
+        cc_toolchain = cc_toolchain,
+        compilation_outputs = compilation_outputs,
+        output_type = "dynamic_library",
+        user_link_flags = ["-Wl,-soname," + ctx.attr.soname],
+    )
+    lib = link_outputs.library_to_link
+    so_file = lib.resolved_symlink_dynamic_library or lib.dynamic_library
 
-    linker_input = cc_common.create_linker_input(
-        owner = ctx.label,
-        libraries = depset(libraries_to_link),
-        user_link_flags = [
-            "-Wl,--no-as-needed",
-        ],
+    library_to_link = cc_common.create_library_to_link(
+        actions = ctx.actions,
+        feature_configuration = feature_configuration,
+        cc_toolchain = cc_toolchain,
+        interface_library = so_file,
     )
     linking_context = cc_common.create_linking_context(
-        linker_inputs = depset([linker_input]),
+        linker_inputs = depset([cc_common.create_linker_input(
+            owner = ctx.label,
+            libraries = depset([library_to_link]),
+        )]),
     )
     return [
-        DefaultInfo(files = depset([libdir])),
+        DefaultInfo(files = depset([so_file])),
         CcInfo(linking_context = linking_context),
+        GlvndStubInfo(
+            library = so_file,
+            link_name = ctx.attr.link_name,
+            soname = ctx.attr.soname,
+        ),
     ]
 
-glvnd_stubs = rule(
-    implementation = _glvnd_stubs_impl,
+glvnd_stub_library = rule(
+    implementation = _glvnd_stub_library_impl,
+    doc = "Builds one link-time-only libglvnd stub from an upstream .symbols file.",
     attrs = {
-        "hdr_deps": attr.label_list(mandatory = True),
+        "link_name": attr.string(mandatory = True),
+        "soname": attr.string(mandatory = True),
+        "symbols": attr.label(mandatory = True, allow_single_file = [".symbols"]),
         "_stub_gen": attr.label(
             default = Label("//:gl_stub_gen"),
             executable = True,
@@ -125,5 +96,42 @@ glvnd_stubs = rule(
     },
     toolchains = use_cc_toolchain(),
     fragments = ["cpp"],
-    provides = [CcInfo],
+    provides = [CcInfo, GlvndStubInfo],
+)
+
+def _glvnd_libdir_impl(ctx):
+    libdir = ctx.actions.declare_directory(ctx.label.name)
+    stubs = [s[GlvndStubInfo] for s in ctx.attr.stubs]
+    args = ctx.actions.args()
+    args.add(libdir.path)
+    for s in stubs:
+        args.add_all([s.library.path, s.soname, "lib{}.so".format(s.link_name)])
+    ctx.actions.run_shell(
+        inputs = [s.library for s in stubs],
+        outputs = [libdir],
+        arguments = [args],
+        command = """
+set -eu
+out="$1"; shift
+mkdir -p "$out"
+while [ "$#" -gt 0 ]; do
+  cp "$1" "$out/$2"
+  cp "$1" "$out/$3"
+  shift 3
+done
+""",
+        mnemonic = "GlvndStubLibdir",
+        progress_message = "Assembling libglvnd stub library directory",
+    )
+    return [DefaultInfo(files = depset([libdir]))]
+
+glvnd_libdir = rule(
+    implementation = _glvnd_libdir_impl,
+    doc = """A directory holding each stub under its SONAME and its unversioned
+link name (libGL.so, libEGL.so, ...), for third-party builds that hard-code
+-lGL/-lEGL and need a -L search path. Never put this directory on a runtime
+library path (RUNPATH, LD_LIBRARY_PATH): the stubs are empty functions.""",
+    attrs = {
+        "stubs": attr.label_list(mandatory = True, providers = [GlvndStubInfo]),
+    },
 )
