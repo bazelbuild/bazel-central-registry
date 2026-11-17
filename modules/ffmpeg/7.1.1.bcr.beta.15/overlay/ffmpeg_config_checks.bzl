@@ -235,9 +235,9 @@ FFMPEG_CONFIG_CHECKS = [
     checks.AC_TRY_LINK(define = "HAVE_PEEKNAMEDPIPE", code = "long x = (long)PeekNamedPipe; (void)x;", includes = ["#include <windows.h>"]),
     checks.AC_CHECK_FUNC("posix_memalign", define = "HAVE_POSIX_MEMALIGN"),
     checks.AC_TRY_LINK(define = "HAVE_PRCTL", code = "long x = (long)prctl; (void)x;", includes = ["#include <sys/prctl.h>"]),
-    checks.AC_CHECK_LIB("pthread", "pthread_cancel", define = "HAVE_PTHREAD_CANCEL"),
-    checks.AC_CHECK_LIB("pthread", "pthread_set_name_np", define = "HAVE_PTHREAD_SET_NAME_NP"),
-    checks.AC_CHECK_LIB("pthread", "pthread_setname_np", define = "HAVE_PTHREAD_SETNAME_NP"),
+    checks.AC_CHECK_LIB("pthread", "pthread_cancel", define = "HAVE_PTHREAD_CANCEL", requires = ["!ac_cv_os_windows"]),
+    checks.AC_CHECK_LIB("pthread", "pthread_set_name_np", define = "HAVE_PTHREAD_SET_NAME_NP", requires = ["!ac_cv_os_windows"]),
+    checks.AC_CHECK_LIB("pthread", "pthread_setname_np", define = "HAVE_PTHREAD_SETNAME_NP", requires = ["!ac_cv_os_windows"]),
     checks.AC_CHECK_FUNC("sched_getaffinity", define = "HAVE_SCHED_GETAFFINITY"),
     checks.AC_CHECK_FUNC("SecItemImport", define = "HAVE_SECITEMIMPORT"),
     checks.AC_TRY_LINK(define = "HAVE_SETCONSOLETEXTATTRIBUTE", code = "long x = (long)SetConsoleTextAttribute; (void)x;", includes = ["#include <windows.h>"]),
@@ -508,7 +508,7 @@ FFMPEG_CONFIG_CHECKS = [
     checks.AC_TRY_LINK(define = "HAVE_MEMORYBARRIER", code = "MemoryBarrier()", includes = ["#include <windows.h>"]),
     checks.AC_TRY_LINK(define = "HAVE_MM_EMPTY", code = "_mm_empty()", includes = ["#include <mmintrin.h>"]),
     checks.AC_TRY_LINK(define = "HAVE_RDTSC", code = "__rdtsc()", includes = ["#include <intrin.h>"]),
-    checks.AC_CHECK_LIB("pthread", "sem_timedwait", define = "HAVE_SEM_TIMEDWAIT"),
+    checks.AC_CHECK_LIB("pthread", "sem_timedwait", define = "HAVE_SEM_TIMEDWAIT", requires = ["!ac_cv_os_windows"]),
 
     # ========== Intrinsics checks (INTRINSICS_LIST) ==========
     checks.AC_TRY_COMPILE(define = "HAVE_INTRINSICS_NEON", code = "int32x4_t test = vdupq_n_s32(0); (void)test;", includes = ["#include <arm_neon.h>"]),
@@ -541,9 +541,12 @@ FFMPEG_CONFIG_CHECKS = [
     checks.AC_TRY_COMPILE(define = "HAVE_XMM_CLOBBERS", code = "void foo(void){ __asm__ volatile(\"\" ::: \"%xmm0\"); }"),
 
     # ========== Threading checks (THREADS_LIST) ==========
-    checks.AC_CHECK_LIB("pthread", "pthread_create", define = "HAVE_PTHREADS"),
+    checks.AC_CHECK_LIB("pthread", "pthread_create", define = "HAVE_PTHREADS", requires = ["!ac_cv_os_windows"]),
     checks.AC_DEFINE("HAVE_OS2THREADS", "0"),
     # Windows has no pthreads; FFmpeg's compat/w32pthreads.h wraps the Win32 API.
+    # As in configure, w32threads takes precedence, so the -lpthread probes above
+    # are skipped on Windows: MinGW sysroots that ship winpthreads would otherwise
+    # enable HAVE_PTHREADS without ffmpeg ever linking -lpthread.
     checks.AC_DEFINE("HAVE_W32THREADS", condition = "ac_cv_os_windows", if_true = "1", if_false = "0"),
 
     # ========== System features (SYSTEM_FEATURES) ==========
