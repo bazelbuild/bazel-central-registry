@@ -8,6 +8,15 @@ matrix:
   - macos_arm64
   - windows
   bazel: [7.x, 8.x, 9.x, rolling]
+  # Windows runs setup commands through cmd.exe, which needs different quoting,
+  # so it has its own hermetic task below.
+  hermetic_llvm_platform:
+  - ubuntu2204
+  - ubuntu2404
+  - ubuntu2404_arm64
+  - debian11
+  - macos
+  - macos_arm64
   # The hermetic LLVM toolchain only works for Bazel 8.x onwards.
   hermetic_llvm_bazel: [8.x, 9.x, rolling]
 tasks:
@@ -23,7 +32,7 @@ tasks:
   # Check building and testing works against a hermetic C++ toolchain.
   verify_targets_hermetic_llvm:
     name: Verify build targets (hermetic llvm)
-    platform: ${{ platform }}
+    platform: ${{ hermetic_llvm_platform }}
     bazel: ${{ hermetic_llvm_bazel }}
     setup:
       - echo 'bazel_dep(name = "llvm", version = "0.8.27")' >> MODULE.bazel
@@ -36,6 +45,21 @@ tasks:
       - '--repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1'
       - '--repo_env=BAZEL_MACOS_FRAMEWORKS=CFNetwork,CoreFoundation,CoreServices,Foundation,Kernel,OSLog,Security,SystemConfiguration'
       - '--extra_toolchains=@llvm//toolchain:all'
+    test_flags: *hermetic_llvm_flags
+    build_targets:
+      - '@xkbcommon//...'
+    test_targets:
+      - '@xkbcommon//...'
+  # Same as above, but setup runs under cmd.exe on Windows, where single quotes
+  # are not stripped by echo. The line would then be appended as a bare string
+  # literal (a silent no-op in Starlark), leaving @llvm undeclared.
+  verify_targets_hermetic_llvm_windows:
+    name: Verify build targets (hermetic llvm)
+    platform: windows
+    bazel: ${{ hermetic_llvm_bazel }}
+    setup:
+      - echo bazel_dep(name = "llvm", version = "0.8.27")>> MODULE.bazel
+    build_flags: *hermetic_llvm_flags
     test_flags: *hermetic_llvm_flags
     build_targets:
       - '@xkbcommon//...'
