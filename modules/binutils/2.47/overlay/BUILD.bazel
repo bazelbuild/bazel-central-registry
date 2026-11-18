@@ -1,0 +1,431 @@
+"""GNU Binutils - https://www.gnu.org/software/binutils/
+
+The programs live in their own packages (//gas, //ld, //binutils, //gprof)
+with the libraries they share (//libiberty, //bfd, //opcodes, //libsframe,
+//libctf) and the headers all of them use (//include).  The tools are built
+for the platform the build is for: there is no notion of a host or target
+triple here.  Each package selects what configure would have chosen for that
+platform from targets.bzl (see platforms.bzl), so a platform the data does
+not cover, or a program upstream does not build for it, is an ordinary
+"no matching conditions" error.
+
+This package holds the configure options, as flags, and the config settings
+the selects key on.  Flag names follow the configure options
+(`--enable-64-bit-bfd` is `--@binutils//:enable_64_bit_bfd`, `--with-sysroot`
+is `--@binutils//:with_sysroot`), with the option's upstream default.
+Options whose default depends on the target (relro, separate code, ...)
+take "auto" or the empty string for that default.  Each flag's comment
+names the configure.ac line that defines the option.
+"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load(":targets.bzl", "PLATFORMS")
+
+package(default_visibility = ["//:__subpackages__"])
+
+exports_files([
+    "COPYING",
+    "COPYING3",
+    "COPYING.LIB",
+    "COPYING3.LIB",
+])
+
+# --- options -----------------------------------------------------------------
+
+# The boolean configure options as (flag, upstream default).  Each becomes a
+# bool_flag and a `_<flag>` config_setting that is true when it is.
+BOOL_FLAGS = [
+    # --enable-64-bit-bfd (bfd/configure.ac:73-84).  On a 64-bit host BFD is
+    # 64-bit regardless; this forces it on 32-bit hosts, which also adds the
+    # 64-bit vectors and emulations config.bfd and configure.tgt keep for that.
+    ("enable_64_bit_bfd", False),
+    # --enable-64-bit-archive (bfd/configure.ac:95-103).
+    ("enable_64_bit_archive", False),
+    # --enable-checking (bfd/configure.ac:60-71 and the same block in opcodes,
+    # gas, ld and binutils).  Defaults to the value of `development` in
+    # bfd/development.sh, which this release ships as true.
+    ("enable_checking", True),
+    # --with-mmap (bfd/configure.ac:105-111).
+    ("with_mmap", True),
+    # --enable-secureplt (bfd/configure.ac:113-123).
+    ("enable_secureplt", True),
+    # --enable-leading-mingw64-underscores (bfd/configure.ac:140-146).
+    ("enable_leading_mingw64_underscores", False),
+    # --with-zstd (config/zstd.m4): compressed debug section support through
+    # zstd, "auto" upstream, which is yes since the module is always available.
+    ("with_zstd", True),
+
+    # --- gas ----------------------------------------------------------------------
+
+    # --enable-x86-tls-check (gas/configure.ac:77-85).
+    ("enable_x86_tls_check", True),
+    # --enable-elf-stt-common (gas/configure.ac:87-96).
+    ("enable_elf_stt_common", False),
+    # --enable-default-sframe (gas/configure.ac:98-106).
+    ("enable_default_sframe", False),
+    # --enable-generate-build-notes (gas/configure.ac:108-118).
+    ("enable_generate_build_notes", False),
+    # --enable-mips-fix-loongson3-llsc (gas/configure.ac:120-130).
+    ("enable_mips_fix_loongson3_llsc", False),
+    # --enable-default-riscv-attribute (gas/configure.ac:144-154).
+    ("enable_default_riscv_attribute", True),
+
+    # --- ld -----------------------------------------------------------------------
+
+    # --enable-new-dtags (ld/configure.ac:164-173).
+    ("enable_new_dtags", False),
+    # --enable-rosegment (ld/configure.ac:206-214).
+    ("enable_rosegment", False),
+    # --enable-mark-plt (ld/configure.ac:216-224).
+    ("enable_mark_plt", False),
+    # --enable-memory-seal (ld/configure.ac:248-256).
+    ("enable_memory_seal", False),
+    # --enable-error-execstack (ld/configure.ac:270-278).
+    ("enable_error_execstack", False),
+    # --enable-error-rwx-segments (ld/configure.ac:290-298).
+    ("enable_error_rwx_segments", False),
+    # --enable-default-execstack (ld/configure.ac:300-309).
+    ("enable_default_execstack", True),
+    # --enable-error-handling-script (ld/configure.ac:312-321).
+    ("enable_error_handling_script", True),
+    # --enable-initfini-array (ld/configure.ac:352-363).
+    ("enable_initfini_array", True),
+    # --enable-libctf (ld/configure.ac:365-370, binutils/configure.ac:107-112):
+    # .ctf type-info section handling in ld and objdump/readelf.
+    ("enable_libctf", True),
+
+    # --- binutils -----------------------------------------------------------------
+
+    # --enable-deterministic-archives (binutils/configure.ac:42-54).
+    ("enable_deterministic_archives", False),
+    # --enable-default-strings-all (binutils/configure.ac:57-69).
+    ("enable_default_strings_all", True),
+    # --enable-f-for-ifunc-symbols (binutils/configure.ac:72-84).
+    ("enable_f_for_ifunc_symbols", False),
+    # --enable-follow-debug-links (binutils/configure.ac:87-99).
+    ("enable_follow_debug_links", True),
+    # --enable-colored-disassembly (binutils/configure.ac:102-114).
+    ("enable_colored_disassembly", False),
+
+    # --- libctf -------------------------------------------------------------------
+
+    # --enable-libctf-hash-debugging (libctf/configure.ac:64-68).
+    ("enable_libctf_hash_debugging", False),
+]
+
+# The string-valued configure options as (flag, upstream default, accepted
+# values; [] for free text).  Each becomes a string_flag and, for every
+# accepted value, a `_<flag>_<value>` config_setting ("" is "default", a
+# comma is "_").  Options whose default depends on the target take "auto" or
+# "" for that default.
+STRING_FLAGS = [
+    # --enable-plugins (config/plugins.m4).  "auto" is yes wherever dlopen or
+    # LoadLibrary exists, which is every platform in targets.bzl.
+    (
+        "enable_plugins",
+        "auto",
+        [
+            "auto",
+            "yes",
+            "no",
+        ],
+    ),
+    # --with-pkgversion and --with-bugurl (ACX_PKGVERSION/ACX_BUGURL in
+    # bfd/configure.ac:140-141), the "(GNU Binutils) " every --version prints
+    # and the address --help points bug reports at.
+    ("with_pkgversion", "(GNU Binutils) ", []),
+    ("with_bugurl", "https://sourceware.org/bugzilla/", []),
+    # The GNU directory variables.  They are compiled into the programs: bfd's
+    # plugin search path ($libdir/bfd-plugins), the separate debug directory, the
+    # linker's default library search path and script directory
+    # ($exec_prefix/<triple>/lib), and the message catalog directory.  The empty
+    # defaults follow configure's derivations from --prefix.
+    ("prefix", "/usr/local", []),
+    ("exec_prefix", "", []),
+    ("bindir", "", []),
+    ("libdir", "", []),
+    # --with-separate-debug-dir (bfd/configure.ac:133-138), default $libdir/debug.
+    ("with_separate_debug_dir", "", []),
+    # --enable-separate-code (bfd/configure.ac:119-131, ld/configure.ac:197-204
+    # and ld/configure.tgt:1098-1105): -z separate-code by default.  "auto" is
+    # yes for Linux/x86 and no elsewhere.
+    (
+        "enable_separate_code",
+        "auto",
+        [
+            "auto",
+            "yes",
+            "no",
+        ],
+    ),
+
+    # --- gas ----------------------------------------------------------------------
+
+    # --enable-leak-check (gas/configure.ac:48-55): "" leaves ENABLE_LEAK_CHECK
+    # at BFD_ASAN, so memory is freed before exit only under a sanitizer.
+    (
+        "enable_leak_check",
+        "",
+        [
+            "",
+            "yes",
+            "no",
+        ],
+    ),
+    # --enable-compressed-debug-sections={all,gas,ld,none} (gas/configure.ac:59-67
+    # and ld/configure.ac:147-154).  Empty takes each program's target default,
+    # which is on for gas on Linux/x86 (gas/configure.tgt:470-477) and off for ld;
+    # naming only one program leaves the other at its default too.
+    (
+        "enable_compressed_debug_sections",
+        "",
+        [
+            "",
+            "all",
+            "yes",
+            "gas",
+            "ld",
+            "gas,ld",
+            "none",
+            "no",
+        ],
+    ),
+    # --enable-default-compressed-debug-sections-algorithm (gas/configure.ac:69-75
+    # and ld/configure.ac:156-162).
+    (
+        "enable_default_compressed_debug_sections_algorithm",
+        "zlib",
+        [
+            "zlib",
+            "zstd",
+        ],
+    ),
+    # --enable-x86-used-note (gas/configure.ac:132-142): "auto" is yes for
+    # Linux/x86 targets (gas/configure.ac:247-252).
+    (
+        "enable_x86_used_note",
+        "auto",
+        [
+            "auto",
+            "yes",
+            "no",
+        ],
+    ),
+    # --with-cpu (gas/configure.ac:163-169), --with-arch, --with-isa-spec and
+    # --with-priv-spec (gas/configure.ac:486-511, RISC-V only).  Empty leaves
+    # the define out, as configure does.
+    ("with_cpu", "", []),
+    ("with_arch", "", []),
+    ("with_isa_spec", "", []),
+    ("with_priv_spec", "", []),
+
+    # --- ld -----------------------------------------------------------------------
+
+    # --with-lib-path (ld/configure.ac:53): the default -L search path, written
+    # into the linker scripts; empty keeps genscripts.sh's own default.
+    ("with_lib_path", "", []),
+    # --with-sysroot (ld/configure.ac:65-97): empty for none.
+    ("with_sysroot", "", []),
+    # --enable-got (ld/configure.ac:120-144).
+    (
+        "enable_got",
+        "target",
+        [
+            "target",
+            "single",
+            "negative",
+            "multigot",
+        ],
+    ),
+    # --enable-relro (ld/configure.ac:175-184 and ld/configure.tgt:1091-1096):
+    # "auto" is yes for Linux targets other than frv, hppa, ia64 and mips.
+    (
+        "enable_relro",
+        "auto",
+        [
+            "auto",
+            "yes",
+            "no",
+        ],
+    ),
+    # --enable-textrel-check (ld/configure.ac:186-195 and
+    # ld/configure.tgt:1098-1105): "" is warning for Linux/x86 and none elsewhere.
+    (
+        "enable_textrel_check",
+        "",
+        [
+            "",
+            "yes",
+            "no",
+            "warning",
+            "error",
+        ],
+    ),
+    # --enable-gnu2-tls-tag and --enable-gnu-tls-tag (ld/configure.ac:226-246):
+    # "" leaves the decision to the libc's GLIBC_ABI_GNU*_TLS version at link
+    # time (value 2).
+    (
+        "enable_gnu2_tls_tag",
+        "",
+        [
+            "",
+            "yes",
+            "no",
+        ],
+    ),
+    (
+        "enable_gnu_tls_tag",
+        "",
+        [
+            "",
+            "yes",
+            "no",
+        ],
+    ),
+    # --enable-warn-execstack (ld/configure.ac:259-268 and
+    # ld/configure.tgt:52-63): "" is the upstream default of warning only when an
+    # input object asks for an executable stack (2), or never on hppa and mips.
+    (
+        "enable_warn_execstack",
+        "",
+        [
+            "",
+            "yes",
+            "no",
+        ],
+    ),
+    # --enable-warn-rwx-segments (ld/configure.ac:280-288 and
+    # ld/configure.tgt:38-50): "auto" is yes except for cris, hppa, mips,
+    # microblaze, sparc and v850.
+    (
+        "enable_warn_rwx_segments",
+        "auto",
+        [
+            "auto",
+            "yes",
+            "no",
+        ],
+    ),
+    # --enable-default-hash-style (ld/configure.ac:323-350): "" is both for GNU
+    # and Linux targets other than mips, sysv elsewhere.
+    (
+        "enable_default_hash_style",
+        "",
+        [
+            "",
+            "sysv",
+            "gnu",
+            "both",
+        ],
+    ),
+
+    # --- binutils -----------------------------------------------------------------
+
+    # --- libctf -------------------------------------------------------------------
+]
+
+[
+    bool_flag(
+        name = name,
+        build_setting_default = default,
+        visibility = ["//visibility:public"],
+    )
+    for name, default in BOOL_FLAGS
+]
+
+[
+    string_flag(
+        name = name,
+        build_setting_default = default,
+        values = values,
+        visibility = ["//visibility:public"],
+    )
+    for name, default, values in STRING_FLAGS
+]
+
+# --- config settings ------------------------------------------------------------
+
+# config_setting defaults to public whatever the package says
+# (--incompatible_config_setting_private_default_visibility is off), so
+# every setting in this file names its visibility.
+[
+    config_setting(
+        name = "_" + name,
+        flag_values = {":" + name: "True"},
+        visibility = ["//:__subpackages__"],
+    )
+    for name, _ in BOOL_FLAGS
+]
+
+[
+    config_setting(
+        name = "_{}_{}".format(
+            name,
+            value.replace(",", "_") or "default",
+        ),
+        flag_values = {":" + name: value},
+        visibility = ["//:__subpackages__"],
+    )
+    for name, _, values in STRING_FLAGS
+    for value in values
+]
+
+# The platforms, as the @platforms os/cpu pair of each PLATFORMS entry.
+[
+    config_setting(
+        name = "_platform_" + key,
+        constraint_values = data["constraints"],
+        visibility = ["//:__subpackages__"],
+    )
+    for key, data in PLATFORMS.items()
+]
+
+# The same pairs split by --enable-64-bit-bfd, where the flag makes a
+# difference (32-bit hosts).
+[
+    config_setting(
+        name = "_platform_{}_bfd{}".format(key, bits),
+        constraint_values = data["constraints"],
+        flag_values = {":enable_64_bit_bfd": value},
+        visibility = ["//:__subpackages__"],
+    )
+    for key, data in PLATFORMS.items()
+    if data["bfd64_differs"]
+    for bits, value in [
+        ("32", "False"),
+        ("64", "True"),
+    ]
+]
+
+# --- the installed programs ------------------------------------------------------
+
+# Under the names `make install` gives them; the packages build them.
+[
+    alias(
+        name = name,
+        actual = actual,
+        visibility = ["//visibility:public"],
+    )
+    for name, actual in {
+        "addr2line": "//binutils:addr2line",
+        "ar": "//binutils:ar",
+        "as": "//gas:as",
+        "c++filt": "//binutils:c++filt",
+        "dlltool": "//binutils:dlltool",
+        "dllwrap": "//binutils:dllwrap",
+        "elfedit": "//binutils:elfedit",
+        "gprof": "//gprof:gprof",
+        "ld": "//ld:ld",
+        "ld.bfd": "//ld:ld",
+        "nm": "//binutils:nm",
+        "objcopy": "//binutils:objcopy",
+        "objdump": "//binutils:objdump",
+        "ranlib": "//binutils:ranlib",
+        "readelf": "//binutils:readelf",
+        "size": "//binutils:size",
+        "strings": "//binutils:strings",
+        "strip": "//binutils:strip",
+        "windmc": "//binutils:windmc",
+        "windres": "//binutils:windres",
+    }.items()
+]

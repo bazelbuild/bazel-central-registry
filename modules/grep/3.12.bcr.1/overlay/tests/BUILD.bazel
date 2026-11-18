@@ -1,0 +1,281 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(":grep_test.bzl", "declared_tests", "grep_test")
+
+# Both test programs are C++17.
+TEST_COPTS = selects.with_or({
+    ("@rules_cc//cc/compiler:clang-cl", "@rules_cc//cc/compiler:msvc-cl"): ["/std:c++17"],
+    "//conditions:default": ["-std=c++17"],
+})
+
+# What the two test programs have in common: running a command through the
+# platform's command interpreter, and a couple of `bazel test` conventions.
+cc_library(
+    name = "test_support",
+    testonly = True,
+    hdrs = ["test_support.h"],
+)
+
+cc_test(
+    name = "grep_smoke_test",
+    size = "small",
+    srcs = ["grep_smoke_test.cc"],
+    copts = TEST_COPTS,
+    data = ["//:grep"],
+    env = {
+        "GREP_RLOCATIONPATH": "$(rlocationpath //:grep)",
+    },
+    deps = [
+        ":test_support",
+        "@rules_cc//cc/runfiles",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Upstream shell test suite (tests/Makefile.am `TESTS`).
+#
+# `check_PROGRAMS = get-mb-cur-max` -- a helper the suite calls to decide
+# whether a locale is multibyte. Without it on PATH, every multibyte test
+# skips.
+# ---------------------------------------------------------------------------
+
+# Deliberately not sharing `//:BUILD.bazel`'s COPTS/LOCAL_DEFINES: this is a
+# four-line `setlocale()` probe, not part of the shipped library, so it only
+# needs the C11 dialect the gnulib replacement headers assume and the same
+# blanket warning silencing. Keeping its own short list here means the flags
+# that matter -- the ones grep itself is built with -- stay in one place next
+# to the targets they configure.
+cc_binary(
+    name = "get-mb-cur-max",
+    testonly = True,
+    srcs = ["get-mb-cur-max.c"],
+    copts = selects.with_or({
+        ("@rules_cc//cc/compiler:clang-cl", "@rules_cc//cc/compiler:msvc-cl"): [
+            "/w",
+            "/std:c11",
+        ],
+        "//conditions:default": [
+            "-w",
+            "-std=gnu11",
+        ],
+    }),
+    deps = [
+        "//:lib/grep",
+        "//:lib/grep_private_headers",
+        "//:linkopts",
+    ],
+)
+
+# The harness behind every upstream test: rebuilds the `make check` layout
+# under $TEST_TMPDIR and runs one script through the shell.  A binary rather
+# than a shell script so that staging and process control are one piece of
+# code on every platform, and so nothing depends on an execute bit surviving
+# the overlay download.
+cc_binary(
+    name = "run_grep_test",
+    testonly = True,
+    srcs = ["run_grep_test.cc"],
+    copts = TEST_COPTS,
+    # GCC < 9 (debian10) keeps std::filesystem in a separate archive; later
+    # GCC still ships it as an empty compatibility stub, so the flag is
+    # harmless there.  clang/libc++ and MSVC have no such library.
+    linkopts = select({
+        "@rules_cc//cc/compiler:gcc": ["-lstdc++fs"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":test_support",
+        "@rules_cc//cc/runfiles",
+    ],
+)
+
+# Every script sources `init.sh`/`init.cfg`, and a handful reach for other
+# siblings (`bre.awk`, `khadafy.lines`, ...), so the whole directory is staged
+# for each test rather than tracking per-test inputs. The excluded patterns are
+# this package's own sources plus automake bookkeeping and the Perl harness
+# for `filename-lineno.pl`, which is not among the tests declared below --
+# together about half the bytes.
+filegroup(
+    name = "upstream_test_data",
+    testonly = True,
+    srcs = glob(
+        ["*"],
+        exclude = [
+            "*.bzl",
+            "*.c",
+            "*.cc",
+            "*.h",
+            "*.pl",
+            "*.pm",
+            "BUILD.bazel",
+            "Makefile.am",
+            "Makefile.in",
+        ],
+    ),
+)
+
+# A verbatim mirror of tests/Makefile.am `TESTS`, so that re-checking it at the
+# next version bump is a plain diff. Policy lives in `OMITTED_TESTS` below
+# rather than being baked into this list.
+UPSTREAM_TESTS = [
+    # Upstream lists this one under `if RUN_EXPENSIVE_TESTS`; it self-skips
+    # when that is unset, so it can be declared unconditionally.
+    "100k-entries",
+    "backref",
+    "backref-alt",
+    "backref-multibyte-slow",
+    "backref-word",
+    "backslash-dot",
+    "backslash-s-and-repetition-operators",
+    "backslash-s-vs-invalid-multibyte",
+    "big-hole",
+    "big-match",
+    "binary-file-matches",
+    "bogus-wctob",
+    "bre",
+    "c-locale",
+    "case-fold-backref",
+    "case-fold-backslash-w",
+    "case-fold-char-class",
+    "case-fold-char-range",
+    "case-fold-char-type",
+    "case-fold-titlecase",
+    "char-class-multibyte",
+    "char-class-multibyte2",
+    "color-colors",
+    "context-0",
+    "count-newline",
+    "dfa-coverage",
+    "dfa-heap-overrun",
+    "dfa-infloop",
+    "dfa-invalid-utf8",
+    "dfaexec-multibyte",
+    "empty",
+    "empty-line",
+    "empty-line-mb",
+    "encoding-error",
+    "epipe",
+    "equiv-classes",
+    "ere",
+    "euc-mb",
+    "false-match-mb-non-utf8",
+    "fedora",
+    "fgrep-infloop",
+    "fgrep-longest",
+    "file",
+    "filename-lineno.pl",
+    "fillbuf-long-line",
+    "fmbtest",
+    "foad1",
+    "glibc-infloop",
+    "grep-dev-null",
+    "grep-dev-null-out",
+    "grep-dir",
+    "hangul-syllable",
+    "hash-collision-perf",
+    "help-version",
+    "high-bit-range",
+    "in-eq-out-infloop",
+    "include-exclude",
+    "inconsistent-range",
+    "initial-tab",
+    "invalid-multibyte-infloop",
+    "khadafy",
+    "kwset-abuse",
+    "long-line-vs-2GiB-read",
+    "long-pattern-perf",
+    "many-regex-performance",
+    "match-lines",
+    "max-count-overread",
+    "max-count-vs-context",
+    "mb-dot-newline",
+    "mb-non-UTF8-overrun",
+    "mb-non-UTF8-perf-Fw",
+    "mb-non-UTF8-performance",
+    "mb-non-UTF8-word-boundary",
+    "multibyte-white-space",
+    "multiple-begin-or-end-line",
+    "null-byte",
+    "options",
+    "pcre",
+    "pcre-abort",
+    "pcre-ascii-digits",
+    "pcre-context",
+    "pcre-count",
+    "pcre-infloop",
+    "pcre-invalid-utf8-infloop",
+    "pcre-invalid-utf8-input",
+    "pcre-jitstack",
+    "pcre-o",
+    "pcre-utf8",
+    "pcre-utf8-bug224",
+    "pcre-utf8-w",
+    "pcre-w",
+    "pcre-wx-backref",
+    "pcre-z",
+    "posix-bracket",
+    "prefix-of-multibyte",
+    "proc",
+    "r-dot",
+    "repetition-overflow",
+    "reversed-range-endpoints",
+    "sjis-mb",
+    "skip-device",
+    "skip-read",
+    "spencer1",
+    "spencer1-locale",
+    "stack-overflow",
+    "status",
+    "surrogate-pair",
+    "surrogate-search",
+    "symlink",
+    "triple-backref",
+    "turkish-I",
+    "turkish-I-without-dot",
+    "turkish-eyes",
+    "two-chars",
+    "two-files",
+    "unibyte-binary",
+    "unibyte-bracket-expr",
+    "unibyte-negated-circumflex",
+    "utf8-bracket",
+    "version-pcre",
+    "warn-char-classes",
+    "word-delim-multibyte",
+    "word-multi-file",
+    "word-multibyte",
+    "write-error-msg",
+    "y2038-vs-32-bit",
+    "yesno",
+    "z-anchor-newline",
+]
+
+# Bazel has no expected-failure status, and asserting on a known-bad result
+# would just break when upstream fixes it.
+OMITTED_TESTS = {
+    "equiv-classes": "upstream XFAIL_TESTS under `if USE_INCLUDED_REGEX`, which is how this port builds: lib/regex.c is compiled in and config.h renames regcomp/regexec to the gnulib entry points",
+    "filename-lineno.pl": "automake drives .pl tests through `$(PERL) -MCoreutils -MCuSkip -MCuTmpdir`, and this module has no Perl toolchain",
+    "glibc-infloop": "unconditional upstream XFAIL_TESTS",
+    "triple-backref": "unconditional upstream XFAIL_TESTS",
+}
+
+_DECLARED_TESTS = declared_tests(
+    mirror = UPSTREAM_TESTS,
+    omitted = OMITTED_TESTS,
+    present = glob(["*"]),
+)
+
+# Every test is `small`: the handful that scan multi-gigabyte inputs
+# (`big-hole`, `long-line-vs-2GiB-read`, `100k-entries`, the `*-perf*` ones)
+# are gated behind RUN_EXPENSIVE_TESTS upstream and exit 77 unless it is set.
+# Passing `--test_env=RUN_EXPENSIVE_TESTS=yes` will need a matching
+# `--test_timeout` bump.
+UPSTREAM_TEST_TARGETS = [grep_test(name = t) for t in _DECLARED_TESTS]
+
+test_suite(
+    name = "upstream",
+    tags = ["manual"],
+    tests = UPSTREAM_TEST_TARGETS,
+)

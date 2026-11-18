@@ -1,0 +1,397 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+new file mode 100644
+--- /dev/null
++++ b/BUILD.bazel
+@@ -0,0 +1,240 @@
++load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
++load(":rounding.bzl", "rounding_header")
++
++RSYNC_CORE_SRCS = [
++    "access.c",
++    "acls.c",
++    "authenticate.c",
++    "backup.c",
++    "batch.c",
++    "chmod.c",
++    "cleanup.c",
++    "clientname.c",
++    "clientserver.c",
++    "compat.c",
++    "connection.c",
++    "checksum.c",
++    "delete.c",
++    "exclude.c",
++    "fileio.c",
++    "flist.c",
++    "generator.c",
++    "hashtable.c",
++    "hlink.c",
++    "io.c",
++    "loadparm.c",
++    "log.c",
++    "main.c",
++    "match.c",
++    "options.c",
++    "params.c",
++    "pipe.c",
++    "progress.c",
++    "receiver.c",
++    "rsync.c",
++    "sender.c",
++    "socket.c",
++    "syscall.c",
++    "token.c",
++    "uidlist.c",
++    "usage.c",
++    "util1.c",
++    "util2.c",
++    "xattrs.c",
++]
++
++RSYNC_LIB_SRCS = [
++    "lib/acl.c",
++    "lib/compat.c",
++    "lib/md5.c",
++    "lib/mdfour.c",
++    "lib/permstring.c",
++    "lib/pool_alloc.c",
++    "lib/snprintf.c",
++    "lib/sysacls.c",
++    "lib/sysxattrs.c",
++    "lib/wildmatch.c",
++]
++
++genrule(
++    name = "daemon_parm_h",
++    srcs = [
++        "daemon-parm.awk",
++        "daemon-parm.txt",
++    ],
++    outs = ["daemon-parm.h"],
++    cmd = "awk -f $(execpath daemon-parm.awk) $(execpath daemon-parm.txt) && cp daemon-parm.h $@",
++)
++
++genrule(
++    name = "default_cvsignore_h",
++    srcs = [
++        "define-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["default-cvsignore.h"],
++    cmd = "awk -f $(execpath define-from-md.awk) -v hfile=$@ $(execpath rsync.1.md)",
++)
++
++genrule(
++    name = "default_dont_compress_h",
++    srcs = [
++        "define-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["default-dont-compress.h"],
++    cmd = "awk -f $(execpath define-from-md.awk) -v hfile=$@ $(execpath rsync.1.md)",
++)
++
++genrule(
++    name = "help_rsync_h",
++    srcs = [
++        "help-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["help-rsync.h"],
++    cmd = "awk -f $(execpath help-from-md.awk) -v hfile=help-rsync.h $(execpath rsync.1.md) && cp help-rsync.h $@",
++)
++
++genrule(
++    name = "help_rsyncd_h",
++    srcs = [
++        "help-from-md.awk",
++        "rsync.1.md",
++    ],
++    outs = ["help-rsyncd.h"],
++    cmd = "awk -f $(execpath help-from-md.awk) -v hfile=help-rsyncd.h $(execpath rsync.1.md) && cp help-rsyncd.h $@",
++)
++
++rounding_header(
++    name = "rounding_h",
++    src = "rounding.c",
++    out = "rounding.h",
++    hdrs = [
++        "byteorder.h",
++        "config.h",
++        "config_linux.h",
++        "config_macos.h",
++        "errcode.h",
++        "lib/addrinfo.h",
++        "lib/md-defines.h",
++        "lib/mdigest.h",
++        "lib/permstring.h",
++        "lib/pool_alloc.h",
++        "lib/wildmatch.h",
++        "rsync.h",
++        ":proto_h",
++    ],
++    deps = ["@openssl//:crypto"],
++)
++
++genrule(
++    name = "git_version_h",
++    outs = ["git-version.h"],
++    cmd = """
++if [ -x $(execpath mkgitver) ]; then
++  $(execpath mkgitver) || true
++fi
++if [ -s git-version.h ]; then
++  cp git-version.h $@
++else
++  echo '/* RSYNC_GITVER not available (fallback to RSYNC_VERSION). */' > $@
++fi
++""",
++    tools = ["mkgitver"],
++)
++
++genrule(
++    name = "proto_h",
++    srcs = glob(["*.c"]) + [
++        "lib/compat.c",
++        ":daemon_parm_h",
++    ],
++    outs = ["proto.h"],
++    cmd = "awk -f $(execpath mkproto.awk) $(SRCS) && cp proto.h $@",
++    tools = ["mkproto.awk"],
++)
++
++filegroup(
++    name = "generated_headers",
++    srcs = [
++        ":daemon_parm_h",
++        ":default_cvsignore_h",
++        ":default_dont_compress_h",
++        ":git_version_h",
++        ":help_rsync_h",
++        ":help_rsyncd_h",
++        ":proto_h",
++        ":rounding_h",
++    ],
++)
++
++cc_library(
++    name = "popt",
++    srcs = [
++        "popt/popt.c",
++        "popt/poptconfig.c",
++        "popt/popthelp.c",
++        "popt/poptint.c",
++        "popt/poptparse.c",
++    ],
++    hdrs = glob(["popt/*.h"]) + [
++        "config.h",
++        "config_linux.h",
++        "config_macos.h",
++        "popt/lookup3.c",
++    ],
++    defines = ["HAVE_CONFIG_H"],
++    includes = ["popt"],
++)
++
++cc_library(
++    name = "zlib",
++    srcs = glob(["zlib/*.c"]),
++    hdrs = glob(["zlib/*.h"]) + glob([
++        "*.h",
++        "lib/*.h",
++    ]) + [
++        ":generated_headers",
++    ],
++    includes = ["zlib"],
++    deps = [
++        "@openssl//:crypto",
++    ],
++)
++
++cc_library(
++    name = "rsync_lib",
++    srcs = RSYNC_CORE_SRCS + RSYNC_LIB_SRCS,
++    hdrs = glob([
++        "*.h",
++        "lib/*.h",
++    ]) + [
++        ":generated_headers",
++    ],
++    defines = ["HAVE_CONFIG_H"],
++    includes = [
++        "lib",
++        "popt",
++        "zlib",
++    ],
++    linkopts = select({
++        # macOS ships iconv as a separate library; glibc provides it itself.
++        "@platforms//os:macos": ["-liconv"],
++        "//conditions:default": [],
++    }),
++    deps = [
++        ":popt",
++        ":zlib",
++        "@lz4",
++        "@openssl//:crypto",
++        "@xxhash",
++        "@zstd",
++    ],
++)
++
++cc_binary(
++    name = "rsync",
++    visibility = ["//visibility:public"],
++    deps = [":rsync_lib"],
++)
+diff --git a/rounding.bzl b/rounding.bzl
+new file mode 100644
+--- /dev/null
++++ b/rounding.bzl
+@@ -0,0 +1,119 @@
++"""Generates rsync's "rounding.h" header file.
++
++The rsync program describes each file in a transfer with a "struct file_struct" value. The file's
++optional fields, such as its owner or its access time, occupy four-byte slots in front of that
++value. The program rounds the number of slots up so that the 64-bit values among them stay aligned.
++"EXTRA_ROUNDING" is one less than the multiple to which it rounds. The project's own Makefile finds
++the value by attempting to compile the "rounding.c" file with each candidate value and keeping the
++first that compiles successfully. The "rounding_header" rule runs that same test with the C compiler
++and flags of the toolchain that Bazel chose for the platform on which this rsync will run.
++"""
++
++load("@rules_cc//cc:action_names.bzl", "ACTION_NAMES")
++load(
++    "@rules_cc//cc:find_cc_toolchain.bzl",
++    "CC_TOOLCHAIN_ATTRS",
++    "find_cc_toolchain",
++    "use_cc_toolchain",
++)
++load("@rules_cc//cc/common:cc_common.bzl", "cc_common")
++load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
++
++def _rounding_header_impl(ctx):
++    cc_toolchain = find_cc_toolchain(ctx)
++    feature_configuration = cc_common.configure_features(
++        ctx = ctx,
++        cc_toolchain = cc_toolchain,
++        requested_features = ctx.features,
++        unsupported_features = ctx.disabled_features,
++    )
++    compilation_context = cc_common.merge_cc_infos(
++        cc_infos = [dep[CcInfo] for dep in ctx.attr.deps],
++    ).compilation_context
++    variables = cc_common.create_compile_variables(
++        cc_toolchain = cc_toolchain,
++        feature_configuration = feature_configuration,
++        source_file = ctx.file.src.path,
++        # Only whether the source file compiles matters, not the object file it would produce.
++        output_file = "/dev/null",
++        user_compile_flags = ctx.fragments.cpp.copts + ctx.fragments.cpp.conlyopts,
++        include_directories = compilation_context.includes,
++        # Bazel writes a generated header file such as "proto.h" into the output directory, not
++        # beside the source files that include it.
++        quote_include_directories = depset(
++            [
++                header.dirname
++                for header in ctx.files.hdrs
++                if not header.is_source
++            ],
++            transitive = [compilation_context.quote_includes],
++        ),
++        system_include_directories = compilation_context.system_includes,
++        framework_include_directories = compilation_context.framework_includes,
++        preprocessor_defines = compilation_context.defines,
++    )
++    compiler = cc_common.get_tool_for_action(
++        feature_configuration = feature_configuration,
++        action_name = ACTION_NAMES.c_compile,
++    )
++    command_line = cc_common.get_memory_inefficient_command_line(
++        feature_configuration = feature_configuration,
++        action_name = ACTION_NAMES.c_compile,
++        variables = variables,
++    )
++    ctx.actions.run(
++        outputs = [ctx.outputs.out],
++        inputs = depset(
++            [ctx.file._test_program, ctx.file.src] + ctx.files.hdrs,
++            transitive = [cc_toolchain.all_files, compilation_context.headers],
++        ),
++        executable = "/bin/sh",
++        arguments = [ctx.file._test_program.path, ctx.outputs.out.path, compiler] + command_line,
++        mnemonic = "RsyncRounding",
++        env = cc_common.get_environment_variables(
++            feature_configuration = feature_configuration,
++            action_name = ACTION_NAMES.c_compile,
++            variables = variables,
++        ),
++        execution_requirements = {
++            requirement: ""
++            for requirement in cc_common.get_execution_requirements(
++                feature_configuration = feature_configuration,
++                action_name = ACTION_NAMES.c_compile,
++            )
++        },
++    )
++
++rounding_header = rule(
++    implementation = _rounding_header_impl,
++    doc = "Writes a header file that defines the \"EXTRA_ROUNDING\" macro with the smallest " +
++          "candidate value for which the \"src\" file compiles successfully.",
++    attrs = {
++        "deps": attr.label_list(
++            providers = [CcInfo],
++            doc = "The C libraries whose header files \"rsync.h\" includes.",
++        ),
++        "hdrs": attr.label_list(
++            allow_files = [".h"],
++            doc = "The header files that the \"src\" file includes directly or through other " +
++                  "header files. The generated ones among them also supply the include search " +
++                  "path for the output directory.",
++        ),
++        "out": attr.output(
++            mandatory = True,
++            doc = "The header file to write.",
++        ),
++        "src": attr.label(
++            allow_single_file = [".c"],
++            mandatory = True,
++            doc = "The C source file, which compiles only when the \"EXTRA_ROUNDING\" macro has " +
++                  "a value that leaves its test struct free of padding.",
++        ),
++        "_test_program": attr.label(
++            default = ":rounding_test.sh",
++            allow_single_file = True,
++        ),
++    } | CC_TOOLCHAIN_ATTRS,
++    fragments = ["cpp"],
++    toolchains = use_cc_toolchain(),
++)
+diff --git a/rounding_test.sh b/rounding_test.sh
+new file mode 100644
+--- /dev/null
++++ b/rounding_test.sh
+@@ -0,0 +1,23 @@
++#!/bin/sh
++# Writes the header file named by the first argument, defining the "EXTRA_ROUNDING" macro with the
++# first candidate value for which the compilation succeeds. The remaining arguments are the compiler
++# command without that macro's definition; the program adds the definition for each candidate value
++# in turn. The candidate values are the ones that rsync's own Makefile tries.
++
++set -eu
++
++out="$1"
++shift
++logs=''
++for r in 0 1 3; do
++  if log="$("$@" "-DEXTRA_ROUNDING=${r}" 2>&1)"; then
++    echo "#define EXTRA_ROUNDING ${r}" >"${out}"
++    exit 0
++  fi
++  logs="${logs}
++--- EXTRA_ROUNDING=${r} ---
++${log}"
++done
++printf '%s\n' "${logs}" >&2
++printf 'Failed to create %s.\n' "${out}" >&2
++exit 1

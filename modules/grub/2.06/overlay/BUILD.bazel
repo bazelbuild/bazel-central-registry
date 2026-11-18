@@ -1,0 +1,531 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load(":autoconf.bzl", "autoconf_targets")
+load(":geninit.bzl", "geninit")
+load(":install_dirs.bzl", "configure_script")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# Hand-written targets: what configure.ac and the Makefiles do not say in a form the converter reads.  The generated
+# sources (bison, flex, geninit.sh), the install layout the scripts are
+# rendered with, the scripts, etc/grub.d and the bash completions, the
+# build-machine tools, and the source tree and names the //platform package
+# builds the boot image from.
+
+# Makefile.am:38-46.  The release tarball does not ship the generated parser,
+# so, as upstream, bison and flex run at build time.
+bison(
+    name = "grub_script_tab",
+    srcs = ["grub-core/script/parser.y"],
+    outs = [
+        "grub_script.tab.c",
+        "grub_script.tab.h",
+    ],
+    # `-Wnone` is `-w` for bison: the grammar's `%pure-parser` is a deprecation
+    # note upstream's own build prints too.
+    args = [
+        "-Wnone",
+        "-d",
+        "-p",
+        "grub_script_yy",
+        "-o",
+        "$(execpath grub_script.tab.c)",
+        "$(execpath grub-core/script/parser.y)",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+flex(
+    name = "grub_script_yy",
+    srcs = ["grub-core/script/yylex.l"],
+    outs = [
+        "grub_script.yy.c",
+        "grub_script.yy.h",
+    ],
+    args = [
+        "-o",
+        "$(execpath grub_script.yy.c)",
+        "--header-file=$(execpath grub_script.yy.h)",
+        "$(execpath grub-core/script/yylex.l)",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# libgrub_a_init.c and grub_fstest_init.c (Makefile.am:59-75): geninit.sh over
+# the GRUB_MOD_INIT names of the library sources, which upstream collects by
+# preprocessing them; the names are fixed by the source list.
+LIBGRUB_INIT_MODULES = [
+    "adler32",
+    "affs",
+    "afs",
+    "bfs",
+    "blocklist",
+    "btrfs",
+    "cbfs",
+    "cpio",
+    "cpio_be",
+    "crc64",
+    "cryptodisk",
+    "disk",
+    "diskfilter",
+    "dm_nv",
+    "exfat",
+    "ext2",
+    "f2fs",
+    "fat",
+    "geli",
+    "gzio",
+    "hfs",
+    "hfsplus",
+    "hfspluscomp",
+    "iso9660",
+    "jfs",
+    "ldm",
+    "loopback",
+    "ls",
+    "luks",
+    "luks2",
+    "lvm",
+    "lzopio",
+    "macbless",
+    "mdraid09",
+    "mdraid09_be",
+    "mdraid1x",
+    "minix",
+    "minix2",
+    "minix2_be",
+    "minix3",
+    "minix3_be",
+    "minix_be",
+    "newc",
+    "nilfs2",
+    "ntfs",
+    "ntfscomp",
+    "odc",
+    "part_acorn",
+    "part_amiga",
+    "part_apple",
+    "part_bsd",
+    "part_dfly",
+    "part_dvh",
+    "part_gpt",
+    "part_msdos",
+    "part_plan",
+    "part_sun",
+    "part_sunpc",
+    "procfs",
+    "raid5rec",
+    "raid6rec",
+    "reiserfs",
+    "romfs",
+    "sfs",
+    "squash4",
+    "tar",
+    "testload",
+    "udf",
+    "ufs1",
+    "ufs1_be",
+    "ufs2",
+    "xfs",
+    "xnu_uuid",
+    "xzio",
+    "zfs",
+    "zfscrypt",
+    "zfsinfo",
+]
+
+write_file(
+    name = "libgrub_a_init_c",
+    out = "libgrub_a_init.c",
+    content = geninit(LIBGRUB_INIT_MODULES),
+)
+
+write_file(
+    name = "grub_fstest_init_c",
+    out = "grub_fstest_init.c",
+    content = geninit(sorted(LIBGRUB_INIT_MODULES + [
+        "host",
+        "hostfs",
+    ])),
+)
+
+# The version for the shell script templates, where autoconf_package_info's
+# substitutions would arrive as quoted C literals.
+_VERSION = "2.06"
+
+# --with-bootdir and --with-grubdir (configure.ac:293 and :313).
+string_flag(
+    name = "bootdir",
+    build_setting_default = "boot",
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "grubdir",
+    build_setting_default = "grub",
+    visibility = ["//visibility:public"],
+)
+
+# The install layout.  configure bakes the directories into the programs
+# (GRUB_LIBDIR and friends, configure.ac:2503) and into the scripts
+# (@bindir@ ...); defaults are autoconf's for `--prefix=/usr/local`.
+# grub-install looks for the platform modules under `$libdir/grub/`.
+[
+    string_flag(
+        name = name,
+        build_setting_default = default,
+        visibility = ["//visibility:public"],
+    )
+    for name, default in {
+        "bindir": "/usr/local/bin",
+        "datadir": "/usr/local/share",
+        "datarootdir": "/usr/local/share",
+        "exec_prefix": "/usr/local",
+        "libdir": "/usr/local/lib",
+        "localedir": "/usr/local/share/locale",
+        "prefix": "/usr/local",
+        "sbindir": "/usr/local/sbin",
+        "sysconfdir": "/usr/local/etc",
+    }.items()
+]
+
+# The @VAR@ substitutions every script and completion template shares.  The
+# `grub_*` names are the program-name transforms (configure.ac:62); with no
+# --program-prefix they are the names themselves.
+SCRIPT_SETTINGS = {
+    ":bindir": "@bindir@",
+    ":bootdir": "@bootdirname@",
+    ":datadir": "@datadir@",
+    ":datarootdir": "@datarootdir@",
+    ":exec_prefix": "@exec_prefix@",
+    ":grubdir": "@grubdirname@",
+    ":libdir": "@libdir@",
+    ":localedir": "@localedir@",
+    ":prefix": "@prefix@",
+    ":sbindir": "@sbindir@",
+    ":sysconfdir": "@sysconfdir@",
+}
+
+SCRIPT_SUBSTITUTIONS = {
+    "@PACKAGE@": "grub",
+    "@PACKAGE_NAME@": "GRUB",
+    "@PACKAGE_VERSION@": _VERSION,
+    "@grub_bios_setup@": "grub-bios-setup",
+    "@grub_editenv@": "grub-editenv",
+    "@grub_file@": "grub-file",
+    "@grub_install@": "grub-install",
+    "@grub_mkconfig@": "grub-mkconfig",
+    "@grub_mkfont@": "grub-mkfont",
+    "@grub_mkimage@": "grub-mkimage",
+    "@grub_mklayout@": "grub-mklayout",
+    "@grub_mkpasswd_pbkdf2@": "grub-mkpasswd-pbkdf2",
+    "@grub_mkrelpath@": "grub-mkrelpath",
+    "@grub_mkrescue@": "grub-mkrescue",
+    "@grub_probe@": "grub-probe",
+    "@grub_reboot@": "grub-reboot",
+    "@grub_script_check@": "grub-script-check",
+    "@grub_set_default@": "grub-set-default",
+    "@grub_sparc64_setup@": "grub-sparc64-setup",
+} | select({
+    "@platforms//os:macos": {"@host_os@": "darwin"},
+    "//conditions:default": {"@host_os@": "linux-gnu"},
+})
+
+# The source tree: //tests compiles upstream's check_PROGRAMS from it, and the
+# //platform data names its files for whatever builds the boot-time image.
+exports_files(
+    ["config.h.in"] + glob([
+        "grub-core/**",
+        "include/**",
+        "util/*.c",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+# Every header a kernel or module compile may include, and the sources that
+# are `#include`d rather than compiled on their own there: the
+# word-size templates, the per-CPU kern/ bodies, the gnulib and libgcrypt
+# files compiled through an includer, and the handful of fs/ and disk/ files
+# compiled several times over.
+filegroup(
+    name = "core_hdrs",
+    srcs = glob([
+        "grub-core/**/*.h",
+        "include/**/*.h",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "core_textual_srcs",
+    srcs = glob([
+        "grub-core/**/*XX.c",
+        "grub-core/**/*xx.c",
+        "grub-core/kern/*/cache.c",
+        "grub-core/kern/*/dl.c",
+        "grub-core/kern/*/dl_helper.c",
+        "grub-core/lib/libgcrypt-grub/cipher/*.c",
+        # startup.S and friends `#include` other .S files (realmode.S,
+        # relocator_common.S, the cache and setjmp bodies).
+        "grub-core/**/*.S",
+    ]) + [
+        "grub-core/commands/search.c",
+        "grub-core/disk/mdraid_linux.c",
+        "grub-core/efiemu/loadcore.c",
+        "grub-core/efiemu/prepare.c",
+        "grub-core/fs/bfs.c",
+        "grub-core/fs/cpio_common.c",
+        "grub-core/fs/fat.c",
+        "grub-core/fs/minix.c",
+        "grub-core/fs/ufs.c",
+        "grub-core/kern/disk_common.c",
+        "grub-core/lib/gnulib/fnmatch_loop.c",
+        "grub-core/lib/gnulib/regcomp.c",
+        "grub-core/lib/gnulib/regex_internal.c",
+        "grub-core/lib/gnulib/regexec.c",
+        "grub-core/loader/i386/bsd_pagetable.c",
+        "grub-core/term/i386/pc/vga_text.c",
+        "grub-core/video/sis315_init.c",
+        "grub-core/video/sm712_init.c",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# Build-machine tools (grub-core/Makefile.am:30-44)
+# ---------------------------------------------------------------------------
+
+# build-grub-module-verifier, which genmod.sh runs over every module.
+# grub-module-verifierXX.c is the word-size template the 32 and 64 files
+# include, hence the library carrying it as a textual header.
+cc_library(
+    name = "build-grub-module-verifier_lib",
+    srcs = [
+        "grub-core/kern/emu/misc.c",
+        "util/grub-module-verifier.c",
+        "util/grub-module-verifier32.c",
+        "util/grub-module-verifier64.c",
+        "util/misc.c",
+    ],
+    copts = ["-w"],
+    local_defines = [
+        "GRUB_BUILD=1",
+        "GRUB_UTIL=1",
+        "GRUB_FILE=__FILE__",
+        "GRUB_BUILD_PROGRAM_NAME=\\\"build-grub-module-verifier\\\"",
+    ],
+    textual_hdrs = ["util/grub-module-verifierXX.c"],
+    deps = [
+        ":config_headers",
+        ":include_includes",
+    ],
+)
+
+cc_binary(
+    name = "build-grub-module-verifier",
+    visibility = ["//visibility:public"],
+    deps = [":build-grub-module-verifier_lib"],
+)
+
+# gentrigtables, and the trigtables.c it writes for the trig module.
+cc_binary(
+    name = "gentrigtables",
+    srcs = ["grub-core/gentrigtables.c"],
+    copts = ["-w"],
+    linkopts = ["-lm"],
+    local_defines = ["GRUB_FILE=__FILE__"],
+    deps = [":include_includes"],
+)
+
+genrule(
+    name = "trigtables",
+    outs = ["gen/trigtables.c"],
+    cmd = "$(execpath :gentrigtables) > $@",
+    tools = [":gentrigtables"],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# Scripts, etc/grub.d and the bash completions (Makefile.util.def, config.status
+# --file substitution of the .in templates)
+# ---------------------------------------------------------------------------
+
+[
+    configure_script(
+        name = name,
+        out = "bin/" + name if dir == "bin" else "sbin/" + name,
+        settings = SCRIPT_SETTINGS,
+        substitutions = SCRIPT_SUBSTITUTIONS,
+        template = "util/{}.in".format(name),
+        visibility = ["//visibility:public"],
+    )
+    for name, dir in {
+        "grub-kbdcomp": "bin",
+        "grub-mkconfig": "sbin",
+        "grub-reboot": "sbin",
+        "grub-set-default": "sbin",
+    }.items()
+]
+
+# installdir = noinst in Makefile.util.def, but Makefile.util.am installs it
+# as pkgdata: $(datadir)/grub/grub-mkconfig_lib, which is where grub-mkconfig
+# and every grub.d script source it from.
+configure_script(
+    name = "grub-mkconfig_lib",
+    out = "share/grub/grub-mkconfig_lib",
+    is_executable = False,
+    settings = SCRIPT_SETTINGS,
+    substitutions = SCRIPT_SUBSTITUTIONS,
+    template = "util/grub-mkconfig_lib.in",
+    visibility = ["//visibility:public"],
+)
+
+# etc/grub.d (grubconf_SCRIPTS).  10_linux and 20_linux_xen are COND_HOST_LINUX,
+# 10_xnu is COND_HOST_XNU; the hurd, kfreebsd, illumos, netbsd and windows
+# ones are for hosts this module does not build on.
+[
+    configure_script(
+        name = "grub.d/" + name,
+        out = "etc/grub.d/" + name,
+        settings = SCRIPT_SETTINGS,
+        substitutions = SCRIPT_SUBSTITUTIONS,
+        template = "util/grub.d/{}.in".format(name),
+        visibility = ["//visibility:public"],
+    )
+    for name in [
+        "00_header",
+        "10_linux",
+        "10_xnu",
+        "20_linux_xen",
+        "30_os-prober",
+        "30_uefi-firmware",
+        "40_custom",
+        "41_custom",
+    ]
+]
+
+filegroup(
+    name = "grub.d",
+    srcs = [
+        "grub.d/00_header",
+        "grub.d/30_os-prober",
+        "grub.d/30_uefi-firmware",
+        "grub.d/40_custom",
+        "grub.d/41_custom",
+        "util/grub.d/README",
+    ] + select({
+        "@platforms//os:macos": ["grub.d/10_xnu"],
+        "//conditions:default": [
+            "grub.d/10_linux",
+            "grub.d/20_linux_xen",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+# util/bash-completion.d/Makefile.am: 2.06 ships one completion script,
+# grub-completion.bash.in, installed under the package's name.
+BASH_COMPLETIONS = {
+    "grub": "grub-completion",
+}
+
+[
+    configure_script(
+        name = "bash-completion/" + name,
+        out = "share/bash-completion/completions/" + name,
+        is_executable = False,
+        settings = SCRIPT_SETTINGS,
+        substitutions = SCRIPT_SUBSTITUTIONS,
+        template = "util/bash-completion.d/{}.bash.in".format(source),
+    )
+    for name, source in BASH_COMPLETIONS.items()
+]
+
+filegroup(
+    name = "bash-completion",
+    srcs = ["bash-completion/" + name for name in BASH_COMPLETIONS],
+    visibility = ["//visibility:public"],
+)
+
+# The bin_PROGRAMS/bin_SCRIPTS and sbin_PROGRAMS/sbin_SCRIPTS sets, for
+# consumers that stage an install tree; the optional programs are listed only
+# when their option is on, since a filegroup is incompatible when any of its
+# sources is.
+filegroup(
+    name = "bin",
+    srcs = [
+        "grub-editenv",
+        "grub-file",
+        "grub-fstest",
+        "grub-glue-efi",
+        "grub-kbdcomp",
+        "grub-menulst2cfg",
+        "grub-mkimage",
+        "grub-mklayout",
+        "grub-mknetdir",
+        "grub-mkpasswd-pbkdf2",
+        "grub-mkrelpath",
+        "grub-mkrescue",
+        "grub-mkstandalone",
+        "grub-render-label",
+        "grub-script-check",
+        "grub-syslinux2cfg",
+    ] + select({
+        ":grub_mkfont_enabled": ["grub-mkfont"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "sbin",
+    srcs = [
+        "grub-bios-setup",
+        "grub-install",
+        "grub-macbless",
+        "grub-mkconfig",
+        "grub-ofpathname",
+        "grub-probe",
+        "grub-reboot",
+        "grub-set-default",
+        "grub-sparc64-setup",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The option config_settings //platform selects on: the generated
+# `<option>_enabled` ones are private to the root package, and a
+# config_setting cannot be replaced through this file, so these stand beside
+# them under another name.
+[
+    config_setting(
+        name = name + "_on",
+        flag_values = {":" + name: "True"},
+        visibility = ["//visibility:public"],
+    )
+    for name in [
+        "boot_time",
+        "cache_stats",
+        "mm_debug",
+    ]
+]
+
+# `-I$(builddir)` (conf/Makefile.common:33) for the two generated headers
+# script/lexer.c and the parser include.
+cc_library(
+    name = "grub_script_hdrs",
+    hdrs = [
+        "grub_script.tab.h",
+        "grub_script.yy.h",
+    ],
+    strip_include_prefix = "/",
+    visibility = ["//visibility:public"],
+)

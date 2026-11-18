@@ -1,0 +1,102 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_bison//bison:bison.bzl", "bison_cc_library")
+
+# buildifier: disable=bzl-visibility
+load("@rules_bison//bison/internal:toolchain_info.bzl", "bison_toolchain_info")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# buildifier: disable=bzl-visibility
+load("@rules_m4//m4/internal:toolchain_info.bzl", "m4_toolchain_info")
+
+bison_toolchain_info(
+    name = "bison_toolchain_info",
+    bison_env = select({
+        "@platforms//os:windows": {
+            "BISON_PKGDATADIR_RLOCATIONPATH": "bison/data",
+            "M4_RLOCATIONPATH": "m4/src/m4.exe",
+        },
+        "//conditions:default": {
+            "BISON_PKGDATADIR_RLOCATIONPATH": "bison/data",
+            "M4_RLOCATIONPATH": "m4/src/m4",
+        },
+    }),
+    bison_tool = "@bison//:bison",
+)
+
+toolchain(
+    name = "bison_toolchain",
+    toolchain = ":bison_toolchain_info",
+    toolchain_type = "@rules_bison//bison:toolchain_type",
+)
+
+m4_toolchain_info(
+    name = "m4_toolchain_info",
+    m4_tool = "@m4//:m4",
+)
+
+toolchain(
+    name = "m4_toolchain",
+    toolchain = ":m4_toolchain_info",
+    toolchain_type = "@rules_m4//m4:toolchain_type",
+)
+
+write_file(
+    name = "hello_y",
+    out = "hello.y",
+    content = """\
+%{
+#include <stdio.h>
+
+#include "hello_parser.h"
+
+/* A two-token input, HELLO then WORLD, without a scanner. */
+static int next_token = HELLO;
+
+int yylex(void) {
+    int token = next_token;
+    next_token = token == HELLO ? WORLD : 0;
+    return token;
+}
+
+void yyerror(const char *message) {
+    fprintf(stderr, "%s\\n", message);
+}
+%}
+
+%start greeting
+%token HELLO WORLD
+
+%%
+
+greeting: HELLO WORLD {
+    printf("Hello, world!\\n");
+}
+
+%%
+""".splitlines(),
+    newline = "unix",
+)
+
+bison_cc_library(
+    name = "hello_parser",
+    src = ":hello_y",
+)
+
+write_file(
+    name = "hello_test_c",
+    out = "hello_test.c",
+    content = """\
+#include "hello_parser.h"
+
+int main(void) {
+    return yyparse();
+}
+""".splitlines(),
+    newline = "unix",
+)
+
+cc_test(
+    name = "hello_test",
+    srcs = [":hello_test_c"],
+    deps = [":hello_parser"],
+)

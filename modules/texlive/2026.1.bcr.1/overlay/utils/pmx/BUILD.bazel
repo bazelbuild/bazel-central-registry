@@ -1,0 +1,100 @@
+"""pmx - preprocessor for MusiXTeX."""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("//bazel:texlive.bzl", "force_include_copts")
+
+# Force-included into libf2c so fio.h's `#ifdef HAVE_UNISTD_H` resolves
+# without source patches. Probes come from //:configure.
+autoconf_hdr(
+    name = "pmx_config_h",
+    out = "pmx_config.h",
+    template = "pmx_config.h.in",
+    deps = ["//:configure"],
+)
+
+cc_library(
+    name = "pmx_config",
+    hdrs = [":pmx_config_h"],
+    includes = ["."],
+)
+
+cc_library(
+    name = "libf2c",
+    srcs = glob(
+        ["pmx-src/libf2c/*.c"],
+        exclude = [
+            "pmx-src/libf2c/uninit.c",
+            "pmx-src/libf2c/ftell64_.c",
+            "pmx-src/libf2c/pow_qq.c",
+            "pmx-src/libf2c/qbitbits.c",
+            "pmx-src/libf2c/qbitshft.c",
+            "pmx-src/libf2c/signbit.c",
+        ],
+    ) + select({
+        # w32getc is libf2c's Windows getc-replacement; fio.h does
+        # `#ifdef WIN32 extern int w32getc(FILE *f); #define getc w32getc`,
+        # so every libf2c consumer needs the symbol available.
+        "@platforms//os:windows": ["pmx-src/w32getc.c"],
+        "//conditions:default": [],
+    }),
+    hdrs = glob(["pmx-src/libf2c/*.h"]),
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }) + force_include_copts("pmx_config.h"),
+    # Project policy (stdio backend choice), not a system probe.
+    #
+    # WIN32 / _COMPLEX_DEFINED light up f2c.h's existing MSVC guard
+    # (`#ifdef WIN32 #define _COMPLEX_DEFINED 1`) so MSVC's UCRT
+    # math.h does not macro-expand `complex` and clobber f2c.h's
+    # `typedef struct { real r, i; } complex;`. Harmless on MinGW
+    # (which uses its own math.h with no `complex` collision), so
+    # gated at the OS level.
+    #
+    # MSDOS is libf2c's historical "Windows-style environment without
+    # POSIX" switch — it routes file I/O through <io.h> instead of
+    # <unistd.h>, sets NO_TRUNCATE (no Windows truncate()), and skips
+    # other Unix-only paths. MinGW does ship <unistd.h> and POSIX
+    # I/O, so MSDOS must NOT fire there — gated at the compiler level
+    # to match cl.exe and clang-cl only.
+    local_defines = ["NON_UNIX_STDIO"] + select({
+        "@platforms//os:windows": [
+            "WIN32",
+            "_COMPLEX_DEFINED=1",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "@rules_cc//cc/compiler:clang-cl": ["MSDOS"],
+        "@rules_cc//cc/compiler:msvc-cl": ["MSDOS"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "pmx-src/libf2c",
+    deps = [":pmx_config"],
+)
+
+cc_binary(
+    name = "pmxab",
+    srcs = ["pmx-src/pmxab.c"],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":libf2c"],
+)
+
+cc_binary(
+    name = "scor2prt",
+    srcs = ["pmx-src/scor2prt.c"],
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": ["/w"],
+        "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":libf2c"],
+)

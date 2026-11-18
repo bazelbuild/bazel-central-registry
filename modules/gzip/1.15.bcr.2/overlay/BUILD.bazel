@@ -1,0 +1,76 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load(":autoconf.bzl", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# Hand-written targets: the shell
+# scripts Makefile.am builds from their `.in` templates, which the converter
+# has no rule for, and the program set the upstream test suite stages.
+
+# Makefile.am lines 56-57 and 89-102: bin_SCRIPTS, each a `.in` template
+# with @GREP@, @SHELL@, @VERSION@ and the *_TRANSFORMED names filled in.
+# zless and zmore are generated regardless of whether a pager is installed
+# on the build machine (configure's AC_CHECK_PROG([LESS]) / ([MORE])); they
+# look for it at run time anyway.
+#
+# The scripts exec `gzip`, `zdiff` and `zgrep` by bare name, so like the
+# installed copies they need this package's programs on PATH.
+#
+# Makefile.am line 96 substitutes the bare $(VERSION), but the VERSION result
+# here is the quoted C literal, `"1.15"`.  Each template mentions @VERSION@
+# exactly once, inside its `version=` string; wrapping the placeholder in the
+# quote character that string uses turns the literal's own quotes into shell
+# string concatenation (`"gunzip (gzip) ""1.15""..."`, `'zgrep (gzip) '"1.15"'...'`),
+# so the shell sees the same text a `make`-built script has.  @GREP@ is
+# AC_PROG_GREP's answer, which has no port: the scripts take `grep` from PATH
+# like every other tool they run.
+SCRIPTS = {
+    "gunzip": '"',
+    "gzexe": "'",
+    "zcat": '"',
+    "zcmp": '"',
+    "zdiff": '"',
+    "zegrep": None,
+    "zfgrep": None,
+    "zforce": '"',
+    "zgrep": "'",
+    "zless": '"',
+    "zmore": '"',
+    "znew": '"',
+}
+
+[
+    autoconf_hdr(
+        name = "{}_script".format(script),
+        out = "_scripts/{}".format(script),
+        mode = "subst",
+        substitutions = {"@GREP@": "grep"} | ({"@VERSION@": quote + "@VERSION@" + quote} if quote else {}),
+        template = "{}.in".format(script),
+        deps = [":autoconf"],
+    )
+    for script, quote in SCRIPTS.items()
+]
+
+[
+    copy_file(
+        name = script,
+        src = ":{}_script".format(script),
+        out = "bin/{}".format(script),
+        is_executable = True,
+        visibility = ["//visibility:public"],
+    )
+    for script in SCRIPTS
+]
+
+# Everything `make check` finds on PATH in the build tree, in
+# tests/Makefile.am's `built_programs` order; the test runner stages them.
+filegroup(
+    name = "programs",
+    srcs = [":gzip"] + [":{}".format(script) for script in SCRIPTS],
+    visibility = ["//tests:__pkg__"],
+)

@@ -1,0 +1,84 @@
+"""rules_req_compile"""
+
+module(
+    name = "rules_req_compile",
+    version = "1.5.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.9")
+bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "rules_venv", version = "0.34.0")
+
+bazel_dep(name = "buildozer", version = "8.2.1", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.2.1.2", dev_dependency = True)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python", dev_dependency = True)
+python.toolchain(
+    configure_coverage_tool = True,
+    # Working around a rules_python issue with docker
+    # https://github.com/bazelbuild/rules_python/pull/713
+    ignore_root_user_error = True,
+    is_default = True,
+    python_version = "3.11",
+)
+use_repo(
+    python,
+    "python_3_11_aarch64-apple-darwin",
+    "python_3_11_aarch64-unknown-linux-gnu",
+    "python_3_11_x86_64-apple-darwin",
+    "python_3_11_x86_64-pc-windows-msvc",
+    "python_3_11_x86_64-unknown-linux-gnu",
+    python311 = "python_3_11",
+)
+
+requirements = use_extension("//extensions:python.bzl", "requirements")
+requirements.parse(
+    name = "req_compile_deps",
+    config_settings = {
+        # Any 32 or 64 bit arm Linux platform uses the aarch64 lock.
+        "//tools/constraints:linux_aarch_any": "linux_aarch64",
+        "//tools/constraints:linux_x86_64": "linux_x86_64",
+        "//tools/constraints:macos_aarch64": "macos_aarch64",
+        "//tools/constraints:macos_x86_64": "macos_x86_64",
+        "//tools/constraints:windows_x86_64": "windows_x86_64",
+    },
+    requirements_locks = {
+        "//3rdparty:requirements.linux_aarch64.txt": "linux_aarch64",
+        "//3rdparty:requirements.linux_x86_64.txt": "linux_x86_64",
+        "//3rdparty:requirements.macos_aarch64.txt": "macos_aarch64",
+        "//3rdparty:requirements.macos_x86_64.txt": "macos_x86_64",
+        "//3rdparty:requirements.windows_x86_64.txt": "windows_x86_64",
+    },
+)
+use_repo(requirements, "req_compile_deps")
+
+sdist_deps = use_extension("//req_compile/private:sdist.bzl", "sdist_deps")
+use_repo(
+    sdist_deps,
+    "req_compile_sdist_compiler__pip",
+    "req_compile_sdist_compiler__setuptools",
+    "req_compile_sdist_compiler__wheel",
+)
+
+# Toolchains backing the `rules_venv` lint, type check, test and wheel rules.
+# These are only ever used when building this repository itself.
+register_toolchains(
+    "//tools/toolchains:py_black_toolchain",
+    "//tools/toolchains:py_isort_toolchain",
+    "//tools/toolchains:py_mypy_toolchain",
+    "//tools/toolchains:py_pylint_toolchain",
+    "//tools/toolchains:py_pytest_toolchain",
+    "//tools/toolchains:py_wheel_toolchain",
+    dev_dependency = True,
+)
+
+bazel_dep(name = "rules_go", version = "0.59.0", dev_dependency = True)
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk.download(version = "1.23.1")
+
+bazel_dep(name = "gazelle", version = "0.47.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+bazel_dep(name = "bazel_skylib_gazelle_plugin", version = "1.8.1", dev_dependency = True)
