@@ -1,0 +1,116 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+    default_visibility = ["//visibility:private"],
+)
+
+# Capstone itself is BSD-3-Clause; the per-architecture decoders derived from
+# LLVM carry the LLVM release license (University of Illinois/NCSA), see
+# LICENSES/LICENSE_LLVM.TXT.
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:BSD-3-Clause",
+        "@rules_license//licenses/spdx:NCSA",
+    ],
+    license_text = "LICENSES/LICENSE.TXT",
+    visibility = ["//visibility:public"],
+)
+
+exports_files(
+    glob(["LICENSES/*"]),
+    visibility = ["//visibility:public"],
+)
+
+# Every architecture upstream supports (CMake's CAPSTONE_ARCHITECTURE_DEFAULT
+# ON). Each maps to arch/<dir>/ and the CAPSTONE_HAS_<define> switch.
+_ARCHS = {
+    "AArch64": "AARCH64",
+    "ARC": "ARC",
+    "ARM": "ARM",
+    "Alpha": "ALPHA",
+    "BPF": "BPF",
+    "EVM": "EVM",
+    "HPPA": "HPPA",
+    "LoongArch": "LOONGARCH",
+    "M680X": "M680X",
+    "M68K": "M68K",
+    "MOS65XX": "MOS65XX",
+    "Mips": "MIPS",
+    "PowerPC": "POWERPC",
+    "RISCV": "RISCV",
+    "SH": "SH",
+    "Sparc": "SPARC",
+    "SystemZ": "SYSTEMZ",
+    "TMS320C64x": "TMS320C64X",
+    "TriCore": "TRICORE",
+    "WASM": "WASM",
+    "X86": "X86",
+    "XCore": "XCORE",
+    "Xtensa": "XTENSA",
+}
+
+# Public headers, at upstream's install path: <capstone/capstone.h> etc.
+cc_library(
+    name = "public_headers",
+    hdrs = glob(["include/capstone/*.h"]),
+    strip_include_prefix = "include",
+)
+
+# Internal headers. The sources include them relative to the including file
+# ("MCInst.h" from the repo root, "../../MCInst.h" from arch/<arch>/), so they
+# need no include path; they only have to be inputs of the compile actions.
+# Consumed through implementation_deps so they never reach dependents.
+cc_library(
+    name = "private_headers",
+    hdrs = glob(["*.h"]) + glob(
+        ["arch/%s/*.h" % arch for arch in _ARCHS],
+        allow_empty = True,
+    ),
+    textual_hdrs = glob(
+        ["arch/%s/*.inc" % arch for arch in _ARCHS],
+        # Not every architecture has .inc files (e.g. BPF).
+        allow_empty = True,
+    ),
+    deps = [":public_headers"],
+)
+
+# The Alpha and TriCore printers include the internal include/platform.h as
+# <platform.h>; expose only that file, and only to capstone's own sources.
+cc_library(
+    name = "platform_h",
+    hdrs = ["include/platform.h"],
+    strip_include_prefix = "include",
+)
+
+# Static Capstone disassembly engine, all architectures, AT&T x86 syntax
+# included.
+cc_library(
+    name = "capstone",
+    srcs = glob(["*.c"]) + glob(
+        ["arch/%s/*.c" % arch for arch in _ARCHS],
+        allow_empty = True,
+    ),
+    # Upstream sets C_STANDARD 99 (gnu99 with CMake's default extensions). The
+    # sources rely on stdbool's `true`/`false` being macros that expand to 1/0
+    # during token pasting, which no longer holds under C23 (GCC 15's default).
+    # All sources are C, so copts only reaches C compiles.
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "//conditions:default": ["-std=gnu99"],
+    }),
+    implementation_deps = [
+        ":platform_h",
+        ":private_headers",
+    ],
+    local_defines = [
+        # Use malloc/calloc/realloc/free/vsnprintf by default (cs_opt_mem can
+        # still override them at run time), as CMake's CAPSTONE_USE_DEFAULT_ALLOC.
+        "CAPSTONE_USE_SYS_DYN_MEM",
+    ] + ["CAPSTONE_HAS_" + define for define in _ARCHS.values()],
+    visibility = ["//visibility:public"],
+    deps = [":public_headers"],
+)
