@@ -15,11 +15,13 @@
 """Unit tests for prepare_context.py."""
 
 import base64
+import io
 import json
 import os
 import pathlib
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import prepare_context
@@ -41,8 +43,15 @@ class PrepareContextTest(unittest.TestCase):
         self.modules_root.mkdir()
         self.old_cwd = os.getcwd()
         os.chdir(self.root)
+        self.eol_patcher = patch.object(
+            prepare_context,
+            "fetch_eol_platforms",
+            return_value=["debian11", "ubuntu2004"],
+        )
+        self.eol_patcher.start()
 
     def tearDown(self):
+        self.eol_patcher.stop()
         os.chdir(self.old_cwd)
         self.tmp_dir.cleanup()
 
@@ -339,6 +348,48 @@ class PrepareContextTest(unittest.TestCase):
             any("starts with the 'rules_' prefix" in r for r in ctx["bcr_maintainer_review_reasons"]),
             ctx["bcr_maintainer_review_reasons"],
         )
+
+    def test_fetch_eol_platforms(self):
+        self.eol_patcher.stop()
+        try:
+            snippet = 'EOL_PLATFORMS = frozenset([\n    "ubuntu2004",\n    "debian11",\n])\n'
+
+            class FakeResp(io.BytesIO):
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    pass
+
+            with patch.object(
+                prepare_context.urllib.request,
+                "urlopen",
+                return_value=FakeResp(snippet.encode("utf-8")),
+            ):
+                self.assertEqual(prepare_context.fetch_eol_platforms(), ["debian11", "ubuntu2004"])
+
+            with patch.object(
+                prepare_context.urllib.request,
+                "urlopen",
+                side_effect=urllib.error.URLError("offline"),
+            ):
+                self.assertEqual(prepare_context.fetch_eol_platforms(), [])
+        finally:
+            self.eol_patcher.start()
+
+    def test_get_latest_bazel_majors(self):
+        releases = [
+            {"tag_name": "10.0.0rc1", "prerelease": True, "draft": False},
+            {"tag_name": "10.0.0", "prerelease": False, "draft": True},
+            {"tag_name": "9.3.0", "prerelease": False, "draft": False},
+            {"tag_name": "8.4.2", "prerelease": False, "draft": False},
+            {"tag_name": "7.6.1", "prerelease": False, "draft": False},
+        ]
+        with patch.object(prepare_context, "gh_api", return_value=releases):
+            self.assertEqual(prepare_context.get_latest_bazel_majors(), [8, 9])
+
+        with patch.object(prepare_context, "gh_api", side_effect=RuntimeError("API error")):
+            self.assertEqual(prepare_context.get_latest_bazel_majors(), [8, 9])
 
 
 if __name__ == "__main__":

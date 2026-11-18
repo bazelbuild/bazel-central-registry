@@ -14,6 +14,7 @@
 # limitations under the License.
 """Prepares gemini-artifacts/context.json and gemini-artifacts/prompt.md for BCR Gemini PR reviews."""
 
+import ast
 import base64
 import copy
 import json
@@ -22,8 +23,11 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.request
 import yaml
 
+
+BAZELCI_PY_URL = "https://raw.githubusercontent.com/bazelbuild/continuous-integration/master/buildkite/bazelci.py"
 
 # Bazel module name / version character sets, per
 # https://bazel.build/external/module#module_name and #version (matching
@@ -136,6 +140,40 @@ def presubmit_changed_beyond_platforms_or_bazel(prev_doc, curr_doc):
                     mat["bazel"] = None
                     mat["platform"] = None
     return curr_scrubbed != prev_scrubbed
+
+
+def fetch_eol_platforms(url=BAZELCI_PY_URL):
+    """Fetches and returns a sorted list of EOL_PLATFORMS from bazelci.py, or [] on error."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "bcr-gemini-review"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        m = re.search(r"^EOL_PLATFORMS\s*=\s*(?:frozenset\s*\(\s*)?(\[.*?\])", text, re.M | re.S)
+        if m:
+            return sorted(str(p) for p in ast.literal_eval(m.group(1)))
+    except Exception:
+        pass
+    return []
+
+
+def get_latest_bazel_majors():
+    """Returns the latest 2 stable Bazel major versions as ints (fallback: [8, 9])."""
+    try:
+        releases = gh_api("repos/bazelbuild/bazel/releases?per_page=100")
+        majors = {
+            int(m.group(1))
+            for r in (releases if isinstance(releases, list) else [])
+            if isinstance(r, dict)
+            and not r.get("prerelease")
+            and not r.get("draft")
+            and (m := re.match(r"^v?(\d+)\.\d+\.\d+$", str(r.get("tag_name") or "")))
+        }
+        if majors and max(majors) >= 2:
+            top = max(majors)
+            return [top - 1, top]
+    except Exception:
+        pass
+    return [8, 9]
 
 
 def render_review_prompt(
@@ -620,6 +658,8 @@ def main():
         "modified_module_versions": modified_module_versions_info,
         "non_module_files": non_module_files,
         "mutated_existing_version_files": mutated_existing_version_files,
+        "eol_platforms": fetch_eol_platforms(),
+        "latest_bazel_majors": get_latest_bazel_majors(),
         "pr_diff_path": pr_diff_path,
         "pr_head_root": pr_head_root,
         "changed_files": changed_files_info,
