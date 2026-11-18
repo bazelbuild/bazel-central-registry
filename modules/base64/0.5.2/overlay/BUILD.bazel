@@ -1,0 +1,113 @@
+# Fast SIMD Base64 encoding/decoding (aklomp/base64), static library, <libbase64.h>.
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+    default_visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-2-Clause"],
+    license_text = "LICENSE",
+)
+
+exports_files(["LICENSE"])
+
+config_setting(
+    name = "x86_64",
+    constraint_values = ["@platforms//cpu:x86_64"],
+)
+
+config_setting(
+    name = "x86_64_msvc",
+    constraint_values = ["@platforms//cpu:x86_64"],
+    flag_values = {"@bazel_tools//tools/cpp:compiler": "msvc-cl"},
+)
+
+# Private headers, consumed only through implementation_deps so they never
+# reach downstream include paths. Upstream sources #include "config.h"
+# (CMake-generated); strip_include_prefix exposes only that one file, not the
+# whole config/ directory.
+cc_library(
+    name = "config",
+    hdrs = ["config/config.h"],
+    strip_include_prefix = "config",
+    visibility = ["//visibility:private"],
+)
+
+# Everything the codec.c files #include textually, via quoted relative paths
+# (no include path needed).
+cc_library(
+    name = "internal",
+    textual_hdrs = glob([
+        "lib/*.h",
+        "lib/lib_openmp.c",
+        "lib/tables/*.h",
+        "lib/arch/*/*.c",
+        "lib/arch/generic/*/*.c",
+    ]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+_C99 = select({
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "@rules_cc//cc/compiler:clang-cl": [],
+    "//conditions:default": ["-std=c99"],
+})
+
+# Each x86 SIMD codec needs its own ISA flags (upstream's
+# cmake/Modules/TargetSIMDInstructionSet.cmake), applied only to its codec.c.
+# On other CPUs the same files compile to stubs (HAVE_<codec> is 0).
+_X86_CODECS = {
+    # name: (gcc/clang flags, MSVC flags)
+    "ssse3": (["-mssse3"], ["-D__SSSE3__"]),
+    "sse41": (["-msse4.1"], ["-D__SSSE4_1__"]),
+    "sse42": (["-msse4.2"], ["-D__SSSE4_2__"]),
+    "avx": (["-mavx"], ["/arch:AVX"]),
+    "avx2": (["-mavx2"], ["/arch:AVX2"]),
+    "avx512": (
+        [
+            "-mavx512vl",
+            "-mavx512vbmi",
+        ],
+        ["/arch:AVX512"],
+    ),
+}
+
+[
+    cc_library(
+        name = "codec_" + name,
+        srcs = ["lib/arch/%s/codec.c" % name],
+        hdrs = ["include/libbase64.h"],
+        copts = _C99 + select({
+            ":x86_64_msvc": msvc_flags,
+            ":x86_64": gnu_flags,
+            "//conditions:default": [],
+        }),
+        local_defines = ["BASE64_STATIC_DEFINE"],
+        visibility = ["//visibility:private"],
+        implementation_deps = [":internal"],
+    )
+    for name, (gnu_flags, msvc_flags) in _X86_CODECS.items()
+]
+
+cc_library(
+    name = "base64",
+    srcs = [
+        "lib/arch/generic/codec.c",
+        "lib/arch/neon32/codec.c",
+        "lib/arch/neon64/codec.c",
+        "lib/codec_choose.c",
+        "lib/lib.c",
+        "lib/tables/tables.c",
+    ],
+    hdrs = ["include/libbase64.h"],
+    copts = _C99,
+    defines = ["BASE64_STATIC_DEFINE"],
+    implementation_deps = [":internal"] + [":codec_" + name for name in _X86_CODECS],
+    strip_include_prefix = "include",
+)
