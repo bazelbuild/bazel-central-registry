@@ -478,8 +478,10 @@ class RegistryClient:
         if module.presubmit_yml:
             shutil.copy(module.presubmit_yml, presubmit_yml)
         else:
-            DEFAULT_PLATFORMS = ["debian11", "ubuntu2204", "macos", "macos_arm64", "windows"]
-            DEFAULT_BAZEL_VERSIONS = ["9.x", "8.x", "7.x"]
+            DEFAULT_PLATFORMS = ["debian13", "ubuntu2404", "macos_arm64", "windows"]
+            # TODO: Switch "10.*" to "10.x" once Bazel 10.0.0 is released. "10.*" is needed until then
+            # because "10.x" only resolves stable releases; ".x" avoids testing release candidates.
+            DEFAULT_BAZEL_VERSIONS = ["10.*", "9.x", "8.x"]
             platforms = module.matrix_platforms or DEFAULT_PLATFORMS
             bazel_versions = module.matrix_bazel_versions or DEFAULT_BAZEL_VERSIONS
             presubmit = {
