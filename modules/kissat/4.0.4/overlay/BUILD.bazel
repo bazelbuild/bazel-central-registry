@@ -1,0 +1,52 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+# Stands in for build.h, which ./configure && make generate via
+# scripts/generate-build-header.sh.
+genrule(
+    name = "build_header",
+    srcs = ["VERSION"],
+    outs = ["src/build.h"],
+    cmd = """
+        VERSION=$$(cat $(location VERSION))
+        cat > $@ <<HEADER
+#define VERSION "$$VERSION"
+#define COMPILER "bazel"
+#define ID "bazel"
+#define BUILD "bazel"
+#define DIR "."
+HEADER
+    """,
+)
+
+# The library is everything in src/ except the stand-alone application
+# (main.c and makefile.in's APPSRC).
+cc_library(
+    name = "kissat",
+    srcs = glob(
+        ["src/*.c"],
+        exclude = [
+            "src/application.c",
+            "src/handle.c",
+            "src/main.c",
+            "src/parse.c",
+            "src/witness.c",
+        ],
+    ) + glob(
+        ["src/*.h"],
+        exclude = ["src/kissat.h"],
+    ) + [":build_header"],
+    hdrs = ["src/kissat.h"],
+    # Embedded use: no metrics, statistics or messages, as with
+    # ./configure --quiet --no-metrics --no-statistics.
+    copts = [
+        "-O3",
+        "-DNDEBUG",
+        "-DNMETRICS",
+        "-DNSTATISTICS",
+        "-DQUIET",
+    ],
+    includes = ["src"],
+    # sort.c is #included by other .c files.
+    textual_hdrs = ["src/sort.c"],
+    visibility = ["//visibility:public"],
+)

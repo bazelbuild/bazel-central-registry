@@ -1,0 +1,497 @@
+"""ld - the GNU linker (ld/Makefile.am)."""
+
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load("@rules_cc_autoconf//autoconf:autoconf_package_info.bzl", "autoconf_package_info")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load("//:platforms.bzl", "select_default", "select_field", "select_flag_defines", "select_ldemul_list", "select_triple")
+load("//:rules.bzl", "install_dirs", "ld_emulations", "policy_defines")
+load(":targets.bzl", "LD", "LD_64")
+
+package(default_visibility = ["//:__subpackages__"])
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# AC_INIT([ld], [BFD_VERSION]) (configure.ac:21).
+autoconf_package_info(
+    name = "package",
+    package_name = "ld",
+    # PACKAGE and VERSION, as AM_INIT_AUTOMAKE defines them.
+    aliases = {
+        "PACKAGE": "PACKAGE_TARNAME",
+        "VERSION": "PACKAGE_VERSION",
+    },
+    package_bugreport = "",
+    package_tarname = "ld",
+    package_url = "",
+    package_version = "2.47",
+)
+
+# configure.ac:613-628 and :680-690.
+TEXTREL_NONE = [
+    "DEFAULT_LD_TEXTREL_CHECK=textrel_check_none",
+    "DEFAULT_LD_TEXTREL_CHECK_WARNING=0",
+]
+
+TEXTREL_WARNING = [
+    "DEFAULT_LD_TEXTREL_CHECK=textrel_check_warning",
+    "DEFAULT_LD_TEXTREL_CHECK_WARNING=1",
+]
+
+TEXTREL_ERROR = [
+    "DEFAULT_LD_TEXTREL_CHECK=textrel_check_error",
+    "DEFAULT_LD_TEXTREL_CHECK_WARNING=0",
+]
+
+HASH_SYSV = [
+    "DEFAULT_EMIT_SYSV_HASH=1",
+    "DEFAULT_EMIT_GNU_HASH=0",
+]
+
+HASH_GNU = [
+    "DEFAULT_EMIT_SYSV_HASH=0",
+    "DEFAULT_EMIT_GNU_HASH=1",
+]
+
+HASH_BOTH = [
+    "DEFAULT_EMIT_SYSV_HASH=1",
+    "DEFAULT_EMIT_GNU_HASH=1",
+]
+
+DECL_INCLUDES = [
+    "#include <stdio.h>",
+    "#include <stdlib.h>",
+    "#include <string.h>",
+    "#include <strings.h>",
+    "#include <unistd.h>",
+]
+
+autoconf(
+    name = "autoconf",
+    checks = [
+                 # LT_INIT (configure.ac:44).
+                 checks.AC_DEFINE(
+                     "LT_OBJDIR",
+                     value = '".libs/"',
+                 ),
+             ] +
+             # AC_PLUGINS, through ACX_LARGEFILE (configure.ac:45).
+             macros.AC_CHECK_HEADERS([
+                 "dlfcn.h",
+                 "windows.h",
+             ]) +
+             # --enable-checking (configure.ac:47-58).
+             select_flag_defines(
+                 [("enable_checking", "ENABLE_CHECKING")],
+                 if_false = None,
+             ) +
+             # --enable-got (configure.ac:120-144).
+             select({
+                 "//:_enable_got_multigot": [checks.AC_DEFINE("GOT_HANDLING_DEFAULT", "GOT_HANDLING_MULTIGOT")],
+                 "//:_enable_got_negative": [checks.AC_DEFINE("GOT_HANDLING_DEFAULT", "GOT_HANDLING_NEGATIVE")],
+                 "//:_enable_got_single": [checks.AC_DEFINE("GOT_HANDLING_DEFAULT", "GOT_HANDLING_SINGLE")],
+                 "//conditions:default": [checks.AC_DEFINE("GOT_HANDLING_DEFAULT", "GOT_HANDLING_TARGET_DEFAULT")],
+             }) +
+             # --enable-default-compressed-debug-sections-algorithm (configure.ac:156-162).
+             select({
+                 "//:_enable_default_compressed_debug_sections_algorithm_zstd": [checks.AC_DEFINE("DEFAULT_COMPRESSED_DEBUG_ALGORITHM", "COMPRESS_DEBUG_ZSTD")],
+                 "//conditions:default": [checks.AC_DEFINE("DEFAULT_COMPRESSED_DEBUG_ALGORITHM", "COMPRESS_DEBUG_GABI_ZLIB")],
+             }) +
+             # The yes/no linker policies whose default does not depend on the
+             # target (configure.ac:164-321 and :596-700); the target-dependent ones
+             # come from :emulations.
+             select_flag_defines([
+                 ("enable_new_dtags", "DEFAULT_NEW_DTAGS"),
+                 ("enable_rosegment", "DEFAULT_LD_ROSEGMENT"),
+                 ("enable_mark_plt", "DEFAULT_LD_Z_MARK_PLT"),
+                 ("enable_memory_seal", "DEFAULT_LD_Z_MEMORY_SEAL"),
+             ]) + select({
+                 "//:_enable_gnu2_tls_tag_no": [checks.AC_DEFINE("DEFAULT_LD_GNU2_TLS_TAG", "0")],
+                 "//:_enable_gnu2_tls_tag_yes": [checks.AC_DEFINE("DEFAULT_LD_GNU2_TLS_TAG", "1")],
+                 "//conditions:default": [checks.AC_DEFINE("DEFAULT_LD_GNU2_TLS_TAG", "2")],
+             }) + select({
+                 "//:_enable_gnu_tls_tag_no": [checks.AC_DEFINE("DEFAULT_LD_GNU_TLS_TAG", "0")],
+                 "//:_enable_gnu_tls_tag_yes": [checks.AC_DEFINE("DEFAULT_LD_GNU_TLS_TAG", "1")],
+                 "//conditions:default": [checks.AC_DEFINE("DEFAULT_LD_GNU_TLS_TAG", "2")],
+             }) + select_flag_defines([
+                 ("enable_error_execstack", "DEFAULT_LD_ERROR_EXECSTACK"),
+                 ("enable_error_rwx_segments", "DEFAULT_LD_ERROR_RWX_SEGMENTS"),
+                 ("enable_default_execstack", "DEFAULT_LD_EXECSTACK"),
+                 ("enable_error_handling_script", "SUPPORT_ERROR_HANDLING_SCRIPT"),
+             ]) +
+             # --enable-initfini-array (configure.ac:352-363).
+             select_flag_defines(
+                 [("enable_initfini_array", "HAVE_INITFINI_ARRAY")],
+                 if_false = None,
+             ) +
+             # --enable-libctf (configure.ac:365-370).
+             select_flag_defines(
+                 [("enable_libctf", "ENABLE_LIBCTF")],
+                 if_false = None,
+             ) + [
+                 # AM_LC_MESSAGES (configure.ac:386).
+                 checks.AC_TRY_LINK(
+                     code = """\
+#include <locale.h>
+int main(void) { return LC_MESSAGES; }
+""",
+                     define = "HAVE_LC_MESSAGES",
+                 ),
+             ] +
+             # configure.ac:425-428.  memory.h and sys/param.h have slots from
+             # autoconf 2.69's AC_INCLUDES_DEFAULT and from AC_FUNC_MMAP.
+             macros.AC_CHECK_HEADERS([
+                 "fcntl.h",
+                 "elf-hints.h",
+                 "limits.h",
+                 "memory.h",
+                 "sys/file.h",
+                 "sys/mman.h",
+                 "sys/param.h",
+                 "sys/time.h",
+             ]) + macros.AC_CHECK_FUNCS([
+                 "close",
+                 "getrusage",
+                 "glob",
+                 "lseek",
+                 "mkstemp",
+                 "open",
+                 "realpath",
+                 "waitpid",
+                 "mallinfo",
+                 "mallinfo2",
+             ]) +
+             # BFD_BINARY_FOPEN (configure.ac:430).
+             select({
+                 "@platforms//os:windows": [checks.AC_DEFINE("USE_BINARY_FOPEN", "1")],
+                 "//conditions:default": [],
+             }) +
+             # configure.ac:432.
+             macros.AC_CHECK_DECLS(
+                 [
+                     "environ",
+                     "stpcpy",
+                     "strtoull",
+                 ],
+                 compile_defines = ["_GNU_SOURCE"],
+                 includes = DECL_INCLUDES,
+             ) + [
+        # GCC_AC_FUNC_MMAP (configure.ac:434): AC_FUNC_MMAP's run test, as
+        # the host answers it natively.
+        checks.AC_CHECK_FUNC(
+            "mmap",
+            define = "HAVE_MMAP",
+            requires = ["HAVE_SYS_MMAN_H"],
+        ),
+    ] + macros.AC_CHECK_FUNCS(["getpagesize"]) + [
+        # configure.ac:436, for plugin.c.
+        checks.AC_SEARCH_LIBS(
+            "dlopen",
+            ["dl"],
+            subst = "LIB_DLOPEN",
+        ),
+        # configure.ac:438-447.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#include <unistd.h>
+int main(void) { extern int getopt (int, char *const*, const char *); return 0; }
+""",
+            compile_defines = ["_GNU_SOURCE"],
+            define = "HAVE_DECL_GETOPT",
+        ),
+        # --with-xxhash=auto (configure.ac:449-468): inline xxhash when the
+        # host has its header.
+        checks.AC_TRY_COMPILE(
+            code = """\
+#define XXH_INLINE_ALL
+#include <xxhash.h>
+XXH128_hash_t r;
+void foo (void) { r = XXH128("foo", 3, 0); }
+int main(void) { foo (); return 0; }
+""",
+            define = "WITH_XXHASH",
+        ),
+    ] +
+    # AC_ZSTD (configure.ac:473).
+    select_flag_defines(
+        [("with_zstd", "HAVE_ZSTD")],
+        if_false = None,
+    ),
+    deps = [
+        ":package",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+        "@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS",
+    ],
+)
+
+autoconf_hdr(
+    name = "config_h",
+    out = "config/config.h",
+    template = "config.in",
+    deps = [":autoconf"],
+)
+
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    copts = COPTS,
+    strip_include_prefix = "config",
+)
+
+autoconf_linkopts(
+    name = "linkopts",
+    vars = ["LIB_DLOPEN"],
+    deps = [":autoconf"],
+)
+
+# genscripts.sh and everything it sources, run once per emulation of the
+# platform ($(EMULATION_OFILES)); see the rule's doc for why this is the one
+# shell step in the module.
+ld_emulations(
+    name = "emulations",
+    srcs = glob([
+        "emulparams/*.sh",
+        "emultempl/*",
+        "scripttempl/*",
+    ]) + [
+        "genscrba.sh",
+        "genscripts.sh",
+    ],
+    emulations = select_field(
+        (LD, LD_64),
+        "emulations",
+    ),
+    genscripts = "genscripts.sh",
+    libpath = select_field(
+        (LD, LD_64),
+        "libpath",
+    ),
+    native_lib_dirs = select_field(
+        (LD, LD_64),
+        "native_lib_dirs",
+    ),
+    tdirs = select_field(
+        (LD, LD_64),
+        "tdirs",
+    ),
+    triple = select_triple(),
+)
+
+# The default linker scripts (ldscripts/*), which `make install` puts under
+# $(tooldir)/lib for emulations not compiled in.
+filegroup(
+    name = "ldscripts",
+    srcs = [":emulations"],
+    output_group = "ldscripts",
+    visibility = ["//visibility:public"],
+)
+
+# ldemul-list.h (Makefile.am:366-379).
+write_file(
+    name = "ldemul_list_h",
+    out = "ldemul-list.h",
+    content = select_ldemul_list((LD, LD_64)),
+)
+
+# -DBINDIR -DTOOLBINDIR -DSCRIPTDIR @TARGET_SYSTEM_ROOT_DEFINE@ for ldmain.c
+# and ldfile.c (Makefile.am:313-333), and -DLOCALEDIR (Makefile.am:181).
+install_dirs(
+    name = "dirs",
+    defines = [
+        "BINDIR",
+        "TOOLBINDIR",
+        "SCRIPTDIR",
+        "TARGET_SYSTEM_ROOT",
+        "LOCALEDIR",
+    ],
+    triple = select_triple(),
+)
+
+# The defaults the target decides (configure.ac:596-700, configure.tgt:
+# 38-63 and :1091-1105), each under its flag.
+# The yes/no/auto options whose default the target decides (configure.ac:
+# 175-204, 259-350 and the ac_default_ld_* settings of configure.tgt).
+[
+    policy_defines(
+        name = name,
+        auto = auto,
+        default = select_default(
+            (LD, LD_64),
+            field,
+        ),
+        flag = "//:" + flag,
+        values = values,
+    )
+    for name, flag, auto, field, values in [
+        (
+            "relro",
+            "enable_relro",
+            ["auto"],
+            "z_relro",
+            {
+                "False": ["DEFAULT_LD_Z_RELRO=0"],
+                "True": ["DEFAULT_LD_Z_RELRO=1"],
+                "no": ["DEFAULT_LD_Z_RELRO=0"],
+                "yes": ["DEFAULT_LD_Z_RELRO=1"],
+            },
+        ),
+        (
+            "separate_code",
+            "enable_separate_code",
+            ["auto"],
+            "z_separate_code",
+            {
+                "False": ["DEFAULT_LD_Z_SEPARATE_CODE=0"],
+                "True": ["DEFAULT_LD_Z_SEPARATE_CODE=1"],
+                "no": ["DEFAULT_LD_Z_SEPARATE_CODE=0"],
+                "yes": ["DEFAULT_LD_Z_SEPARATE_CODE=1"],
+            },
+        ),
+        (
+            "textrel_check",
+            "enable_textrel_check",
+            [""],
+            "textrel_check",
+            {
+                "error": TEXTREL_ERROR,
+                "no": TEXTREL_NONE,
+                "unset": TEXTREL_NONE,
+                "warning": TEXTREL_WARNING,
+                "yes": TEXTREL_WARNING,
+            },
+        ),
+        (
+            "warn_execstack",
+            "enable_warn_execstack",
+            [""],
+            "warn_execstack",
+            {
+                "0": ["DEFAULT_LD_WARN_EXECSTACK=0"],
+                "1": ["DEFAULT_LD_WARN_EXECSTACK=1"],
+                "2": ["DEFAULT_LD_WARN_EXECSTACK=2"],
+                "no": ["DEFAULT_LD_WARN_EXECSTACK=0"],
+                "yes": ["DEFAULT_LD_WARN_EXECSTACK=1"],
+            },
+        ),
+        (
+            "warn_rwx_segments",
+            "enable_warn_rwx_segments",
+            ["auto"],
+            "warn_rwx_segments",
+            {
+                "False": ["DEFAULT_LD_WARN_RWX_SEGMENTS=0"],
+                "True": ["DEFAULT_LD_WARN_RWX_SEGMENTS=1"],
+                "no": ["DEFAULT_LD_WARN_RWX_SEGMENTS=0"],
+                "yes": ["DEFAULT_LD_WARN_RWX_SEGMENTS=1"],
+            },
+        ),
+        (
+            "hash_style",
+            "enable_default_hash_style",
+            [""],
+            "hash_style",
+            {
+                "both": HASH_BOTH,
+                "gnu": HASH_GNU,
+                "sysv": HASH_SYSV,
+            },
+        ),
+    ]
+]
+
+POLICIES = [
+    ":hash_style",
+    ":relro",
+    ":separate_code",
+    ":textrel_check",
+    ":warn_execstack",
+    ":warn_rwx_segments",
+]
+
+# --enable-compressed-debug-sections for ld (configure.ac:147-154, :566): no
+# target default, off unless the option names ld.
+COMPRESSED_DEBUG_DEFINES = select({
+    "//:_enable_compressed_debug_sections_all": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+    "//:_enable_compressed_debug_sections_gas_ld": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+    "//:_enable_compressed_debug_sections_ld": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+    "//:_enable_compressed_debug_sections_yes": ["DEFAULT_FLAG_COMPRESS_DEBUG=1"],
+    "//conditions:default": [],
+})
+
+# ld_new_SOURCES (Makefile.am:437-439).
+LD_SRCS = [
+    "ldgram.c",
+    "ldlex-wrapper.c",
+    "lexsup.c",
+    "ldlang.c",
+    "mri.c",
+    "ldctor.c",
+    "ldmain.c",
+    "ldwrite.c",
+    "ldexp.c",
+    "ldemul.c",
+    "ldver.c",
+    "ldmisc.c",
+    "ldfile.c",
+    "ldcref.c",
+    "plugin.c",
+    "ldbuildid.c",
+]
+
+# ldlex-wrapper.c includes the shipped ldlex.c; pep-dll.c includes pe-dll.c.
+cc_library(
+    name = "textual",
+    copts = COPTS,
+    textual_hdrs = [
+        "ldlex.c",
+        "pe-dll.c",
+    ],
+)
+
+# ld-new, installed as ld.bfd and ld.
+cc_binary(
+    name = "ld",
+    srcs = LD_SRCS + glob(["*.h"]) + [
+        "ldemul-list.h",
+        ":emulations",
+    ] +
+    # $(EMUL_EXTRA_OFILES) (configure.ac:528-536).
+    select_field(
+        (LD, LD_64),
+        "extra_srcs",
+    ),
+    copts = COPTS,
+    includes = ["."],
+    # $(ELF_CFLAGS) (Makefile.am:42-45), -DDEFAULT_EMULATION -DTARGET
+    # (Makefile.am:313-316) and the policy defaults.
+    local_defines = ["HAVE_CONFIG_H"] + select_field(
+        (LD, LD_64),
+        "defines",
+    ) + COMPRESSED_DEBUG_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = POLICIES + [
+        ":config",
+        ":dirs",
+        ":linkopts",
+        ":textual",
+        "//bfd",
+        "//include",
+        "//libiberty",
+        "@zlib",
+    ] + select({
+        "//:_enable_libctf": ["//libctf:ctf"],
+        "//conditions:default": [],
+    }) + select({
+        "//:_with_zstd": ["@zstd"],
+        "//conditions:default": [],
+    }),
+)

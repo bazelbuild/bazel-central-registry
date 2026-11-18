@@ -1,0 +1,13 @@
+/* Linux audit features provided by the supported Linux toolchains. */
+#define _GNU_SOURCE 1
+#define HAVE_ATOMIC 1
+#define HAVE_LIBCAP_NG 1
+#define HAVE_STRNDUPA 1
+#define HAVE_DECL_AUDIT_FEATURE_VERSION 1
+#define HAVE_DECL_AUDIT_STATUS_BACKLOG_WAIT_TIME 1
+#define HAVE_DECL_AUDIT_STATUS_BACKLOG_WAIT_TIME_ACTUAL 1
+#define HAVE_STRUCT_AUDIT_STATUS_FEATURE_BITMAP 1
+#define WITH_AARCH64 1
+#define WITH_ARM 1
+#define WITH_IO_URING 1
+#define WITH_RISCV 1

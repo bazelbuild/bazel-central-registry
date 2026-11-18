@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mikhail Zinchenko <m1d3ry@proton.me>
+Date: Tue, 13 Oct 2026 12:00:00 +0200
+Subject: [PATCH] Skip the delay-load failure hook when delayimp.h is
+ missing
+
+`Exceptions.cpp` installs a delay-load failure hook on every Windows build, and the hook needs
+`<delayimp.h>`. Visual Studio always ships the header. A toolchain that exposes only part of the MSVC
+include directory may not. hermetic-llvm is one example: it copies an allowlist of MSVC headers into
+the build, and `delayimp.h` is not on it. The file then fails with "file not found".
+
+The hook only matters for a binary linked with `/DELAYLOAD`. Upstream CMake passes that flag for the
+two WinRT DLLs that bundle support needs. A build without it never runs the hook.
+
+Compile the hook only when `__has_include` finds the header. When the header is present, the hook
+compiles as before. A compiler without `__has_include` drops it, which is safe for the same reason.
+---
+ src/msix/common/Exceptions.cpp | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/msix/common/Exceptions.cpp b/src/msix/common/Exceptions.cpp
+index 3fafd459..939bf00f 100644
+--- a/src/msix/common/Exceptions.cpp
++++ b/src/msix/common/Exceptions.cpp
+@@ -4,7 +4,16 @@
+ // 
+ #include "Exceptions.hpp"
+ 
+-#ifdef WIN32
++// The delay-load failure hook needs <delayimp.h>. Visual Studio always ships it, but a toolchain that
++// exposes only part of the MSVC include directory may not. The hook only matters for a binary linked
++// with /DELAYLOAD, so skip it when the header is missing.
++#if defined(WIN32) && defined(__has_include)
++#if __has_include(<delayimp.h>)
++#define MSIX_HAS_DELAYIMP 1
++#endif
++#endif
++
++#if defined(WIN32) && defined(MSIX_HAS_DELAYIMP)
+ #include <delayimp.h>
+ 
+ // Custom failure hook that will be called if delayloading a dll fails. This give us the ability

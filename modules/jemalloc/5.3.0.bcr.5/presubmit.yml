@@ -1,0 +1,64 @@
+matrix:
+  platform:
+    - rockylinux8
+    - debian11
+    - ubuntu2004
+    - ubuntu2204
+    - ubuntu2404
+    - ubuntu2404_arm64
+    - fedora43
+    - macos
+    - macos_arm64
+  bazel: ["7.4.0", "7.x", "8.x", "9.x", "rolling"]
+tasks:
+  verify_jemalloc:
+    name: Build as a dependency
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@jemalloc"
+
+bcr_test_module:
+  module_path: "."
+  matrix:
+    platform:
+      - rockylinux8
+      - debian11
+      - ubuntu2004
+      - ubuntu2204
+      - ubuntu2404
+      - ubuntu2404_arm64
+      - fedora43
+      - macos
+      - macos_arm64
+    bazel: ["7.4.0", "7.x", "8.x", "9.x", "rolling"]
+    # llvm@0.8.26 needs Bazel 7.7.0 or later
+    llvm_platform:
+      - debian11
+      - ubuntu2004
+      - macos_arm64
+    # Not rolling: it resets --@jemalloc//settings/flags:nm in exec configurations, so private_namespace.h falls back to
+    # the toolchain's nm, which the llvm toolchain does not declare.
+    llvm_bazel: ["8.x", "9.x"]
+  tasks:
+    test_jemalloc:
+      name: Run upstream's tests and the fidelity tests
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets:
+        - "//..."
+    test_host_toolchain:
+      name: Run the host toolchain examples as a consumer
+      working_directory: examples/host_toolchain
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets:
+        - "//..."
+    test_hermetic_llvm:
+      name: Run the hermetic LLVM example as a consumer
+      working_directory: examples/hermetic_llvm
+      platform: ${{ llvm_platform }}
+      bazel: ${{ llvm_bazel }}
+      test_targets:
+        - "//..."
+        - "@jemalloc//include/jemalloc/internal:private_namespace_leak_test"

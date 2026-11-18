@@ -1,0 +1,111 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load(":autoconf.bzl", "NO_WARNINGS", "autoconf_targets")
+load(":rmt_command.bzl", "rmt_command_h")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# Hand-written targets: the two build
+# settings configure takes as --with/--enable arguments, the header one of
+# them is compiled into, and the helper the upstream test suite runs.
+
+# CPIO_DEFAULT_QUOTING_STYLE (am/quoting.m4:21).  The m4 `QUOTING_STYLES`
+# list is the set of accepted names; configure turns the chosen one into the
+# matching `quotearg` enumerator by mapping "-" to "_" and appending
+# "_quoting_style" (the `variable:DEFAULT_QUOTING_STYLE` decision).  The
+# `values` list makes the "Invalid quoting style" AC_MSG_ERROR a load-time
+# error instead.
+QUOTING_STYLES = [
+    "literal",
+    "shell",
+    "shell-always",
+    "c",
+    "escape",
+    "locale",
+    "clocale",
+]
+
+string_flag(
+    name = "default_quoting_style",
+    build_setting_default = "escape",
+    values = QUOTING_STYLES,
+    visibility = ["//visibility:public"],
+)
+
+[
+    config_setting(
+        name = "_quoting_style_" + style.replace("-", "_"),
+        flag_values = {":default_quoting_style": style},
+    )
+    for style in QUOTING_STYLES
+]
+
+# --with-rmt=FILE / DEFAULT_RMT_DIR (m4/rmt.m4:50 and :59).  The default is
+# upstream's `$(libexecdir)/rmt` with the default `--prefix`.  This is the
+# compiled-in path to the `rmt` helper `lib/rtapelib.c` execs for remote
+# archives, and cpio has no runtime flag that overrides it.  lib/Makefile.am
+# writes it into lib/rmt-command.h (the `generated:lib/rmt-command.h`
+# decision), so the config.h define of the same name stays out.
+string_flag(
+    name = "default_rmt_command",
+    build_setting_default = "/usr/local/libexec/rmt",
+    visibility = ["//visibility:public"],
+)
+
+rmt_command_h(
+    name = "rmt_command_h",
+    out = "lib/rmt-command.h",
+    command = ":default_rmt_command",
+)
+
+# `check_PROGRAMS` (tests/Makefile.am:83), so it is never installed -- it is
+# visible only to //tests, which drives the suite that runs it.  Built here
+# rather than in //tests because it wants the same private gnulib header set
+# the installed programs do; upstream links it against libgnu.a alone, not
+# paxlib.
+cc_binary(
+    name = "genfile",
+    testonly = True,
+    srcs = [
+        "//tests:argcv.c",
+        "//tests:argcv.h",
+        "//tests:genfile.c",
+    ],
+    copts = NO_WARNINGS,
+    includes = ["tests"],
+    local_defines = [
+        "HAVE_CONFIG_H",
+        # tests/Makefile.am:89 passes its own LOCALEDIR rather than taking
+        # gnulib's, though both resolve to $(datadir)/locale.
+        'LOCALEDIR=\\"/usr/local/share/locale\\"',
+    ],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":config_headers",
+        ":gnu/gnu",
+        ":gnu/gnu_private_headers",
+        # tests/Makefile.am:88: -I$(top_srcdir)/lib for <system.h>.
+        ":lib/pax_private_headers",
+    ],
+)
+
+# gl_NSTRFTIME (m4/nstrftime.m4:20) defines `my_strftime` to `nstrftime`, the
+# one function gnu/nstrftime.c exports; without it the file defines a plain
+# `strftime` that collides with libc and leaves gnu/parse-datetime.c (linked
+# into `genfile`) with an undefined `nstrftime`.  rules_cc_autoconf 0.29.0's
+# port of the module carries the struct tm probes but not this define (added
+# upstream after 0.29.0), so the template's line is filled in here.  Replaces
+# the generated rule of the same name, which is otherwise identical.
+autoconf_hdr(
+    name = "config",
+    out = "config.h",
+    substitutions = {"#undef my_strftime": "#define my_strftime nstrftime"},
+    template = "config.h.in",
+    visibility = ["//visibility:public"],
+    deps = [":autoconf"],
+)
