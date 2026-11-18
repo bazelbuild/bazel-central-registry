@@ -1,0 +1,46 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+    default_visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:MIT"],
+    license_text = "LICENSE",
+)
+
+exports_files(["LICENSE"])
+
+# Header-only parallel pattern-defeating quicksort (C++20).
+#
+# Consumers see exactly upstream's installed layout: <ppqsort.h> plus its
+# <ppqsort/...> internals. strip_include_prefix exposes only these headers
+# (not the whole include/ directory, nor the repository root).
+#
+# Uses its own std::thread pool. The OpenMP backend (upstream option
+# PPQSORT_USE_OPENMP, or compiling with -fopenmp so _OPENMP is defined) is not
+# wired up: this module provides no OpenMP runtime. Upstream's generated
+# <ppqsort/version.h> is not provided.
+cc_library(
+    name = "ppqsort",
+    hdrs = ["include/ppqsort.h"] + glob(["include/ppqsort/**/*.h"]),
+    linkopts = select({
+        "@platforms//os:linux": ["-lpthread"],
+        "//conditions:default": [],
+    }),
+    strip_include_prefix = "include",
+)
+
+# A header-only library compiles nothing on its own: this test instantiates
+# the sequential and parallel sorts so that building @ppqsort//... actually
+# compiles the headers. Requires C++20 (e.g. --cxxopt=-std=c++20).
+cc_test(
+    name = "ppqsort_test",
+    size = "small",
+    srcs = ["ppqsort_test.cc"],
+    deps = [":ppqsort"],
+)
