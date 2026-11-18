@@ -1,0 +1,299 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros", "utils")
+load("//include/jemalloc/internal:public_symbols.bzl", "public_symbols_header")
+load("//tools:cc.bzl", "CONLYOPTS")
+load("//tools:configure_host.bzl", "HOST_CC_DEPS", "HOST_CPPFLAGS")
+load("//tools:version.bzl", "VERSION")
+load(":jemalloc_hdr.bzl", "jemalloc_hdr")
+
+exports_files(
+    [
+        "jemalloc.sh",
+        "jemalloc_mangle.sh",
+        "jemalloc_rename.sh",
+    ],
+    visibility = ["//tools/fidelity:__pkg__"],
+)
+
+autoconf(
+    name = "jemalloc_defs_checks",
+    cc_deps = HOST_CC_DEPS,
+    checks = [
+        checks.AC_TRY_LINK(
+            name = "je_cv_attribute",
+            code = utils.AC_LANG_PROGRAM("static __attribute__((unused)) void foo(void){}", ""),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR",
+            condition = "je_cv_attribute",
+        ),
+        checks.AC_CHECK_FUNC(
+            "memalign",
+            code = utils.AC_LANG_FUNC_LINK_TRY("memalign"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_OVERRIDE_MEMALIGN",
+            condition = "ac_cv_func_memalign",
+        ),
+        checks.AC_CHECK_FUNC(
+            "valloc",
+            code = utils.AC_LANG_FUNC_LINK_TRY("valloc"),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_OVERRIDE_VALLOC",
+            condition = "ac_cv_func_valloc",
+        ),
+    ] + macros.AC_CHECK_HEADERS(["malloc.h"]) + [
+        checks.AC_TRY_COMPILE(
+            name = "malloc_usable_size_const_argument",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#include <malloc.h>",
+                    "#include <stddef.h>",
+                    "size_t malloc_usable_size(const void *ptr);",
+                ],
+                "",
+            ),
+            requires = ["ac_cv_header_malloc_h"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_USABLE_SIZE_CONST",
+            condition = "!ac_cv_header_malloc_h || malloc_usable_size_const_argument",
+            if_false = "",
+            if_true = "const",
+        ),
+    ] + select({
+        "@platforms//os:linux": [checks.AC_DEFINE_UNQUOTED("JEMALLOC_USE_CXX_THROW", "")],
+        "//conditions:default": [],
+    }) + [
+        # configure.ac skips this probe for MSVC compilers; jemalloc_internal_defs.h reads it for JEMALLOC_RETAIN, which
+        # MSVC compilers never get.
+        checks.AC_CHECK_SIZEOF("void *"),
+    ] + select({
+        "@rules_cc//cc/compiler:clang-cl": [checks.AC_DEFINE_UNQUOTED("LG_SIZEOF_PTR", "LG_SIZEOF_PTR_WIN")],
+        "@rules_cc//cc/compiler:msvc-cl": [checks.AC_DEFINE_UNQUOTED("LG_SIZEOF_PTR", "LG_SIZEOF_PTR_WIN")],
+        "//conditions:default": [
+            checks.AC_TRY_COMPILE(
+                name = "pointer_size_supported",
+                code = utils.AC_LANG_PROGRAM("", ""),
+                error = "Unsupported pointer size: sizeof(void *) is neither 4 nor 8",
+                requires = ["ac_cv_sizeof_void_p==8 || ac_cv_sizeof_void_p==4"],
+            ),
+            checks.AC_DEFINE_UNQUOTED(
+                "LG_SIZEOF_PTR",
+                condition = "ac_cv_sizeof_void_p==8",
+                if_false = "2",
+                if_true = "3",
+            ),
+        ],
+    }),
+    conlyopts = CONLYOPTS,
+    copts = HOST_CPPFLAGS,
+    tags = ["manual"],
+    visibility = ["//include/jemalloc/internal:__pkg__"],
+)
+
+# configure.ac adds -Wimplicit-fallthrough only around this probe (JE_CFLAGS_SAVE/JE_CFLAGS_RESTORE), so the flag is
+# set once on its own target rather than on the check. msvc-cl gets no flag: cl ignores it with a warning, so configure's
+# probe runs without it there.
+autoconf(
+    name = "jemalloc_defs_implicit_fallthrough_checks",
+    cc_deps = HOST_CC_DEPS,
+    checks = [
+        checks.AC_TRY_LINK(
+            name = "je_cv_fallthrough",
+            code = utils.AC_LANG_PROGRAM(
+                [
+                    "#if !__has_attribute(fallthrough)",
+                    "#error \"foo\"",
+                    "#endif",
+                ],
+                [
+                    "int x = 0;",
+                    "switch (x) {",
+                    "case 0: __attribute__((__fallthrough__));",
+                    "case 1: return 1;",
+                    "}",
+                ],
+            ),
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR_FALLTHROUGH",
+            condition = "je_cv_fallthrough",
+        ),
+    ],
+    conlyopts = CONLYOPTS,
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "//conditions:default": ["-Wimplicit-fallthrough"],
+    }) + HOST_CPPFLAGS,
+    tags = ["manual"],
+)
+
+# configure.ac adds -Werror only around these probes (JE_CFLAGS_SAVE/JE_CFLAGS_RESTORE), so a construct the compiler
+# merely warns about counts as unsupported. Each check carries the flag in its own copts: rules_cc_autoconf strips
+# -Werror from the target's copts. cl ignores -Werror with a warning, as it does under configure.
+autoconf(
+    name = "jemalloc_defs_warnings_as_errors_checks",
+    cc_deps = HOST_CC_DEPS,
+    checks = [
+        checks.AC_TRY_LINK(
+            name = "je_cv_alloc_size",
+            code = utils.AC_LANG_PROGRAM("#include <stdlib.h>", "void *foo(size_t size) __attribute__((alloc_size(1)));"),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR_ALLOC_SIZE",
+            condition = "je_cv_alloc_size",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_format_gnu_printf",
+            code = utils.AC_LANG_PROGRAM("#include <stdlib.h>", "void *foo(const char *format, ...) __attribute__((format(gnu_printf, 1, 2)));"),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR_FORMAT_GNU_PRINTF",
+            condition = "je_cv_format_gnu_printf",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_format_printf",
+            code = utils.AC_LANG_PROGRAM("#include <stdlib.h>", "void *foo(const char *format, ...) __attribute__((format(printf, 1, 2)));"),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR_FORMAT_PRINTF",
+            condition = "je_cv_format_printf",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_format_arg",
+            code = utils.AC_LANG_PROGRAM("#include <stdlib.h>", "const char * __attribute__((__format_arg__(1))) foo(const char *format);"),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR_FORMAT_ARG",
+            condition = "je_cv_format_arg",
+        ),
+        checks.AC_TRY_LINK(
+            name = "je_cv_cold",
+            code = utils.AC_LANG_PROGRAM("", "__attribute__((__cold__)) void foo();"),
+            copts = ["-Werror"],
+        ),
+        checks.AC_DEFINE_UNQUOTED(
+            "JEMALLOC_HAVE_ATTR_COLD",
+            condition = "je_cv_cold",
+        ),
+    ],
+    conlyopts = CONLYOPTS,
+    copts = HOST_CPPFLAGS,
+    tags = ["manual"],
+)
+
+autoconf_hdr(
+    name = "jemalloc_defs",
+    out = "jemalloc_defs.h",
+    tags = ["manual"],
+    template = "jemalloc_defs.h.in",
+    visibility = [
+        "//include/jemalloc/internal:__pkg__",
+        "//tools/fidelity:__pkg__",
+    ],
+    deps = [
+        ":jemalloc_defs_checks",
+        ":jemalloc_defs_implicit_fallthrough_checks",
+        ":jemalloc_defs_warnings_as_errors_checks",
+    ],
+)
+
+expand_template(
+    name = "jemalloc_macros",
+    out = "jemalloc_macros.h",
+    substitutions = {
+        "@jemalloc_version@": VERSION.full,
+        "@jemalloc_version_major@": VERSION.major,
+        "@jemalloc_version_minor@": VERSION.minor,
+        "@jemalloc_version_bugfix@": VERSION.bugfix,
+        "@jemalloc_version_nrev@": VERSION.nrev,
+        "@jemalloc_version_gid@": VERSION.gid,
+    },
+    template = "jemalloc_macros.h.in",
+    visibility = [
+        "//test:__subpackages__",
+        "//tools/fidelity:__pkg__",
+    ],
+)
+
+public_symbols_header(
+    name = "jemalloc_mangle",
+    out = "jemalloc_mangle.h",
+    public_symbols = "//include/jemalloc/internal:public_symbols",
+    script = "jemalloc_mangle.sh",
+    symbol_prefix = "je_",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+public_symbols_header(
+    name = "jemalloc_mangle_jet",
+    out = "jemalloc_mangle_jet.h",
+    public_symbols = "//include/jemalloc/internal:public_symbols",
+    script = "jemalloc_mangle.sh",
+    symbol_prefix = "jet_",
+    tags = ["manual"],
+    visibility = ["//tools/fidelity:__pkg__"],
+)
+
+expand_template(
+    name = "jemalloc_protos",
+    out = "jemalloc_protos.h",
+    substitutions = {
+        "@je_@": "je_",
+        "@install_suffix@": "",
+    },
+    template = "jemalloc_protos.h.in",
+    visibility = ["//tools/fidelity:__pkg__"],
+)
+
+expand_template(
+    name = "jemalloc_protos_jet",
+    out = "jemalloc_protos_jet.h",
+    substitutions = {
+        "@je_@": "jet_",
+        "@install_suffix@": "",
+    },
+    template = "jemalloc_protos.h.in",
+)
+
+public_symbols_header(
+    name = "jemalloc_rename",
+    out = "jemalloc_rename.h",
+    public_symbols = "//include/jemalloc/internal:public_symbols",
+    script = "jemalloc_rename.sh",
+    tags = ["manual"],
+    visibility = ["//visibility:public"],
+)
+
+expand_template(
+    name = "jemalloc_typedefs",
+    out = "jemalloc_typedefs.h",
+    substitutions = {},
+    template = "jemalloc_typedefs.h.in",
+    visibility = ["//tools/fidelity:__pkg__"],
+)
+
+jemalloc_hdr(
+    name = "jemalloc",
+    srcs = [
+        # do not sort: jemalloc.h concatenates them in this order
+        ":jemalloc_defs",
+        ":jemalloc_rename",
+        ":jemalloc_macros",
+        ":jemalloc_protos",
+        ":jemalloc_typedefs",
+        ":jemalloc_mangle",
+    ],
+    out = "jemalloc.h",
+    tags = ["manual"],
+    visibility = ["//:__subpackages__"],
+)

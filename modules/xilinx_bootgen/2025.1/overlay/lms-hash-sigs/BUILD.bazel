@@ -1,0 +1,77 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:BSD-3-Clause",
+    text = "license.txt",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# Cisco's LMS/HSS signature library: the objects of this directory's own
+# Makefile's hss_lib_thread.a rule (the pthread-threaded build), which the
+# top-level Makefile links into bootgen.  BSD 3-Clause, hence the package's
+# own metadata above.
+cc_library(
+    name = "hss_lib_thread",
+    srcs = [
+        "endian.c",
+        "fips202.c",
+        "hss.c",
+        "hss_alloc.c",
+        "hss_aux.c",
+        "hss_common.c",
+        "hss_compute.c",
+        "hss_derive.c",
+        "hss_generate.c",
+        "hss_keygen.c",
+        "hss_param.c",
+        "hss_reserve.c",
+        "hss_sign.c",
+        "hss_sign_inc.c",
+        "hss_thread_pthread.c",
+        "hss_verify.c",
+        "hss_verify_inc.c",
+        "hss_zeroize.c",
+        "lm_common.c",
+        "lm_ots_common.c",
+        "lm_ots_sign.c",
+        "lm_ots_verify.c",
+        "lm_verify.c",
+        "lms_hash.c",
+        "lms_keys.c",
+        "lms_sign.c",
+        "sha256.c",
+    ],
+    hdrs = glob(["*.h"]),
+    copts = COPTS,
+    includes = ["."],
+    # hss_thread_pthread.c; the top-level Makefile links with -lpthread.
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lpthread"],
+    }),
+    visibility = ["//:__pkg__"],
+    # sha256.c is a wrapper over OpenSSL's SHA-256 (upstream builds the
+    # directory against the system OpenSSL headers).
+    deps = ["@openssl//:crypto"],
+)

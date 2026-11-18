@@ -1,0 +1,138 @@
+# The tests that upstream registers with ctest (ASMJIT_TEST=ON), plus the two
+# extra invocations from upstream's CI (.github/workflows/build-config.json):
+# asmjit_test_assembler --validate and asmjit_bench_codegen --quick.
+#
+# This is the root package of the test module (MODULE.bazel here), which uses
+# the parent directory as @asmjit through local_path_override. It is also the
+# //test package of @asmjit itself, which is how the two headers below, that
+# the library sources include as "../../../test/<header>" when built with
+# ASMJIT_TEST, become inputs of @asmjit.
+load("@asmjit//:defs.bzl", "ASMJIT_COPTS", "ASMJIT_LINKOPTS")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+exports_files(
+    [
+        "asmjit_test_random.h",
+        "broken.h",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# AsmJit compiled with its embedded unit tests (ASMJIT_TEST), which only
+# asmjit_test_unit links, as upstream's asmjit_test_unit target does.
+cc_library(
+    name = "asmjit_with_unit_tests",
+    testonly = True,
+    srcs = [
+        "@asmjit//:srcs",
+        "@asmjit//test:asmjit_test_random.h",
+        "@asmjit//test:broken.h",
+    ],
+    copts = ASMJIT_COPTS,
+    defines = ["ASMJIT_TEST"],
+    linkopts = ASMJIT_LINKOPTS,
+    deps = ["@asmjit//:headers"],
+    # The unit tests register themselves from static initializers.
+    alwayslink = True,
+)
+
+cc_library(
+    name = "test_helpers",
+    testonly = True,
+    hdrs = [
+        "asmjit_test_assembler.h",
+        "asmjit_test_compiler.h",
+        "asmjit_test_misc.h",
+        "asmjit_test_random.h",
+        "asmjitutils.h",
+        "cmdline.h",
+        "performancetimer.h",
+    ],
+)
+
+cc_test(
+    name = "asmjit_test_unit",
+    srcs = [
+        "asmjit_test_unit.cpp",
+        "broken.cpp",
+        "broken.h",
+    ],
+    copts = ASMJIT_COPTS,
+    deps = [
+        ":asmjit_with_unit_tests",
+        ":test_helpers",
+    ],
+)
+
+[
+    cc_test(
+        name = name,
+        srcs = [
+            "asmjit_test_assembler.cpp",
+            "asmjit_test_assembler_a64.cpp",
+            "asmjit_test_assembler_x64.cpp",
+            "asmjit_test_assembler_x86.cpp",
+        ],
+        args = args,
+        copts = ASMJIT_COPTS,
+        deps = [
+            ":test_helpers",
+            "@asmjit",
+        ],
+    )
+    for name, args in {
+        "asmjit_test_assembler": [],
+        "asmjit_test_assembler_validate": ["--validate"],
+    }.items()
+]
+
+cc_test(
+    name = "asmjit_bench_codegen",
+    srcs = [
+        "asmjit_bench_codegen.cpp",
+        "asmjit_bench_codegen.h",
+        "asmjit_bench_codegen_a64.cpp",
+        "asmjit_bench_codegen_x86.cpp",
+    ],
+    args = ["--quick"],
+    copts = ASMJIT_COPTS,
+    deps = [
+        ":test_helpers",
+        "@asmjit",
+    ],
+)
+
+cc_test(
+    name = "asmjit_test_compiler",
+    srcs = [
+        "asmjit_test_compiler.cpp",
+        "asmjit_test_compiler_a64.cpp",
+        "asmjit_test_compiler_x86.cpp",
+    ],
+    copts = ASMJIT_COPTS,
+    deps = [
+        ":test_helpers",
+        "@asmjit",
+    ],
+)
+
+[
+    cc_test(
+        name = test,
+        srcs = ["{}.cpp".format(test)],
+        copts = ASMJIT_COPTS,
+        deps = [
+            ":test_helpers",
+            "@asmjit",
+        ],
+    )
+    for test in [
+        "asmjit_bench_overhead",
+        "asmjit_bench_regalloc",
+        "asmjit_test_emitters",
+        "asmjit_test_environment",
+        "asmjit_test_instinfo",
+        "asmjit_test_x86_sections",
+    ]
+]

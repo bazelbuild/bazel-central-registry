@@ -15,6 +15,13 @@ parentheses:
 A consumer depends on `@sdl3` alone and includes `<SDL3/SDL.h>`. That target
 carries the public headers, so the build satisfies `layering_check`.
 
+A consumer can build with `--features=external_include_paths` and
+`--host_features=external_include_paths`. It then gets SDL's headers with
+`-isystem`, as it gets those of other modules, so their warnings stay out of
+its build. Without the feature, Bazel 7 and 8 pass them with `-isystem`, and
+Bazel 9 with `-I`. With MSVC, the feature needs rules_cc 0.2.18 or newer. Older
+versions pass `/external:I` without `/external:W0`, and MSVC ignores the path.
+
 The module supports Linux, macOS and Windows. On other platforms `@sdl3` is
 incompatible, and a wildcard build therefore skips it. The module needs Bazel
 7.4.0 or newer, because rules_cc_autoconf uses `attr.string_keyed_label_dict`.
@@ -77,7 +84,7 @@ links `@sdl3` as a consumer links it.
    EOF search with `SDL_strnstr`, delete the patch as above.
 4. Set the new version in `MODULE.bazel` and in `overlay/MODULE.bazel`. Keep
    the two files identical, because `bcr_validation` compares them.
-5. Change the `release-3.4.18` links in `overlay/` to the new release tag.
+5. Change the `release-3.4.20` links in `overlay/` to the new release tag.
    Correct each line anchor that moved.
 6. Update the hashes with `bazel run //tools:update_integrity -- sdl3
    --version=<new>`. Then start the presubmit matrix.

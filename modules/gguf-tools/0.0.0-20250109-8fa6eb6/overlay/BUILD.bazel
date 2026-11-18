@@ -1,0 +1,69 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+exports_files(
+    ["LICENSE"],
+    visibility = ["//visibility:private"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+# gguflib uses assert() to reject malformed tensor headers, so keep the asserts
+# live even in optimized builds (matches the upstream MLX CMake setup).
+_COPTS = select({
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "//conditions:default": ["-UNDEBUG"],
+})
+
+cc_library(
+    name = "gguflib",
+    srcs = [
+        "fp16.c",
+        "gguflib.c",
+    ],
+    hdrs = [
+        "bf16.h",
+        "fp16.h",
+        "gguflib.h",
+    ],
+    copts = _COPTS,
+    includes = ["."],
+    linkopts = select({
+        "@platforms//os:linux": ["-lm"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "gguf-tools",
+    srcs = [
+        "gguf-tools.c",
+        "sds.c",
+        "sds.h",
+        "sdsalloc.h",
+    ],
+    copts = _COPTS,
+    visibility = ["//visibility:public"],
+    deps = [":gguflib"],
+)

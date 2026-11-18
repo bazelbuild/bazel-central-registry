@@ -1,0 +1,118 @@
+"""rules_tofu: Bazel rules for managing OpenTofu/Terraform configuration.
+
+Downstream usage (for the latest version, see
+https://registry.bazel.build/modules/rules_tofu or the GitHub releases page):
+
+    bazel_dep(name = "rules_tofu", version = "X.Y.Z")
+    tofu = use_extension("@rules_tofu//toolchain:extensions.bzl", "tofu")
+    # tofu.version(version = "1.8.5")  # optional override
+    use_repo(tofu, "tofu_toolchains")
+"""
+
+# `version` is deliberately unset: the release tag is the single source of
+# truth. publish-to-bcr patches the release version into the BCR entry's
+# MODULE.bazel, and leaving the default here avoids issues when the module
+# is consumed via non-registry overrides (see
+# https://github.com/bazel-contrib/rules_go/issues/4380 and the NOTE in
+# bazel-contrib/rules-template's MODULE.bazel).
+#
+# Keep comments OUT of the module() block below: publish-to-bcr inserts
+# `version` before the first ")" after "module(", so a parenthesis in a
+# comment inside the block yields a broken MODULE.bazel (as with 0.1.1).
+#
+# 8.5.0 is the oldest supported Bazel: it is the first with extension facts,
+# which tf_providers uses to record registry digests in MODULE.bazel.lock.
+module(
+    name = "rules_tofu",
+    bazel_compatibility = [">=8.5.0"],
+    version = "0.3.0",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_go", version = "0.60.0")
+bazel_dep(name = "gazelle", version = "0.40.0")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.26.3")
+
+# The host Go SDK, which compiles the .terraform.lock.hcl reader that
+# tf_providers.from_lock runs (see tf/providers/lock_reader.bzl).
+use_repo(go_sdk, "go_host_compatible_sdk_label")
+
+lock_reader = use_repo_rule("//tf/providers:lock_reader.bzl", "lock_reader")
+
+lock_reader(name = "rules_tofu_lock_reader")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_hashicorp_hcl_v2",
+)
+
+tofu = use_extension("//toolchain:extensions.bzl", "tofu")
+use_repo(tofu, "tofu_toolchains")
+
+register_toolchains("@tofu_toolchains//:all")
+
+# Provider plugins, downloaded once per workspace and vendored into deploy work
+# trees so `tofu init` runs fully offline. aws and google pin their sha256s;
+# posthog trusts the OpenTofu registry's, which are recorded in
+# MODULE.bazel.lock. BUILD files name every provider through the hub, e.g.
+# `@tf_providers//hashicorp/aws`.
+# These declarations exist only to drive the in-tree `examples/aws`,
+# `examples/gcp` and `examples/posthog` targets, so the usage is marked
+# `dev_dependency`: that keeps the example pins out of the published module,
+# where they would otherwise feed into (and skew) a downstream's own
+# `tf_providers` version resolution.
+tf_providers = use_extension("//tf/providers:extensions.bzl", "tf_providers", dev_dependency = True)
+tf_providers.provider(
+    sha256 = {
+        "linux_amd64": "49ecd456fb8fee5562725c36bd5992b6982704100ead0164d26c6cbb11b07653",
+        "linux_arm64": "295133d1097c14254729a24a61f4cb2e8d7f278f80a8cbfafd3ac9401ab370d6",
+        "darwin_amd64": "233b84d24e042e7187efc1ff601cdada61ee1bfab6facc454430d880660145ef",
+        "darwin_arm64": "b05796c799ab11b12f2510a06343d30fd61fdad09835ec24ac1741970a3d8f48",
+        "windows_amd64": "1599fc46d0bd5b621ef054a93d69bbaba1e74828d9a59741ff13b10366dad245",
+    },
+    source = "hashicorp/aws",
+    version = "6.45.0",
+)
+tf_providers.provider(
+    sha256 = {
+        "linux_amd64": "84cba090b3d9eee432a5121e4484ef592976fc4918cb10eb0182dea00cecd8c1",
+        "linux_arm64": "e24d8380413b3460b1ac09687a9a78904e6b5d011db0fad952ee76d806ee6e85",
+        "darwin_amd64": "d26e0221f7dd7abf5cd9431f5bea227d176ea7e81c50fb0d96c7d7f1fc77ef56",
+        "darwin_arm64": "46722e5509ba24cad6ab85cb5dae6f06e97e416660b68b8ff4cbce682f597d59",
+        "windows_amd64": "1b9261f4a7329c4fa73886e3474ebdc66a0fa36aee78233f5a24e335e6062777",
+    },
+    source = "hashicorp/google",
+    version = "7.32.0",
+)
+tf_providers.provider(
+    source = "PostHog/posthog",
+    version = "1.0.24",
+)
+
+# examples/lock takes its providers from a .terraform.lock.hcl instead, which
+# Renovate and Dependabot can update. `@tf_providers//:pin` regenerates it.
+tf_providers.from_lock(lock = "//examples/lock:.terraform.lock.hcl")
+use_repo(tf_providers, "tf_providers")
+
+# `unittest`/`asserts` for the Starlark tests under //toolchain/tests and
+# //tf/providers/tests. Dev-only, which is why those tests are subpackages:
+# //toolchain:BUILD.bazel and //tf/providers:BUILD.bazel are loaded by
+# downstream modules and must not reference a dev-only repo.
+bazel_dep(name = "bazel_skylib", version = "1.9.2", dev_dependency = True)
+
+# Bazel-in-Bazel integration tests under //tests/integration.
+bazel_dep(name = "rules_bazel_integration_test", version = "0.37.1", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
+
+bazel_binaries = use_extension(
+    "@rules_bazel_integration_test//:extensions.bzl",
+    "bazel_binaries",
+    dev_dependency = True,
+)
+bazel_binaries.download(version_file = "//:.bazelversion")
+use_repo(bazel_binaries, "bazel_binaries", "bazel_binaries_bazelisk", "build_bazel_bazel_.bazelversion")

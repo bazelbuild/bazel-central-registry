@@ -1,0 +1,67 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
+
+# Select OpenSSL with --@jwt-cpp//:ssl_lib=openssl.
+string_flag(
+    name = "ssl_lib",
+    build_setting_default = "boringssl",
+    values = [
+        "boringssl",
+        "openssl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_boringssl",
+    flag_values = {":ssl_lib": "boringssl"},
+)
+
+config_setting(
+    name = "use_openssl",
+    flag_values = {":ssl_lib": "openssl"},
+)
+
+cc_library(
+    name = "jwt-cpp",
+    hdrs = [
+        "include/jwt-cpp/base.h",
+        "include/jwt-cpp/jwt.h",
+        "include/jwt-cpp/traits/defaults.h",
+        "include/jwt-cpp/traits/nlohmann-json/defaults.h",
+        "include/jwt-cpp/traits/nlohmann-json/traits.h",
+    ],
+    defines = [
+        "JWT_DISABLE_PICOJSON",
+    ],
+    include_prefix = "jwt-cpp",
+    strip_include_prefix = "include/jwt-cpp",
+    visibility = ["//visibility:public"],
+    deps = ["@nlohmann_json//:json"] + select({
+        ":use_boringssl": ["@boringssl//:crypto"],
+        ":use_openssl": ["@openssl//:crypto"],
+    }),
+)

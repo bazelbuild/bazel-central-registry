@@ -1,0 +1,28 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+cc_binary(
+    name = "qpdf",
+    srcs = ["qpdf.cc"],
+    cxxopts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++20"],
+        "@rules_cc//cc/compiler:clang-cl": ["/std:c++20"],
+        "//conditions:default": ["-std=c++20"],
+    }),
+    # mingw needs -municode for wmain; the MSVC CRT finds it itself. Unlike upstream, links neither wsetargv.obj nor
+    # CRT_glob.o, so qpdf.exe doesn't expand argv wildcards.
+    linkopts = select({
+        "//:windows_msvc": [],
+        "//:windows_clang_cl": [],
+        "@platforms//os:windows": ["-municode"],
+        "//conditions:default": [],
+    }),
+    # Upstream's check_wmain probe passes on every supported Windows toolchain.
+    local_defines = select({
+        "//:windows_msvc": ["WINDOWS_WMAIN"],
+        "//:windows_clang_cl": ["WINDOWS_WMAIN"],
+        "@platforms//os:windows": ["WINDOWS_WMAIN"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["//libqpdf:qpdf"],
+)

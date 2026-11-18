@@ -1,0 +1,158 @@
+"""BUILD file for reflect-cpp.
+
+The targets follow the upstream CMake build's split: a format-independent
+core, plus one target per serialization format that depends on the core and
+on that format's library. Depend on the formats you use. :reflect-cpp
+combines all of them, as in earlier versions of this module.
+"""
+
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+_COPTS = ["--std=c++20"]
+
+# Entry-point headers of the serialization formats. Each format's own
+# target provides its header; the core provides none of them.
+_FORMAT_HEADERS = [
+    "include/rfl/avro.hpp",
+    "include/rfl/bson.hpp",
+    "include/rfl/capnproto.hpp",
+    "include/rfl/cbor.hpp",
+    "include/rfl/csv.hpp",
+    "include/rfl/flexbuf.hpp",
+    "include/rfl/json.hpp",
+    "include/rfl/msgpack.hpp",
+    "include/rfl/parquet.hpp",
+    "include/rfl/toml.hpp",
+    "include/rfl/ubjson.hpp",
+    "include/rfl/xml.hpp",
+    "include/rfl/yaml.hpp",
+]
+
+# Reflection, validators, and the generic representation: upstream's
+# src/reflectcpp.cpp. Uses only the header-only libraries upstream bundles
+# (ctre, enchantum).
+cc_library(
+    name = "core",
+    srcs = [
+        "src/rfl/Generic.cpp",
+        "src/rfl/generic/Writer.cpp",
+        "src/rfl/internal/strings/strings.cpp",
+        "src/rfl/parsing/schema/Type.cpp",
+        "src/rfl/parsing/schemaful/tuple_to_object.cpp",
+    ],
+    hdrs = glob(
+        [
+            "include/rfl.hpp",
+            "include/rfl/*.hpp",
+            "include/rfl/generic/**",
+            "include/rfl/internal/**",
+            "include/rfl/io/**",
+            "include/rfl/parsing/**",
+            "include/rfl/thirdparty/**",
+        ],
+        exclude = _FORMAT_HEADERS + [
+            # :json uses yyjson from the yyjson module instead.
+            "include/rfl/thirdparty/yyjson.h",
+        ],
+    ),
+    copts = _COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+)
+
+# JSON: upstream's src/reflectcpp_json.cpp. Uses yyjson from the yyjson
+# module rather than the copy upstream bundles, so a build links one yyjson.
+cc_library(
+    name = "json",
+    srcs = [
+        "src/rfl/json/Writer.cpp",
+        "src/rfl/json/to_schema.cpp",
+    ],
+    hdrs = ["include/rfl/json.hpp"] + glob(["include/rfl/json/**"]),
+    copts = _COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        "@yyjson",
+    ],
+)
+
+# YAML: upstream's src/reflectcpp_yaml.cpp.
+cc_library(
+    name = "yaml",
+    srcs = ["src/rfl/yaml/Writer.cpp"],
+    hdrs = ["include/rfl/yaml.hpp"] + glob(["include/rfl/yaml/**"]),
+    copts = _COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        "@yaml-cpp",
+    ],
+)
+
+# Cap'n Proto: upstream's src/reflectcpp_capnproto.cpp. Its schema
+# generation goes through JSON, hence :json.
+cc_library(
+    name = "capnproto",
+    srcs = [
+        "src/rfl/capnproto/Reader.cpp",
+        "src/rfl/capnproto/SchemaImpl.cpp",
+        "src/rfl/capnproto/Type.cpp",
+        "src/rfl/capnproto/Writer.cpp",
+        "src/rfl/capnproto/to_schema.cpp",
+    ],
+    hdrs = ["include/rfl/capnproto.hpp"] + glob(["include/rfl/capnproto/**"]),
+    copts = _COPTS,
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":core",
+        ":json",
+        "@capnp-cpp//src/capnp",
+        "@capnp-cpp//src/capnp:capnpc",
+    ],
+)
+
+# What this target provided in earlier versions of this module: the core,
+# JSON, YAML, and Cap'n Proto, with support for C arrays and inheritance
+# turned on for dependents (REFLECT_CPP_C_ARRAYS_OR_INHERITANCE). The headers
+# are listed again so that code depending only on this target may include
+# them under layering_check.
+cc_library(
+    name = "reflect-cpp",
+    hdrs = glob(
+        [
+            "include/rfl.hpp",
+            "include/rfl/*.hpp",
+            "include/rfl/generic/**",
+            "include/rfl/internal/**",
+            "include/rfl/io/**",
+            "include/rfl/json/**",
+            "include/rfl/capnproto/**",
+            "include/rfl/parsing/**",
+            "include/rfl/thirdparty/**",
+            "include/rfl/yaml/**",
+        ],
+        exclude = [
+            "include/rfl/avro.hpp",
+            "include/rfl/bson.hpp",
+            "include/rfl/cbor.hpp",
+            "include/rfl/flexbuf.hpp",
+            "include/rfl/msgpack.hpp",
+            "include/rfl/toml.hpp",
+            "include/rfl/ubjson.hpp",
+            "include/rfl/xml.hpp",
+        ],
+    ),
+    defines = ["REFLECT_CPP_C_ARRAYS_OR_INHERITANCE"],
+    includes = ["include"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":capnproto",
+        ":core",
+        ":json",
+        ":yaml",
+    ],
+)

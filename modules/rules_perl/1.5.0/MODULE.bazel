@@ -1,0 +1,82 @@
+"""
+Perl rules
+"""
+
+module(
+    name = "rules_perl",
+    version = "1.5.0",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "rules_cc", version = "0.2.9")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+
+# Stardoc is used by //docs to regression test the `bzl_library` tree.
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+
+# Stardoc pulls in protobuf, whose Starlark actions do not yet declare their
+# toolchains and so fail analysis under `--incompatible_auto_exec_groups`.
+# Patch the affected actions until the upstream fix is released:
+# https://github.com/protocolbuffers/protobuf/pull/30568
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//tools/patches:protobuf-auto-exec-groups.patch"],
+    version = "33.4",
+)
+
+repos = use_extension("@rules_perl//perl:extensions.bzl", "perl_repositories")
+use_repo(
+    repos,
+    "perl_darwin_amd64",
+    "perl_darwin_arm64",
+    "perl_linux_amd64",
+    "perl_linux_arm64",
+    "perl_windows_x86_64",
+)
+
+# Target toolchains: the perl a target is built for.
+register_toolchains(
+    "@rules_perl//perl:perl_darwin_amd64_toolchain",
+    "@rules_perl//perl:perl_darwin_arm64_toolchain",
+    "@rules_perl//perl:perl_linux_amd64_toolchain",
+    "@rules_perl//perl:perl_linux_arm64_toolchain",
+    "@rules_perl//perl:perl_windows_x86_64_toolchain",
+)
+
+# Exec toolchains: the perl that runs build actions such as xsubpp.
+register_toolchains(
+    "@rules_perl//perl:perl_darwin_amd64_toolchain_exec",
+    "@rules_perl//perl:perl_darwin_arm64_toolchain_exec",
+    "@rules_perl//perl:perl_linux_amd64_toolchain_exec",
+    "@rules_perl//perl:perl_linux_arm64_toolchain_exec",
+    "@rules_perl//perl:perl_windows_x86_64_toolchain_exec",
+)
+
+# Host-fallback toolchains are registered last so they only resolve when no
+# target-constrained perl toolchain above matches the target platform.
+register_toolchains(
+    "@rules_perl//perl:perl_darwin_amd64_toolchain_any_target",
+    "@rules_perl//perl:perl_darwin_arm64_toolchain_any_target",
+    "@rules_perl//perl:perl_linux_amd64_toolchain_any_target",
+    "@rules_perl//perl:perl_linux_arm64_toolchain_any_target",
+    "@rules_perl//perl:perl_windows_x86_64_toolchain_any_target",
+)
+
+cpan = use_extension("@rules_perl//perl/cpan:extensions.bzl", "cpan")
+cpan.install(
+    name = "cpan_compiler_deps",
+    lock = "//perl/cpan/3rdparty:cpanfile.snapshot.lock.json",
+)
+use_repo(
+    cpan,
+    "cpan_compiler_deps",
+)
+
+dev_repos = use_extension("@rules_perl//perl:extensions.bzl", "perl_dev_repositories", dev_dependency = True)
+use_repo(
+    dev_repos,
+    "fcgi",
+    "genhtml",
+)

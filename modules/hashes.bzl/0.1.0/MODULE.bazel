@@ -1,0 +1,49 @@
+module(
+    name = "hashes.bzl",
+    version = "0.1.0",
+    # json.decode yields UTF-8 bytes, like every other Bazel string, only from
+    # 8.2.0 (bazelbuild/bazel#24417); see "Compatibility" in README.md.
+    bazel_compatibility = [">=8.2.0"],
+)
+
+###############################################################################
+# Development dependencies (tests only)
+###############################################################################
+bazel_dep(name = "aspect_rules_py", version = "1.11.2", dev_dependency = True)
+bazel_dep(name = "bazel_skylib", version = "1.9.2", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "10.1.0", dev_dependency = True)
+
+# Only so .bazelrc can set its python_version flag, which aspect_rules_py's uv
+# extension requires to agree with its own.
+bazel_dep(name = "rules_python", version = "1.7.0", dev_dependency = True)
+
+interpreters = use_extension(
+    "@aspect_rules_py//py/unstable:extension.bzl",
+    "python_interpreters",
+    dev_dependency = True,
+)
+interpreters.toolchain(
+    is_default = True,
+    python_version = "3.14",
+)
+use_repo(interpreters, "python_interpreters")
+
+register_toolchains(
+    "@python_interpreters//:all",
+    dev_dependency = True,
+)
+
+uv = use_extension(
+    "@aspect_rules_py//uv/unstable:extension.bzl",
+    "uv",
+    dev_dependency = True,
+)
+uv.declare_hub(hub_name = "pypi")
+uv.project(
+    # Every locked requirement ships a wheel, so no sdist build tools are needed.
+    default_build_dependencies = [],
+    hub_name = "pypi",
+    lock = "//:uv.lock",
+    pyproject = "//:pyproject.toml",
+)
+use_repo(uv, "pypi")

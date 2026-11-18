@@ -1,0 +1,75 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT-open-group",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# Public header, exposed as <xcb/xcb_renderutil.h> to match the installed layout.
+cc_library(
+    name = "renderutil_prefixed_hdrs",
+    hdrs = ["renderutil/xcb_renderutil.h"],
+    include_prefix = "xcb",
+    strip_include_prefix = "renderutil",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    deps = ["@libxcb"],
+)
+
+# Unprefixed header for xcb-renderutil's own sources, which use
+# #include "xcb_renderutil.h". Used via implementation_deps so the bare
+# "renderutil" include path does not propagate to dependents.
+cc_library(
+    name = "renderutil_private_hdrs",
+    hdrs = ["renderutil/xcb_renderutil.h"],
+    includes = ["renderutil"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:private"],
+    deps = ["@libxcb"],
+)
+
+cc_library(
+    name = "xcb-renderutil",
+    srcs = [
+        "renderutil/cache.c",
+        "renderutil/glyph.c",
+        "renderutil/util.c",
+    ],
+    implementation_deps = [":renderutil_private_hdrs"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":renderutil_prefixed_hdrs",
+        "@libxcb",
+        "@xorgproto",
+    ],
+)
+
+alias(
+    name = "libxcb-render-util",
+    actual = ":xcb-renderutil",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "renderutil",
+    actual = ":xcb-renderutil",
+    visibility = ["//visibility:public"],
+)

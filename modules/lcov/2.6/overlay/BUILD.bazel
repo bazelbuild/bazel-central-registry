@@ -1,0 +1,99 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_perl//perl:perl_binary.bzl", "perl_binary")
+load("@rules_perl//perl:perl_library.bzl", "perl_library")
+load("@rules_perl//perl/cpan:cpan_compiler.bzl", "cpan_compiler")
+
+exports_files(["COPYING"])
+
+# GPL-2.0-or-later: every source says "either version 2 of the License, or (at
+# your option) any later version", and COPYING is the GPLv2 text.
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:GPL-2.0-or-later",
+    text = "COPYING",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# The Perl tools. py2lcov, xml2lcov and xml2lcovutil.py are Python.
+BINARIES = [
+    "bin/fix.pl",
+    "bin/gendesc",
+    "bin/genhtml",
+    "bin/geninfo",
+    "bin/genpng",
+    "bin/html2lcov",
+    "bin/jacoco2lcov",
+    "bin/lcov",
+    "bin/llvm2lcov",
+    "bin/perl2lcov",
+]
+
+exports_files(glob(
+    include = ["bin/*"],
+    exclude = BINARIES,
+))
+
+perl_library(
+    name = "liblcov",
+    srcs = ["lib/lcovutil.pm"],
+    includes = ["lib"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@lcov_deps//:Capture-Tiny",
+        "@lcov_deps//:DateTime",
+        "@lcov_deps//:DateTime-Format-W3CDTF",
+        "@lcov_deps//:Devel-Cover",
+        "@lcov_deps//:Devel-StackTrace",
+        "@lcov_deps//:Memory-Process",
+        "@lcov_deps//:TimeDate",
+    ],
+)
+
+# Preloaded by the tools under --@rules_perl//perl/settings:xs=false, which on
+# Linux resolves a perl without dynamic loading; see the module itself. With
+# the flag on the tools neither load nor carry it.
+perl_library(
+    name = "lcov_pure_perl",
+    srcs = ["lib/lcov_pure_perl.pm"],
+    includes = ["lib"],
+)
+
+PURE_PERL_PERLOPT = select({
+    "@rules_perl//perl/settings:xs_disabled": ["-Mlcov_pure_perl"],
+    "//conditions:default": [],
+})
+
+PURE_PERL_DEPS = select({
+    "@rules_perl//perl/settings:xs_disabled": [":lcov_pure_perl"],
+    "//conditions:default": [],
+})
+
+[
+    perl_binary(
+        name = bin[len("bin/"):],
+        srcs = [bin],
+        perlopt = PURE_PERL_PERLOPT,
+        visibility = ["//visibility:public"],
+        deps = [":liblcov"] + PURE_PERL_DEPS,
+    )
+    for bin in BINARIES
+]
+
+# Despite lcov working perfectly fine on macos and windows, it has dependencies
+# that are only installable on linux, thus compilation will only succeed there.
+cpan_compiler(
+    name = "cpan_compiler",
+    cpanfile = "cpanfile",
+    lockfile = "cpanfile.snapshot.lock.json",
+)
