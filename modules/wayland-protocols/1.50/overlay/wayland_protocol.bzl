@@ -64,7 +64,10 @@ def wayland_client_protocol(name, src, basename = None, header = None, **kwargs)
       header: generated header file name, overriding
         "<basename>-client-protocol.h" (some projects expect e.g.
         "xdg-foreign-unstable-v2.h").
-      **kwargs: forwarded to cc_library (visibility, target_compatible_with, ...).
+      **kwargs: forwarded to cc_library (deps, visibility,
+        target_compatible_with, ...). Pass `deps` on the libraries of other
+        protocols whose interfaces this one references, e.g. xdg-decoration
+        on xdg-shell.
     """
     if basename == None:
         # The file name without directories or extension, e.g. "xdg-shell".
@@ -74,11 +77,18 @@ def wayland_client_protocol(name, src, basename = None, header = None, **kwargs)
         header = basename + "-client-protocol.h"
     header = "%s/%s" % (gen_dir, header)
     code = "%s/%s-protocol.c" % (gen_dir, basename)
+    deps = kwargs.pop("deps", [])
+
+    # The generator follows the library's compatibility and testonly-ness, so
+    # that `bazel build //...` skips both on non-Linux hosts.
     _wayland_scanner(
         name = name + "_gen",
         src = src,
         header = header,
         code = code,
+        tags = ["manual"],
+        target_compatible_with = kwargs.get("target_compatible_with"),
+        testonly = kwargs.get("testonly"),
         visibility = ["//visibility:private"],
     )
     cc_library(
@@ -86,6 +96,6 @@ def wayland_client_protocol(name, src, basename = None, header = None, **kwargs)
         srcs = [code],
         hdrs = [header],
         strip_include_prefix = gen_dir,
-        deps = [Label("@wayland//:wayland_client")],
+        deps = [Label("@wayland//:wayland_client")] + deps,
         **kwargs
     )
