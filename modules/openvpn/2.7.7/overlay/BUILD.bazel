@@ -1,0 +1,80 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+exports_files(["distro/dns-scripts/systemd-dns-updown.sh"])
+
+cc_library(
+    name = "headers",
+    hdrs = [
+        "config.h",
+        "include/openvpn-plugin.h",
+    ],
+    defines = [
+        "HAVE_CONFIG_H",
+        "_GNU_SOURCE",
+    ],
+    includes = ["include"],
+    strip_include_prefix = ".",
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = ["@openssl//:ssl"],
+)
+
+cc_binary(
+    name = "openvpn",
+    srcs = glob(
+        [
+            "src/compat/*.c",
+            "src/compat/*.h",
+            "src/openvpn/*.c",
+            "src/openvpn/*.h",
+        ],
+        exclude = ["src/openvpn/wfp_block.c"],
+    ),
+    includes = ["src/compat"],
+    linkopts = ["-Wl,--as-needed"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        "@libcap-ng",
+        "@libnl//:genl",
+        "@lz4",
+        "@lzo",
+        "@pkcs11-helper",
+        "@systemd//:libsystemd",
+    ],
+)
+
+# Only the plugin entry points are part of the dynamic ABI.
+cc_library(
+    name = "pam_utils",
+    srcs = ["src/plugins/auth-pam/utils.c"],
+    hdrs = ["src/plugins/auth-pam/utils.h"],
+    copts = ["-fvisibility=hidden"],
+    deps = [":headers"],
+)
+
+cc_binary(
+    name = "openvpn-plugin-auth-pam.so",
+    srcs = ["src/plugins/auth-pam/auth-pam.c"],
+    dynamic_deps = ["@linux-pam//:libpam"],
+    # The plugin and its PAM library are installed in the same directory.
+    linkopts = [
+        "-Wl,--as-needed",
+        "-Wl,-rpath,$$ORIGIN",
+    ],
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":headers",
+        ":pam_utils",
+        "@linux-pam",
+    ],
+)
+
+cc_binary(
+    name = "openvpn-plugin-down-root.so",
+    srcs = ["src/plugins/down-root/down-root.c"],
+    linkopts = ["-Wl,--as-needed"],
+    linkshared = True,
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)

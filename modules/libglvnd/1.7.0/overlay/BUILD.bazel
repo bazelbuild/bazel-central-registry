@@ -1,0 +1,131 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+load(":glvnd_stubs.bzl", "glvnd_libdir", "glvnd_stub_library")
+
+# This module does not build libglvnd's runtime (libGLdispatch, vendor
+# loading). It provides link-time-only stubs of the libglvnd client libraries,
+# generated from upstream's per-library export lists, so OpenGL/EGL/GLES/GLX
+# consumers can be linked hermetically and cross-compiled without a sysroot
+# libGL. At runtime the system libglvnd and its installed vendor drivers are
+# used.
+#
+# Each public library target below bundles the stub with the headers for that
+# API. Depend only on what you use: e.g. headless rendering is :EGL + :OpenGL
+# (or :GLESv2), and does not pull in GLX or X11.
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+# Only these upstream files are used, each licensed as noted:
+#   src/*/*.symbols                    libglvnd license (NVIDIA, MIT-style)
+#   include/GL/glx.h                   Mesa license (MIT)
+#   include/GLES/{gl,glext}.h          Khronos, SPDX MIT
+#   include/GLES/glplatform.h          Khronos, SPDX Apache-2.0
+# README.md carries the libglvnd and Mesa license texts. The other licenses
+# it lists (uthash, buildconf, AX_PTHREAD, cJSON, list.h) cover upstream
+# files this module does not use.
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:Apache-2.0",
+        "@rules_license//licenses/spdx:MIT",
+    ],
+    license_text = "README.md",
+)
+
+exports_files(["README.md"] + glob(["src/*/*.symbols"]))
+
+_UNIX_GL_COMPATIBLE = select({
+    "@platforms//os:freebsd": [],
+    "@platforms//os:linux": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# <GL/glx.h>, the GLX client API header that distributions install from
+# libglvnd. libglvnd's copies of the Khronos headers (GL/gl.h, GL/glext.h,
+# GL/glxext.h, EGL/, GLES2/, GLES3/, KHR/) come from @opengl-registry and
+# @egl-registry instead, so there is a single copy of each on the include
+# path. @egl-registry is needed for <KHR/khrplatform.h>, which GL/glext.h
+# includes.
+cc_library(
+    name = "glx_headers",
+    hdrs = ["include/GL/glx.h"],
+    strip_include_prefix = "include",
+    target_compatible_with = _UNIX_GL_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@egl-registry//:EGL_headers",
+        "@libx11",
+        "@opengl-registry//:OpenGL_headers",
+    ],
+)
+
+# OpenGL ES 1.x headers (<GLES/gl.h>). These are not in @opengl-registry, so
+# libglvnd's copies are used.
+cc_library(
+    name = "gles1_headers",
+    hdrs = [
+        "include/GLES/gl.h",
+        "include/GLES/glext.h",
+        "include/GLES/glplatform.h",
+    ],
+    strip_include_prefix = "include",
+    target_compatible_with = _UNIX_GL_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = ["@egl-registry//:EGL_headers"],
+)
+
+cc_binary(
+    name = "gl_stub_gen",
+    srcs = ["gl_stub_gen.cc"],
+    visibility = ["//visibility:private"],
+)
+
+# (target name, SONAME, upstream export list, headers)
+_LIBRARIES = [
+    ("GL", "libGL.so.1", "src/GL/gl.symbols", [":glx_headers"]),
+    ("GLX", "libGLX.so.0", "src/GLX/glx.symbols", [":glx_headers"]),
+    ("OpenGL", "libOpenGL.so.0", "src/OpenGL/ogl.symbols", [
+        "@egl-registry//:EGL_headers",  # <KHR/khrplatform.h>
+        "@opengl-registry//:OpenGL_headers",
+    ]),
+    ("EGL", "libEGL.so.1", "src/EGL/egl.symbols", ["@egl-registry//:EGL_headers"]),
+    ("GLESv1_CM", "libGLESv1_CM.so.1", "src/GLESv1/glesv1.symbols", [":gles1_headers"]),
+    ("GLESv2", "libGLESv2.so.2", "src/GLESv2/glesv2.symbols", [
+        "@egl-registry//:EGL_headers",  # <KHR/khrplatform.h>
+        "@opengl-registry//:GLES2_headers",
+        "@opengl-registry//:GLES3_headers",
+    ]),
+]
+
+[
+    glvnd_stub_library(
+        name = name + "_stub",
+        link_name = name,
+        soname = soname,
+        symbols = symbols,
+        target_compatible_with = _UNIX_GL_COMPATIBLE,
+        visibility = ["//visibility:private"],
+    )
+    for name, soname, symbols, _ in _LIBRARIES
+]
+
+[
+    cc_library(
+        name = name,
+        target_compatible_with = _UNIX_GL_COMPATIBLE,
+        visibility = ["//visibility:public"],
+        deps = [":" + name + "_stub"] + hdrs,
+    )
+    for name, _, _, hdrs in _LIBRARIES
+]
+
+glvnd_libdir(
+    name = "libdir",
+    stubs = [":" + name + "_stub" for name, _, _, _ in _LIBRARIES],
+    target_compatible_with = _UNIX_GL_COMPATIBLE,
+    visibility = ["//visibility:public"],
+)

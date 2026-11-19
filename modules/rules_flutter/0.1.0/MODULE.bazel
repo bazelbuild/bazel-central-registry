@@ -1,0 +1,357 @@
+"Bazel dependencies"
+
+# NOTE: The version field is intentionally omitted. Leaving it unset (the
+# default "") prevents issues when the module is used via non-registry
+# overrides (e.g. https://github.com/bazel-contrib/rules_go/issues/4380).
+# The publish.yaml GitHub Action patches in the release version when
+# submitting to the Bazel Central Registry.
+#
+# That patcher edits the first occurrence of the declaration's opening text in
+# this file, comments included, and does not parse Starlark. Keep that text out
+# of everything above the declaration, and keep this note outside it.
+#
+# For more info, see this Slack thread:
+# https://bazelbuild.slack.com/archives/CA31HN1T3/p1750406404452179
+#
+# NOTE: compatibility_level is omitted (defaults to 0). Bumping it too
+# frequently is discouraged because it's very disruptive: as soon as a module
+# is requested at two different compatibility levels in the dependency tree,
+# users will see an error. Bump it *only* when the breaking change affects most
+# use cases and isn't easy to migrate and/or work around, and *in the same
+# commit* that introduces the incompatible (breaking) change.
+
+module(
+    name = "rules_flutter",
+    bazel_compatibility = [">=9.2.0"],
+    version = "0.1.0",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "package_metadata", version = "0.0.15")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_cc", version = "0.2.28")
+bazel_dep(name = "apple_support", version = "2.12.0")
+
+# Named as rules_swift_package_manager's generated BUILD files load them: the
+# Swift packages of Apple plugins' dependencies are repositories of the pub
+# extension, which see rules_flutter's names for its dependencies.
+bazel_dep(name = "rules_apple", version = "5.4.0", repo_name = "build_bazel_rules_apple")
+bazel_dep(name = "rules_swift", version = "4.2.2", repo_name = "build_bazel_rules_swift")
+bazel_dep(name = "rules_android", version = "0.8.1")
+bazel_dep(name = "rules_kotlin", version = "2.4.21")
+bazel_dep(name = "rules_java", version = "9.9.0")
+bazel_dep(name = "rules_jvm_external", version = "7.2")
+bazel_dep(name = "rules_dart", version = "0.9.1")
+
+# The Go SDK that builds rules_android's Go tools (`ak`, a tool of the Android
+# toolchain, so every Android build analyses it) and the Gazelle tools that
+# fetch their Go modules.
+# rules_dart brings Gazelle 0.54.0, whose `go.work` needs Go 1.24.12 or newer;
+# rules_android declares Go 1.22.4. rules_go builds with the first SDK the
+# module graph declares, the root's and then each module's in breadth-first
+# order, so this one, declared here, is the one an app gets whenever its
+# MODULE.bazel names rules_flutter before rules_android, as the README's does.
+bazel_dep(name = "rules_go", version = "0.64.2")
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.download(version = "1.27.3")
+
+# The Android SDK, for the SDK tools rules_flutter's own rules name
+# (`flutter_android_release`'s apksigner). The app chooses the SDK in its own
+# MODULE.bazel: rules_android's, found at `ANDROID_HOME`, or
+# hermetic_android_toolchains', which overrides this repository. This only
+# makes it visible here.
+android_sdk_repository_extension = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+)
+use_repo(android_sdk_repository_extension, "androidsdk")
+
+# This repository's own tests build with the downloaded SDK, as the README
+# recommends an app does, so they need no `ANDROID_HOME`. `.bazelrc` accepts
+# its licence. No test here builds native Android code, so no NDK.
+bazel_dep(name = "hermetic_android_toolchains", version = "0.5.0", dev_dependency = True)
+
+android = use_extension("@hermetic_android_toolchains//:extensions.bzl", "android", dev_dependency = True)
+android.sdk(
+    build_tools_version = "35.0.0",
+    version = "35",
+)
+
+# Named apart from `androidsdk`, which the `use_repo` above imports; every module's
+# `@androidsdk` is this one.
+use_repo(android, hermetic_androidsdk = "androidsdk")
+
+android_sdk_override = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+    dev_dependency = True,
+)
+
+override_repo(
+    android_sdk_override,
+    androidsdk = "hermetic_androidsdk",
+)
+
+register_toolchains(
+    "@hermetic_androidsdk//:all",
+    dev_dependency = True,
+)
+
+# Builds the Swift packages Apple plugins depend on (`.package(url:)`).
+bazel_dep(name = "rules_swift_package_manager", version = "1.25.0")
+
+# What the BUILD files rules_swift_package_manager generates load, besides
+# rules_cc, apple_support, bazel_skylib and the Apple rules above.
+bazel_dep(name = "rules_license", version = "1.0.0")
+
+# The development tooling rules_flutter shares with the repositories built on
+# rules_dart (the commit policy, release notes, tool pins, lock checks): the
+# `overhead/` module of rules_dart. `bazel run @overhead//changelog:check`, say.
+bazel_dep(name = "overhead", version = "0.0.0", dev_dependency = True)
+git_override(
+    module_name = "overhead",
+    commit = "6868a95fd5b341345c506eef8a19a2564ace65bc",
+    remote = "https://github.com/aran/rules_dart.git",
+    strip_prefix = "overhead",
+)
+
+# Put the apple_cc CC toolchain first for this repository's own builds, so
+# rules_swift's xcode_swift_toolchain resolves to a CC toolchain with a valid
+# Apple target triple (rather than the generic rules_cc local_config_cc, whose
+# target_gnu_system_name is "local" and causes "Invalid target triple" in
+# rules_swift autoconfig). apple_support's MODULE.bazel registers these
+# toolchains for every module that depends on it, but in this repository's dep
+# graph they can be ordered after the generic local_config_cc. Dependent
+# modules rely on apple_support's registration; a dev dependency keeps this one
+# from reordering their toolchains.
+apple_cc_configure = use_extension(
+    "@apple_support//crosstool:setup.bzl",
+    "apple_cc_configure_extension",
+)
+use_repo(apple_cc_configure, "local_config_apple_cc_toolchains")
+
+register_toolchains(
+    "@local_config_apple_cc_toolchains//:all",
+    dev_dependency = True,
+)
+
+e2e_copies = use_repo_rule("//tools/e2e_copy_guard:e2e_copies.bzl", "e2e_copies")
+
+e2e_copies(
+    name = "e2e_copies",
+    dev_dependency = True,
+)
+
+flutter = use_extension("//flutter:extensions.bzl", "flutter")
+flutter.toolchain(flutter_version = "3.47.9")
+use_repo(flutter, "flutter_android_emulator_darwin_aarch64", "flutter_android_emulator_linux_x64", "flutter_android_engine_arm", "flutter_android_engine_arm64", "flutter_android_engine_x64", "flutter_android_system_image_arm64_v8a", "flutter_android_system_image_x86_64", "flutter_chrome_for_testing_linux64", "flutter_chrome_for_testing_linux_arm64", "flutter_chrome_for_testing_mac_arm64", "flutter_chrome_for_testing_mac_x64", "flutter_chrome_for_testing_win64", "flutter_dev_root", "flutter_ios_engine", "flutter_ios_engine_profile", "flutter_linux_runtime_amd64", "flutter_linux_runtime_arm64", "flutter_macos_engine", "flutter_outline_tool", "flutter_sdks", "flutter_sky_engine", "flutter_toolchains", "flutter_version_pin", "flutter_web_sdk")
+
+flutter_pub = use_extension("//flutter/pub:extensions.bzl", "pub")
+use_repo(flutter_pub, "flutter_gen_l10n", "flutter_pub_android_maven", "flutter_pub_apple_app_settings")
+
+# One more SDK for each Dart release a supported Flutter version bundles, besides
+# the default's, for //flutter/tests/outline_fixture: it builds the fixture
+# under each, so every Dart's outline stripper is tested on that Dart's kernels.
+# Repositories are fetched lazily, so only those tests download them.
+flutter_outline = use_extension("//flutter:extensions.bzl", "flutter", dev_dependency = True)
+flutter_outline.toolchain(
+    name = "outline_dart_3_13_2",
+    flutter_version = "3.47.2",
+)
+flutter_outline.toolchain(
+    name = "outline_dart_3_13_4",
+    flutter_version = "3.47.5",
+)
+flutter_outline.toolchain(
+    name = "outline_dart_3_13_5",
+    flutter_version = "3.47.7",
+)
+
+register_toolchains("@flutter_toolchains//:all")
+
+# AndroidX dependencies the Flutter Android embedding (flutter.jar) requires
+# at runtime, mirroring the dependency list of Flutter's official
+# io.flutter:flutter_embedding_* Maven POM, plus androidx.annotation needed to
+# compile the runner Kotlin sources.
+#
+# `@rules_flutter_maven` is the one resolution of an app's Android libraries,
+# as Gradle resolves one per app: these, the Maven dependencies the app's
+# plugins declare, and those of the app's own Android code. A module that
+# needs more declares `maven.install(name = "rules_flutter_maven")` with its
+# artifacts and a lock of its own, and rules_jvm_external merges them with
+# these. A module that adds nothing gets this module's lock.
+#
+# The name is this module's, as rules_jvm_external asks of a module used
+# through `bazel_dep`, so no other module's tools share the resolution.
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "rules_flutter_maven",
+    # Coursier refuses an exact version range in a POM (`[1.3.6]`) when
+    # anything asks for a higher version; Gradle, which plugins are written
+    # against, lets the higher one win. Relaxed reconciliation does the same.
+    # The option reaches every module that declares an install of this name,
+    # because rules_jvm_external concatenates each module's options.
+    additional_coursier_options = [
+        "--reconciliation",
+        "*:*:relaxed",
+    ],
+    artifacts = [
+        "androidx.annotation:annotation:1.9.1",
+        "androidx.core:core:1.17.0",
+        # core's Gradle module metadata constrains core-ktx to its own
+        # version, as Gradle builds it. Coursier reads only POMs: without this
+        # line it resolves the 1.13.1 savedstate asks for, beside core 1.17.0.
+        # An app's `bazel run //:<app>_maven_artifacts` prints such lines.
+        "androidx.core:core-ktx:1.17.0",
+        "androidx.exifinterface:exifinterface:1.4.1",
+        "androidx.fragment:fragment:1.8.9",
+        "androidx.lifecycle:lifecycle-common:2.10.0",
+        "androidx.lifecycle:lifecycle-runtime:2.10.0",
+        # androidx.lifecycle is one version group, and fragment pulls in more
+        # of it than the lines above: pin those members to the same version.
+        # Relaxed reconciliation lets Coursier resolve without them, but takes
+        # the old version another artifact asks for (livedata 2.0.0,
+        # livedata-core and viewmodel-savedstate 2.6.1, savedstate 1.2.1) next
+        # to lifecycle-runtime 2.10.0. //tools/maven_locks:root_lock_test
+        # fails on that.
+        "androidx.lifecycle:lifecycle-livedata:2.10.0",
+        "androidx.lifecycle:lifecycle-livedata-core:2.10.0",
+        "androidx.lifecycle:lifecycle-viewmodel:2.10.0",
+        "androidx.lifecycle:lifecycle-viewmodel-savedstate:2.10.0",
+        "androidx.tracing:tracing:1.2.0",
+        "androidx.window:window:1.3.0",
+        "androidx.window:window-java:1.3.0",
+        "com.getkeepsafe.relinker:relinker:1.4.5",
+        # The bundled `flutter/ext/jni` overlay's Java support classes implement
+        # kotlin.coroutines.Continuation (PortContinuation returns
+        # Dispatchers.getIO()), so every workspace using a jnigen-based
+        # plugin needs these on the plugin's compile classpath and in the
+        # APK dex. kotlin-stdlib's version here is not the app's: see the
+        # override of it below.
+        "org.jetbrains.kotlin:kotlin-stdlib:2.1.20",
+        "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0",
+    ],
+    # The lock of these artifacts, which a module that adds none to the
+    # repository gets. Regenerate it with
+    # `bazel run //tools/maven_locks -- --refresh .` (docs/TESTING.md, "Maven
+    # lock files").
+    lock_file = "//:rules_flutter_maven_install.json",
+    repositories = [
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+)
+
+# lifecycle-runtime pulls in androidx.profileinstaller, whose
+# AbstractResolvableFuture implements com.google.guava's ListenableFuture and
+# runs in every app shortly after launch. androidx asks for the 1.0 jar that
+# holds it; from 27.0, Guava's POM asks for
+# `9999.0-empty-to-avoid-conflict-with-guava`, a jar with no classes, and
+# Coursier, like Gradle, takes the highest version asked for. Gradle resolves
+# each app on its own, so an app that links such a Guava gets the empty jar
+# and Guava's own copy of the interface, and any other app gets the 1.0 jar.
+# This install is one resolution for every app of a workspace, and an
+# integration test's app links Guava: so the jar is forced to 1.0 and is
+# compile-only here. `flutter_android_app` links it unless the app links such
+# a Guava (`flutter_android_listenablefuture` in flutter_android_classes.bzl),
+# and `flutter_android_engine` links it always. Any other `android_binary`
+# that needs it at runtime depends on
+# `@rules_flutter_maven//:original_com_google_guava_listenablefuture`.
+maven.artifact(
+    name = "rules_flutter_maven",
+    artifact = "listenablefuture",
+    force_version = True,
+    group = "com.google.guava",
+    version = "1.0",
+)
+maven.override(
+    name = "rules_flutter_maven",
+    coordinates = "com.google.guava:listenablefuture",
+    target = "//flutter/private:listenablefuture_compile_only",
+)
+
+# A Kotlin Multiplatform library publishes a common artifact whose jar holds
+# only klib metadata (`commonMain/default/linkdata/...`, no classes), and
+# Gradle module metadata that sends a JVM or Android build to its `-jvm`
+# variant instead. Gradle never sees the common jar; Coursier, which reads
+# only the POM, resolves both, and the common jar's metadata would ship in
+# every APK as Java resources. Each common artifact the Flutter embedding's
+# dependencies and common plugins pull in resolves to its `-jvm` variant
+# here, as Gradle resolves it. The overrides apply to every module's install
+# of this name.
+#
+# A library with an Android variant goes to that one instead: Gradle sends an
+# Android build there, though a POM names the `-jvm` artifact.
+# datastore-preferences-core-jvm, which shared_preferences_android's
+# datastore-preferences brings, names datastore-core-jvm, whose atomicMoveTo
+# calls java.nio.file.Files.move (API 26) unguarded. An override of an
+# artifact an install does not resolve adds nothing to it.
+[
+    maven.override(
+        name = "rules_flutter_maven",
+        coordinates = coordinates,
+        target = "@rules_flutter_maven//:" + target,
+    )
+    for coordinates, target in [
+        ("androidx.annotation:annotation", "androidx_annotation_annotation_jvm"),
+        ("androidx.collection:collection", "androidx_collection_collection_jvm"),
+        ("androidx.datastore:datastore-core-jvm", "androidx_datastore_datastore_core_android"),
+        ("androidx.lifecycle:lifecycle-common", "androidx_lifecycle_lifecycle_common_jvm"),
+        ("org.jetbrains.kotlinx:kotlinx-coroutines-core", "org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm"),
+        ("org.jetbrains.kotlinx:kotlinx-serialization-core", "org_jetbrains_kotlinx_kotlinx_serialization_core_jvm"),
+    ]
+]
+
+# One Kotlin standard library in an app, the compiler's. rules_kotlin links its
+# compiler's stdlib into every Kotlin library it builds (the runner, the
+# registrant, plugins), so an app also linking the Maven kotlin-stdlib that
+# androidx and plugins ask for would carry two versions mixed. The Kotlin
+# Gradle plugin adds its compiler's stdlib to the app and aligns
+# kotlin-stdlib-jdk7 and -jdk8 to it; Gradle then ships the highest version
+# anything asks for, which is the compiler's unless a library needs a newer
+# stdlib than the compiler is.
+[
+    maven.override(
+        name = "rules_flutter_maven",
+        coordinates = "org.jetbrains.kotlin:" + artifact,
+        target = "@rules_kotlin//kotlin/compiler:" + artifact,
+    )
+    for artifact in [
+        "kotlin-stdlib",
+        "kotlin-stdlib-jdk7",
+        "kotlin-stdlib-jdk8",
+    ]
+]
+
+use_repo(maven, "rules_flutter_maven")
+
+# Pub dependencies of every Dart tool in this repository: the dev tool, the rule
+# tools, the vendored `flutter gen-l10n` generator and the integration-test
+# support analysis. One pub workspace (the root `pubspec.yaml`) resolves them
+# together, so they share one version of each package and honour
+# `flutter_test`'s exact pins. The workspace's members are not lock entries, so
+# nothing is mapped with `resolve`. The generator's own `intl` is in this lock;
+# an app using the generated localizations needs `intl` in its own.
+flutter_pub.from_lock(
+    name = "dev_tool_deps",
+    # Each version here is a minimum: a consumer's lock ahead of these tools'
+    # builds the higher version, silently, and a tool that does not build
+    # against it is the tool's bug.
+    lock = "//:pubspec.lock",
+)
+use_repo(flutter_pub, "dev_tool_deps")
+
+# The packages go_router_builder's shim (`//flutter/ext/go_router:shim`) is built from,
+# for the apps that use `go_router_codegen`. rules_dart's extension, as
+# rules_dart builds its own builders' shims: they are tools of the build, with
+# nothing of Flutter's. Hub names are global to the extension, so this one is
+# named for rules_flutter. A package it shares with rules_dart's own builder
+# lock, or any other lock of this extension, is built at the highest version
+# any of them asks for.
+dart_pub = use_extension("@rules_dart//dart/pub:extensions.bzl", "pub")
+dart_pub.from_lock(
+    name = "rules_flutter_go_router_builder",
+    lock = "//flutter/ext/go_router:pubspec.lock",
+)
+use_repo(dart_pub, "rules_flutter_go_router_builder")

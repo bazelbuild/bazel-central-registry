@@ -1,0 +1,856 @@
+module(
+    name = "aos",
+    version = "1.0.0",
+    bazel_compatibility = [">=8.0.0"],
+)
+
+bazel_dep(name = "bazel_features", version = "1.50.0")
+bazel_dep(name = "rules_cc", version = "0.2.18")
+
+bazel_dep(name = "rules_cuda", version = "0.3.0", dev_dependency = True)
+
+# Pin to an upstream commit past v0.3.0 that includes the configurable
+# cc_host_compile_flags and multi-arch toolchain refactors we depend on,
+# plus the -std=, BAZEL_CURRENT_REPOSITORY, and host_defines fixes that
+# have since merged upstream.
+archive_override(
+    module_name = "rules_cuda",
+    integrity = "sha256-BW9EQVIw+wY6CQqdBgfUNGFn18aNa/9HCVILEyqKj+Q=",
+    strip_prefix = "rules_cuda-345dd02d2b64b8a6c138800da3180c9278417ec2",
+    urls = ["https://github.com/bazel-contrib/rules_cuda/archive/345dd02d2b64b8a6c138800da3180c9278417ec2.tar.gz"],
+)
+
+# avoid 0.0.0-20251216-6ef568c, it's broken
+bazel_dep(name = "envoy_api", version = "0.0.0-20260130-84e8436")
+bazel_dep(name = "rules_java", version = "9.3.0")
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
+
+bazel_dep(name = "aspect_rules_lint", version = "2.7.2", dev_dependency = True)
+bazel_dep(name = "rules_multirun", version = "0.9.0", dev_dependency = True)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_uv", version = "0.77.0")
+bazel_dep(name = "rules_python", version = "1.5.3")
+single_version_override(
+    module_name = "rules_python",
+    patch_strip = 1,
+    patches = [
+        "//third_party:rules_python/0002-Allow-users-to-inject-extra-deps.patch",
+        "//third_party:rules_python/0003-Add-sysroot-dep.patch",
+    ],
+    version = "1.5.3",
+)
+
+bazel_dep(name = "glib", version = "2.82.2.bcr.10", repo_name = "glib")
+bazel_dep(name = "liburing", version = "2.14.bcr.2")
+
+single_version_override(
+    module_name = "glib",
+    patch_strip = 1,
+    patches = [
+        "third_party/glib/0001-Add-sysroot-select.patch",
+    ],
+    version = "2.82.2.bcr.10",
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    python_version = "3.10",
+)
+python.toolchain(
+    is_default = True,
+    python_version = "3.13",
+)
+use_repo(
+    python,
+    "python_3_10",
+    "python_3_10_x86_64-unknown-linux-gnu",
+    "python_3_13",
+    "python_3_13_x86_64-unknown-linux-gnu",
+    "python_versions",
+)
+
+_AOS_PIP_ENVSUBST = [
+    "AOS_PIP_INDEX_URL",
+    "AOS_PIP_EXTRA_INDEX_URL",
+    "AOS_PIP_TRUSTED_HOST",
+]
+
+_AOS_EXTRA_PIP_ARGS = [
+    "--timeout=1800",
+    "--index-url=${AOS_PIP_INDEX_URL:-https://pypi.org/simple}",
+    # Use an extra index url rather than an explicit index url to allow us to
+    # use the pypi mirror for everything else.
+    "--extra-index-url=${AOS_PIP_EXTRA_INDEX_URL:-https://realtimeroboticsgroup.org/build-dependencies/wheelhouse/simple}",
+    "--prefer-binary",
+    # In CI we override this with --trusted-host=realtimeroboticsgroup.org to bypass SSL cert issues.
+    # Locally, we default to --timeout=1800 (harmless duplicate) to avoid passing an empty string or bypassing SSL.
+    "${AOS_PIP_TRUSTED_HOST:---timeout=1800}",
+]
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    enable_implicit_namespace_pkgs = True,
+    envsubst = _AOS_PIP_ENVSUBST,
+    extra_pip_args = _AOS_EXTRA_PIP_ARGS,
+    hub_name = "pip_deps",
+    python_version = "3.10",
+    requirements_lock = "//tools/python:requirements.lock.txt",
+    whl_modifications = {
+        "//third_party/python:matplotlib_annotation.json": "matplotlib",
+        "//third_party/python:pygobject_annotation.json": "pygobject",
+    },
+)
+pip.parse(
+    enable_implicit_namespace_pkgs = True,
+    envsubst = _AOS_PIP_ENVSUBST,
+    extra_pip_args = _AOS_EXTRA_PIP_ARGS,
+    hub_name = "pip_deps",
+    python_version = "3.13",
+    requirements_lock = "//tools/python:requirements.lock.txt",
+    whl_modifications = {
+        "//third_party/python:matplotlib_annotation.json": "matplotlib",
+        "//third_party/python:pygobject_annotation.json": "pygobject",
+    },
+)
+pip.parse(
+    enable_implicit_namespace_pkgs = True,
+    envsubst = _AOS_PIP_ENVSUBST,
+    extra_pip_args = _AOS_EXTRA_PIP_ARGS,
+    hub_name = "aos_pip_deps",
+    python_version = "3.10",
+    requirements_lock = "//tools/python:aos_requirements.lock.txt",
+)
+pip.parse(
+    enable_implicit_namespace_pkgs = True,
+    envsubst = _AOS_PIP_ENVSUBST,
+    extra_pip_args = _AOS_EXTRA_PIP_ARGS,
+    hub_name = "aos_pip_deps",
+    python_version = "3.13",
+    requirements_lock = "//tools/python:aos_requirements.lock.txt",
+)
+pip.override(
+    file = "matplotlib-3.9.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    patch_strip = 2,
+    patches = ["//third_party/python:matplotlib/init.patch"],
+)
+pip.override(
+    file = "matplotlib-3.9.2-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    patch_strip = 2,
+    patches = [
+        "//third_party/python:matplotlib/init.patch",
+        "//third_party/python:matplotlib/RECORD_313.patch",
+    ],
+)
+pip.override(
+    file = "pygobject-3.50.2-cp310-cp310-manylinux_2_36_x86_64.whl",
+    patch_strip = 2,
+    patches = [
+        "//third_party/python:pygobject/init.patch",
+        "//third_party/python:pygobject/RECORD_310.patch",
+    ],
+)
+pip.override(
+    file = "pygobject-3.50.2-cp310-cp310-linux_x86_64.whl",
+    patch_strip = 2,
+    patches = [
+        "//third_party/python:pygobject/init.patch",
+        "//third_party/python:pygobject/RECORD_310.patch",
+    ],
+)
+pip.override(
+    file = "pygobject-3.50.2-cp313-cp313-manylinux_2_36_x86_64.whl",
+    patch_strip = 2,
+    patches = [
+        "//third_party/python:pygobject/init.patch",
+        "//third_party/python:pygobject/RECORD_313.patch",
+    ],
+)
+use_repo(pip, "aos_pip_deps", pip_deps = "pip_deps")
+
+bazel_dep(name = "grpc", version = "1.83.1", repo_name = "com_github_grpc_grpc")
+bazel_dep(name = "protobuf", version = "35.1", repo_name = "com_google_protobuf")
+
+# protobuf's crate extension has no lockfile, which rules_rust 0.71 rejects in a
+# non-root module.  Fixed in protobuf 37.
+single_version_override(
+    module_name = "protobuf",
+    patch_strip = 1,
+    patches = ["//third_party:protobuf/0001-Make-the-crate-extension-a-dev-dependency.patch"],
+    version = "35.1",
+)
+
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
+bazel_dep(name = "aspect_rules_js", version = "3.5.2")
+bazel_dep(name = "rules_nodejs", version = "6.7.3")
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
+use_repo(node, "nodejs_linux_amd64")
+
+bazel_dep(name = "aspect_rules_esbuild", version = "0.25.1")
+bazel_dep(name = "aspect_rules_rollup", version = "2.0.1")
+bazel_dep(name = "aspect_rules_terser", version = "2.1.2")
+
+bazel_dep(name = "gazelle", version = "0.51.3", dev_dependency = True, repo_name = "bazel_gazelle")
+
+bazel_dep(name = "rules_license", version = "1.0.0")
+bazel_dep(name = "rules_go", version = "0.61.1", repo_name = "io_bazel_rules_go")
+
+go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+go_sdk.download(
+    name = "go_sdk",
+    sdks = {
+        "darwin_arm64": ("go1.24.13.darwin-arm64.tar.gz", "f282d882c3353485e2fc6c634606d85caf36e855167d59b996dbeae19fa7629a"),
+        "linux_amd64": ("go1.24.13.linux-amd64.tar.gz", "1fc94b57134d51669c72173ad5d49fd62afb0f1db9bf3f798fd98ee423f8d730"),
+    },
+    version = "1.24.13",
+)
+
+# A second dev-only handle on the same extension, for use_repo. Like the
+# download above, dependents never see it.
+go_sdk_deps = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk", dev_dependency = True)
+use_repo(go_sdk_deps, "go_sdk")
+
+bazel_dep(name = "rules_pkg", version = "1.1.0")
+bazel_dep(name = "abseil-cpp", version = "20260526.0", repo_name = "com_google_absl")
+
+# The version pin has to exist because other modules ask for abseil versions
+# that are not in BCR-compatible ranges (tcmalloc wants 20250814.0), and
+# forcing one version is what makes the graph resolve. The patches below are
+# root-only by design -- an override is ignored for anyone but the root
+# module: 0001/0002 are weak-symbol hooks with
+# safe defaults, so a dependent that resolves plain BCR abseil still links and
+# runs -- it just keeps realtime priority while a fatal message formats.
+single_version_override(
+    module_name = "abseil-cpp",
+    patch_strip = 1,
+    patches = [
+        "//third_party/abseil:0001-Add-hooks-for-using-abseil-with-AOS.patch",
+        "//third_party/abseil:0002-Suppress-the-stack-trace-on-SIGABRT.patch",
+        "//third_party/abseil:0005-Expose-google_benchmark-and-downgrade-dependencies.patch",
+    ],
+    version = "20260526.0",
+)
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
+single_version_override(
+    module_name = "googletest",
+    patch_strip = 1,
+    patches = ["third_party/googletest/0001-Expose-rules_python-dependency.patch"],
+    version = "1.17.0.bcr.2",
+)
+
+bazel_dep(name = "google_benchmark", version = "1.9.5")
+bazel_dep(name = "snappy", version = "1.2.2.bcr.2")
+single_version_override(
+    module_name = "snappy",
+    patch_strip = 1,
+    patches = ["third_party/snappy/0001-Zero-the-tag-scratch-buffer-for-MemorySanitizer.patch"],
+)
+
+# Not used directly.  These are the first versions which load the C++ rules
+# from rules_cc, which Bazel 9 requires.  Earlier curl either leaks a
+# --version-script into everything which links it or hides its API from
+# shared libraries.
+bazel_dep(name = "curl", version = "8.12.0.bcr.2")
+bazel_dep(name = "opentelemetry-cpp", version = "1.24.0")
+bazel_dep(name = "re2", version = "2025-08-12.bcr.1")
+bazel_dep(name = "nlohmann_json", version = "3.12.0.bcr.1", repo_name = "com_github_nlohmann_json")
+bazel_dep(name = "lz4", version = "1.9.4")
+bazel_dep(name = "tl-expected", version = "1.1.0", repo_name = "tl-expected")
+bazel_dep(name = "eigen", version = "5.0.1.bcr.1")
+bazel_dep(name = "xz", version = "5.4.5.bcr.7")
+single_version_override(
+    module_name = "xz",
+    patch_strip = 1,
+    patches = [
+        "third_party/xz/0001-Add-sysroot-select.patch",
+        "third_party/xz/0002-Add-ARMv7-support.patch",
+    ],
+    version = "5.4.5.bcr.7",
+)
+
+bazel_dep(name = "aws_sdk", version = "1.11.321")
+bazel_dep(name = "boringssl", version = "0.20251110.0")
+bazel_dep(name = "apple_support", version = "1.24.2", repo_name = "build_bazel_apple_support")
+bazel_dep(name = "foxglove_ws_protocol", version = "0.8.1.bcr.1")
+
+bazel_dep(name = "rules_m4", version = "0.2.4", dev_dependency = True)
+
+bazel_dep(name = "rawrtc", version = "0.5.2")
+
+bazel_dep(name = "bazel_iwyu", version = "0.0.4", dev_dependency = True)
+
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+bazel_dep(name = "amd64_tensorrt", version = "10.9.0", dev_dependency = True)
+bazel_dep(name = "amd64_debian_sysroot", version = "2025.04.20", dev_dependency = True)
+
+bazel_dep(name = "rules_rust", version = "0.71.3")
+
+# Generates the Rust declarations for our C FFI headers.  The toolchain in
+# //tools/rust points bindgen at the clang we already download rather than the
+# @llvm-project build from source that rules_rust_bindgen defaults to, so this
+# doesn't register the default toolchain (it is a dev_dependency over there, so
+# depending on rules_rust_bindgen doesn't pull it in).
+bazel_dep(name = "rules_rust_bindgen", version = "0.71.3")
+single_version_override(
+    module_name = "rules_rust_bindgen",
+    patch_strip = 1,
+    patches = [
+        "//third_party:rules_rust_bindgen-0.71.3.patch",
+    ],
+    version = "0.71.3",
+)
+
+register_toolchains("//tools/rust:bindgen_toolchain")
+
+register_toolchains("//tools/rust:bindgen_toolchain_darwin")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = [
+        "arm-unknown-linux-gnueabi",
+        "armv7-unknown-linux-gnueabihf",
+        "aarch64-unknown-linux-gnu",
+    ],
+    rustfmt_version = "1.85.0",
+    versions = ["1.85.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
+rust_host_tools.host_tools(
+    name = "aos_rust_host_tools",
+    rustfmt_version = "1.85.0",
+    version = "1.85.0",
+)
+use_repo(rust_host_tools, "aos_rust_host_tools")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Alpine Linux aarch64 netboot artifacts. These are the upstream raw
+# inputs to the macOS CUDA cross-compile vfkit boot pair; bazel
+# extracts the kernel `Image` from `vmlinuz-virt`, pulls
+# `binfmt_misc.ko` out of `modloop-virt`, and splices the in-repo
+# `tools/cuda/vm/init` plus that .ko into `initramfs-virt` to produce
+# the pair the wrapper boots. All three are rehosted with
+# `tools/rehost.sh` so we don't depend on Alpine's CDN at build time.
+ALPINE_NETBOOT_PATH = "dl-cdn.alpinelinux.org/alpine/v3.20/releases/aarch64/netboot"
+
+http_file(
+    name = "alpine_aarch64_vmlinuz_virt",
+    downloaded_file_path = "vmlinuz-virt",
+    sha256 = "573d0eb4713fc7b631e7242a95fa9d048c60365993658b24d5106a69d0a0e7f2",
+    urls = ["https://realtimeroboticsgroup.org/build-dependencies/" + ALPINE_NETBOOT_PATH + "/vmlinuz-virt"],
+)
+
+http_file(
+    name = "alpine_aarch64_initramfs_virt",
+    downloaded_file_path = "initramfs-virt",
+    sha256 = "90f5159c2cbf81b5d6ad7b14a314815589a7077d0e8fa4e8aa0403c3fef458ae",
+    urls = ["https://realtimeroboticsgroup.org/build-dependencies/" + ALPINE_NETBOOT_PATH + "/initramfs-virt"],
+)
+
+http_file(
+    name = "alpine_aarch64_modloop_virt",
+    downloaded_file_path = "modloop-virt",
+    sha256 = "3bd7260becc8629d2692261c374256c5478d1667feec7897fe4318152c4ca62b",
+    urls = ["https://realtimeroboticsgroup.org/build-dependencies/" + ALPINE_NETBOOT_PATH + "/modloop-virt"],
+)
+
+http_archive(
+    name = "cxxbridge-cmd",
+    build_file = "@aos//third_party/cargo:cxxbridge-cmd/include.BUILD.bazel",
+    sha256 = "df13eece12ed9e7bd4fb071a6af4c44421bb9024d339d029f5333bcdaca00000",
+    strip_prefix = "cxxbridge-cmd-1.0.100",
+    type = "tar.gz",
+    urls = ["https://crates.io/api/v1/crates/cxxbridge-cmd/1.0.100/download"],
+)
+
+http_archive(
+    name = "microsoft_detours",
+    build_file = "@aos//third_party:detours.BUILD",
+    integrity = "sha256-dvOWeFbHjEWMHSgvHdZjtAPDaURm0W/fWxb30iGoT0s=",
+    strip_prefix = "Detours-d644ce94e8c7f7f5a31591577c78134ea3ac1fae",
+    urls = ["https://github.com/microsoft/Detours/archive/d644ce94e8c7f7f5a31591577c78134ea3ac1fae.tar.gz"],
+)
+
+bazel_dep(name = "arm64_debian_sysroot", version = "2025.10.25", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "7.3.1", dev_dependency = True)
+bazel_dep(name = "buildozer", version = "8.2.1", dev_dependency = True)
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm",
+    data = [
+        "//:package.json",
+        "//:pnpm-workspace.yaml",
+        "//aos/analysis/foxglove_extension:package.json",
+        "//frc/control_loops/swerve/spline_ui/www:package.json",
+    ],
+    lifecycle_hooks_no_sandbox = False,
+    npmrc = "//:.npmrc",
+    pnpm_lock = "//:pnpm-lock.yaml",
+    quiet = False,
+    # Flip this flag when adding/upgrading a package in the package.json
+    update_pnpm_lock = False,
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "npm")
+
+# flatbuffers' ts/ package links its own pnpm workspace. The repo comes from
+# our extension (aos/extension.bzl), so its BUILD files resolve
+# @flatbuffers_npm through AOS's mapping -- declare it here. The repo is named
+# aos_flatbuffers_npm because the npm extension's namespace is shared across
+# the whole module graph, and BCR flatbuffers declares its own flatbuffers_npm
+# there: a consumer with plain BCR flatbuffers anywhere in its graph would
+# otherwise fail with "A repo named flatbuffers_npm is already generated by
+# this module extension". The use_repo alias maps it back to the
+# @flatbuffers_npm apparent name upstream's ts/BUILD.bazel loads from.
+npm.npm_translate_lock(
+    name = "aos_flatbuffers_npm",
+    npmrc = "@aos_flatbuffers//:.npmrc",
+    pnpm_lock = "@aos_flatbuffers//ts:pnpm-lock.yaml",
+    verify_node_modules_ignored = "@aos_flatbuffers//:.bazelignore",
+)
+use_repo(npm, flatbuffers_npm = "aos_flatbuffers_npm")
+
+rules_ts_ext = use_extension("@aspect_rules_ts//ts:extensions.bzl", "ext")
+rules_ts_ext.deps(
+    ts_version_from = "//:package.json",
+)
+use_repo(rules_ts_ext, "npm_typescript")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "cxxbridge_cmd_deps",
+    cargo_lockfile = "//third_party/cargo:cxxbridge-cmd/Cargo.lock",
+    host_tools = "@aos_rust_host_tools",
+    lockfile = "//third_party/cargo:cxxbridge-cmd/Cargo.Bazel.lock",
+    manifests = ["@cxxbridge-cmd//:Cargo.toml"],
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "arm-unknown-linux-gnueabi",
+        "armv7-unknown-linux-gnueabihf",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+    ],
+)
+use_repo(crate, "cxxbridge_cmd_deps")
+crate.from_cargo(
+    name = "crate_index",
+    cargo_lockfile = "//:Cargo.lock",
+    host_tools = "@aos_rust_host_tools",
+    lockfile = "//:Cargo.Bazel.lock",
+    manifests = [
+        "//:Cargo.toml",
+        "@aos_flatbuffers//rust:flatbuffers/Cargo.toml",
+        "@aos_flatbuffers//rust:flexbuffers/Cargo.toml",
+        "@aos_flatbuffers//rust:reflection/Cargo.toml",
+    ],
+    supported_platform_triples = [
+        "x86_64-unknown-linux-gnu",
+        "arm-unknown-linux-gnueabi",
+        "armv7-unknown-linux-gnueabihf",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+    ],
+)
+crate.annotation(
+    additive_build_file = "@aos//third_party/cargo:cxx/include.BUILD.bazel",
+    crate = "cxx",
+    extra_aliased_targets = {"cxx_cc": "cxx_cc"},
+    gen_build_script = "off",
+    repositories = ["crate_index"],
+)
+crate.annotation(
+    crate = "link-cplusplus",
+    crate_features = ["nothing"],
+    repositories = ["crate_index"],
+)
+crate.annotation(
+    crate = "log",
+    repositories = ["crate_index"],
+    rustc_flags = ["--cfg=atomic_cas"],
+)
+
+# To validate that you only get 1 version of dependencies, run:
+#   bazel query "filter('arrayvec', deps(//aos/testing/ping_pong:pingpong_test_rs))" --enable_bzlmod
+use_repo(crate, "crate_index")
+
+bazel_dep(name = "rules_bzlmodrio_toolchains", version = "2025-1", dev_dependency = True)
+bazel_dep(name = "bzlmodrio-ni", version = "2025.2.0", dev_dependency = True)
+bazel_dep(name = "range_http_server", version = "0.0.1", dev_dependency = True, repo_name = "RangeHTTPServer")
+bazel_dep(name = "ceres-solver", version = "2.2.0", dev_dependency = True)
+
+# TODO(austin): Need to apply patch file so the tests pass.
+# archive_override rather than git_override so the fetch goes through Bazel's
+# downloader and respects --downloader_config URL rewriting (mirrorable).
+archive_override(
+    module_name = "ceres-solver",
+    integrity = "sha256-vwvMeProhOWd2JNpPlJRDafMaGanRE/a6bqPGeriZs0=",
+    patch_strip = 1,
+    patches = ["//third_party:ceres-bzlmod.patch"],
+    strip_prefix = "ceres-solver-0c70ed3a1a2d6ba47c06c7e8b3b040880bc474db",
+    urls = ["https://github.com/ceres-solver/ceres-solver/archive/0c70ed3a1a2d6ba47c06c7e8b3b040880bc474db.tar.gz"],
+)
+
+bazel_dep(name = "tcmalloc", version = "0.0.0-20250927-12f2552", dev_dependency = True, repo_name = "com_google_tcmalloc")
+
+# Hedron's Compile Commands Extractor for Bazel
+# https://github.com/hedronvision/bazel-compile-commands-extractor
+bazel_dep(name = "hedron_compile_commands", dev_dependency = True)
+
+# archive_override rather than git_override so the fetch goes through Bazel's
+# downloader and respects --downloader_config URL rewriting (mirrorable).
+archive_override(
+    module_name = "hedron_compile_commands",
+    integrity = "sha256-Q0UaMr8nHnukY1oH95ltU1UB8GbA/o/qsE+wyR3VmG4=",
+    patch_strip = 1,
+    patches = ["//third_party:hedron_compile_commands/0001-Load-py_binary-from-rules_python.patch"],
+    strip_prefix = "bazel-compile-commands-extractor-daae6f40adfa5fdb7c89684cbe4d88b691c63b2d",
+    urls = ["https://github.com/hedronvision/bazel-compile-commands-extractor/archive/daae6f40adfa5fdb7c89684cbe4d88b691c63b2d.tar.gz"],
+)
+
+bazel_dep(name = "websocketpp", version = "0.8.2.bcr.5")
+
+# The websocketpp patch is required for the ROBORIO build (arm-frc-linux-gnueabi-gcc)
+# which fails to compile cpp/foxglove-websocket/src/server_factory.cpp because of
+# syntax errors in basic.hpp:
+# error: expected ')' before 'h'
+#   basic<concurrency,names>(channel_type_hint::value h =
+# Nothing downstream needs the patch.
+single_version_override(
+    module_name = "websocketpp",
+    patch_strip = 1,
+    patches = ["third_party/websocketpp/websocketpp.patch"],
+)
+
+bazel_dep(name = "asio", version = "1.31.0")
+
+bazel_dep(name = "ctre_phoenix6_api_cpp_headers", version = "25.3.2", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix6_tools_headers", version = "25.3.2", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix6_api_cpp_athena", version = "25.3.2", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix6_tools_athena", version = "25.3.2", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix6_arm64", version = "24.50.0", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix_api_cpp_headers", version = "5.35.0", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix_api_cpp_athena", version = "5.35.0", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix_cci_headers", version = "5.35.0", dev_dependency = True)
+bazel_dep(name = "ctre_phoenix_cci_athena", version = "5.35.0", dev_dependency = True)
+bazel_dep(name = "rules_halide", version = "0.0.1", dev_dependency = True)
+bazel_dep(name = "allwpilib", version = "0.0.0", dev_dependency = True, repo_name = "com_github_wpilibsuite_allwpilib")
+local_path_override(
+    module_name = "allwpilib",
+    path = "third_party/allwpilib",
+)
+
+# Our flatbuffers carries 22 patches, several of which change behaviour rather
+# than adding to it -- force_defaults defaults to true, FLATBUFFERS_ASSERT
+# becomes ABSL_DCHECK, the verifier's max_tables triples. It must never
+# resolve as anyone's `flatbuffers` module, so it is not a module at all: a
+# module extension fetches it, patched, as a repo private to AOS. No registry
+# entry is needed, and a dependent's own `flatbuffers` is untouched.
+# Consumers that want the same bits reach them through this extension; see
+# aos/extension.bzl.
+dependencies = use_extension("//aos:extension.bzl", "dependencies")
+use_repo(dependencies, "aos_flatbuffers", "com_github_foxglove_schemas")
+
+bazel_dep(name = "symengine", version = "0.12.0", dev_dependency = True)
+bazel_dep(name = "gmp", version = "6.3.0.bcr.2", dev_dependency = True)
+
+bazel_dep(name = "aspect_rules_cypress", version = "0.8.0")
+
+cypress = use_extension("@aspect_rules_cypress//cypress:extensions.bzl", "cypress")
+cypress.toolchain(cypress_version = "13.6.6")
+use_repo(cypress, "cypress_toolchains")
+
+register_toolchains("@cypress_toolchains//:all")
+
+bazel_dep(name = "toolchains_llvm", version = "1.11.1", dev_dependency = True)
+
+llvm = use_extension("@toolchains_llvm//toolchain/extensions:llvm.bzl", "llvm", dev_dependency = True)
+
+llvm_version = "22.1.8"
+
+llvm_alternative_sources = [
+    "https://github.com/RealtimeRoboticsGroup/toolchains/releases/download/{llvm_version}/{basename}",
+]
+
+llvm_x86_64_basename = "clang+llvm-%s-x86_64-linux-gnu-ubuntu-22.04.tar.zst" % llvm_version
+
+llvm_aarch64_basename = "clang+llvm-%s-aarch64-linux-gnu.tar.zst" % llvm_version
+
+llvm_darwin_aarch64_basename = "clang+llvm-%s-aarch64-apple-darwin.tar.zst" % llvm_version
+
+llvm_extra_distributions = {
+    llvm_x86_64_basename: "82fd4fe320aae577f971b38a1371832cb8f88876c95928baf55e0fb50522cf8a",
+    llvm_aarch64_basename: "50bce7e8afe6764ed4d11042dc2bcc70e511db58d66e39ffa820bdf2325d03fa",
+    llvm_darwin_aarch64_basename: "9f6bab6fc328d3e7a45ddd165233f2d84118baa491f0be1150a52864a060524b",
+}
+
+llvm.toolchain(
+    name = "llvm_k8",
+    alternative_llvm_sources = llvm_alternative_sources,
+    distribution = llvm_x86_64_basename,
+    extra_llvm_distributions = llvm_extra_distributions,
+    # MemorySanitizer-instrumented libc++ overlay, swapped in for builds with
+    # `--features=msan` (see `build:msan` in .bazelrc). Same LLVM version as the
+    # base toolchain so it is ABI-compatible with clang 22.1.8.
+    libcxx_sha256 = "fd1ac49eeda4edc6deeda2037998e558718a63a5054fff4fdace7751b270217a",
+    libcxx_url = "https://github.com/RealtimeRoboticsGroup/toolchains/releases/download/22.1.8/libcxx-msan-22.1.8-x86_64-linux-gnu-ubuntu-22.04.tar.zst",
+    llvm_versions = {"": llvm_version},
+)
+llvm.toolchain(
+    name = "llvm_aarch64",
+    alternative_llvm_sources = llvm_alternative_sources,
+    distribution = llvm_aarch64_basename,
+    extra_llvm_distributions = llvm_extra_distributions,
+    # MemorySanitizer-instrumented libc++ overlay, swapped in for builds with
+    # `--features=msan` (see `build:msan` in .bazelrc). Same LLVM version as the
+    # base toolchain so it is ABI-compatible with clang 22.1.8.
+    libcxx_sha256 = "283fc2fc17b3ed2ebf7e1281d9a6391e692da344290fc5c726037e2d1da405a1",
+    libcxx_url = "https://github.com/RealtimeRoboticsGroup/toolchains/releases/download/22.1.8/libcxx-msan-22.1.8-aarch64-linux-gnu.tar.zst",
+    llvm_versions = {"": llvm_version},
+)
+llvm.toolchain(
+    name = "llvm_darwin_aarch64",
+    alternative_llvm_sources = llvm_alternative_sources,
+    distribution = llvm_darwin_aarch64_basename,
+    extra_llvm_distributions = llvm_extra_distributions,
+    llvm_versions = {"": llvm_version},
+)
+
+llvm_conly_flags = ["-std=gnu99"]
+
+llvm_extra_compile_flags = [
+    "-D__STDC_FORMAT_MACROS",
+    "-D__STDC_CONSTANT_MACROS",
+    "-D__STDC_LIMIT_MACROS",
+    "-D_FILE_OFFSET_BITS=64",
+    "-fmessage-length=100",
+    "-fmacro-backtrace-limit=0",
+    "-ggdb3",
+    # Too many core libraries have these right now.
+    # TODO(austin): Turn this off later.
+    "-Wno-deprecated-declarations",
+    "-Wembedded-directive",
+]
+
+llvm_extra_compile_flags_aarch64 = llvm_extra_compile_flags + ["-march=armv8-a+crc"]
+
+llvm_extra_compile_flags_darwin_aarch64 = llvm_extra_compile_flags + ["-march=armv8-a+crc+crypto"]
+
+llvm_cxx_standard = "gnu++20"
+
+llvm_cxx_standard_darwin = "c++20"
+
+llvm.toolchain(
+    name = "llvm_toolchain",
+    conly_flags = {
+        "darwin-aarch64": llvm_conly_flags,
+        "linux-aarch64": llvm_conly_flags,
+        "linux-x86_64": llvm_conly_flags,
+    },
+    cxx_include_layout = {
+        "linux-aarch64": "yocto",
+    },
+    cxx_standard = {
+        "darwin-aarch64": llvm_cxx_standard_darwin,
+        "linux-aarch64": llvm_cxx_standard,
+        "linux-x86_64": llvm_cxx_standard,
+    },
+    extra_compile_flags = {
+        "darwin-aarch64": llvm_extra_compile_flags_darwin_aarch64,
+        "linux-aarch64": llvm_extra_compile_flags_aarch64,
+        "linux-x86_64": llvm_extra_compile_flags,
+    },
+    # The ld64.lld in LLVM 22 can't parse the .tbd files in Xcode 27.2's SDK, which
+    # list an arm64e.x1 target.  toolchains_llvm says this is fixed in LLVM 24.
+    # Until then, use the linker from the active Xcode.
+    linker = {"darwin-aarch64": "auto"},
+    llvm_versions = {"": llvm_version},
+    multiarch = {
+        "linux-aarch64": "aarch64-oe4t-linux",
+    },
+    stdlib = {
+        "darwin-aarch64": "builtin-libc++",
+        "linux-aarch64": "dynamic-stdc++-14.3.0",
+        "linux-x86_64": "dynamic-stdc++-12",
+    },
+)
+llvm.toolchain_root(
+    name = "llvm_toolchain",
+    label = "@llvm_k8//:BUILD",
+    targets = ["linux-x86_64"],
+)
+llvm.toolchain_root(
+    name = "llvm_toolchain",
+    label = "@llvm_aarch64//:BUILD",
+    targets = ["linux-aarch64"],
+)
+llvm.toolchain_root(
+    name = "llvm_toolchain",
+    label = "@llvm_darwin_aarch64//:BUILD",
+    targets = ["darwin-aarch64"],
+)
+llvm.target_toolchain_root(
+    name = "llvm_toolchain",
+    label = "@llvm_k8//:BUILD",
+    targets = ["linux-x86_64"],
+)
+llvm.target_toolchain_root(
+    name = "llvm_toolchain",
+    label = "@llvm_aarch64//:BUILD",
+    targets = ["linux-aarch64"],
+)
+llvm.target_toolchain_root(
+    name = "llvm_toolchain",
+    label = "@llvm_darwin_aarch64//:BUILD",
+    targets = ["darwin-aarch64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain",
+    label = "@amd64_debian_sysroot//:sysroot_files",
+    targets = ["linux-x86_64"],
+)
+llvm.sysroot(
+    name = "llvm_toolchain",
+    label = "@arm64_debian_sysroot//:sysroot_files",
+    targets = ["linux-aarch64"],
+)
+
+# The asan/ubsan ignorelists are passed to clang via `-fsanitize-blacklist=` as
+# a plain `--copt` (see .bazelrc), so they must be declared as compile-action
+# inputs or they are absent from the sandbox and clang fails with "no such file
+# or directory". The filegroup selects the relevant list per `--config`.
+llvm.extra_compiler_files(
+    name = "llvm_toolchain",
+    label = "//tools/cpp:flags_compiler_inputs",
+)
+use_repo(
+    llvm,
+    "llvm_toolchain",
+    llvm_aarch64 = "llvm_aarch64_llvm",
+    llvm_darwin_aarch64 = "llvm_darwin_aarch64_llvm",
+    llvm_k8 = "llvm_k8_llvm",
+)
+
+register_toolchains(
+    "//tools/cuda:x86_64_clang_toolchain",
+    "//tools/cuda:aarch64_clang_toolchain",
+    "//tools/cuda:no_gpu_clang_toolchain",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "@llvm_toolchain//:all",
+    dev_dependency = True,
+)
+
+dev_toolchains_ext = use_extension("//tools/cpp:extensions.bzl", "dev_toolchains_extension", dev_dependency = True)
+use_repo(dev_toolchains_ext, "arm_frc_linux_gnueabi_repo", "gcc_arm_none_eabi")
+
+http_file(
+    name = "sample_logfile",
+    downloaded_file_path = "log.fbs",
+    sha256 = "45d1d19fb82786c476d3f21a8d62742abaeeedf4c16a00ec37ae350dcb61f1fc",
+    urls = ["https://realtimeroboticsgroup.org/build-dependencies/small_sample_logfile2.fbs"],
+)
+
+http_file(
+    name = "com_github_foxglove_mcap_mcap",
+    executable = True,
+    sha256 = "e87895e9af36db629ad01c554258ec03d07b604bc61a0a421449c85223357c71",
+    urls = ["https://github.com/foxglove/mcap/releases/download/releases%2Fmcap-cli%2Fv0.0.51/mcap-linux-amd64"],
+)
+
+frc_deps_ext = use_extension("//tools/frc:extensions.bzl", "frc_deps_extension", dev_dependency = True)
+use_repo(
+    frc_deps_ext,
+    "april_tag_test_image",
+    "apriltag_test_bfbs_images",
+    "calibrate_multi_cameras_data",
+    "com_github_nvidia_cccl",
+    "coral_image_thriftycam_2025",
+    "drivetrain_replay",
+    "frc2026_field_map_welded",
+    "intrinsic_calibration_test_images",
+    "orin_capture_24_04",
+    "orin_capture_24_04_side",
+    "orin_image_apriltag",
+    "orin_large_image_apriltag",
+    "superstructure_replay",
+)
+
+ci_configure_extension = use_extension("//tools/ci:extensions.bzl", "ci_configure_extension")
+use_repo(ci_configure_extension, "ci_configure")
+
+debian_deps_extension = use_extension("//debian:extensions.bzl", "debian_deps_extension")
+use_repo(
+    debian_deps_extension,
+    "deb_can_utils_2020_11_0_1_arm64_deb_repo",
+    "deb_phoenix6_24_2_0_arm64_deb_repo",
+)
+
+register_toolchains(
+    "//tools/cpp:cc-toolchain-roborio",
+    "//tools/cpp:cc-toolchain-cortex-m4f",
+    "//tools/cpp:cc-toolchain-rp2040",
+    "//tools/cpp:cc-toolchain-cortex-m4f-imu",
+    # Find a good way to select between these two M4F toolchains.
+    #"//tools/cpp:cc-toolchain-cortex-m4f-k22",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "//tools/python:noop_python_toolchain",
+    "//tools/go:noop_go_toolchain",
+    "//tools/ts:noop_node_runtime_toolchain",
+    "//tools/rust:rust-toolchain-x86",
+    "//tools/rust:rust-toolchain-armv7",
+    "//tools/rust:rust-toolchain-arm64",
+    # TODO(Brian): Make this work. See the comment on
+    # //tools/platforms:linux_roborio for details.
+    #"//tools/rust:rust-toolchain-roborio",
+    "//tools/rust:noop_rust_toolchain",
+)
+
+# AOS's hermetic python runtime is built on the amd64_debian_sysroot, which is a
+# dev_dependency and therefore does not exist for modules that depend on AOS.
+# The toolchain is otherwise an exact match for a typical consumer host
+# (linux + x86_64, canonical @rules_python//python:toolchain_type), so exporting
+# it would hijack a consumer's python toolchain and point it at a repository
+# that isn't there.  dev_dependency registrations still apply when AOS is the
+# root module, so AOS's own builds are unchanged.
+register_toolchains(
+    "//tools/python:python_bzlmod_toolchain",
+    dev_dependency = True,
+)
+
+# TODO(austin): Rust can't mention llvm_toolchain, otherwise wpilib needs llvm_toolchain + the sysroot.  Which is bad.
+
+mock_external_fbs_repo_extension = use_extension(
+    "//aos/flatbuffers/test_dir:extensions.bzl",
+    "mock_external_fbs_repo_extension",
+)
+use_repo(mock_external_fbs_repo_extension, "mock_external_fbs_repo")
+
+single_version_override(
+    module_name = "amd64_debian_sysroot",
+    patch_cmds = [
+        # OSX is case insensitive filenames.  Fix up the couple of them which are case sensitive.
+        "rm -f usr/lib/x86_64-linux-gnu/libCharLS.so.2",
+        "ln -s libcharls.so.2.4.1 usr/lib/x86_64-linux-gnu/libCharLS.so.2",
+        "rm -f usr/share/man/man2/_Exit.2.gz usr/share/man/man2/exit.2.gz usr/share/man/man7/pam.7.gz",
+        "rm -f usr/share/terminfo/N/NCR260VT300WPP",
+    ],
+    version = "2025.04.20",
+)

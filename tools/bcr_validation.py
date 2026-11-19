@@ -549,6 +549,15 @@ class BcrValidator:
 
         self._download_source_archive(source, output_dir)
 
+        if not source_root.is_dir():
+            error_msg = (
+                f"Source root '{source_root}' is not a directory; "
+                f"strip_prefix '{strip_prefix}' may not match the archive layout."
+            )
+            self.report(BcrValidationResult.FAILED, error_msg)
+            shutil.rmtree(tmp_dir)
+            return
+
         module_file = self.registry.get_module_dot_bazel_path(module_name, version)
         if module_file.is_symlink():
             self.report(BcrValidationResult.FAILED, f"{module_file} must not be a symlink.")

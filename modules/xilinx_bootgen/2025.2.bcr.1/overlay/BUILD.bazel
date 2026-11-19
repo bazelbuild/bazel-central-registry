@@ -1,0 +1,135 @@
+load("@bison//:bison.bzl", "bison")
+load("@flex//:flex.bzl", "flex")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+exports_files(["LICENSE"])
+
+# Apache 2.0; LICENSE also carries the notices of the bundled bison skeleton,
+# flex scanner class, keccak and stdint.h the sources were built with.
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# Upstream's -Wall is dropped: third-party warnings are noise to consumers.
+COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# CXXFLAGS = -std=c++0x; the C files take the toolchain default, as CFLAGS
+# does.  MSVC's oldest selectable standard is C++14.
+CXXOPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/std:c++14"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/std:c++14"],
+    "//conditions:default": ["-std=c++0x"],
+})
+
+# The device-family directories the Makefile compiles (CXXFILES, CFILES) and
+# puts on the include path (INCLUDE_SYS); each is an include/ + src/ pair.
+FAMILIES = [
+    "common",
+    "spartanup",
+    "versal",
+    "versal_2ve_2vm",
+    "zynq",
+    "zynqmp",
+    "utils",
+]
+
+# The three parsers, each a bison grammar and a flex scanner in parser/.
+# Upstream compiles its checked-in bison 2.7 / flex 2.5 output in bisonflex/;
+# here they are regenerated from parser/ (as the 2026.2 Makefile can, given
+# BISON_HOME and FLEX_HOME), so bisonflex/ and win_include/ (the flex 2.5
+# FlexLexer.h) are unused; the scanner headers' "FlexLexer.h" resolves to
+# flex's own.  patches/regenerate_parsers.patch holds the one edit that
+# needs: an untyped INT_HASH in bif.y.
+PARSERS = [
+    "bif",
+    "cmdoptions",
+    "reginit",
+]
+
+# `-Wnone` is `-w` for bison: the grammars use %define names bison 3 has
+# renamed, which it reports as deprecations.  Only bif.y generates
+# location.hh; the others reuse BIF::location (%define api.location.type).
+[
+    bison(
+        name = "parser/" + p + "_tab",
+        srcs = ["parser/" + p + ".y"],
+        outs = [
+            "parser/" + p + ".tab.cpp",
+            "parser/" + p + ".tab.hpp",
+        ] + (["parser/location.hh"] if p == "bif" else []),
+        args = [
+            "-Wnone",
+            "-d",
+            "-o",
+            "$(execpath parser/%s.tab.cpp)" % p,
+            "$(execpath parser/%s.y)" % p,
+        ],
+    )
+    for p in PARSERS
+]
+
+[
+    flex(
+        name = "parser/" + p + "_yy",
+        srcs = ["parser/" + p + ".l"],
+        outs = ["parser/" + p + ".yy.cpp"],
+        args = [
+            "--nowarn",
+            "--prefix=" + p,
+            "-o",
+            "$(execpath parser/%s.yy.cpp)" % p,
+            "$(execpath parser/%s.l)" % p,
+        ],
+    )
+    for p in PARSERS
+]
+
+# The bison and flex targets: their .cpp, .hpp and .hh outputs.
+GRAMMAR = ["parser/%s_%s" % (p, k) for p in PARSERS for k in [
+    "tab",
+    "yy",
+]]
+
+# Upstream's one program: the parsers, every .cpp and .c under the family
+# src/ directories and the hash-sigs archive, linked against OpenSSL.
+# cdo-driver/ is a standalone library the Makefile does not build; it has
+# no target.
+cc_binary(
+    name = "bootgen",
+    srcs = GRAMMAR + glob(
+        [d + "/src/*.cpp" for d in FAMILIES] +
+        [d + "/src/*.c" for d in FAMILIES] +
+        [d + "/include/*.h" for d in FAMILIES],
+        # Only utils/src has C files; the Makefile's `find` tolerates the rest.
+        allow_empty = True,
+    ),
+    copts = COPTS,
+    cxxopts = CXXOPTS,
+    includes = ["parser"] + [d + "/include" for d in FAMILIES],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//lms-hash-sigs:hss_lib_thread",
+        "@flex//:headers",
+        "@openssl//:crypto",
+        "@openssl//:ssl",
+    ],
+)

@@ -1,0 +1,96 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+string_flag(
+    name = "ssl_lib",
+    build_setting_default = "boringssl",
+    values = [
+        "boringssl",
+        "openssl",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_openssl",
+    flag_values = {":ssl_lib": "openssl"},
+)
+
+_VERSION_PARTS = module_version().split(".")[:3]
+
+expand_template(
+    name = "config_h",
+    out = "sdk/include/alibabacloud/oss/Config.h",
+    substitutions = {
+        "#cmakedefine OSS_DISABLE_BUCKET": "/* #undef OSS_DISABLE_BUCKET */",
+        "#cmakedefine OSS_DISABLE_ENCRYPTION": "/* #undef OSS_DISABLE_ENCRYPTION */",
+        "#cmakedefine OSS_DISABLE_LIVECHANNEL": "/* #undef OSS_DISABLE_LIVECHANNEL */",
+        "#cmakedefine OSS_DISABLE_RESUAMABLE": "/* #undef OSS_DISABLE_RESUAMABLE */",
+        "@PROJECT_VERSION_MAJOR@": _VERSION_PARTS[0],
+        "@PROJECT_VERSION_MINOR@": _VERSION_PARTS[1],
+        "@PROJECT_VERSION_PATCH@": _VERSION_PARTS[2],
+    },
+    template = "sdk/src/Config.h.in",
+)
+
+cc_library(
+    name = "private_includes",
+    hdrs = glob(["sdk/src/external/**/*.h"]),
+    includes = ["sdk/src/external"],
+)
+
+cc_library(
+    name = "aliyun-oss-cpp-sdk",
+    srcs = glob(
+        [
+            "sdk/src/**/*.cc",
+            "sdk/src/**/*.cpp",
+            "sdk/src/**/*.h",
+        ],
+        exclude = ["sdk/src/external/**/*.h"],
+    ),
+    hdrs = glob(["sdk/include/**/*.h"]) + [":config_h"],
+    copts = ["-pthread"],
+    implementation_deps = select({
+        ":use_openssl": ["@openssl//:crypto"],
+        "//conditions:default": ["@boringssl//:crypto"],
+    }) + [
+        ":private_includes",
+        "@curl",
+    ],
+    includes = [
+        "sdk/include",
+        "sdk/include/alibabacloud/oss",
+    ],
+    linkopts = ["-pthread"],
+    local_defines = select({
+        "@platforms//os:android": ["PLATFORM_ANDROID"],
+        "@platforms//os:linux": ["PLATFORM_LINUX"],
+        "@platforms//os:macos": ["PLATFORM_APPLE"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
