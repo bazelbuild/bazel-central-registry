@@ -1,0 +1,61 @@
+load("@nginx//perl:xsubpp.bzl", "perl_xsubpp")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    defines = [
+        "_FILE_OFFSET_BITS=64",
+        "_GNU_SOURCE",
+        "_LARGEFILE_SOURCE",
+        "_REENTRANT",
+    ],
+    includes = ["."],
+    deps = ["@libxcrypt"],
+)
+
+perl_xsubpp(
+    name = "DynaLoader",
+    src = "ext/DynaLoader/dl_dlopen.xs",
+)
+
+cc_library(
+    name = "dynaloader",
+    srcs = [":DynaLoader"],
+    textual_hdrs = ["ext/DynaLoader/dlutils.c"],
+    includes = ["ext/DynaLoader"],
+    local_defines = ['XS_VERSION=\\"1.57\\"'],
+    deps = [":headers"],
+)
+
+cc_library(
+    name = "libperl",
+    srcs = glob(
+        ["*.c"],
+        exclude = [
+            "generate_uudmap.c",  # Build tool.
+            "malloc.c",  # portable-perl uses the glibc allocator.
+            "miniperlmain.c",  # Interpreter entry point.
+            "vutil.c",  # Included by util.c.
+        ],
+    ),
+    textual_hdrs = glob(["*.inc"]) + ["perly.act", "perly.tab", "vutil.c"],
+    copts = ["-fno-strict-aliasing", "-fwrapv"],
+    local_defines = ["PERL_CORE"],
+    linkopts = ["-ldl", "-lm", "-lpthread"],
+    deps = [":dynaloader", ":headers"],
+    # XS modules loaded later can reference any public libperl symbol.
+    alwayslink = True,
+)
+
+filegroup(
+    name = "stdlib",
+    srcs = glob(
+        ["portable/lib/5.44.0/**"],
+        exclude = ["**/CORE/**", "**/.packlist", "**/*.pod"],
+    ),
+)
+
+alias(name = "strict_pm", actual = "portable/lib/5.44.0/strict.pm")

@@ -1,0 +1,489 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//tools:test.bzl", "cc_test", "test_name")
+load("//tools:transition.bzl", "with_settings")
+
+license(
+    name = "smhasher_license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE.smhasher",
+)
+
+# hash.c adapts SMHasher's VerificationTest and states no upstream version.
+package_metadata(
+    name = "smhasher_metadata",
+    attributes = [":smhasher_license"],
+    purl = "pkg:github/aappleby/smhasher#src/KeysetTest.cpp",
+)
+
+filegroup(
+    name = "smhasher_test_sources",
+    srcs = ["hash.c"],
+    applicable_licenses = [":smhasher_metadata"],
+)
+
+filegroup(
+    name = "sfmt_test_sources",
+    srcs = ["SFMT.c"],
+    applicable_licenses = [
+        "//:package_metadata",
+        "//test:sfmt_metadata",
+    ],
+)
+
+with_settings(
+    name = "testlib",
+    testonly = True,
+    src = "//test:testlib",
+    settings = {
+        "//settings:enable_jet": "True",
+        "//settings:with_test": "unit",
+        # This needs to be pinned for testing. The MALLOC_CONF ENV depends on it. The make build allows for it to be
+        # set dynamically via templating and generates a test harness around it. By requiring a value that cannot be
+        # set internally by accident, this exercises the same functionality.
+        "//settings/flags:jemalloc_prefix": "je_test_",
+    },
+    visibility = ["//:__subpackages__"],
+)
+
+# Handle C source inclusions
+[
+    cc_library(
+        name = src.replace(".", "_"),
+        testonly = True,
+        hdrs = [src],
+        tags = ["manual"],
+        visibility = ["//visibility:private"],
+    )
+    for src in [
+        "arena_reset.c",
+        "batch_alloc.c",
+        "junk.c",
+    ]
+]
+
+# Tests without a .sh.
+UNIT_TESTS = [
+    {"src": "a0.c"},
+    {"src": "arena_reset.c"},
+    {"src": "atomic.c"},
+    {"src": "background_thread.c"},
+    {"src": "background_thread_enable.c"},
+    {"src": "background_thread_init.c"},
+    {"src": "base.c"},
+    {"src": "bin.c"},
+    {"src": "bitmap.c"},
+    {"src": "bit_util.c"},
+    {"src": "buf_writer.c"},
+    {"src": "cache_bin.c"},
+    {"src": "ckh.c"},
+    {"src": "conf.c"},
+    # conf_init_0 asserts the default dirty_decay_ms, so like upstream it runs with no MALLOC_CONF; conf_init_1 and
+    # conf_init_confirm set the malloc_conf global themselves.
+    {"src": "conf_init_0.c"},
+    {"src": "conf_init_1.c"},
+    {"src": "conf_init_confirm.c"},
+    {"src": "conf_parse.c"},
+    {"src": "counter.c"},
+    {"src": "decay.c"},
+    {"src": "div.c"},
+    {"src": "edata_cache.c"},
+    {"src": "emitter.c"},
+    {"src": "extent_quantize.c"},
+    {"src": "fb.c"},
+    {"src": "fork.c"},
+    {"src": "fxp.c"},
+    {"src": "san_bump.c"},
+    {
+        "name": "hash",
+        "src": ":smhasher_test_sources",
+    },
+    {"src": "hook.c"},
+    {"src": "hpdata.c"},
+    {"src": "huge.c"},
+    {"src": "json_stats.c"},
+    {"src": "large_ralloc.c"},
+    {"src": "log.c"},
+    {"src": "mallctl.c"},
+    {"src": "malloc_io.c"},
+    {"src": "math.c"},
+    {"src": "mpsc_queue.c"},
+    {"src": "mq.c"},
+    {"src": "mtx.c"},
+    {"src": "nstime.c"},
+    {"src": "ncached_max.c"},
+    {"src": "oversize_threshold.c"},
+    {"src": "pa.c"},
+    {"src": "pages.c"},
+    {"src": "peak.c"},
+    {"src": "ph.c"},
+    {"src": "prng.c"},
+    {"src": "psset.c"},
+    {"src": "ql.c"},
+    {"src": "qr.c"},
+    {"src": "rb.c"},
+    {"src": "retained.c"},
+    {"src": "rtree.c"},
+    {"src": "sc.c"},
+    {"src": "sec.c"},
+    {"src": "seq.c"},
+    {
+        "name": "sfmt",
+        "src": ":sfmt_test_sources",
+    },
+    {"src": "slab.c"},
+    {"src": "smoothstep.c"},
+    {"src": "spin.c"},
+    {"src": "stats.c"},
+    {"src": "stats_print.c"},
+    {"src": "sz.c"},
+    {"src": "tcache_init.c"},
+    {"src": "test_hooks.c"},
+    {"src": "ticker.c"},
+    {"src": "tsd.c"},
+    {"src": "uaf.c"},
+    {"src": "witness.c"},
+]
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    deps = [":testlib"],
+) for test in UNIT_TESTS]
+
+# Tests whose .sh exports a MALLOC_CONF in every configuration.
+UNIT_CONF_TESTS = [
+    {
+        "src": "arena_decay.c",
+        "conf": "dirty_decay_ms:1000,muzzy_decay_ms:1000,tcache_max:1024",
+    },
+    {
+        "src": "batch_alloc.c",
+        "conf": "tcache_gc_incr_bytes:2147483648",
+    },
+    {
+        "src": "binshard.c",
+        "conf": "narenas:1,bin_shards:1-160:16|129-512:4|256-256:8|513-8070450532247928832:1",
+    },
+    {
+        "src": "san.c",
+        "conf": "san_guard_large:1,san_guard_small:1",
+    },
+    {
+        "src": "hpa.c",
+        "conf": "process_madvise_max_batch:0,experimental_hpa_start_huge_if_thp_always:false",
+    },
+    {
+        "src": "hpa_sec_integration.c",
+        "conf": "process_madvise_max_batch:0,experimental_hpa_start_huge_if_thp_always:false",
+    },
+    {
+        "src": "hpa_thp_always.c",
+        "conf": "process_madvise_max_batch:0,experimental_hpa_start_huge_if_thp_always:true",
+    },
+    {
+        "src": "hpa_vectorized_madvise.c",
+        "conf": "process_madvise_max_batch:2,experimental_hpa_start_huge_if_thp_always:false",
+    },
+    {
+        "src": "hpa_vectorized_madvise_large_batch.c",
+        "conf": "process_madvise_max_batch:64",
+    },
+    {
+        "src": "hpa_background_thread.c",
+        "conf": "hpa_dirty_mult:0,hpa_min_purge_interval_ms:50,hpa_sec_nshards:0,experimental_hpa_start_huge_if_thp_always:false",
+    },
+    {
+        "src": "malloc_conf_2.c",
+        "conf": "dirty_decay_ms:500",
+    },
+    {
+        "src": "pack.c",
+        "conf": "dirty_decay_ms:0,muzzy_decay_ms:0",
+    },
+    {
+        "src": "size_classes.c",
+        "conf": "disable_large_size_classes:true",
+    },
+    {
+        "src": "tcache_max.c",
+        "conf": "tcache_max:1024,tcache_gc_incr_bytes:939524096",
+    },
+    {
+        "src": "zero_realloc_abort.c",
+        "conf": "zero_realloc:abort",
+    },
+    {
+        "src": "zero_realloc_free.c",
+        "conf": "zero_realloc:free",
+    },
+    {
+        "src": "zero_realloc_alloc.c",
+        "conf": "zero_realloc:alloc",
+    },
+    {
+        "src": "zero_reallocs.c",
+        "conf": "zero_realloc:free",
+    },
+]
+
+# jemalloc reads MALLOC_CONF only with //settings/flags:enable_user_config (JEMALLOC_CONFIG_ENV, src/conf.c), so a test
+# with a MALLOC_CONF is incompatible without it rather than run without its conf. Upstream's test scripts export it
+# regardless.
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": test["conf"]},
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in UNIT_CONF_TESTS]
+
+# Tests whose .sh exports a MALLOC_CONF only if enable_prof.
+UNIT_PROF_CONF_TESTS = [
+    {
+        "src": "inspect.c",
+        "conf": "prof:false",
+    },
+    {
+        "src": "prof_accum.c",
+        "conf": "prof:true,prof_accum:true,prof_active:false,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_active.c",
+        "conf": "prof:true,prof_active:true,prof_thread_active_init:false,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_gdump.c",
+        "conf": "prof:true,prof_active:false,prof_gdump:true,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_hook.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0,prof_bt_max:200",
+    },
+    {
+        "src": "prof_log.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_mdump.c",
+        "conf": "prof:true,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_recent.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0,prof_recent_alloc_max:3,prof_sys_thread_name:true",
+    },
+    {
+        "src": "prof_reset.c",
+        "conf": "prof:true,prof_active:false,lg_prof_sample:0,prof_recent_alloc_max:0",
+    },
+    {
+        "src": "prof_small.c",
+        "conf": "prof:true,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_stats.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0,prof_stats:true",
+    },
+    {
+        "src": "prof_tctx.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0",
+    },
+    {
+        "src": "prof_thread_name.c",
+        "conf": "prof:true,prof_active:false",
+    },
+    {
+        "src": "prof_sys_thread_name.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0,prof_sys_thread_name:true",
+    },
+    {
+        "src": "safety_check.c",
+        "conf": "prof:true,prof_active:true,lg_prof_sample:0",
+    },
+    {
+        "src": "size_check.c",
+        "conf": "prof:false",
+    },
+    {
+        "src": "thread_event.c",
+        "conf": "prof:true,lg_prof_sample:0",
+    },
+]
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    env = select({
+        "//settings/flags:prof": {"JE_TEST_MALLOC_CONF": test["conf"]},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:no_prof": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in UNIT_PROF_CONF_TESTS]
+
+cc_test(
+    name = "prof_idump",
+    src = "prof_idump.c",
+    env = select({
+        "//settings/flags:prof": {
+            "JE_TEST_MALLOC_CONF": "tcache:false,prof:true,prof_accum:true,prof_active:false,lg_prof_sample:0,lg_prof_interval:0",
+        },
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "tcache:false"},
+    }),
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+cc_test(
+    name = "arena_reset_prof",
+    src = "arena_reset_prof.c",
+    env = {"JE_TEST_MALLOC_CONF": "prof:true,lg_prof_sample:0"},
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":arena_reset_c",
+        ":testlib",
+    ],
+)
+
+cc_test(
+    name = "batch_alloc_prof",
+    src = "batch_alloc_prof.c",
+    env = {"JE_TEST_MALLOC_CONF": "prof:true,lg_prof_sample:14"},
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":batch_alloc_c",
+        ":testlib",
+    ],
+)
+
+# Debug catches the double free only on the slow free path, which a debug build takes because fill turns junk on.
+# Without fill, free_fastpath caches the second free unchecked. Upstream's CI never builds debug without fill.
+selects.config_setting_group(
+    name = "debug_without_fill",
+    match_all = [
+        "//settings/flags:debug",
+        "//settings/flags:fill_disabled",
+    ],
+)
+
+cc_test(
+    name = "double_free",
+    src = "double_free.c",
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        ":debug_without_fill": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":testlib"],
+)
+
+cc_test(
+    name = "junk",
+    src = "junk.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "abort:false,zero:false,junk:true"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:fill_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+cc_test(
+    name = "junk_alloc",
+    src = "junk_alloc.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "abort:false,zero:false,junk:alloc"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:fill_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":junk_c",
+        ":testlib",
+    ],
+)
+
+cc_test(
+    name = "junk_free",
+    src = "junk_free.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "abort:false,zero:false,junk:free"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:fill_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":junk_c",
+        ":testlib",
+    ],
+)
+
+cc_test(
+    name = "zero",
+    src = "zero.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "abort:false,junk:false,zero:true"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    linkstatic = True,
+    local_defines = ["JEMALLOC_UNIT_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:fill_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
