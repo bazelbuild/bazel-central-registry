@@ -1,0 +1,75 @@
+# The tests upstream runs with ctest (tests/CMakeLists.txt), against @mattbusel-llm-cpp
+# through local_path_override:
+#
+#   header_<name>   the implementation (headers/<name>.cpp) plus a second
+#                   translation unit that includes the header again, in both
+#                   spellings, with main(); must link and run
+#   link_all        every implementation in one binary plus <llm/llm.hpp>
+#   upstream_<name> a library's own test program (upstream/<name>/)
+
+load("@mattbusel-llm-cpp//:libraries.bzl", "CURL_LIBRARIES", "PLAIN_LIBRARIES")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(":defs.bzl", "configure_file")
+
+LIBRARIES = PLAIN_LIBRARIES + CURL_LIBRARIES
+
+COPTS = select({
+    "@platforms//os:windows": ["/utf-8"],
+    "//conditions:default": [],
+})
+
+[
+    configure_file(
+        name = "second_tu_" + name,
+        src = "second_tu.cpp.in",
+        substitutions = {"@LLM_NAME@": name},
+    )
+    for name in LIBRARIES
+]
+
+[
+    cc_test(
+        name = "header_" + name,
+        srcs = [
+            "headers/%s.cpp" % name,
+            ":second_tu_" + name,
+        ],
+        copts = COPTS,
+        deps = ["@mattbusel-llm-cpp//:" + name],
+    )
+    for name in LIBRARIES
+]
+
+configure_file(
+    name = "link_all_main",
+    src = "link_all.cpp",
+    substitutions = {"LLM_CPP_EXPECTED_VERSION": "\"1.2.0\""},
+)
+
+cc_test(
+    name = "link_all",
+    srcs = [":link_all_main"] + ["headers/%s.cpp" % name for name in LIBRARIES],
+    copts = COPTS,
+    deps = ["@mattbusel-llm-cpp"],
+)
+
+cc_test(
+    name = "upstream_cost_cost_table",
+    srcs = ["upstream/cost/cost_table.cpp"],
+    copts = COPTS,
+    deps = ["@mattbusel-llm-cpp//:cost"],
+)
+
+cc_test(
+    name = "upstream_retry_test_llm_retry",
+    srcs = ["upstream/retry/test_llm_retry.cpp"],
+    copts = COPTS,
+    deps = ["@mattbusel-llm-cpp//:retry"],
+)
+
+cc_test(
+    name = "upstream_stream_test_responses_sse",
+    srcs = ["upstream/stream/test_responses_sse.cpp"],
+    copts = COPTS,
+    deps = ["@mattbusel-llm-cpp//:stream"],
+)

@@ -1,0 +1,85 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE.md",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# Mirrors fastgltf's CMake option of the same name. It changes the layout of
+# public types, so it applies to fastgltf and everything that includes it:
+#   --@fastgltf//:use_64bit_float
+bool_flag(
+    name = "use_64bit_float",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "use_64bit_float_enabled",
+    flag_values = {":use_64bit_float": "True"},
+)
+
+# Mirrors fastgltf_compiler_flags in cmake/compilers.cmake. fastgltf 1.x
+# needs C++20.
+_MSVC_COPTS = [
+    "/std:c++20",
+    "/EHsc",
+    "/utf-8",
+]
+
+cc_library(
+    name = "fastgltf",
+    srcs = [
+        "src/base64.cpp",
+        "src/crc32.cpp",
+        "src/exporter.cpp",
+        "src/io.cpp",
+        "src/parser.cpp",
+        "src/uri.cpp",
+        "src/validate.cpp",
+    ],
+    hdrs = glob(
+        ["include/fastgltf/**/*.hpp"],
+        # These need glm / DirectXMath, which are not dependencies.
+        exclude = [
+            "include/fastgltf/dxmath_element_traits.hpp",
+            "include/fastgltf/glm_element_traits.hpp",
+        ],
+    ),
+    copts = select({
+        "@rules_cc//cc/compiler:clang-cl": _MSVC_COPTS,
+        "@rules_cc//cc/compiler:msvc-cl": _MSVC_COPTS,
+        "//conditions:default": ["-std=c++20"],
+    }),
+    defines = select({
+        ":use_64bit_float_enabled": ["FASTGLTF_USE_64BIT_FLOAT=1"],
+        "//conditions:default": [],
+    }),
+    includes = ["include"],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        "@simdjson",
+        "@simdutf",
+    ],
+)

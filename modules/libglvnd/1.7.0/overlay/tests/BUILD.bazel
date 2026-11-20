@@ -1,0 +1,87 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Hermetic checks (run on CI, no GPU or display needed):
+#   exports_<lib>_test   each stub exports exactly upstream's src/*/*.symbols
+#   <case>_needed_test   each render binary links only the libraries it uses
+#
+# On-GPU checks (tagged manual + local; run them on a machine with a driver):
+#   <case>_render_test   creates a context, clears, reads back a pixel, and
+#                        verifies the system libraries (not the stubs) were
+#                        loaded. The GLX cases need an X server in $DISPLAY.
+#
+#   bazel test //:all_render_tests
+
+# (SONAME, upstream export list)
+_EXPORTS = {
+    "EGL": ("libEGL.so.1", "src/EGL/egl.symbols"),
+    "GL": ("libGL.so.1", "src/GL/gl.symbols"),
+    "GLESv1_CM": ("libGLESv1_CM.so.1", "src/GLESv1/glesv1.symbols"),
+    "GLESv2": ("libGLESv2.so.2", "src/GLESv2/glesv2.symbols"),
+    "GLX": ("libGLX.so.0", "src/GLX/glx.symbols"),
+    "OpenGL": ("libOpenGL.so.0", "src/OpenGL/ogl.symbols"),
+}
+
+[
+    cc_test(
+        name = "exports_" + lib + "_test",
+        srcs = ["elf_check.cc"],
+        args = [
+            "exports",
+            "$(rootpath @libglvnd//:libdir)/" + soname,
+            "$(rootpath @libglvnd//:" + symbols + ")",
+        ],
+        data = [
+            "@libglvnd//:libdir",
+            "@libglvnd//:" + symbols,
+        ],
+    )
+    for lib, (soname, symbols) in _EXPORTS.items()
+]
+
+# (source, defines, libglvnd targets, expected libglvnd DT_NEEDED, needs X)
+_RENDER_CASES = {
+    "egl_gles1": ("egl_render.c", ["USE_GLES1"], ["EGL", "GLESv1_CM"], ["libEGL.so.1", "libGLESv1_CM.so.1"], False),
+    "egl_gles2": ("egl_render.c", ["USE_GLES2"], ["EGL", "GLESv2"], ["libEGL.so.1", "libGLESv2.so.2"], False),
+    "egl_opengl": ("egl_render.c", ["USE_OPENGL"], ["EGL", "OpenGL"], ["libEGL.so.1", "libOpenGL.so.0"], False),
+    "glx_legacy_gl": ("glx_render.c", ["USE_LEGACY_GL"], ["GL"], ["libGL.so.1"], True),
+    "glx_opengl": ("glx_render.c", [], ["GLX", "OpenGL"], ["libGLX.so.0", "libOpenGL.so.0"], True),
+}
+
+[
+    cc_test(
+        name = case + "_render_test",
+        srcs = [src, "render_common.h"],
+        env_inherit = ["DISPLAY", "XAUTHORITY"] if needs_x else [],
+        linkopts = ["-ldl"],
+        local_defines = ["_GNU_SOURCE"] + defines,
+        # manual: needs a GPU driver (and an X server for GLX), so it is
+        #         excluded from wildcards and never runs on CI.
+        # local:  never run remotely or sandboxed, so the test sees the host's
+        #         driver, /dev/dri and /dev/nvidia* nodes.
+        tags = [
+            "local",
+            "manual",
+        ],
+        deps = ["@libglvnd//:" + t for t in targets],
+    )
+    for case, (src, defines, targets, _, needs_x) in _RENDER_CASES.items()
+]
+
+test_suite(
+    name = "all_render_tests",
+    tags = ["manual"],
+    tests = [":" + case + "_render_test" for case in _RENDER_CASES],
+)
+
+[
+    cc_test(
+        name = case + "_needed_test",
+        srcs = ["elf_check.cc"],
+        args = [
+            "needed",
+            "$(rootpath :" + case + "_render_test)",
+        ] + needed,
+        data = [":" + case + "_render_test"],
+    )
+    for case, (_, _, _, needed, _) in _RENDER_CASES.items()
+]

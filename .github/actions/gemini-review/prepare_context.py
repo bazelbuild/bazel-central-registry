@@ -12,8 +12,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Prepares .gemini/context.json and .gemini/prompt.md for BCR Gemini PR reviews."""
+"""Prepares gemini-artifacts/context.json and gemini-artifacts/prompt.md for BCR Gemini PR reviews."""
 
+import ast
 import base64
 import copy
 import json
@@ -22,8 +23,11 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.request
 import yaml
 
+
+BAZELCI_PY_URL = "https://raw.githubusercontent.com/bazelbuild/continuous-integration/master/buildkite/bazelci.py"
 
 # Bazel module name / version character sets, per
 # https://bazel.build/external/module#module_name and #version (matching
@@ -138,26 +142,54 @@ def presubmit_changed_beyond_platforms_or_bazel(prev_doc, curr_doc):
     return curr_scrubbed != prev_scrubbed
 
 
+def fetch_eol_platforms(url=BAZELCI_PY_URL):
+    """Fetches and returns a sorted list of EOL_PLATFORMS from bazelci.py, or [] on error."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "bcr-gemini-review"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        m = re.search(r"^EOL_PLATFORMS\s*=\s*(?:frozenset\s*\(\s*)?(\[.*?\])", text, re.M | re.S)
+        if m:
+            return sorted(str(p) for p in ast.literal_eval(m.group(1)))
+    except Exception:
+        pass
+    return []
+
+
+def get_latest_bazel_majors():
+    """Returns the latest 2 stable Bazel major versions as ints (fallback: [8, 9])."""
+    try:
+        releases = gh_api("repos/bazelbuild/bazel/releases?per_page=100")
+        majors = {
+            int(m.group(1))
+            for r in (releases if isinstance(releases, list) else [])
+            if isinstance(r, dict)
+            and not r.get("prerelease")
+            and not r.get("draft")
+            and (m := re.match(r"^v?(\d+)\.\d+\.\d+$", str(r.get("tag_name") or "")))
+        }
+        if majors and max(majors) >= 2:
+            top = max(majors)
+            return [top - 1, top]
+    except Exception:
+        pass
+    return [8, 9]
+
+
 def render_review_prompt(
     context_json_str,
     template_path=pathlib.Path(".github/actions/gemini-review/prompt_template.md"),
-    styleguide_path=pathlib.Path(".gemini/styleguide.md"),
-    out_path=pathlib.Path(".gemini/prompt.md"),
+    out_path=pathlib.Path("gemini-artifacts/prompt.md"),
 ):
-    """Renders .gemini/prompt.md by expanding styleguide and context into prompt_template.md."""
+    """Renders gemini-artifacts/prompt.md by expanding context into prompt_template.md."""
     if not template_path.is_file():
         fallback = pathlib.Path(__file__).resolve().parent / "prompt_template.md"
         if fallback.is_file():
             template_path = fallback
-    if not template_path.is_file() or not styleguide_path.is_file():
+    if not template_path.is_file():
         return False
     prompt_template = template_path.read_text(encoding="utf-8")
-    styleguide = styleguide_path.read_text(encoding="utf-8").strip()
-    # Expand trusted styleguide.md first, then context.json second so untrusted
-    # fields in context.json can never trigger template expansion.
-    rendered = prompt_template.replace("@{.gemini/styleguide.md}", styleguide).replace(
-        "@{.gemini/context.json}", context_json_str.strip()
-    )
+    rendered = prompt_template.replace("{{CONTEXT_JSON}}", context_json_str.strip())
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(rendered, encoding="utf-8")
     return True
@@ -301,7 +333,7 @@ def main():
     additional_context = input_context
     if not additional_context and comment_body:
         additional_context = re.sub(
-            r"^(@bazel-io\s+gemini-review|@gemini-cli\s+/review)\s*",
+            r"^@bazel-io\s+gemini-review\s*",
             "",
             comment_body,
         ).strip()
@@ -416,6 +448,10 @@ def main():
 
         if is_new_module:
             reasons.append(f"Adds a new module '{mod_name}'.")
+            if mod_name.startswith("rules_"):
+                reasons.append(
+                    f"⚠️ New module '{mod_name}' starts with the 'rules_' prefix — explicitly verify whether claiming a top-level 'rules_*' name is warranted or if it should be user/org-prefixed (e.g., '<user_or_org>_{mod_name}')."
+                )
         else:
             maintainers = (main_meta or {}).get("maintainers") or []
             gh_maintainers = [m for m in maintainers if isinstance(m, dict) and m.get("github")]
@@ -622,19 +658,21 @@ def main():
         "modified_module_versions": modified_module_versions_info,
         "non_module_files": non_module_files,
         "mutated_existing_version_files": mutated_existing_version_files,
+        "eol_platforms": fetch_eol_platforms(),
+        "latest_bazel_majors": get_latest_bazel_majors(),
         "pr_diff_path": pr_diff_path,
         "pr_head_root": pr_head_root,
         "changed_files": changed_files_info,
     }
 
-    os.makedirs(".gemini", exist_ok=True)
+    os.makedirs("gemini-artifacts", exist_ok=True)
     context_json_str = json.dumps(context_data, indent=2)
-    with open(".gemini/context.json", "w", encoding="utf-8") as f:
+    with open("gemini-artifacts/context.json", "w", encoding="utf-8") as f:
         f.write(context_json_str)
 
     render_review_prompt(context_json_str)
 
-    print("Generated .gemini/context.json:")
+    print("Generated gemini-artifacts/context.json:")
     print(context_json_str)
 
     with open(github_output, "a", encoding="utf-8") as out:
