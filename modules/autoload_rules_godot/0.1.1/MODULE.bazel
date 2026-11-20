@@ -1,0 +1,500 @@
+module(
+    name = "autoload_rules_godot",
+    version = "0.1.1",
+    bazel_compatibility = [">=9.0.0"],
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.27")
+bazel_dep(name = "rules_python", version = "2.4.5")
+bazel_dep(name = "rules_android", version = "0.8.0")
+bazel_dep(name = "rules_android_ndk", version = "0.1.5")
+
+# Builds Godot's Java/Kotlin Android shell library from source; no Kotlin toolchain is
+# registered.
+bazel_dep(name = "rules_kotlin", version = "2.4.21")
+bazel_dep(name = "rules_apple", version = "5.3.1")
+bazel_dep(name = "rules_swift", version = "4.1.1")
+bazel_dep(name = "apple_support", version = "2.9.1")
+
+# The version Bazel 10's bazel_tools requires, so Bazel 9 and 10 resolve the same graph.
+bazel_dep(name = "rules_java", version = "9.9.0")
+bazel_dep(name = "rules_jvm_external", version = "6.10")
+
+# bzl_library targets of the API reference.
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+
+# The Starlark unit and analysis tests of the ruleset's tests packages.
+bazel_dep(name = "rules_testing", version = "0.9.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "10.1.0", dev_dependency = True)
+bazel_dep(name = "protobuf", version = "34.0.bcr.1", dev_dependency = True)
+bazel_dep(name = "aspect_rules_lint", version = "2.9.0", dev_dependency = True)
+
+# rules_android 0.8.0 exports its API files but keeps the transitive Starlark
+# library private. Expose only its documentation source library for Stardoc.
+# Root-module overrides are ignored when this ruleset is consumed as a dependency.
+single_version_override(
+    module_name = "rules_android",
+    patch_strip = 1,
+    patches = ["//tools/docs:rules_android_doc_visibility.patch"],
+)
+
+# rules_android_ndk 0.1.5 exports no files; expose rules.bzl, which godot_android_toolchains
+# loads, for Stardoc. Root-module overrides are ignored when this ruleset is consumed.
+single_version_override(
+    module_name = "rules_android_ndk",
+    patch_strip = 1,
+    patches = ["//tools/docs:rules_android_ndk_doc_visibility.patch"],
+)
+
+# Repositories that godot_android_toolchains' generated SDK and toolchain repositories
+# name: this host's SDK, whose API level setting the Linux SDK follows, and rules_java's tools,
+# which rules_android's SDK helper names.
+android_sdk = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+)
+use_repo(android_sdk, "androidsdk")
+
+# The SDK of //godot/platforms/private/tests, at the API level and build tools mise.toml
+# provisions; a dependency's tags would apply to consumers without their own.
+android_sdk_development = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+    dev_dependency = True,
+)
+android_sdk_development.configure(
+    api_level = 35,
+    build_tools_version = "35.0.0",
+)
+
+java_toolchains = use_extension("@rules_java//java:extensions.bzl", "toolchains")
+use_repo(java_toolchains, "remote_java_tools")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(python_version = "3.14")
+
+# Python targets of this module import only packages that have an __init__.py of their own.
+python_config = use_extension("@rules_python//python/extensions:config.bzl", "config")
+python_config.explicit_init_py(default = True)
+
+# The Android toolchains of //godot/platforms/private/tests.
+godot_android_toolchains = use_extension(
+    "//godot:extensions.bzl",
+    "godot_android_toolchains",
+    dev_dependency = True,
+)
+godot_android_toolchains.configure(ndk_api_level = 24)
+use_repo(godot_android_toolchains, "android_toolchains")
+
+# The ruleset's own development engines; consumers register their own sets.
+godot_engines = use_extension("//godot:extensions.bzl", "godot_engines", dev_dependency = True)
+godot_engines.prebuilt(
+    name = "godot",
+    version = "4.7.2",
+)
+
+# The next-minor engine of //godot/extension/tests/compatibility and
+# //godot/platforms/private/tests/engine_probe, which select it with a test transition; not
+# registered, so only those tests fetch it. The prerelease shell AAR is a GitHub release
+# asset, not a catalogued Maven artifact.
+godot_engines.prebuilt(
+    name = "godot_beta",
+    android_shell_integrity = "sha256-G1KpV92jFIn4OirzO17zy2euXFLyE40BSATgYs9MI5Y=",
+    android_shell_urls = ["https://github.com/godotengine/godot-builds/releases/download/4.8-beta1/godot-lib.4.8.beta1.template_release.aar"],
+    version = "4.8.0-beta1",
+)
+
+# Sources of the white-box tests and API contract fixtures; fetched only when needed.
+godot_engines.source(
+    name = "godot_sources",
+    sha256 = "e954996374cbd1cb5d72e0e3781cc537408e6ce73b010b12c6c2f308a820690a",
+    strip_prefix = "godot-4.7.2-stable",
+    urls = ["https://github.com/godotengine/godot/archive/refs/tags/4.7.2-stable.tar.gz"],
+    version = "4.7.2",
+)
+
+# Next-minor compatibility probe; the archive's version.py names the unnumbered beta.
+godot_engines.source(
+    name = "godot_sources_beta",
+    sha256 = "6d49c02e438935e49a12231d857b2b56131948b004d5b668bf295c9bc3b2281c",
+    strip_prefix = "godot-4.8-beta1",
+    urls = ["https://github.com/godotengine/godot-builds/releases/download/4.8-beta1/godot-4.8-beta1.tar.xz"],
+    version = "4.8.0-beta",
+)
+
+# A non-release snapshot of the 4.7 maintenance branch: an immutable commit archive whose
+# version.py names 4.7.3-rc, which the Android shell review checks.
+godot_engines.source(
+    name = "godot_sources_snapshot",
+    sha256 = "90ef5ad9f4c59750004813813534527eb3f82f1975789fb5b79b609fe841beb8",
+    strip_prefix = "godot-2ea68c77c3157c95793987569dc44662fe4f83cf",
+    urls = ["https://github.com/godotengine/godot/archive/2ea68c77c3157c95793987569dc44662fe4f83cf.tar.gz"],
+    version = "4.7.3-rc",
+)
+
+# The source-built engines of //godot/platforms/private/tests/engine_probe, which selects
+# each with a test transition; not registered, so only those tests fetch and build them.
+# Android and iOS differ in renderer options and modules; the beta builds add the ruleset's
+# own bazel_probe module and engine patch.
+godot_engines.source_build(
+    name = "godot_source_build_android",
+    build_options = {
+        "vulkan": "no",
+        "opengl3": "yes",
+        "disable_3d": "yes",
+        "disable_physics_2d": "yes",
+        "disable_navigation_2d": "yes",
+        "disable_navigation_3d": "yes",
+    },
+    build_targets = ["template_release"],
+    cpus = ["arm64"],
+    platforms = ["android"],
+    source = "@godot_sources//:source.json",
+)
+godot_engines.source_build(
+    name = "godot_source_build_ios",
+    build_options = {
+        "metal": "no",
+        "vulkan": "no",
+        "opengl3": "yes",
+        "disable_3d": "yes",
+        "disable_physics_2d": "yes",
+        "disable_navigation_2d": "yes",
+        "disable_navigation_3d": "yes",
+    },
+    build_targets = ["template_release"],
+    cpus = ["arm64"],
+    enabled_modules = [
+        "gdscript",
+        "text_server_fb",
+        "freetype",
+        "webp",
+    ],
+    ios_environments = ["simulator"],
+    platforms = ["ios"],
+    source = "@godot_sources//:source.json",
+)
+godot_engines.source_build(
+    name = "godot_beta_source_build_android",
+    build_options = {
+        "vulkan": "no",
+        "opengl3": "yes",
+        "rendering_device": "no",
+        "disable_3d": "yes",
+        "disable_physics_2d": "yes",
+        "disable_navigation_2d": "yes",
+        "disable_navigation_3d": "yes",
+    },
+    build_targets = ["template_release"],
+    cpus = ["arm64"],
+    custom_modules = {"//godot/engine/private/tests/fixtures/source_build/modules/bazel_probe:config.py": "bazel_probe"},
+    enabled_modules = [
+        "gdscript",
+        "text_server_fb",
+        "freetype",
+        "bazel_probe",
+    ],
+    patches = ["//godot/engine/private/tests/fixtures/source_build/patches:engine-name.patch"],
+    platforms = ["android"],
+    source = "@godot_sources_beta//:source.json",
+)
+godot_engines.source_build(
+    name = "godot_beta_source_build_ios",
+    build_options = {
+        "metal": "no",
+        "vulkan": "no",
+        "opengl3": "yes",
+        "disable_3d": "yes",
+        "disable_physics_2d": "yes",
+        "disable_navigation_2d": "yes",
+        "disable_navigation_3d": "yes",
+        "accesskit": "no",
+        "rendering_device": "no",
+    },
+    build_targets = ["template_release"],
+    cpus = ["arm64"],
+    custom_modules = {"//godot/engine/private/tests/fixtures/source_build/modules/bazel_probe:config.py": "bazel_probe"},
+    enabled_modules = [
+        "gdscript",
+        "text_server_fb",
+        "freetype",
+        "bazel_probe",
+    ],
+    ios_environments = ["simulator"],
+    patches = ["//godot/engine/private/tests/fixtures/source_build/patches:engine-name.patch"],
+    platforms = ["ios"],
+    source = "@godot_sources_beta//:source.json",
+)
+use_repo(
+    godot_engines,
+    "godot",
+    "godot_beta",
+    "godot_beta_source_build_android",
+    # The source-built beta engines' configuration manifests, which the engine probe's
+    # tests inspect.
+    "godot_beta_source_build_android_android_arm64_template_release",
+    "godot_beta_source_build_ios",
+    "godot_beta_source_build_ios_ios_arm64_simulator_template_release",
+    "godot_beta_templates",
+    "godot_editor_linux_arm64",
+    "godot_editor_linux_x86_64",
+    "godot_editor_macos",
+    "godot_source_build_android",
+    "godot_source_build_ios",
+    "godot_sources",
+    "godot_sources_beta",
+    "godot_sources_snapshot",
+    "godot_templates",
+)
+
+register_toolchains(
+    "@godot//toolchains:all",
+    dev_dependency = True,
+)
+
+# A consumer extension calling the public source build helper; built only when requested explicitly.
+# Its macOS release recipe is the godot_engine_build repository whose entrypoints
+# //godot/engine/private/tests checks.
+source_build_fixture = use_extension(
+    "//godot/tests/api_contracts/source_build:extension.bzl",
+    "source_build_fixture",
+    dev_dependency = True,
+)
+use_repo(
+    source_build_fixture,
+    "godot_source_build_fixture",
+    "godot_source_build_fixture_macos_arm64_template_release",
+)
+
+# Desktop export platform tests run on an execution platform of their operating system and
+# CPU.
+register_toolchains("//godot/private/config:all")
+
+# Optional native C++ example. Mobile example modules reuse its extension target;
+# the repository is fetched only when that target is referenced.
+godot_cpp_bindings = use_repo_rule(
+    "//godot/extension:repositories.bzl",
+    "godot_cpp_bindings",
+)
+
+godot_cpp_bindings(
+    name = "godot_cpp",
+    enabled_classes = ["Node"],
+)
+
+# Source recipes of the API contract fixtures; acquisition is lazy until explicitly built.
+godot_engine_build = use_repo_rule(
+    "//godot/engine:repositories.bzl",
+    "godot_engine_build",
+)
+
+godot_android_shell = use_repo_rule(
+    "//godot/engine:repositories.bzl",
+    "godot_android_shell",
+)
+
+# The Android shell library of the API contract fixture; analyzable only with an Android
+# SDK.
+godot_android_shell(
+    name = "godot_android_shell_fixture",
+    dev_dependency = True,
+    source = "@godot_sources//:source.json",
+)
+
+# Fails if ever configured: select_recipe_test proves an unselected recipe stays lazy.
+godot_engine_build(
+    name = "godot_unconfigured_fixture",
+    build_options = {"platform": "rejected"},
+    build_target = "template_release",
+    cpu = "arm64",
+    dev_dependency = True,
+    platform = "android",
+    source = "@godot_sources//:source.json",
+)
+
+# Godot's Gradle declarations for the app template and the Android shell library
+# (platform/android/java/app/config.gradle, app/build.gradle, lib/build.gradle), with the
+# modules whose labels the shell library's aar_import names directly. rules_godot
+# contributes them to the consumer's shared maven installation, where they are floors: the
+# consumer's resolution may select higher versions. Resolved alone, they are Godot's Maven
+# graph, the minimums every Android application is checked against.
+GODOT_ANDROID_ARTIFACTS = [
+    "androidx.annotation:annotation-jvm:1.8.1",
+    "androidx.core:core-splashscreen:1.0.1",
+    "androidx.documentfile:documentfile:1.1.0",
+    "androidx.fragment:fragment:1.8.6",
+    "org.jetbrains:annotations:13.0",
+    "org.jetbrains.kotlin:kotlin-stdlib:2.1.21",
+]
+
+# Maven Central and Google's Maven, which hold every module of Godot's graph.
+GODOT_ANDROID_REPOSITORIES = [
+    "https://repo.maven.apache.org/maven2",
+    "https://dl.google.com/dl/android/maven2",
+]
+
+# The shared installation also serves the build tools, whose protobuf libraries bring Guava;
+# with Guava in the graph, highest-wins selects Guava's empty listenablefuture placeholder,
+# which leaves ListenableFuture undefined in every application that does not package Guava.
+# Godot's own graph selects 1.0. A consumer's root request decides over this one.
+GODOT_LISTENABLEFUTURE_VERSION = "1.0"
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "maven",
+    aar_import_bzl_label = "@rules_android//rules:rules.bzl",
+    artifacts = GODOT_ANDROID_ARTIFACTS,
+    known_contributing_modules = ["protobuf"],
+    lock_file = "//:maven_install.json",
+    repositories = GODOT_ANDROID_REPOSITORIES,
+    resolver = "gradle",
+    use_starlark_android_rules = True,
+)
+maven.artifact(
+    name = "maven",
+    artifact = "listenablefuture",
+    force_version = True,
+    group = "com.google.guava",
+    version = GODOT_LISTENABLEFUTURE_VERSION,
+)
+use_repo(maven, "maven")
+
+# Gradle module metadata redirects a Kotlin Multiplatform root module, which has no JVM
+# artifact of its own, to its JVM module. The gradle resolver of rules_jvm_external records
+# such a root module's POM checksum as its jar checksum, so its jar never downloads. Godot's
+# graph has two of them; each override selects the JVM module Gradle selects. Remove the
+# overrides once a rules_jvm_external release no longer falls back to the POM in
+# GradleResolver (7.2 still does), and repin.
+maven.override(
+    name = "maven",
+    coordinates = "androidx.annotation:annotation",
+    target = "@maven//:androidx_annotation_annotation_jvm",
+)
+maven.override(
+    name = "maven",
+    coordinates = "org.jetbrains.kotlinx:kotlinx-coroutines-core",
+    target = "@maven//:org_jetbrains_kotlinx_kotlinx_coroutines_core_jvm",
+)
+
+# Godot's Maven graph: what Gradle resolves for rules_godot's contribution alone. Its lock is
+# committed beside the template activities and read by each Android application's minimum
+# check; repin with `REPIN=1 bazel run @godot_android_maven_graph//:pin`.
+maven_development = use_extension(
+    "@rules_jvm_external//:extensions.bzl",
+    "maven",
+    dev_dependency = True,
+)
+maven_development.install(
+    name = "godot_android_maven_graph",
+    artifacts = GODOT_ANDROID_ARTIFACTS,
+    lock_file = "//godot/private/engine:android/maven_graph_install.json",
+    repositories = GODOT_ANDROID_REPOSITORIES,
+    resolver = "gradle",
+)
+maven_development.artifact(
+    name = "godot_android_maven_graph",
+    artifact = "listenablefuture",
+    force_version = True,
+    group = "com.google.guava",
+    version = GODOT_LISTENABLEFUTURE_VERSION,
+)
+use_repo(maven_development, "godot_android_maven_graph")
+
+# rules_android and bazel_worker_java resolve their own tools from Maven without a lock
+# file, so every output base resolves and downloads all of them eagerly. As the root
+# module, the ruleset pins those repositories like its consumer modules do: pinned
+# artifacts are fetched lazily through Bazel's shared repository cache.
+maven_development.install(
+    name = "rules_android_maven",
+    known_contributing_modules = ["rules_android"],
+    lock_file = "//:rules_android_maven_install.json",
+    repositories = [
+        "https://maven-central.storage-download.googleapis.com/maven2",
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+    resolver = "maven",
+)
+maven_development.install(
+    name = "android_ide_common_30_1_3",
+    known_contributing_modules = ["rules_android"],
+    lock_file = "//:android_ide_common_30_1_3_install.json",
+    repositories = [
+        "https://maven-central.storage-download.googleapis.com/maven2",
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+    resolver = "maven",
+)
+maven_development.install(
+    name = "bazel_worker_maven",
+    known_contributing_modules = ["bazel_worker_java"],
+    lock_file = "//:bazel_worker_maven_install.json",
+    repositories = [
+        "https://maven-central.storage-download.googleapis.com/maven2",
+        "https://maven.google.com",
+        "https://repo1.maven.org/maven2",
+    ],
+    resolver = "maven",
+)
+
+repository_fixtures = use_extension(
+    "//godot/tests/api_contracts/repositories:fixtures.bzl",
+    "repository_fixtures",
+    dev_dependency = True,
+)
+use_repo(repository_fixtures, "godot_split_templates")
+
+http_archive = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_archive",
+)
+
+# GdUnit4 for the run tests of the GdUnit adapter.
+http_archive(
+    name = "gdunit4",
+    build_file = "//godot/private/tests:gdunit4.BUILD.bazel",
+    dev_dependency = True,
+    sha256 = "3b112b67f7cb85e59f3814ea81473e64b9ddfad351073ce89d496da749a6d1fe",
+    strip_prefix = "gdUnit4-0127a55f4543dfc24746f6e5c7ba6f94105d51f2",
+    urls = ["https://github.com/godot-gdunit-labs/gdUnit4/archive/0127a55f4543dfc24746f6e5c7ba6f94105d51f2.tar.gz"],
+)
+
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+# The prebuilt beta engine's shell AAR, whose engine library the engine probe's Android
+# test compares with the packaged one.
+http_file(
+    name = "godot_beta_shell_aar",
+    dev_dependency = True,
+    downloaded_file_path = "godot-4.8-beta1.aar",
+    sha256 = "1b52a957dda31489f83a2af33b5ef3cb67ae5c52f2138d014804e062cf4c2396",
+    urls = ["https://github.com/godotengine/godot-builds/releases/download/4.8-beta1/godot-lib.4.8.beta1.template_release.aar"],
+)
+
+# Inspects App Bundles: the all-in-one release carries aapt2 for macOS and Linux.
+http_file(
+    name = "bundletool",
+    dev_dependency = True,
+    downloaded_file_path = "bundletool-all.jar",
+    sha256 = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29",
+    urls = ["https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar"],
+)
+
+# BuildBuddy's Linux execution platform and C++ toolchain for remote execution, which
+# --config=buildbuddy selects; inert without it.
+bazel_dep(
+    name = "toolchains_buildbuddy",
+    version = "0.0.4",
+    dev_dependency = True,
+    repo_name = "toolchains_buildbuddy",
+)
+
+buildbuddy = use_extension(
+    "@toolchains_buildbuddy//:extensions.bzl",
+    "buildbuddy",
+    dev_dependency = True,
+)
+buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
