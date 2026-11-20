@@ -1,0 +1,758 @@
+load("@rules_cc_autoconf//autoconf:autoconf_srcs.bzl", "autoconf_srcs")
+load("//tools:test.bzl", "cc_test", "join_conf", "test_name")
+load("//tools:transition.bzl", "with_settings")
+
+# Makefile.in runs each integration test (TESTS_INTEGRATION and TESTS_INTEGRATION_CPP) once per test.sh line of
+# check_integration, check_integration_decay and check_integration_prof, with that line's MALLOC_CONF joined after the
+# one the test's .sh exports (test/test.sh.in's export_malloc_conf). Each such line has a block of targets below.
+#
+# jemalloc reads MALLOC_CONF only with //settings/flags:enable_user_config (JEMALLOC_CONFIG_ENV, src/conf.c), so a test
+# with a MALLOC_CONF is incompatible without it rather than run without its conf. Upstream's test scripts export it
+# regardless.
+
+TESTLIB_SETTINGS = {
+    "//settings:with_test": "integration",
+    # This needs to be pinned for testing. The MALLOC_CONF ENV depends on it. The make build allows for it to be
+    # set dynamically via templating and generates a test harness around it. By requiring a value that cannot be
+    # set internally by accident, this exercises the same functionality.
+    "//settings/flags:jemalloc_prefix": "je_test_",
+}
+
+with_settings(
+    name = "testlib",
+    testonly = True,
+    src = "//test:testlib",
+    settings = TESTLIB_SETTINGS,
+    visibility = ["//:__subpackages__"],
+)
+
+with_settings(
+    name = "testlib_cpp",
+    testonly = True,
+    src = "//test:testlib",
+    settings = TESTLIB_SETTINGS | {"//settings:with_test": "integration_cpp"},
+    visibility = ["//:__subpackages__"],
+)
+
+# Makefile.in:791, check_integration.
+
+# Tests without a .sh.
+INTEGRATION_TESTS = [
+    {"src": "aligned_alloc.c"},
+    {"src": "allocated.c"},
+    {"src": "free_sized.c"},
+    {"src": "malloc.c"},
+    {"src": "MALLOCX_ARENA.c"},
+    {"src": "overflow.c"},
+    {"src": "posix_memalign.c"},
+    {"src": "rallocx.c"},
+    {"src": "sdallocx.c"},
+    {"src": "thread_arena.c"},
+    {"src": "thread_tcache_enabled.c"},
+]
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    deps = [":testlib"],
+) for test in INTEGRATION_TESTS]
+
+# Tests whose .sh exports a MALLOC_CONF in every configuration.
+INTEGRATION_CONF_TESTS = [
+    {
+        "src": "slab_sizes.c",
+        "conf": "slab_sizes:1-4096:17|100-200:1|128-128:2",
+    },
+]
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": test["conf"]},
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_CONF_TESTS]
+
+# Tests whose .sh exports junk:false only if enable_fill. smallocx.sh does too, but Makefile.in:354 adds smallocx.c only
+# with --enable-experimental-smallocx, so it has targets of its own.
+INTEGRATION_FILL_TESTS = [
+    {"src": "extent.c"},
+    {"src": "mallocx.c"},
+    {"src": "xallocx.c"},
+]
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:fill_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_FILL_TESTS]
+
+cc_test(
+    name = "smallocx",
+    src = "smallocx.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:experimental_smallocx_api": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:fill_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+# Makefile.in:358-367 also lists tcache_fiber_migration.c, the regression test for upstream issue #2890, but only for an
+# ELF build with a static library, ucontext, --enable-experimental-fiber-safe-tls and -flto in CFLAGS, and links it on
+# its own against the static archive between -Wl,--whole-archive and -Wl,--no-whole-archive. It has no target here. The
+# bug it guards against appears only when whole-program LTO inlines the allocator into the fiber code, which neither a
+# test-owned transition nor the build's own flags can turn on portably (Bazel's thin_lto feature is distributed ThinLTO
+# for clang only), and without LTO the test cannot observe it.
+
+# Makefile.in:373 empties TESTS_INTEGRATION_CPP unless @enable_cxx@ (on by default; --disable-cxx turns it off).
+INTEGRATION_CPP_TESTS = [
+    {"src": "cpp/basic.cpp"},
+]
+
+[cc_test(
+    name = test_name(test),
+    src = test["src"],
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib_cpp"],
+) for test in INTEGRATION_CPP_TESTS]
+
+# Makefile.in:376-381 adds infallible_new.cpp with --enable-cxx-infallible-new and failing_new.cpp without it, both only
+# where the C++ toolchain has exceptions. Whether it does is configure's probe (je_cv_cxx_exceptions, which defines
+# JEMALLOC_HAVE_CXX_EXCEPTIONS), known only once the probe has compiled, so each test's source comes from autoconf_srcs:
+# upstream's file where the probe succeeds and cpp/no_cxx_exceptions.cpp, which reports a skip, where it fails. Every
+# target below that runs either file, the decay and prof ones included, takes its source from here. The sources are
+# generated in the test library's configuration, so the probe is the one the test library's headers carry.
+#
+# Their .sh files set xmalloc:false only where enable_xmalloc is 1, so that jemalloc returns null to operator new rather
+# than aborting. test.sh.in never passes enable_xmalloc to them, so that guard is inactive upstream, and it puts the
+# per-test conf before the global MALLOC_CONF, so a global xmalloc:true would win anyway. This build honours the
+# scripts' intent and sets xmalloc:false under //settings/flags:enable_xmalloc.
+autoconf_srcs(
+    name = "cpp_failing_new_sources",
+    srcs = {
+        "cpp/failing_new.cpp": "je_cv_cxx_exceptions",
+        "cpp/no_cxx_exceptions.cpp": "!je_cv_cxx_exceptions",
+    },
+    naming = "per_target",
+    tags = ["manual"],
+    wrap = "include",
+    deps = ["//include/jemalloc/internal:jemalloc_internal_defs_checks"],
+)
+
+with_settings(
+    name = "cpp_failing_new_sources_test_config",
+    testonly = True,
+    src = ":cpp_failing_new_sources",
+    settings = TESTLIB_SETTINGS | {"//settings:with_test": "integration_cpp"},
+)
+
+cc_test(
+    name = "cpp_failing_new",
+    src = ":cpp_failing_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:xmalloc_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_failing_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+autoconf_srcs(
+    name = "cpp_infallible_new_sources",
+    srcs = {
+        "cpp/infallible_new.cpp": "je_cv_cxx_exceptions",
+        "cpp/no_cxx_exceptions.cpp": "!je_cv_cxx_exceptions",
+    },
+    naming = "per_target",
+    tags = ["manual"],
+    wrap = "include",
+    deps = ["//include/jemalloc/internal:jemalloc_internal_defs_checks"],
+)
+
+with_settings(
+    name = "cpp_infallible_new_sources_test_config",
+    testonly = True,
+    src = ":cpp_infallible_new_sources",
+    settings = TESTLIB_SETTINGS | {"//settings:with_test": "integration_cpp"},
+)
+
+cc_test(
+    name = "cpp_infallible_new",
+    src = ":cpp_infallible_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": ""},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:xmalloc_disabled": [],
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_infallible_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+# Not upstream's: this build compiles jemalloc's C++ support with every compiler, cl and clang-cl included, where
+# configure leaves it off, so a program linking jemalloc must get its operator new rather than the C++ runtime's.
+# infallible_new.cpp checks that only off Windows, and only with //settings/flags:enable_cxx_infallible_new. Upstream
+# expects the replacement to fail with MinGW (infallible_new.cpp:41-44).
+cc_test(
+    name = "cpp_operator_new_owned",
+    src = "cpp/operator_new_owned.cpp",
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "@rules_cc//cc/compiler:mingw-gcc": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    deps = [":testlib_cpp"],
+)
+
+# Makefile.in:788, check_integration_decay.
+[cc_test(
+    name = test_name(test, "decay_minus_one"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "dirty_decay_ms:-1,muzzy_decay_ms:-1",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_TESTS + INTEGRATION_CONF_TESTS]
+
+[cc_test(
+    name = test_name(test, "decay_minus_one"),
+    src = test["src"],
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_FILL_TESTS]
+
+cc_test(
+    name = "smallocx_decay_minus_one",
+    src = "smallocx.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:experimental_smallocx_api": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+[cc_test(
+    name = test_name(test, "decay_minus_one"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "dirty_decay_ms:-1,muzzy_decay_ms:-1",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib_cpp"],
+) for test in INTEGRATION_CPP_TESTS]
+
+cc_test(
+    name = "cpp_failing_new_decay_minus_one",
+    src = ":cpp_failing_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_failing_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+cc_test(
+    name = "cpp_infallible_new_decay_minus_one",
+    src = ":cpp_infallible_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:-1,muzzy_decay_ms:-1"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_infallible_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+# Makefile.in:789, check_integration_decay.
+[cc_test(
+    name = test_name(test, "decay_zero"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "dirty_decay_ms:0,muzzy_decay_ms:0",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_TESTS + INTEGRATION_CONF_TESTS]
+
+[cc_test(
+    name = test_name(test, "decay_zero"),
+    src = test["src"],
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,dirty_decay_ms:0,muzzy_decay_ms:0"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:0,muzzy_decay_ms:0"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_FILL_TESTS]
+
+cc_test(
+    name = "smallocx_decay_zero",
+    src = "smallocx.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,dirty_decay_ms:0,muzzy_decay_ms:0"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:0,muzzy_decay_ms:0"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:experimental_smallocx_api": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+[cc_test(
+    name = test_name(test, "decay_zero"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "dirty_decay_ms:0,muzzy_decay_ms:0",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib_cpp"],
+) for test in INTEGRATION_CPP_TESTS]
+
+cc_test(
+    name = "cpp_failing_new_decay_zero",
+    src = ":cpp_failing_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,dirty_decay_ms:0,muzzy_decay_ms:0"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:0,muzzy_decay_ms:0"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_failing_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+cc_test(
+    name = "cpp_infallible_new_decay_zero",
+    src = ":cpp_infallible_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,dirty_decay_ms:0,muzzy_decay_ms:0"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "dirty_decay_ms:0,muzzy_decay_ms:0"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_infallible_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+# Makefile.in:784, check_integration_prof.
+[cc_test(
+    name = test_name(test, "prof"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "prof:true",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_TESTS + INTEGRATION_CONF_TESTS]
+
+[cc_test(
+    name = test_name(test, "prof"),
+    src = test["src"],
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,prof:true"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_FILL_TESTS]
+
+cc_test(
+    name = "smallocx_prof",
+    src = "smallocx.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,prof:true"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:experimental_smallocx_api": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+[cc_test(
+    name = test_name(test, "prof"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "prof:true",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib_cpp"],
+) for test in INTEGRATION_CPP_TESTS]
+
+cc_test(
+    name = "cpp_failing_new_prof",
+    src = ":cpp_failing_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,prof:true"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_failing_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+cc_test(
+    name = "cpp_infallible_new_prof",
+    src = ":cpp_infallible_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,prof:true"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_infallible_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+# Makefile.in:785, check_integration_prof.
+[cc_test(
+    name = test_name(test, "prof_active_false"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "prof:true,prof_active:false",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_TESTS + INTEGRATION_CONF_TESTS]
+
+[cc_test(
+    name = test_name(test, "prof_active_false"),
+    src = test["src"],
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,prof:true,prof_active:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true,prof_active:false"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+) for test in INTEGRATION_FILL_TESTS]
+
+cc_test(
+    name = "smallocx_prof_active_false",
+    src = "smallocx.c",
+    env = select({
+        "//settings/flags:fill": {"JE_TEST_MALLOC_CONF": "junk:false,prof:true,prof_active:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true,prof_active:false"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:experimental_smallocx_api": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib"],
+)
+
+[cc_test(
+    name = test_name(test, "prof_active_false"),
+    src = test["src"],
+    env = {"JE_TEST_MALLOC_CONF": join_conf(
+        test.get("conf"),
+        "prof:true,prof_active:false",
+    )},
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [":testlib_cpp"],
+) for test in INTEGRATION_CPP_TESTS]
+
+cc_test(
+    name = "cpp_failing_new_prof_active_false",
+    src = ":cpp_failing_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,prof:true,prof_active:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true,prof_active:false"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_failing_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
+
+cc_test(
+    name = "cpp_infallible_new_prof_active_false",
+    src = ":cpp_infallible_new_sources_test_config",
+    env = select({
+        "//settings/flags:xmalloc": {"JE_TEST_MALLOC_CONF": "xmalloc:false,prof:true,prof_active:false"},
+        "//conditions:default": {"JE_TEST_MALLOC_CONF": "prof:true,prof_active:false"},
+    }),
+    local_defines = ["JEMALLOC_INTEGRATION_CPP_TEST"],
+    target_compatible_with = select({
+        "//settings/flags:cxx": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:prof": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:cxx_infallible_new": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }) + select({
+        "//settings/flags:user_config": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":cpp_infallible_new_sources_test_config",
+        ":testlib_cpp",
+    ],
+)
