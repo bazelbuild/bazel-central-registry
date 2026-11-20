@@ -1,0 +1,102 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
+
+# Sources of upstream's libshaderc tests, built and run by the test module (tests/).
+exports_files([
+    "libshaderc/src/common_shaders_for_test.h",
+    "libshaderc/src/shaderc_c_smoke_test.c",
+    "libshaderc/src/shaderc_cpp_test.cc",
+    "libshaderc/src/shaderc_test.cc",
+])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+# Modelled on the upstream CMake build: the static libshaderc (with libshaderc_util) and the glslc
+# compiler. glslang, SPIRV-Tools and SPIRV-Headers come from their modules.
+
+# CMake: shaderc_util, the glslang and SPIRV-Tools wrapper used by libshaderc and glslc.
+cc_library(
+    name = "shaderc_util",
+    srcs = glob(
+        ["libshaderc_util/src/*.cc"],
+        exclude = ["libshaderc_util/src/*_test.cc"],
+    ),
+    hdrs = glob([
+        "libshaderc_util/include/libshaderc_util/*.h",
+        "libshaderc_util/include/libshaderc_util/*.inc",
+    ]),
+    includes = ["libshaderc_util/include"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@glslang",
+        "@spirv_tools",
+        "@spirv_tools//:spirv_tools_opt",
+    ],
+)
+
+# CMake: shaderc, the static libshaderc. <shaderc/shaderc.h> is the C API, <shaderc/shaderc.hpp>
+# the C++ API.
+cc_library(
+    name = "shaderc",
+    srcs = [
+        "libshaderc/src/shaderc.cc",
+        "libshaderc/src/shaderc_private.h",
+    ],
+    hdrs = [
+        "libshaderc/include/shaderc/env.h",
+        "libshaderc/include/shaderc/shaderc.h",
+        "libshaderc/include/shaderc/shaderc.hpp",
+        "libshaderc/include/shaderc/status.h",
+        "libshaderc/include/shaderc/visibility.h",
+    ],
+    # The public headers only need the C and C++ standard libraries.
+    implementation_deps = [
+        ":shaderc_util",
+        "@glslang",
+        "@spirv_headers//:spirv_cpp_headers",
+        "@spirv_tools",
+    ],
+    includes = ["libshaderc/include"],
+)
+
+# CMake: glslc_exe, installed as glslc. glslc/src/build-version.inc is pre-generated (see the comment
+# at the top of that file).
+cc_binary(
+    name = "glslc",
+    srcs = glob(
+        [
+            "glslc/src/*.cc",
+            "glslc/src/*.h",
+        ],
+        exclude = ["glslc/src/*_test.cc"],
+    ) + ["glslc/src/build-version.inc"],
+    deps = [
+        ":shaderc",
+        ":shaderc_util",
+        "@glslang",
+        "@spirv_tools",
+    ],
+)
