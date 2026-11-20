@@ -1,0 +1,289 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_import.bzl", "cc_import")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+exports_files([
+    "Include/RmlUi/Core/Containers/LICENSE.txt",
+    "LICENSE.txt",
+    "Source/Debugger/LICENSE.txt",
+])
+
+# The bundled containers (Include/RmlUi/Core/Containers: itlib, robin_hood) are MIT licensed as well.
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE.txt",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+# The Debugger embeds the font 'Courier Prime Code' (SIL Open Font License 1.1).
+license(
+    name = "license_debugger_font",
+    kind = "@package_metadata//licenses/spdx:OFL-1.1",
+    text = "Source/Debugger/LICENSE.txt",
+)
+
+package_metadata(
+    name = "package_metadata_debugger",
+    attributes = [
+        ":license",
+        ":license_debugger_font",
+    ],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+# Build options, named after the upstream CMake options. Not supported: RMLUI_LUA_BINDINGS,
+# RMLUI_LOTTIE_PLUGIN (rlottie), RMLUI_TRACY_PROFILING and RMLUI_CUSTOM_CONFIGURATION.
+
+# RMLUI_FONT_ENGINE: "freetype" (default) or "none". With "none" the application provides its own
+# Rml::FontEngineInterface (Rml::SetFontEngineInterface).
+string_flag(
+    name = "font_engine",
+    build_setting_default = "freetype",
+    values = [
+        "freetype",
+        "none",
+    ],
+)
+
+config_setting(
+    name = "font_engine_freetype",
+    flag_values = {":font_engine": "freetype"},
+)
+
+# RMLUI_SVG_PLUGIN (default: off): the <svg> element and the svg decorator, rendered with lunasvg.
+bool_flag(
+    name = "svg_plugin",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "svg_plugin_enabled",
+    flag_values = {":svg_plugin": "True"},
+)
+
+# RMLUI_THIRDPARTY_CONTAINERS (default: on): the bundled containers instead of the standard library ones.
+bool_flag(
+    name = "thirdparty_containers",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "thirdparty_containers_disabled",
+    flag_values = {":thirdparty_containers": "False"},
+)
+
+# RMLUI_MATRIX_ROW_MAJOR (default: off): row-major instead of column-major matrices.
+bool_flag(
+    name = "matrix_row_major",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "matrix_row_major_enabled",
+    flag_values = {":matrix_row_major": "True"},
+)
+
+_CORE_HDRS = ["Include/RmlUi/Core.h"] + glob([
+    "Include/RmlUi/Config/**/*.h",
+    "Include/RmlUi/Core/**/*.h",
+    "Include/RmlUi/Core/**/*.hpp",
+    "Include/RmlUi/Core/**/*.inl",
+]) + select({
+    ":svg_plugin_enabled": ["Include/RmlUi/SVG/ElementSVG.h"],
+    "//conditions:default": [],
+})
+
+# Source/Core contains Elements/ and Layout/ as well; FontEngineDefault/ is the FreeType font engine.
+_CORE_SRCS = glob(
+    [
+        "Source/Core/**/*.cpp",
+        "Source/Core/**/*.h",
+        "Source/Core/**/*.inl",
+    ],
+    exclude = ["Source/Core/FontEngineDefault/**"],
+) + select({
+    ":font_engine_freetype": glob([
+        "Source/Core/FontEngineDefault/*.cpp",
+        "Source/Core/FontEngineDefault/*.h",
+    ]),
+    "//conditions:default": [],
+}) + select({
+    ":svg_plugin_enabled": glob([
+        "Source/SVG/*.cpp",
+        "Source/SVG/*.h",
+    ]),
+    "//conditions:default": [],
+})
+
+# Public compile definitions of upstream's rmlui_core, besides RMLUI_STATIC_LIB.
+_CORE_DEFINES = select({
+    ":thirdparty_containers_disabled": ["RMLUI_NO_THIRDPARTY_CONTAINERS"],
+    "//conditions:default": [],
+}) + select({
+    ":matrix_row_major_enabled": ["RMLUI_MATRIX_ROW_MAJOR"],
+    "//conditions:default": [],
+})
+
+_CORE_LOCAL_DEFINES = ['RMLUI_VERSION=\\"6.3\\"'] + select({
+    ":font_engine_freetype": ["RMLUI_FONT_ENGINE_FREETYPE"],
+    "//conditions:default": [],
+}) + select({
+    ":svg_plugin_enabled": ["RMLUI_SVG_PLUGIN"],
+    "//conditions:default": [],
+})
+
+_CORE_DEPS = select({
+    ":font_engine_freetype": ["@freetype"],
+    "//conditions:default": [],
+}) + select({
+    ":svg_plugin_enabled": ["@lunasvg"],
+    "//conditions:default": [],
+})
+
+# Source/Core/LogDefault.cpp calls MessageBoxA on Windows.
+_CORE_LINKOPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["-DEFAULTLIB:user32.lib"],
+    "@rules_cc//cc/compiler:mingw-gcc": ["-luser32"],
+    "@rules_cc//cc/compiler:msvc-cl": ["-DEFAULTLIB:user32.lib"],
+    "//conditions:default": [],
+})
+
+_DEBUGGER_HDRS = ["Include/RmlUi/Debugger.h"] + glob(["Include/RmlUi/Debugger/*.h"])
+
+_DEBUGGER_SRCS = glob([
+    "Source/Debugger/*.cpp",
+    "Source/Debugger/*.h",
+])
+
+# Static libraries, like upstream's CMake targets with BUILD_SHARED_LIBS=OFF.
+
+# RmlUi::Core
+cc_library(
+    name = "core",
+    srcs = _CORE_SRCS,
+    hdrs = _CORE_HDRS,
+    defines = ["RMLUI_STATIC_LIB"] + _CORE_DEFINES,
+    includes = ["Include"],
+    linkopts = _CORE_LINKOPTS,
+    local_defines = _CORE_LOCAL_DEFINES,
+    deps = _CORE_DEPS,
+)
+
+# RmlUi::Debugger
+cc_library(
+    name = "debugger",
+    srcs = _DEBUGGER_SRCS,
+    hdrs = _DEBUGGER_HDRS,
+    includes = ["Include"],
+    package_metadata = [":package_metadata_debugger"],
+    deps = [":core"],
+)
+
+# RmlUi::RmlUi: Core and Debugger.
+cc_library(
+    name = "rmlui",
+    deps = [
+        ":core",
+        ":debugger",
+    ],
+)
+
+# Core and Debugger as one shared library (upstream: BUILD_SHARED_LIBS=ON): rmlui.dll with the import
+# library rmlui.dll.if.lib, librmlui.so or librmlui.dylib; FreeType and lunasvg are linked into it
+# statically. Dependents get the shared library in their runfiles, on Windows it is also copied next
+# to their binaries (feature copy_dynamic_libraries_to_binary). Do not link :rmlui_shared and the
+# static libraries into the same binary.
+cc_library(
+    name = "rmlui_shared",
+    hdrs = _CORE_HDRS + _DEBUGGER_HDRS,
+    defines = _CORE_DEFINES,
+    includes = ["Include"],
+    deps = [":rmlui_shared_import"],
+)
+
+cc_library(
+    name = "rmlui_shared_objects",
+    srcs = _CORE_SRCS + _DEBUGGER_SRCS,
+    hdrs = _CORE_HDRS + _DEBUGGER_HDRS,
+    includes = ["Include"],
+    linkopts = _CORE_LINKOPTS,
+    local_defines = _CORE_DEFINES + _CORE_LOCAL_DEFINES + [
+        "RMLUI_CORE_EXPORTS",
+        "RMLUI_DEBUGGER_EXPORTS",
+    ],
+    package_metadata = [":package_metadata_debugger"],
+    visibility = ["//visibility:private"],
+    deps = _CORE_DEPS,
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "rmlui.dll",
+    linkshared = True,
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:private"],
+    deps = [":rmlui_shared_objects"],
+)
+
+filegroup(
+    name = "rmlui_dll_interface_library",
+    srcs = [":rmlui.dll"],
+    output_group = "interface_library",
+    target_compatible_with = ["@platforms//os:windows"],
+    visibility = ["//visibility:private"],
+)
+
+cc_binary(
+    name = "librmlui.dylib",
+    linkshared = True,
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:private"],
+    deps = [":rmlui_shared_objects"],
+)
+
+cc_binary(
+    name = "librmlui.so",
+    linkshared = True,
+    target_compatible_with = select({
+        "@platforms//os:macos": ["@platforms//:incompatible"],
+        "@platforms//os:windows": ["@platforms//:incompatible"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:private"],
+    deps = [":rmlui_shared_objects"],
+)
+
+cc_import(
+    name = "rmlui_shared_import",
+    interface_library = select({
+        "@platforms//os:windows": ":rmlui_dll_interface_library",
+        "//conditions:default": None,
+    }),
+    shared_library = select({
+        "@platforms//os:macos": ":librmlui.dylib",
+        "@platforms//os:windows": ":rmlui.dll",
+        "//conditions:default": ":librmlui.so",
+    }),
+    visibility = ["//visibility:private"],
+)
