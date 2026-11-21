@@ -1,0 +1,56 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:LGPL-2.1-or-later",
+    text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+UPSTREAM_VERSION = module_version().split(".bcr.", 1)[0]
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = "pkg:generic/glib@{}".format(UPSTREAM_VERSION),
+    visibility = ["//visibility:public"],
+)
+
+[
+    V_MAJOR,
+    V_MINOR,
+    V_MICRO,
+] = UPSTREAM_VERSION.split(".", 3)
+
+BINARY_AGE = 100 * int(V_MINOR) + int(V_MICRO)
+
+expand_template(
+    name = "gen_config_h",
+    out = "include/config.h",
+    substitutions = {
+        "{GLIB_BINARY_AGE}": str(BINARY_AGE),
+        "{GLIB_INTERFACE_AGE}": V_MICRO if int(V_MINOR) % 2 == 0 else "0",
+        "{GLIB_MAJOR_VERSION}": V_MAJOR,
+        "{GLIB_MINOR_VERSION}": V_MINOR,
+        "{GLIB_MICRO_VERSION}": V_MICRO,
+        "{GLIB_VERSION}": UPSTREAM_VERSION,
+    },
+    template = select({
+        "@platforms//os:macos": "config.h-macos",
+        "@platforms//os:linux": "config.h-linux",
+        "@platforms//os:windows": "config.h-windows",
+    }),
+)
+
+cc_library(
+    name = "config_h",
+    hdrs = [":gen_config_h"],
+    strip_include_prefix = "/include",
+    visibility = ["//:__subpackages__"],
+)
