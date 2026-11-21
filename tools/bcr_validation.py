@@ -197,6 +197,9 @@ def is_ref_in_original_repo(repo_path, reference) -> bool:
 
 
 def check_github_url(repo_path, source_url):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", repo_path) or repo_path.lower().endswith(".git"):
+        return False
+
     parts = urlparse(source_url)
     # Avoid potential path manipulations with "../"
     normalized_path = os.path.abspath(parts.path)
@@ -317,20 +320,30 @@ class BcrValidator:
         for source_repository in source_repositories:
             if matched:
                 break
-            repo_type, repo_path = source_repository.split(":")
+            repo_type, sep, repo_path = source_repository.partition(":")
+            if not sep:
+                continue
             if repo_type == "github":
                 matched = check_github_url(repo_path, source_url)
             elif repo_type == "https":
                 repo = urlparse(source_repository)
-                parts = urlparse(source_url)
-                expected_path = repo.path
-                if not expected_path.endswith("/"):
-                    expected_path += "/"
-                matched = (
-                    parts.scheme == repo.scheme
-                    and parts.netloc == repo.netloc
-                    and os.path.abspath(parts.path).startswith(expected_path)
-                )
+                hostname = (repo.hostname or "").rstrip(".")
+                if hostname == "github.com":
+                    matched = check_github_url(repo.path.strip("/"), source_url)
+                elif (
+                    re.fullmatch(r"[a-z0-9.-]+", repo.netloc)
+                    and hostname != "githubusercontent.com"
+                    and not hostname.endswith((".github.com", ".githubusercontent.com"))
+                ):
+                    parts = urlparse(source_url)
+                    expected_path = repo.path
+                    if not expected_path.endswith("/"):
+                        expected_path += "/"
+                    matched = (
+                        parts.scheme == repo.scheme
+                        and parts.netloc == repo.netloc
+                        and os.path.abspath(parts.path).startswith(expected_path)
+                    )
         if not matched:
             self.report(
                 BcrValidationResult.FAILED,
