@@ -448,5 +448,5 @@ def qemu_package(subdirs = []):
                 for r in native.existing_rules().values()
                 if _TARGET_PART in r.get("tags", []) and r["name"].endswith("_" + target)
             ] + ["//{}:{}".format(pkg + "/" + s if pkg else s, target) for s in subdirs],
-            visibility = ["//visibility:public"],
+            visibility = ["//:__subpackages__"],
         )

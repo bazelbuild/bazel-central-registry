@@ -1,23 +1,24 @@
 # QEMU Bazel overlay
 
 This is a downstream Bazel build, not QEMU's upstream build system. The
-upstream release archive is unchanged. The Bazel overlay is maintained in
-[sonix-network/qemu-bazel](https://github.com/sonix-network/qemu-bazel),
-separately from QEMU's source and releases.
+upstream release archive is unchanged. The overlay is maintained in
+[sonix-network/qemu-bazel](https://github.com/sonix-network/qemu-bazel).
+The initial scope of the `qemu` module is a static Linux x86-64 system
+emulator with KVM and no TCG. It does not replace the `rules_qemu`
+toolchain rules, and consumers supply a static-capable C toolchain.
 
-The checked-in BUILD files describe the source sets needed for Linux x86-64
-system emulation with KVM. Build actions generate configuration and device
-selection from the upstream Kconfig and `.mak` inputs, and call the upstream
-Python generators for trace and QAPI code. The test module registers a pinned
-Zig/musl toolchain. With no profile tag the build selects only q35 and its
-Kconfig dependencies; `profile = "default"` selects QEMU's default x86-64
-devices. The Linux presubmit checks both profiles without booting a guest.
+The checked-in BUILD files describe QEMU's source sets. Device selection
+runs QEMU's Kconfig generator under rules_python's managed host interpreter;
+other generators run in build actions. The emulator, its build information,
+release `pc-bios` files, package metadata, and Linux x86-64 `qemu-img` for the
+`rules_qemu` adapter are public. Other binaries and build targets are internal.
 
-The static build uses the pinned GLib build overlay from BCR with local musl
-and package-metadata adjustments, a pinned PCRE2 build, and an optional pinned
-libslirp build for the default profile. Their build adaptations are under
-`11.1.2/overlay/bazel/deps/` and `11.1.2/overlay/bazel/libslirp.BUILD.bazel`.
+GLib, PCRE2, and libslirp resolve through Bzlmod. The GLib and PCRE2 registry
+revisions support the static musl build without private copies or registry
+URLs in the build rules. The Linux presubmit registers Zig/musl and checks
+both the q35-only `minimal` and upstream-device `default` profiles without
+booting a guest.
 
-The first registry version is `11.1.2`. Later registry-only changes against the
+The first registry version is `11.1.2`. Later registry-only changes for the
 same QEMU release use new versions and directories `11.1.2.bcr.1`,
 `11.1.2.bcr.2`, and so on, without editing a published version.

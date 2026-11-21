@@ -22,8 +22,10 @@ load("//bazel:qemu.bzl", "CONFIG_HOST", "QEMU_COPTS", "QEMU_DEFINES", "QEMU_LINK
 
 package(
     default_package_metadata = [":package_metadata"],
-    default_visibility = ["//visibility:public"],
+    default_visibility = ["//:__subpackages__"],
 )
+
+_LINUX_X86_64 = ["@platforms//cpu:x86_64", "@platforms//os:linux"]
 
 package_metadata(
     name = "package_metadata",
@@ -43,7 +45,7 @@ exports_files([
     "VERSION",
     "qemu-options.hx",
     "trace-events",
-])
+], visibility = ["//:__subpackages__"])
 
 # Files from the pinned release, not a firmware build. Firmware carries its
 # own licenses, separate from the package metadata for the emulator.
@@ -51,6 +53,7 @@ filegroup(
     name = "pc-bios-files",
     srcs = glob(["pc-bios/**"]),
     package_metadata = [],
+    visibility = ["//visibility:public"],
 )
 
 ###########################
@@ -276,7 +279,7 @@ qemu_archive(
         "//semihosting:stub_ss",
         "//stubs:stub_ss",
     ],
-    deps = ["@qemu_glib//glib"],
+    deps = ["@glib//glib"],
 )
 
 # meson.build: qemuutil = declare_dependency(link_with: libqemuutil,
@@ -420,10 +423,8 @@ qemu_package(subdirs = [
         'CONFIG_TARGET=\\"{}-config-target.h\\"'.format(target),
         'CONFIG_DEVICES=\\"{}-config-devices.h\\"'.format(target),
     ],
-    target_compatible_with = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:linux",
-    ],
+    target_compatible_with = _LINUX_X86_64,
+    visibility = ["//visibility:public"],
     deps = [
         ":" + target,
         ":config_target_" + target,
@@ -436,6 +437,8 @@ qemu_package(subdirs = [
 qemu_build_info(
     name = "qemu-system-x86_64_info",
     binary = ":qemu-system-x86_64",
+    target_compatible_with = _LINUX_X86_64,
+    visibility = ["//visibility:public"],
 )
 
 # Registry overlay files do not carry executable mode bits.
@@ -458,10 +461,7 @@ sh_test(
     srcs = [":kvm_smoke_script"],
     args = ["$(rootpath :qemu-system-x86_64)", _SMOKE_DEVICE_SET],
     data = [":qemu-system-x86_64"],
-    target_compatible_with = [
-        "@platforms//cpu:x86_64",
-        "@platforms//os:linux",
-    ],
+    target_compatible_with = _LINUX_X86_64,
 )
 
 # Linux-user links libuser and its ABI-specific objects, not the system tree.
@@ -501,6 +501,9 @@ sh_test(
     copts = QEMU_COPTS,
     linkopts = QEMU_LINKOPTS,
     local_defines = QEMU_DEFINES,
+    target_compatible_with = _LINUX_X86_64,
+    # qemu-img is also used by the rules_qemu toolchain adapter.
+    visibility = ["//visibility:public"] if tool == "qemu-img" else ["//visibility:private"],
     deps = tool_deps + [
         ":qemuutil",
         "//include:qemu",

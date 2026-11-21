@@ -140,11 +140,12 @@ def _target_config(mctx, target, devmak, settings, python):
         cfg.update(devs)
         cfg["DEVICES"] = sorted(devs.keys())
 
-        # re-run when any Kconfig file minikconf read changes
-        deps = mctx.read(depfile).replace("\\\n", " ").replace("\n", " ")
-        for tok in deps.partition(":")[2].split(" "):
-            if tok.startswith("/") and not tok.endswith(":"):
-                mctx.watch(tok)
+        # minikconf writes one dependency per line. Keep spaces and Windows
+        # drive letters in paths rather than tokenizing them as a makefile.
+        for line in mctx.read(depfile).splitlines():
+            _, sep, path = line.partition(": ")
+            if sep and path:
+                mctx.watch(mctx.path(path))
     return cfg
 
 def _qemu_targets_repo_impl(rctx):
@@ -177,9 +178,9 @@ _qemu_targets_repo = repository_rule(
 )
 
 def _qemu_targets_impl(mctx):
-    if mctx.os.name != "linux" or mctx.os.arch not in ("amd64", "x86_64"):
-        fail("QEMU repository configuration requires a Linux x86_64 host")
-    python = mctx.path(Label("@qemu_host_python//:bin/python3"))
+    # Configuration runs on the Bazel host, independent of the target OS.
+    host_runtime = mctx.path(Label("@python_3_12_host//:BUILD.bazel")).dirname
+    python = host_runtime.get_child("python.exe" if mctx.os.name.startswith("windows") else "python")
     tags = []
     for mod in mctx.modules:
         if mod.tags.configure and not mod.is_root:
@@ -256,7 +257,7 @@ def _qemu_targets_impl(mctx):
         targets = json.encode(configs),
         version = version,
     )
-    return mctx.extension_metadata(reproducible = True)
+    return mctx.extension_metadata(reproducible = False)
 
 def _check_choices(field, values, allowed):
     if len({value: None for value in values}) != len(values) or any([value not in allowed for value in values]):
@@ -264,6 +265,8 @@ def _check_choices(field, values, allowed):
 
 qemu_targets = module_extension(
     implementation = _qemu_targets_impl,
+    os_dependent = True,
+    arch_dependent = True,
     tag_classes = {"configure": tag_class(attrs = {
         "accelerators": attr.string_list(default = ["kvm"]),
         "device_mode": attr.string(values = ["", "defconfig", "allnoconfig"]),
