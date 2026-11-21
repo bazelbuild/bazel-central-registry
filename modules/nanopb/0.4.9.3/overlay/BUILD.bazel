@@ -1,0 +1,188 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+
+# Note: if you are still using WORKSPACE, you will need to patch this file to use the following instead
+# load("@python_3_11//:defs.bzl", "py_binary")
+load("@python_versions//3.11:defs.bzl", "py_binary")
+load("@rules_proto//proto:defs.bzl", "proto_library")
+load("@rules_proto_grpc//:defs.bzl", "proto_plugin")
+load("@rules_python//python:proto.bzl", "py_proto_library")
+load("@rules_python//python/pip_install:requirements.bzl", "compile_pip_requirements")
+load("//extra/bazel:nanopb_cc_proto_library.bzl", "cc_nanopb_proto_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+licenses(["notice"])
+
+exports_files(["LICENSE.txt"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Zlib",
+    text = "LICENSE.txt",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(module_name(), module_version()),
+)
+
+cc_library(
+    name = "nanopb_compilation_options_default",
+)
+
+label_flag(
+    name = "nanopb_compilation_options",
+    build_setting_default = ":nanopb_compilation_options_default",
+)
+
+cc_library(
+    name = "nanopb",
+    srcs = [
+        "pb_common.c",
+        "pb_decode.c",
+        "pb_encode.c",
+    ],
+    hdrs = [
+        "pb.h",
+        "pb_common.h",
+        "pb_decode.h",
+        "pb_encode.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":nanopb_compilation_options"],
+)
+
+copy_file(
+    name = "protoc-gen-nanopb.py",
+    src = "generator/protoc-gen-nanopb",
+    out = "generator/protoc-gen-nanopb.py",
+    allow_symlink = True,
+)
+
+py_binary(
+    name = "protoc-gen-nanopb",
+    srcs = glob([
+        "generator/**/*.py",
+    ]) + [
+        ":protoc-gen-nanopb.py",
+    ],
+    data = glob([
+        "generator/**/*.proto",
+    ]),
+    env = {
+        "NANOPB_PB2_NO_REBUILD": "1",
+    },
+    imports = [
+        "generator",
+    ],
+    deps = [
+        ":nanopb_py_proto",
+    ],
+)
+
+string_flag(
+    name = "nanopb_extension",
+    build_setting_default = ".pb",
+    values = [
+        ".pb",
+        ".nanopb",
+    ],
+)
+
+config_setting(
+    name = "nanopb_extension_default",
+    flag_values = {
+        ":nanopb_extension": ".pb",
+    },
+)
+
+config_setting(
+    name = "nanopb_extension_nanopb",
+    flag_values = {
+        ":nanopb_extension": ".nanopb",
+    },
+)
+
+proto_plugin(
+    name = "nanopb_plugin",
+    env = {
+        "NANOPB_PB2_NO_REBUILD": "1",
+    },
+    options = [
+        "--library-include-format=quote",
+    ],
+    outputs = select({
+        ":nanopb_extension_default": [
+            "{protopath}.pb.h",
+            "{protopath}.pb.c",
+        ],
+        ":nanopb_extension_nanopb": [
+            "{protopath}.nanopb.h",
+            "{protopath}.nanopb.c",
+        ],
+    }),
+    separate_options_flag = True,
+    tool = ":protoc-gen-nanopb",
+    use_built_in_shell_environment = False,
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "nanopb_proto",
+    srcs = [
+        "generator/proto/nanopb.proto",
+    ],
+    strip_import_prefix = "generator/proto/",
+    deps = ["@protobuf//:descriptor_proto"],
+)
+
+py_proto_library(
+    name = "nanopb_py_proto",
+    deps = [":nanopb_proto"],
+)
+
+cc_nanopb_proto_library(
+    name = "test_compilation",
+    defines = ["PB_FIELD_32BIT"],
+    protos = ["@protobuf//:descriptor_proto"],
+    visibility = ["//visibility:private"],
+)
+
+proto_library(
+    name = "all_types_proto",
+    srcs = ["tests/alltypes/alltypes.proto"],
+)
+
+cc_nanopb_proto_library(
+    name = "all_types_nanopb",
+    nanopb_options_files = ["tests/alltypes/alltypes.options"],
+    protos = [":all_types_proto"],
+    visibility = ["//visibility:private"],
+)
+
+cc_test(
+    name = "bazel_options_support",
+    srcs = ["tests/bazel_options_support/bazel_options_support.cc"],
+    copts = select({
+        ":nanopb_extension_nanopb": ["-DUSE_NANOPB_EXTENSION_NAME"],
+        ":nanopb_extension_default": [],
+    }),
+    deps = [":all_types_nanopb"],
+)
+
+# Run `bazel run //:requirements.update` if you want to update the requirements.
+compile_pip_requirements(
+    name = "requirements",
+    extra_args = ["--allow-unsafe"],
+    requirements_in = "extra/requirements.txt",
+    requirements_txt = "extra/requirements_lock.txt",
+)
