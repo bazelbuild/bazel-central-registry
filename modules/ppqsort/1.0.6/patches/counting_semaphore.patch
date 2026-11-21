@@ -1,0 +1,20 @@
+thread_pool: use a counting_semaphore for threads_done_semaphore_.
+
+Several workers can observe total_tasks_ == 0 concurrently and each call
+release(); std::binary_semaphore's precondition (count <= 1) is then violated
+and libc++ asserts. Taken from Tracy 0.15.0 (cmake/ppqsort-semaphore.patch).
+
+diff --git a/include/ppqsort/parallel/cpp/thread_pool.h b/include/ppqsort/parallel/cpp/thread_pool.h
+--- a/include/ppqsort/parallel/cpp/thread_pool.h
++++ b/include/ppqsort/parallel/cpp/thread_pool.h
+@@ -134,7 +134,9 @@
+             alignas(parameters::cacheline_size) std::atomic<std::size_t> pending_tasks_{0};
+             alignas(parameters::cacheline_size) std::atomic<std::size_t> total_tasks_{0};
+             alignas(parameters::cacheline_size) std::atomic<bool> to_stop_{false};
+-            std::binary_semaphore threads_done_semaphore_{0};   // used to wait for all tasks to finish
++            // counting_semaphore: multiple workers may concurrently observe total_tasks_ == 0
++            // and call release(); a binary_semaphore would assert when the count exceeds 1.
++            std::counting_semaphore<> threads_done_semaphore_{0};
+             std::mutex mtx_priority_;
+             bool stopped = false;
+     };
