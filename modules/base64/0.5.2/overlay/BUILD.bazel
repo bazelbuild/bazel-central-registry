@@ -1,0 +1,169 @@
+# Fast SIMD Base64 encoding/decoding (aklomp/base64), static library, <libbase64.h>.
+
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+    default_visibility = ["//visibility:public"],
+)
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:BSD-2-Clause"],
+    license_text = "LICENSE",
+)
+
+exports_files(["LICENSE"])
+
+# Per target CPU: the SIMD codecs to compile in (upstream's CMakeLists.txt
+# defaults, plus NEON32 so armv7 targets get their NEON path) and the flags each
+# codec.c needs (upstream's cmake/Modules/TargetSIMDInstructionSet.cmake). At
+# run time lib/codec_choose.c still picks the best codec the CPU supports.
+_X86_CODECS = {
+    # codec: (gcc/clang flags, MSVC flags)
+    "ssse3": (["-mssse3"], []),
+    "sse41": (["-msse4.1"], []),
+    "sse42": (["-msse4.2"], []),
+    "avx": (["-mavx"], ["/arch:AVX"]),
+    "avx2": (["-mavx2"], ["/arch:AVX2"]),
+    "avx512": (
+        [
+            "-mavx512vl",
+            "-mavx512vbmi",
+        ],
+        ["/arch:AVX512"],
+    ),
+}
+
+_CPU_CODECS = {
+    "aarch64": ["neon64"],
+    "armv7": ["neon32"],
+    "x86_32": _X86_CODECS.keys(),
+    "x86_64": _X86_CODECS.keys(),
+}
+
+_ALL_CODECS = _X86_CODECS.keys() + ["neon32", "neon64"]
+
+[
+    config_setting(
+        name = cpu,
+        constraint_values = ["@platforms//cpu:" + cpu],
+    )
+    for cpu in _CPU_CODECS
+]
+
+[
+    config_setting(
+        name = cpu + "_msvc",
+        constraint_values = ["@platforms//cpu:" + cpu],
+        flag_values = {"@rules_cc//cc/compiler:compiler": "msvc-cl"},
+    )
+    for cpu in ["x86_32", "x86_64"]
+]
+
+# Expands upstream's "#cmakedefine01 BASE64_WITH_<CODEC>" lines for each CPU.
+# The newline is part of each key so that AVX does not also match AVX2/AVX512.
+_CONFIG_H_SUBSTITUTIONS = {
+    cpu: {
+        "#cmakedefine01 BASE64_WITH_%s\n" % codec.upper(): "#define BASE64_WITH_%s %d\n" % (
+            codec.upper(),
+            1 if codec in codecs else 0,
+        )
+        for codec in _ALL_CODECS
+    }
+    for cpu, codecs in _CPU_CODECS.items() + [("//conditions:default", [])]
+}
+
+expand_template(
+    name = "config_h",
+    out = "generated/config.h",
+    substitutions = select({
+        (cpu if cpu.startswith("//") else ":" + cpu): substitutions
+        for cpu, substitutions in _CONFIG_H_SUBSTITUTIONS.items()
+    }),
+    template = "cmake/config.h.in",
+    visibility = ["//visibility:private"],
+)
+
+# Private headers, consumed only through implementation_deps so they never
+# reach downstream include paths. Upstream sources #include "config.h";
+# strip_include_prefix exposes only that one generated file.
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    strip_include_prefix = "generated",
+    visibility = ["//visibility:private"],
+)
+
+# Everything the codec.c files #include textually, via quoted relative paths
+# (no include path needed).
+cc_library(
+    name = "internal",
+    textual_hdrs = glob([
+        "lib/*.h",
+        "lib/lib_openmp.c",
+        "lib/tables/*.h",
+        "lib/arch/*/*.c",
+        "lib/arch/generic/*/*.c",
+    ]),
+    visibility = ["//visibility:private"],
+    deps = [":config"],
+)
+
+_C99 = select({
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "@rules_cc//cc/compiler:clang-cl": [],
+    "//conditions:default": ["-std=c99"],
+})
+
+# Each x86 SIMD codec needs its own ISA flags (upstream's
+# cmake/Modules/TargetSIMDInstructionSet.cmake), applied only to its codec.c.
+# On other CPUs the same files compile to stubs (HAVE_<codec> is 0).
+# Each SIMD codec.c gets its own ISA flags. On other CPUs the same file
+# compiles to a stub (BASE64_WITH_<CODEC> is 0).
+_CODEC_COPTS = {
+    codec: select({
+        ":x86_32_msvc": msvc_flags,
+        ":x86_64_msvc": msvc_flags,
+        ":x86_32": gnu_flags,
+        ":x86_64": gnu_flags,
+        "//conditions:default": [],
+    })
+    for codec, (gnu_flags, msvc_flags) in _X86_CODECS.items()
+} | {
+    "neon32": select({
+        ":armv7": ["-mfpu=neon"],
+        "//conditions:default": [],
+    }),
+    "neon64": [],
+}
+
+[
+    cc_library(
+        name = "codec_" + codec,
+        srcs = ["lib/arch/%s/codec.c" % codec],
+        hdrs = ["include/libbase64.h"],
+        copts = _C99 + copts,
+        local_defines = ["BASE64_STATIC_DEFINE"],
+        visibility = ["//visibility:private"],
+        implementation_deps = [":internal"],
+    )
+    for codec, copts in _CODEC_COPTS.items()
+]
+
+cc_library(
+    name = "base64",
+    srcs = [
+        "lib/arch/generic/codec.c",
+        "lib/codec_choose.c",
+        "lib/lib.c",
+        "lib/tables/tables.c",
+    ],
+    hdrs = ["include/libbase64.h"],
+    copts = _C99,
+    defines = ["BASE64_STATIC_DEFINE"],
+    implementation_deps = [":internal"] + [":codec_" + codec for codec in _CODEC_COPTS],
+    strip_include_prefix = "include",
+)
