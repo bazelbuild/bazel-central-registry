@@ -1,0 +1,110 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_java//java:java_library.bzl", "java_library")
+
+copy_file(
+    name = "copy_link_jni_md_header",
+    src = select({
+        "@bazel_tools//src/conditions:darwin": "@bazel_tools//tools/jdk:jni_md_header-darwin",
+        "@bazel_tools//src/conditions:freebsd": "@bazel_tools//tools/jdk:jni_md_header-freebsd",
+        "@bazel_tools//src/conditions:openbsd": "@bazel_tools//tools/jdk:jni_md_header-openbsd",
+        "@bazel_tools//src/conditions:windows": "@bazel_tools//tools/jdk:jni_md_header-windows",
+        "//conditions:default": "@bazel_tools//tools/jdk:jni_md_header-linux",
+    }),
+    out = "jni_md.h",
+    allow_symlink = True,
+)
+
+copy_file(
+    name = "copy_link_jni_header",
+    src = "@bazel_tools//tools/jdk:jni_header",
+    out = "jni.h",
+    allow_symlink = True,
+)
+
+# Warning flags differ between compilers: Clang warns about GCC-only -Wno-*
+# flags with -Wunknown-warning-option, so select them based on the compiler of
+# the C++ toolchain.
+_GCC_COPTS = [
+    "-std=c99",
+    "-Wno-unused-variable",
+    "-Wno-maybe-uninitialized",
+]
+
+_CLANG_WARNING_COPTS = [
+    "-Wno-unused-variable",
+    "-Wno-sometimes-uninitialized",
+]
+
+cc_binary(
+    name = "libzstd-jni.so",
+    srcs = glob([
+        "src/main/native/**/*.c",
+        "src/main/native/**/*.h",
+    ]) + [
+        ":jni_md.h",
+        ":jni.h",
+    ] + select({
+        # zstd only uses its assembly with GCC-compatible compilers.
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "@rules_cc//cc/compiler:clang-cl": [],
+        "//conditions:default": glob(["src/main/native/**/*.S"]),
+    }),
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": [],
+        "@rules_cc//cc/compiler:clang-cl": _CLANG_WARNING_COPTS,
+        "@rules_cc//cc/compiler:gcc": _GCC_COPTS,
+        "@rules_cc//cc/compiler:mingw-gcc": _GCC_COPTS,
+        "//conditions:default": ["-std=c99"] + _CLANG_WARNING_COPTS,
+    }),
+    linkshared = 1,
+    includes = [
+        ".",  # For jni headers.
+        "src/main/native",
+        "src/main/native/common",
+    ],
+    local_defines = [
+        "ZSTD_MULTITHREAD=1",
+    ] + select({
+        "@bazel_tools//src/conditions:windows": ["_JNI_IMPLEMENTATION_"],
+        "//conditions:default": [],
+    }),
+)
+
+write_file(
+    name = "version-java",
+    out = "ZstdVersion.java",
+    content = [
+        "package com.github.luben.zstd.util;",
+        "",
+        "public class ZstdVersion {",
+        "\tpublic static final String VERSION = \"1.5.7-26\";",
+        "}",
+        "",
+    ],
+    newline = "unix",
+)
+
+# Upstream depends on org.jetbrains:annotations at compile time only.
+java_library(
+    name = "jetbrains_annotations_stub",
+    srcs = glob(["jetbrains_annotations_stub/**/*.java"]),
+    neverlink = True,
+)
+
+# Only the JNI-based implementation is built. The FFM-based sources in
+# src/main/java22 are meant for a multi-release jar.
+java_library(
+    name = "zstd-jni",
+    srcs = glob([
+        "src/main/java/**/*.java",
+    ]) + [
+        ":version-java",
+    ],
+    resources = [":libzstd-jni.so"],
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [":jetbrains_annotations_stub"],
+)
