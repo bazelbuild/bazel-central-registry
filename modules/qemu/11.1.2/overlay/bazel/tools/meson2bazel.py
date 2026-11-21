@@ -418,9 +418,9 @@ def emit(sets, todo_top, path, subdirs=()):
     out += [f'load("//bazel:qemu.bzl", {imports})', ""]
     out.append(f"# Translated from {path}.")
     if os.path.exists(os.path.join(d, "trace-events")):
-        out += ["", 'exports_files(["trace-events"])']
+        out += ["", 'exports_files(["trace-events"], visibility = ["//:__subpackages__"])']
     if has_hdrs:
-        out += ["", "cc_library(", '    name = "headers",', '    visibility = ["//visibility:public"],']
+        out += ["", "cc_library(", '    name = "headers",', '    visibility = ["//:__subpackages__"],']
         if hs:
             out.append('    hdrs = glob(["*.h"]),')
         if incs:
@@ -448,7 +448,7 @@ def emit(sets, todo_top, path, subdirs=()):
         if linkopts:
             out.append(f"    linkopts = {fmt_list(linkopts, 4)},")
         if not archive:
-            out.append('    visibility = ["//visibility:public"],')
+            out.append('    visibility = ["//:__subpackages__"],')
         if s.when:
             out.append("    when = [")
             out.extend(fmt_when(keys, t, f) for keys, t, f in s.when)
