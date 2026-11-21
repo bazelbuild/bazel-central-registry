@@ -19,11 +19,11 @@ grep '#undef' bazel-bin/external/pkgconf+/libpkgconf/config.h
 `_LARGE_FILES` is AIX-only and the only `#undef` a correct build emits; a failed
 probe renders as `#define HAVE_DECL_X 0`.
 
-Then re-point the `pkgconf-3.0.10` GitHub links in `overlay/` — a fifth of the
+Then re-point the `pkgconf-3.0.11` GitHub links in `overlay/` — a fifth of the
 line anchors moved across one patch release — run
 `bazel run //tools:update_integrity -- pkgconf --version=<new>`, and test both
-runfiles modes: `--noenable_runfiles` is the only local way to hit the path
-Windows always takes.
+runfiles modes: `--noenable_runfiles` is the only local way to find the test
+files through a manifest, as Windows always does.
 
 Upstream removes autotools in 3.1 and the 2.x → 3.0 bump restructured the tests
 wholesale, so expect a minor bump to be a rewrite.
