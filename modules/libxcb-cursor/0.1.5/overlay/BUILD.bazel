@@ -1,0 +1,149 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+HDRS = ["cursor/xcb_cursor.h"]
+
+# Mirrors the probes in upstream configure.ac, evaluated against the target
+# toolchain and sysroot (so they hold when cross-compiling):
+#
+#   AC_CHECK_HEADERS([endian.h sys/endian.h sys/byteorder.h libkern/OSByteOrder.h], [break])
+#   AC_CHECK_FUNCS([le32toh])
+#
+# Like upstream's [break], each header is only probed while none of the
+# earlier ones was found, so at most one HAVE_*_H is defined. Otherwise, where
+# several exist (e.g. clang's own <endian.h> next to the macOS SDK's
+# <sys/endian.h> and <libkern/OSByteOrder.h>), cursor/parse_cursor_file.c would
+# include each of them and define le32toh more than once.
+autoconf(
+    name = "config_checks",
+    checks = [
+        checks.AC_CHECK_HEADER("endian.h", define = "HAVE_ENDIAN_H"),
+        checks.AC_CHECK_HEADER(
+            "sys/endian.h",
+            define = "HAVE_SYS_ENDIAN_H",
+            requires = ["!HAVE_ENDIAN_H"],
+        ),
+        checks.AC_CHECK_HEADER(
+            "sys/byteorder.h",
+            define = "HAVE_SYS_BYTEORDER_H",
+            requires = [
+                "!HAVE_ENDIAN_H",
+                "!HAVE_SYS_ENDIAN_H",
+            ],
+        ),
+        checks.AC_CHECK_HEADER(
+            "libkern/OSByteOrder.h",
+            define = "HAVE_LIBKERN_OSBYTEORDER_H",
+            requires = [
+                "!HAVE_ENDIAN_H",
+                "!HAVE_SYS_ENDIAN_H",
+                "!HAVE_SYS_BYTEORDER_H",
+            ],
+        ),
+        checks.AC_CHECK_FUNC("le32toh", define = "HAVE_LE32TOH"),
+    ],
+)
+
+# Named after the library rather than config.h: dependencies such as libxcb
+# put their own config.h on the include path, which would shadow this one.
+autoconf_hdr(
+    name = "xcb_cursor_config_h",
+    out = "generated/xcb_cursor_config.h",
+    template = "config.h.in",
+    deps = [":config_checks"],
+)
+
+# Private: exposes the generated header to this package's sources only.
+cc_library(
+    name = "xcb_cursor_config",
+    hdrs = [":xcb_cursor_config_h"],
+    strip_include_prefix = "generated",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:private"],
+)
+
+# Public header, exposed to consumers only as <xcb/xcb_cursor.h>. The sources
+# include their own headers with quotes from the same directory, so no include
+# path is needed for cursor/ (which would leak cursor.h and <xcb_cursor.h>).
+cc_library(
+    name = "cursor_prefixed_hdrs",
+    hdrs = HDRS,
+    include_prefix = "xcb",
+    strip_include_prefix = "cursor",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:private"],
+    deps = ["@libxcb"],
+)
+
+cc_library(
+    name = "xcb-cursor",
+    srcs = [
+        "cursor/cursor.c",
+        "cursor/cursor.h",
+        "cursor/load_cursor.c",
+        "cursor/parse_cursor_file.c",
+        "cursor/shape_to_id.c",
+    ],
+    hdrs = HDRS,
+    copts = [
+        # Default cursor theme search path, copied verbatim from upstream
+        # configure.ac (DEF_CURSORPATH, used unless --with-cursorpath is given).
+        # It is only read at runtime, and only as a fallback: the XCURSOR_PATH
+        # environment variable takes precedence (see cursor_path() in
+        # cursor/load_cursor.c).
+        '-DXCURSORPATH=\\"~/.icons:/usr/share/icons:/usr/share/pixmaps:/usr/X11R6/lib/X11/icons\\"',
+        # Upstream configure.ac uses AC_USE_SYSTEM_EXTENSIONS. cursor.c calls
+        # asprintf(), which glibc < 2.38 only declares under _GNU_SOURCE.
+        "-D_GNU_SOURCE",
+        # The sources never include a config header; autotools passes these
+        # results on the command line (DEFS), so force-include the generated one.
+        "-include",
+        "xcb_cursor_config.h",
+    ],
+    implementation_deps = [":xcb_cursor_config"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":cursor_prefixed_hdrs",
+        "@libxcb",
+        "@libxcb-image",
+        "@libxcb-render-util",
+    ],
+)
+
+alias(
+    name = "libxcb-cursor",
+    actual = ":xcb-cursor",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "cursor",
+    actual = ":xcb-cursor",
+    visibility = ["//visibility:public"],
+)
