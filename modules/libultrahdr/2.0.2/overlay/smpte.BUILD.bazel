@@ -1,0 +1,71 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+
+rust_static_library(
+    name = "smpte_rust",
+    srcs = glob(["rust_lib/src/*.rs"]),
+    crate_features = ["cxxbridge"],
+    crate_name = "libsmpte2094_50",
+    crate_root = "rust_lib/src/lib.rs",
+    edition = "2021",
+    deps = ["@cxx.rs//:cxx"],
+)
+
+genrule(
+    name = "pchip_bridge",
+    srcs = ["rust_lib/src/pchip_ffi.rs"],
+    outs = [
+        "pchip_rs_bridge/pchip_ffi.h",
+        "pchip_rs_bridge/pchip_ffi.cc",
+    ],
+    cmd = "$(execpath @cxx.rs//:codegen) $(execpath rust_lib/src/pchip_ffi.rs) --header -o $(execpath pchip_rs_bridge/pchip_ffi.h) && $(execpath @cxx.rs//:codegen) $(execpath rust_lib/src/pchip_ffi.rs) -o $(execpath pchip_rs_bridge/pchip_ffi.cc)",
+    tools = ["@cxx.rs//:codegen"],
+)
+
+genrule(
+    name = "utils_bridge",
+    srcs = ["rust_lib/src/utils_ffi.rs"],
+    outs = [
+        "utils_rs_bridge/utils_ffi.h",
+        "utils_rs_bridge/utils_ffi.cc",
+    ],
+    cmd = "$(execpath @cxx.rs//:codegen) $(execpath rust_lib/src/utils_ffi.rs) --header -o $(execpath utils_rs_bridge/utils_ffi.h) && $(execpath @cxx.rs//:codegen) $(execpath rust_lib/src/utils_ffi.rs) -o $(execpath utils_rs_bridge/utils_ffi.cc)",
+    tools = ["@cxx.rs//:codegen"],
+)
+
+cc_library(
+    name = "smpte2094_50_utils",
+    srcs = [
+        "pchip_rs_bridge/pchip_ffi.cc",
+        "src/pchip.cc",
+        "src/pchip_ffi.h",
+        "src/utils.cc",
+        "src/utils_ffi.h",
+        "utils_rs_bridge/utils_ffi.cc",
+    ],
+    hdrs = glob(["include/smpte2094_50/*.h"]) + [
+        "pchip_rs_bridge/pchip_ffi.h",
+        "utils_rs_bridge/utils_ffi.h",
+    ],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+        "//conditions:default": ["-std=c++17"],
+    }),
+    includes = [
+        ".",
+        "include",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": ["ntdll.lib"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [
+        ":smpte_rust",
+        "@abseil-cpp//absl/status:status",
+        "@abseil-cpp//absl/status:statusor",
+        "@abseil-cpp//absl/strings:strings",
+        "@abseil-cpp//absl/types:span",
+        "@cxx.rs//:core",
+    ],
+)
