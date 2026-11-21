@@ -1,0 +1,40 @@
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@wayland-protocols//:wayland_protocol.bzl", "wayland_client_protocol")
+
+# Every protocol Tracy's Wayland backend and nativefiledialog-extended use.
+_PROTOCOLS = {
+    "xdg_shell": "stable/xdg-shell/xdg-shell.xml",
+    "xdg_activation": "staging/xdg-activation/xdg-activation-v1.xml",
+    "xdg_decoration": "unstable/xdg-decoration/xdg-decoration-unstable-v1.xml",
+    "fractional_scale": "staging/fractional-scale/fractional-scale-v1.xml",
+    "viewporter": "stable/viewporter/viewporter.xml",
+    "cursor_shape": "staging/cursor-shape/cursor-shape-v1.xml",
+    "tablet": "unstable/tablet/tablet-unstable-v2.xml",
+    "xdg_toplevel_icon": "staging/xdg-toplevel-icon/xdg-toplevel-icon-v1.xml",
+    "xdg_foreign": "unstable/xdg-foreign/xdg-foreign-unstable-v2.xml",
+}
+
+# Protocols whose generated code references another protocol's interfaces.
+_PROTOCOL_DEPS = {
+    "cursor_shape": [":tablet"],  # zwp_tablet_tool_v2
+    "xdg_decoration": [":xdg_shell"],  # xdg_toplevel
+    "xdg_toplevel_icon": [":xdg_shell"],  # xdg_toplevel
+}
+
+[
+    wayland_client_protocol(
+        name = name,
+        src = "@wayland-protocols//:" + path,
+        target_compatible_with = ["@platforms//os:linux"],
+        deps = _PROTOCOL_DEPS.get(name, []),
+    )
+    for name, path in _PROTOCOLS.items()
+]
+
+cc_test(
+    name = "protocols_test",
+    size = "small",
+    srcs = ["protocols_test.c"],
+    target_compatible_with = ["@platforms//os:linux"],
+    deps = [":" + name for name in _PROTOCOLS],
+)
