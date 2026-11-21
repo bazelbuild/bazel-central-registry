@@ -1,0 +1,132 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
+
+# Test data of the test module (tests/).
+exports_files([
+    "models/cube.usdc",
+    "models/cube.usdz",
+])
+
+# The bundled third-party code (src/external, src/lz4, src/nonstd) comes with its own licenses.
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+# The core of upstream's CMake target tinyusdz_static: the USDA reader and writer, the USDC and
+# USDZ readers (the USDC writer of 0.9.1 is not implemented yet), composition and the UsdGeom,
+# UsdShade, UsdSkel and UsdLux schemas. The optional features are off: Tydra, MaterialX, OBJ/FBX/VOX
+# import, audio, EXR/TIFF, the built-in image loader (applications provide image loader callbacks),
+# the C API and the Python bindings.
+cc_library(
+    name = "tinyusdz",
+    srcs = [
+        "src/ascii-parser.cc",
+        "src/ascii-parser-basetype.cc",
+        "src/ascii-parser-timesamples.cc",
+        "src/ascii-parser-timesamples-array.cc",
+        "src/asset-resolution.cc",
+        "src/audio-loader.cc",
+        "src/base122.cc",
+        "src/composition.cc",
+        "src/crate-format.cc",
+        "src/crate-pprint.cc",
+        "src/crate-reader.cc",
+        "src/crate-writer.cc",
+        "src/image-loader.cc",
+        "src/image-util.cc",
+        "src/image-writer.cc",
+        "src/integerCoding.cpp",
+        "src/io-util.cc",
+        "src/linear-algebra.cc",
+        "src/lz4-compression.cc",
+        "src/lz4/lz4.c",
+        "src/lz4/lz4.h",
+        "src/path-util.cc",
+        "src/performance.cc",
+        "src/pprinter.cc",
+        "src/prim-composition.cc",
+        "src/prim-reconstruct.cc",
+        "src/prim-types.cc",
+        "src/primvar.cc",
+        "src/stage.cc",
+        "src/str-util.cc",
+        "src/tiny-format.cc",
+        "src/tinyusdz.cc",
+        "src/usdGeom.cc",
+        "src/usdLux.cc",
+        "src/usdMtlx.cc",
+        "src/usdObj.cc",
+        "src/usdShade.cc",
+        "src/usdSkel.cc",
+        "src/usda-reader.cc",
+        "src/usda-writer.cc",
+        "src/usdc-reader.cc",
+        "src/usdc-writer.cc",
+        "src/value-pprint.cc",
+        "src/value-types.cc",
+        "src/xform.cc",
+    ] + glob([
+        # Header-only third-party libraries used by the core.
+        "src/external/*.h",
+        "src/external/*.hh",
+        "src/external/*.hpp",
+        "src/external/fast_float/include/fast_float/*.h",
+        "src/external/filesystem/include/ghc/*.hpp",
+        "src/external/floaxie/floaxie/*.h",
+        "src/external/glob/single_include/glob/*.hpp",
+        "src/external/jsteemann/*.h",
+        "src/external/mapbox/eternal/include/mapbox/*.hpp",
+    ]),
+    hdrs = glob(
+        [
+            "src/*.h",
+            "src/*.hh",
+            "src/*.inc",
+            "src/external/string_id/*.hpp",
+            "src/nonstd/*.hpp",
+        ],
+        exclude = [
+            # Optional features that are not built.
+            "src/c-tinyusd.h",
+            "src/json-to-usd.hh",
+            "src/json-writer.hh",
+            "src/pxr-compat.hh",
+            "src/usd-to-json.hh",
+            "src/usdFbx.hh",
+            "src/usdVox.hh",
+        ],
+    ),
+    copts = select({
+        "@rules_cc//cc/compiler:mingw-gcc": ["-Wa,-mbig-obj"],
+        "//conditions:default": [],
+    }),
+    # nonstd::expected instead of std::expected (C++23) in the library and in its users.
+    defines = ["nsel_CONFIG_SELECT_EXPECTED=nsel_EXPECTED_NONSTD"],
+    includes = ["src"],
+    local_defines = [
+        "TINYUSDZ_NO_BUILTIN_IMAGE_LOADER",
+        # Keeps the bundled stb_image_write and stb_image_resize2 private to the library.
+        "STB_IMAGE_RESIZE_STATIC",
+        "STB_IMAGE_WRITE_STATIC",
+    ],
+)
