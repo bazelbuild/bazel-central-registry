@@ -1,0 +1,106 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_package", "qemu_source_set", "when")
+
+# Translated from backends/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = [
+        "confidential-guest-support.c",
+        "cryptodev.c",
+        "cryptodev-builtin.c",
+        "hostmem.c",
+        "hostmem-ram.c",
+        "rng.c",
+        "rng-builtin.c",
+        "rng-egd.c",
+    ],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "have_hmp",
+            ["cryptodev-hmp-cmds.c"],
+        ),
+        when(
+            "!CONFIG_WIN32",
+            ["rng-random.c"],
+        ),
+        when(
+            [
+                "!CONFIG_WIN32",
+                "!host_emscripten",
+            ],
+            [
+                "hostmem-file.c",
+                "hostmem-shm.c",
+            ],
+        ),
+        when(
+            "CONFIG_LINUX",
+            [
+                "hostmem-memfd.c",
+                "host_iommu_device.c",
+            ],
+        ),
+        when(
+            "keyutils",
+            ["cryptodev-lkcf.c"],
+        ),
+        when(
+            [
+                "have_vhost_user",
+                "CONFIG_VIRTIO",
+            ],
+            ["vhost-user.c"],
+        ),
+        when(
+            "CONFIG_VIRTIO_CRYPTO",
+            ["cryptodev-vhost.c"],
+        ),
+        when(
+            "CONFIG_IOMMUFD",
+            ["iommufd.c"],
+        ),
+        when(
+            [
+                "have_vhost_user_crypto",
+                "CONFIG_VIRTIO_CRYPTO",
+            ],
+            ["cryptodev-vhost-user.c"],
+        ),
+        when(
+            "gio",
+            ["dbus-vmstate.c"],
+        ),
+        when(
+            "CONFIG_SGX",
+            ["hostmem-epc.c"],
+        ),
+        when(
+            "igvm",
+            [
+                "igvm-cfg.c",
+                "igvm.c",
+            ],
+        ),
+        when(
+            "CONFIG_SPDM_SOCKET",
+            ["spdm-socket.c"],
+        ),
+    ],
+    deps = [
+        ":headers",
+        "//hw/core:headers",
+    ],
+)
+
+qemu_package(subdirs = ["tpm"])

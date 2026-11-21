@@ -1,0 +1,70 @@
+load("@qemu_targets//:targets.bzl", "TARGETS")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:python_gen.bzl", "python_gen")
+load("//bazel:qemu.bzl", "qemu_package", "qemu_source_set", "qemu_target_source_set", "qemu_user_source_set")
+
+# gdbstub/meson.build
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+# The XML target descriptions of every configured target, compiled into
+# one table.
+GDBSTUB_XML_FILES = {
+    "gdb-xml/" + f: None
+    for config in TARGETS.values()
+    for f in config.get("TARGET_XML_FILES", "").split(" ")
+    if f
+}.keys()
+
+python_gen(
+    name = "gdbstub_xml",
+    srcs = GDBSTUB_XML_FILES,
+    outs = ["gdbstub-xml.c"],
+    arguments = ["{inputs}"],
+    capture_stdout = True,
+    script = "//scripts:feature_to_c.py",
+)
+
+qemu_source_set(
+    name = "common_ss",
+    srcs = ["gdbstub-xml.c"] if GDBSTUB_XML_FILES else ["gdb-xml-stub.c"],
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+_GDBSTUB_SRCS = [
+    "gdbstub.c",
+    "syscalls.c",
+]
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = _GDBSTUB_SRCS + ["system.c"],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+qemu_user_source_set(
+    name = "user_ss",
+    srcs = _GDBSTUB_SRCS + ["user.c"],
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+# The user-target is specialised by the guest.
+qemu_target_source_set(
+    name = "specific_ss",
+    srcs = ["user-target.c"],
+    mode = "user",
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+qemu_package()

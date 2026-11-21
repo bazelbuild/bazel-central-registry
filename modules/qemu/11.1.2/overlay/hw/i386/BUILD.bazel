@@ -1,0 +1,142 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_archive_part", "qemu_package", "qemu_target_source_set", "when")
+
+# Translated from hw/i386/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+    deps = ["//target/i386/kvm:headers"],
+)
+
+qemu_target_source_set(
+    name = "i386_ss",
+    srcs = [
+        "e820_memory_layout.c",
+        "fw_cfg.c",
+        "monitor.c",
+        "multiboot.c",
+        "x86.c",
+        "x86-cpu.c",
+    ],
+    arch = "i386",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "CONFIG_APIC",
+            ["vapic.c"],
+        ),
+        when(
+            "CONFIG_X86_IOMMU",
+            ["x86-iommu.c"],
+            if_false = ["x86-iommu-stub.c"],
+        ),
+        when(
+            "CONFIG_AMD_IOMMU",
+            ["amd_iommu.c"],
+            if_false = ["amd_iommu-stub.c"],
+        ),
+        when(
+            "CONFIG_I440FX",
+            ["pc_piix.c"],
+        ),
+        when(
+            "CONFIG_ISAPC",
+            ["isapc.c"],
+        ),
+        when(
+            "CONFIG_MICROVM",
+            [
+                "x86-common.c",
+                "microvm.c",
+                "acpi-microvm.c",
+                "microvm-dt.c",
+            ],
+        ),
+        when(
+            "CONFIG_NITRO_ENCLAVE",
+            ["nitro_enclave.c"],
+        ),
+        when(
+            "CONFIG_Q35",
+            ["pc_q35.c"],
+        ),
+        when(
+            "CONFIG_VMMOUSE",
+            ["vmmouse.c"],
+        ),
+        when(
+            "CONFIG_VMPORT",
+            ["vmport.c"],
+        ),
+        when(
+            "CONFIG_VTD",
+            ["intel_iommu.c"],
+        ),
+        when(
+            "CONFIG_VTD_ACCEL",
+            ["intel_iommu_accel.c"],
+        ),
+        when(
+            "CONFIG_SGX",
+            [
+                "sgx-epc.c",
+                "sgx.c",
+            ],
+            if_false = ["sgx-stub.c"],
+        ),
+        when(
+            "CONFIG_ACPI",
+            ["acpi-common.c"],
+        ),
+        when(
+            "CONFIG_PC",
+            [
+                "x86-common.c",
+                "pc.c",
+                "pc_sysfw.c",
+                "acpi-build.c",
+                "port92.c",
+            ],
+        ),
+        when(
+            "CONFIG_X86_FW_OVMF",
+            ["pc_sysfw_ovmf.c"],
+            if_false = ["pc_sysfw_ovmf-stubs.c"],
+        ),
+        when(
+            "CONFIG_TDX",
+            [
+                "tdvf.c",
+                "tdvf-hob.c",
+            ],
+        ),
+    ],
+    deps = [
+        ":headers",
+        "//hw/acpi:headers",
+        "//hw/i386/kvm:headers",
+        "//hw/vfio:headers",
+    ],
+)
+
+qemu_archive_part(
+    # of libqemuutil.a
+    name = "stub_ss",
+    when = [
+        when(
+            "have_hmp",
+            ["sgx-hmp-stub.c"],
+        ),
+    ],
+    deps = [":headers"],
+)
+
+qemu_package(subdirs = [
+    "kvm",
+    "mshv",
+    "xen",
+])

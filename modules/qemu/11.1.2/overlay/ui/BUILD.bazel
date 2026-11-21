@@ -1,0 +1,149 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:python_gen.bzl", "python_gen")
+load("//bazel:qemu.bzl", "qemu_enabled", "qemu_library", "qemu_package", "qemu_source_set", "when")
+
+# ui/meson.build.  Only what this configuration builds is here: the
+# optional front ends and modules (vnc, curses, gtk, sdl, spice, dbus,
+# opengl, egl-headless) need dependencies options.bzl does not enable.
+
+exports_files(["trace-events"])
+
+# meson.build: keymaps
+KEYMAPS = [
+    ("atset1", "linux"),
+    ("linux", "qcode"),
+    ("linux", "atset1"),
+    ("linux", "atset2"),
+    ("linux", "atset3"),
+    ("qcode", "linux"),
+    ("linux", "qnum"),
+    ("linux", "sun"),
+    ("qnum", "linux"),
+    ("usb", "linux"),
+    ("win32", "linux"),
+    ("x11", "linux"),
+    ("xorgkbd", "linux"),
+    ("xorgxquartz", "linux"),
+    ("xorgxwin", "linux"),
+    ("osx", "linux"),
+]
+
+[python_gen(
+    name = "input-keymap-{}-to-{}".format(src, dst),
+    src = "//subprojects:keycodemapdb/data/keymaps.csv",
+    outs = ["input-keymap-{}-to-{}.c.inc".format(src, dst)],
+    arguments = [
+        "code-map",
+        "--lang",
+        "glib2",
+        "--varname",
+        "qemu_input_map_{}_to_{}".format(src, dst),
+        "{src}",
+        src,
+        dst,
+    ],
+    capture_stdout = True,
+    script = "//subprojects:keycodemapdb/tools/keymap-gen",
+) for src, dst in KEYMAPS]
+
+# Part of Meson's genh: on every compile line, like the other generated
+# headers.
+cc_library(
+    name = "genh",
+    includes = ["."],
+    textual_hdrs = ["input-keymap-{}-to-{}.c.inc".format(s, d) for s, d in KEYMAPS],
+    visibility = ["//include:__pkg__"],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+# libqemuui
+qemu_library(
+    name = "ui",
+    srcs = [
+        "clipboard.c",
+        "console.c",
+        "cursor.c",
+        "display-surface.c",
+        "dmabuf.c",
+        "input-keymap.c",
+        "kbd-state.c",
+        "keymaps.c",
+        "qemu-pixman.c",
+        "spice-module.c",
+        "vgafont.c",
+    ] + ([
+        "cp437.c",
+        "vt100.c",
+    ] if qemu_enabled("pixman") else []),
+    textual_hdrs = [
+        "cursor_hidden.xpm",
+        "cursor_left_ptr.xpm",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = [
+        "input.c",
+        "input-barrier.c",
+        "ui-qmp-cmds.c",
+        "util.c",
+    ],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "have_hmp",
+            ["ui-hmp-cmds.c"],
+        ),
+        when(
+            "pixman",
+            ["console-vc.c"],
+            if_false = ["console-vc-stubs.c"],
+        ),
+        when(
+            "dbus_display",
+            ["dbus-module.c"],
+        ),
+        when(
+            "spice_protocol",
+            ["vdagent.c"],
+        ),
+        when(
+            "CONFIG_LINUX",
+            [
+                "input-linux.c",
+                "udmabuf.c",
+            ],
+        ),
+        when(
+            "cocoa",
+            ["cocoa.m"],
+        ),
+        when(
+            "vnc",
+            ["vnc-system.c"],
+            if_false = ["vnc-stubs.c"],
+        ),
+        when(
+            [
+                "gtk",
+                "CONFIG_WIN32",
+            ],
+            ["win32-kbd-hook.c"],
+        ),
+    ],
+    deps = [
+        ":headers",
+        ":ui",
+    ],
+)
+
+qemu_package()

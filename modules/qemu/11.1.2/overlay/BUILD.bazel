@@ -1,0 +1,519 @@
+# Downstream QEMU 11.1.2 build for Linux x86_64/KVM.
+#
+# This package holds what the top-level meson.build defines: the
+# configuration headers, the generated headers every compile sees, the
+# sources that live in the top directory, the libraries the executables
+# link (Meson's declare_dependency() objects) and the executables.
+
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@qemu_targets//:settings.bzl", "SETTINGS")
+load("@qemu_targets//:targets.bzl", "TARGETS")
+load("@qemu_targets//:version.bzl", "QEMU_VERSION")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//bazel:config_h.bzl", "config_devices_values", "config_header", "config_poison", "config_target_values")
+load("//bazel:executable_script.bzl", "executable_script")
+load("//bazel:info.bzl", "qemu_build_info")
+load("//bazel:python_gen.bzl", "python_gen")
+load("//bazel:qemu.bzl", "CONFIG_HOST", "QEMU_COPTS", "QEMU_DEFINES", "QEMU_LINKOPTS", "qemu_archive", "qemu_enabled", "qemu_library", "qemu_package", "qemu_source_set", "qemu_target_source_set", "qemu_user_source_set", "when")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":qemu_license"],
+    purl = purl.builder().type("generic").name("qemu").version(QEMU_VERSION).build(),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "qemu_license",
+    kind = "@package_metadata//licenses/spdx:GPL-2.0-only",
+    text = "COPYING",
+)
+
+exports_files([
+    "Kconfig",
+    "VERSION",
+    "qemu-options.hx",
+    "trace-events",
+])
+
+# Files from the pinned release, not a firmware build. Firmware carries its
+# own licenses, separate from the package metadata for the emulator.
+filegroup(
+    name = "pc-bios-files",
+    srcs = glob(["pc-bios/**"]),
+    package_metadata = [],
+)
+
+###########################
+# Configuration headers   #
+###########################
+
+_VERSION_PARTS = QEMU_VERSION.split(".")
+
+config_header(
+    name = "config_host_h",
+    out = "config-host.h",
+    values = CONFIG_HOST | {
+        # The Linux USBFS headers compile on the supported host, as in Meson.
+        "CONFIG_USBFS": qemu_enabled("have_linux_user"),
+        "QEMU_VERSION": '"{}"'.format(QEMU_VERSION),
+        "QEMU_VERSION_MAJOR": int(_VERSION_PARTS[0]),
+        "QEMU_VERSION_MINOR": int(_VERSION_PARTS[1]),
+        "QEMU_VERSION_MICRO": int(_VERSION_PARTS[2]),
+    },
+)
+
+[config_header(
+    name = target + "-config-target_h",
+    out = target + "-config-target.h",
+    values = config_target_values(config),
+) for target, config in TARGETS.items()]
+
+[config_header(
+    name = target + "-config-devices_h",
+    out = target + "-config-devices.h",
+    values = config_devices_values(config),
+) for target, config in TARGETS.items() if target.endswith("-softmmu")]
+
+# Included by name (-DCONFIG_TARGET="<target>-config-target.h") from
+# per-target code.
+[cc_library(
+    name = "config_target_" + target,
+    hdrs = [target + "-config-target.h"] + (
+        [target + "-config-devices.h"] if target.endswith("-softmmu") else []
+    ),
+) for target in TARGETS]
+
+# Poisons the target-specific macros in code that is compiled once.
+config_poison(
+    name = "config_poison_h",
+    out = "config-poison.h",
+    configs = TARGETS.values(),
+)
+
+# Match scripts/qemu-version.sh for a release tarball (not a Git checkout).
+config_header(
+    name = "qemu_version_h",
+    out = "qemu-version.h",
+    values = {
+        "QEMU_FULL_VERSION": '"{}"'.format(QEMU_VERSION),
+        "QEMU_PKGVERSION": '""',
+    },
+)
+
+[python_gen(
+    name = name.replace(".", "_"),
+    src = source,
+    outs = [name],
+    arguments = ["{src}"],
+    capture_stdout = True,
+    script = "//bazel:hxtool.py",
+) for name, source in {
+    "qemu-options.def": "qemu-options.hx",
+    "hmp-commands.h": "hmp-commands.hx",
+    "hmp-commands-info.h": "hmp-commands-info.hx",
+}.items()]
+
+# config-host.h and the other headers generated at the top of the build
+# tree; //include:qemu makes them visible to every compile.
+cc_library(
+    name = "genh",
+    hdrs = [
+        "config-host.h",
+        "config-poison.h",
+        "hmp-commands.h",
+        "hmp-commands-info.h",
+        "qemu-version.h",
+    ],
+    # Meson's implicit include directories: every library is defined in
+    # the top-level meson.build, so every compile has -I<source> -I<build>.
+    includes = ["."],
+    visibility = ["//include:__pkg__"],
+)
+
+###########################
+# Sources of this package #
+###########################
+
+qemu_source_set(
+    name = "block_ss",
+    srcs = [
+        "block.c",
+        "blockjob.c",
+        "job.c",
+        "qemu-io-cmds.c",
+    ],
+    when = [
+        when(
+            "CONFIG_REPLICATION",
+            ["replication.c"],
+        ),
+    ],
+    deps = [
+        "//block:headers",
+        "//block:module_block",
+    ],
+)
+
+qemu_source_set(
+    name = "blockdev_ss",
+    srcs = [
+        "blockdev.c",
+        "blockdev-nbd.c",
+        "iothread.c",
+        "job-qmp.c",
+    ],
+    when = [
+        when(
+            "host_emscripten",
+            ["os-wasm.c"],
+        ),
+        when(
+            [
+                "!CONFIG_WIN32",
+                "!host_emscripten",
+            ],
+            ["os-posix.c"],
+        ),
+    ],
+    deps = ["//block:headers"],
+)
+
+qemu_source_set(
+    name = "common_ss",
+    srcs = [
+        "cpu-common.c",
+        "page-vary-common.c",
+        "target-info.c",
+    ],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = [
+        "cpu-target.c",
+        "page-vary-system.c",
+        "target-info-qom.c",
+    ],
+    kind = "system",
+    when = [
+        when(
+            "CONFIG_WIN32",
+            ["os-win32.c"],
+        ),
+    ],
+)
+
+qemu_user_source_set(
+    name = "user_ss",
+    srcs = ["cpu-target.c"],
+)
+
+qemu_library(
+    name = "event-loop-base",
+    srcs = ["event-loop-base.c"],
+    qemuutil = False,
+    deps = [":libqemuutil"],
+)
+
+# meson.build: no generated target metadata for this release profile.
+qemu_target_source_set(
+    name = "arch_srcs",
+    srcs = ["target-info-stub.c"],
+    mode = "both",
+)
+
+###########################
+# Libraries               #
+###########################
+
+# libqemuutil.a: one archive, so that the stubs only fill in what nothing
+# else defines (see qemu_archive_part).
+qemu_archive(
+    name = "libqemuutil",
+    copts = ["-pthread"],  # meson.build: dependency('threads')
+    linkopts = [
+        "-lm",
+        "-pthread",
+    ],
+    parts = [
+        "//crypto:util_ss",
+        "//qapi:util_ss",
+        "//qobject:util_ss",
+        "//trace:util_ss",
+        "//util:util_ss",
+        # Meson's stub_ss spans these subdirectories. Keep these objects in
+        # the same archive as util, even when the device itself is disabled.
+        "//accel/stubs:stub_ss",
+        "//fsdev:stub_ss",
+        "//hw/acpi:stub_ss",
+        "//hw/arm:stub_ss",
+        "//hw/cxl:stub_ss",
+        "//hw/display:stub_ss",
+        "//hw/i386:stub_ss",
+        "//hw/i386/kvm:stub_ss",
+        "//hw/intc:stub_ss",
+        "//hw/mem:stub_ss",
+        "//hw/misc:stub_ss",
+        "//hw/net:stub_ss",
+        "//hw/pci:stub_ss",
+        "//hw/s390x:stub_ss",
+        "//hw/smbios:stub_ss",
+        "//hw/usb:stub_ss",
+        "//hw/vfio:stub_ss",
+        "//hw/virtio:stub_ss",
+        "//migration:stub_ss",
+        "//net:stub_ss",
+        "//semihosting:stub_ss",
+        "//stubs:stub_ss",
+    ],
+    deps = ["@qemu_glib//glib"],
+)
+
+# meson.build: qemuutil = declare_dependency(link_with: libqemuutil,
+# dependencies: [event_loop_base]).  Everything QEMU compiles depends on
+# it (qemu_library), which also puts the archive after all objects on the
+# link line.
+cc_library(
+    name = "qemuutil",
+    deps = [
+        ":event-loop-base",
+        ":libqemuutil",
+    ],
+)
+
+cc_library(
+    name = "qom",
+    deps = ["//qom:qom_ss"],
+)
+
+cc_library(
+    name = "authz",
+    deps = [
+        ":qom",
+        "//authz:authz_ss",
+    ],
+)
+
+cc_library(
+    name = "crypto",
+    deps = [
+        ":authz",
+        ":qom",
+        "//crypto:crypto_ss",
+    ],
+)
+
+cc_library(
+    name = "io",
+    deps = [
+        ":crypto",
+        ":qom",
+        "//io:io_ss",
+    ],
+)
+
+cc_library(
+    name = "block",
+    deps = [
+        ":block_ss",
+        ":crypto",
+        ":io",
+        "//block:block_ss",
+        "//block/monitor:block_ss",
+        "//nbd:block_ss",
+        "//scsi:block_ss",
+        "@zlib",
+    ],
+)
+
+cc_library(
+    name = "blockdev",
+    deps = [
+        ":block",
+        ":blockdev_ss",
+        ":event-loop-base",
+        "//block/export:blockdev_ss",
+        "//nbd:blockdev_ss",
+    ],
+)
+
+cc_library(
+    name = "chardev",
+    deps = [
+        ":io",
+        "//chardev:chardev_ss",
+    ],
+)
+
+cc_library(
+    name = "qmp",
+    deps = [
+        "//monitor:qmp_ss",
+        "//qom:qmp_ss",
+    ],
+)
+
+# Per target, everything the top-level meson.build's subdir()s add to the
+# source sets (`:<target>`, see qemu_package).
+qemu_package(subdirs = [
+    "qapi",
+    "qobject",
+    "stubs",
+    "trace",
+    "util",
+    "qom",
+    "authz",
+    "crypto",
+    "ui",
+    "semihosting",
+    "audio",
+    "io",
+    "chardev",
+    "fsdev",
+    "dump",
+    "accel",
+    "backends",
+    "disas",
+    "migration",
+    "monitor",
+    "net",
+    "replay",
+    "stats",
+    "fpu",
+    "plugins",
+    "ebpf",
+    "hw",
+    "system",
+    "hw/core",
+    "libdecnumber",
+    "gdbstub",
+    "target",
+    "nbd",
+    "scsi",
+    "block",
+])
+
+###########################
+# Executables             #
+###########################
+
+# qemu-system-<target>: system/main.c and everything the source sets give
+# that target.
+[cc_binary(
+    name = "qemu-system-" + config["TARGET_NAME"],
+    srcs = ["//system:main.c"],
+    copts = QEMU_COPTS,
+    linkopts = QEMU_LINKOPTS,
+    linkstatic = True,
+    local_defines = QEMU_DEFINES + [
+        "COMPILING_PER_TARGET",
+        'CONFIG_TARGET=\\"{}-config-target.h\\"'.format(target),
+        'CONFIG_DEVICES=\\"{}-config-devices.h\\"'.format(target),
+    ],
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    deps = [
+        ":" + target,
+        ":config_target_" + target,
+        ":qemuutil",
+        "//include:qemu",
+        "//target/{}:headers".format(config["TARGET_BASE_ARCH"]),
+    ],
+) for target, config in TARGETS.items() if target.endswith("-softmmu")]
+
+qemu_build_info(
+    name = "qemu-system-x86_64_info",
+    binary = ":qemu-system-x86_64",
+)
+
+# Registry overlay files do not carry executable mode bits.
+executable_script(
+    name = "kvm_smoke_script",
+    src = "//bazel:kvm_smoke.sh",
+    out = "kvm_smoke_test.sh",
+)
+
+# The built-in device sets have fixed expectations; custom sets need not
+# register either PC chipset.
+_SMOKE_DEVICE_SET = (
+    "q35-only" if SETTINGS["device_set"] == "q35" and not SETTINGS["default_devices"] else
+    "qemu-default" if SETTINGS["device_set"] == "default" and SETTINGS["default_devices"] else
+    "custom"
+)
+
+sh_test(
+    name = "kvm_smoke_test",
+    srcs = [":kvm_smoke_script"],
+    args = ["$(rootpath :qemu-system-x86_64)", _SMOKE_DEVICE_SET],
+    data = [":qemu-system-x86_64"],
+    target_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+# Linux-user links libuser and its ABI-specific objects, not the system tree.
+[cc_binary(
+    name = "qemu-" + config["TARGET_NAME"],
+    linkopts = QEMU_LINKOPTS + ["-lrt"],
+    deps = [
+        ":arch_srcs_" + target,
+        ":common_ss",
+        ":qemuutil",
+        ":qom",
+        ":user_ss",
+        "//accel:common_ss",
+        "//accel:user_ss",
+        "//accel/tcg:user_ss",
+        "//common-user:user_ss",
+        "//disas:common_ss",
+        "//fpu:common_ss",
+        "//gdbstub:common_ss",
+        "//gdbstub:specific_ss_" + target,
+        "//gdbstub:user_ss",
+        "//hw/core:common_ss",
+        "//hw/core:hwcore_ss",
+        "//hw/core:user_ss",
+        "//linux-user:linux_user_ss_" + target,
+        "//linux-user/x86_64:abi_srcs_" + target,
+        "//target/i386:i386_ss_" + target,
+        "//target/i386/tcg:i386_ss_" + target,
+        "//target/i386/tcg/user:i386_user_ss_" + target,
+        "//tcg:user_ss",
+    ],
+) for target, config in TARGETS.items() if target == "x86_64-linux-user"]
+
+[cc_binary(
+    name = tool,
+    srcs = [tool + ".c"],
+    copts = QEMU_COPTS,
+    linkopts = QEMU_LINKOPTS,
+    local_defines = QEMU_DEFINES,
+    deps = tool_deps + [
+        ":qemuutil",
+        "//include:qemu",
+    ],
+) for tool, tool_deps in {
+    "qemu-img": [
+        ":authz",
+        ":block",
+        ":crypto",
+        ":io",
+        ":qom",
+        "//block:headers",
+    ],
+    "qemu-io": [":block"],
+    "qemu-nbd": [":blockdev"],
+}.items()]

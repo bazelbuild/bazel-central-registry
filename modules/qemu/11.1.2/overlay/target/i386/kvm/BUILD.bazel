@@ -1,0 +1,64 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_package", "qemu_target_source_set", "when")
+
+# Translated from target/i386/kvm/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+qemu_target_source_set(
+    name = "i386_system_ss",
+    arch = "i386",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "CONFIG_HYPERV",
+            ["hyperv.c"],
+            if_false = ["hyperv-stub.c"],
+        ),
+        when(
+            "CONFIG_KVM",
+            [
+                "kvm.c",
+                "kvm-cpu.c",
+                "vmsr_energy.c",
+            ],
+        ),
+        when(
+            [
+                "CONFIG_KVM",
+                "CONFIG_XEN_EMU",
+            ],
+            ["xen-emu.c"],
+        ),
+        when(
+            [
+                "CONFIG_KVM",
+                "CONFIG_TDX",
+            ],
+            [
+                "tdx.c",
+                "tdx-quote-generator.c",
+            ],
+        ),
+        when(
+            [
+                "CONFIG_KVM",
+                "!CONFIG_TDX",
+            ],
+            ["tdx-stub.c"],
+        ),
+    ],
+    deps = [
+        ":headers",
+        "//hw/i386:headers",
+        "//hw/i386/kvm:headers",
+    ],
+)
+
+qemu_package()

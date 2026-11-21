@@ -1,0 +1,155 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_archive_part", "qemu_package", "qemu_source_set", "when")
+
+# Translated from crypto/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    textual_hdrs = glob(["*.inc"]),
+    visibility = ["//visibility:public"],
+)
+
+qemu_source_set(
+    name = "crypto_ss",
+    srcs = [
+        "afsplit.c",
+        "akcipher.c",
+        "block.c",
+        "block-luks.c",
+        "block-qcow.c",
+        "cipher.c",
+        "der.c",
+        "hash.c",
+        "hmac.c",
+        "ivgen.c",
+        "ivgen-essiv.c",
+        "ivgen-plain.c",
+        "ivgen-plain64.c",
+        "pbkdf.c",
+        "rsakey.c",
+        "secret.c",
+        "secret_common.c",
+        "tlscreds.c",
+        "tlscredsanon.c",
+        "tlscredspsk.c",
+        "tlscredsx509.c",
+        "tlssession.c",
+    ],
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "gnutls",
+            [
+                "tlscredsbox.c",
+                "x509-utils.c",
+            ],
+        ),
+        when(
+            "nettle",
+            [
+                "hash-nettle.c",
+                "hmac-nettle.c",
+                "pbkdf-nettle.c",
+            ],
+        ),
+        when(
+            [
+                "!nettle",
+                "gcrypt",
+            ],
+            [
+                "hash-gcrypt.c",
+                "hmac-gcrypt.c",
+                "pbkdf-gcrypt.c",
+            ],
+        ),
+        when(
+            [
+                "!nettle",
+                "!gcrypt",
+                "gnutls_crypto",
+            ],
+            [
+                "hash-gnutls.c",
+                "hmac-gnutls.c",
+                "pbkdf-gnutls.c",
+            ],
+        ),
+        when(
+            [
+                "!nettle",
+                "!gcrypt",
+                "!gnutls_crypto",
+            ],
+            [
+                "hash-glib.c",
+                "hmac-glib.c",
+                "pbkdf-stub.c",
+            ],
+        ),
+        when(
+            "have_keyring",
+            ["secret_keyring.c"],
+        ),
+    ],
+    deps = [":headers"],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "gnutls",
+            ["tls-cipher-suites.c"],
+        ),
+    ],
+    deps = [":headers"],
+)
+
+qemu_archive_part(
+    # of libqemuutil.a
+    name = "util_ss",
+    srcs = [
+        "aes.c",
+        "clmul.c",
+        "init.c",
+        "sm4.c",
+    ],
+    when = [
+        when(
+            "gcrypt",
+            ["random-gcrypt.c"],
+        ),
+        when(
+            [
+                "!gcrypt",
+                "gnutls",
+            ],
+            ["random-gnutls.c"],
+        ),
+        when(
+            [
+                "!gcrypt",
+                "!gnutls",
+                "rng_none",
+            ],
+            ["random-none.c"],
+        ),
+        when(
+            [
+                "!gcrypt",
+                "!gnutls",
+                "!rng_none",
+            ],
+            ["random-platform.c"],
+        ),
+    ],
+    deps = [":headers"],
+)
+
+qemu_package()

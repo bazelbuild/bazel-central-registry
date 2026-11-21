@@ -1,0 +1,163 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_archive_part", "qemu_enabled", "qemu_package", "qemu_source_set", "when")
+load("//bazel:trace.bzl", "TRACE_BACKENDS", "trace_events", "underscorify")
+load("//qapi:qapi.bzl", "QAPI_TRACE_EVENTS")
+
+# meson.build: trace_events_subdirs
+TRACE_EVENTS_SUBDIRS = [
+    "crypto",
+    "qapi",
+    "qom",
+    "monitor",
+    "util",
+    "gdbstub",
+    "tools/qemu-vnc",
+] + (["linux-user"] if qemu_enabled("have_linux_user") else []) + (
+    ["bsd-user"] if qemu_enabled("have_bsd_user") else []
+) + ([
+    "authz",
+    "block",
+    "chardev",
+    "io",
+    "nbd",
+    "scsi",
+] if qemu_enabled("have_block") else []) + ([
+    "accel/hvf",
+    "accel/kvm",
+    "accel/mshv",
+    "accel/nitro",
+    "audio",
+    "backends",
+    "backends/tpm",
+    "ebpf",
+    "hw/9pfs",
+    "hw/acpi",
+    "hw/adc",
+    "hw/alpha",
+    "hw/arm",
+    "hw/audio",
+    "hw/block",
+    "hw/char",
+    "hw/display",
+    "hw/dma",
+    "hw/fsi",
+    "hw/hexagon",
+    "hw/hyperv",
+    "hw/i2c",
+    "hw/i3c",
+    "hw/i386",
+    "hw/i386/xen",
+    "hw/i386/kvm",
+    "hw/ide",
+    "hw/input",
+    "hw/intc",
+    "hw/isa",
+    "hw/mem",
+    "hw/mips",
+    "hw/misc",
+    "hw/misc/macio",
+    "hw/net",
+    "hw/net/can",
+    "hw/nitro",
+    "hw/nubus",
+    "hw/nvme",
+    "hw/nvram",
+    "hw/pci",
+    "hw/pci-host",
+    "hw/ppc",
+    "hw/rtc",
+    "hw/riscv",
+    "hw/s390x",
+    "hw/scsi",
+    "hw/sd",
+    "hw/sensor",
+    "hw/sh4",
+    "hw/sparc",
+    "hw/sparc64",
+    "hw/ssi",
+    "hw/timer",
+    "hw/tpm",
+    "hw/uefi",
+    "hw/ufs",
+    "hw/usb",
+    "hw/vfio",
+    "hw/vfio-user",
+    "hw/virtio",
+    "hw/vmapple",
+    "hw/watchdog",
+    "hw/xen",
+    "hw/gpio",
+    "migration",
+    "net",
+    "replay",
+    "system",
+    "ui",
+    "hw/remote",
+] if qemu_enabled("have_system") else []) + ([
+    "accel/tcg",
+    "hw/core",
+    "target/arm",
+    "target/arm/hvf",
+    "target/arm/tcg",
+    "target/hppa",
+    "target/i386",
+    "target/i386/kvm",
+    "target/i386/whpx",
+    "target/loongarch",
+    "target/mips/tcg",
+    "target/ppc",
+    "target/riscv",
+    "target/s390x",
+    "target/s390x/kvm",
+    "target/sparc",
+] if qemu_enabled("have_system|have_user") else [])
+
+# group name -> trace-events file
+TRACE_GROUPS = dict(
+    [("root", "//:trace-events")] +
+    [(
+        underscorify(d),
+        "//{}:trace-events".format(d),
+    ) for d in TRACE_EVENTS_SUBDIRS] +
+    [(
+        underscorify(f),
+        "//qapi:" + f,
+    ) for f in QAPI_TRACE_EVENTS],
+)
+
+[trace_events(group, src) for group, src in TRACE_GROUPS.items()]
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]) + ["trace-{}.h".format(g) for g in TRACE_GROUPS],
+    includes = ["."],
+    visibility = ["//include:__pkg__"],
+)
+
+qemu_archive_part(
+    # of libqemuutil.a
+    name = "util_ss",
+    srcs = ["control.c"] + (["simple.c"] if "simple" in TRACE_BACKENDS else []) +
+           ["trace-{}.c".format(g) for g in TRACE_GROUPS],
+    when = [
+        when(
+            "have_system|have_tools|have_ga",
+            ["qmp.c"],
+        ),
+    ],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = ["control-target.c"],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "have_hmp",
+            ["trace-hmp-cmds.c"],
+        ),
+    ],
+)
+
+qemu_package()

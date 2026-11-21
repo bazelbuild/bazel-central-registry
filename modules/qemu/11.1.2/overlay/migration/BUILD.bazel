@@ -1,0 +1,117 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_archive_part", "qemu_package", "qemu_source_set", "when")
+
+# Translated from migration/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+    deps = ["//net:headers"],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = [
+        "block-active.c",
+        "block-dirty-bitmap.c",
+        "channel.c",
+        "channel-block.c",
+        "cpr.c",
+        "cpr-exec.c",
+        "cpr-transfer.c",
+        "cpu-throttle.c",
+        "dirtyrate.c",
+        "exec.c",
+        "fd.c",
+        "file.c",
+        "global_state.c",
+        "migration.c",
+        "multifd.c",
+        "multifd-device-state.c",
+        "multifd-nocomp.c",
+        "multifd-zero-page.c",
+        "multifd-zlib.c",
+        "options.c",
+        "postcopy-ram.c",
+        "ram.c",
+        "savevm.c",
+        "socket.c",
+        "tls.c",
+    ],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "have_hmp",
+            ["migration-hmp-cmds.c"],
+        ),
+        when(
+            "replication",
+            [
+                "colo-failover.c",
+                "colo.c",
+                "multifd-colo.c",
+            ],
+        ),
+        when(
+            "!replication",
+            ["colo-stubs.c"],
+        ),
+        when(
+            "rdma",
+            ["rdma.c"],
+        ),
+        when(
+            "zstd",
+            ["multifd-zstd.c"],
+        ),
+        when(
+            "qpl",
+            ["multifd-qpl.c"],
+        ),
+        when(
+            "uadk",
+            ["multifd-uadk.c"],
+        ),
+        when(
+            "qatzip",
+            ["multifd-qatzip.c"],
+        ),
+        when(
+            "CONFIG_VFIO",
+            ["vfio.c"],
+        ),
+    ],
+    deps = [
+        ":headers",
+        "@zlib",
+    ],
+)
+
+qemu_archive_part(
+    # of libqemuutil.a
+    name = "stub_ss",
+    srcs = ["vfio-stub.c"],
+    deps = [":headers"],
+)
+
+# meson.build: libmigration, linked into the system emulators.
+qemu_source_set(
+    name = "migration",
+    srcs = [
+        "migration-stats.c",
+        "page_cache.c",
+        "qemu-file.c",
+        "vmstate.c",
+        "vmstate-types.c",
+        "xbzrle.c",
+        "yank_functions.c",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":headers"],
+)
+
+qemu_package()

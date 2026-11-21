@@ -1,0 +1,83 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:python_gen.bzl", "python_gen")
+load("//bazel:qemu.bzl", "qemu_archive_part", "qemu_package", "when")
+load(":qapi.bzl", "QAPI_OUTPUTS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["trace-events"])
+
+_SCHEMA_INPUTS = glob(["*.json"])
+
+filegroup(
+    name = "schema_inputs",
+    srcs = _SCHEMA_INPUTS,
+    visibility = ["//storage-daemon/qapi:__pkg__"],
+)
+
+# The shared QAPI schema.  qapi-gen.py also writes qapi-features.[ch],
+# which Meson does not list among the outputs.
+python_gen(
+    name = "qapi_files",
+    src = "qapi-schema.json",
+    srcs = _SCHEMA_INPUTS,
+    outs = QAPI_OUTPUTS + [
+        "qapi-features.c",
+        "qapi-features.h",
+    ],
+    arguments = [
+        "-o",
+        "{out_dir}",
+        "-b",
+        "{src}",
+    ],
+    script = "//scripts:qapi-gen.py",
+    deps = ["//scripts:qapi_sources"],
+)
+
+cc_library(
+    name = "local_headers",
+    hdrs = ["trace.h"],
+    deps = ["//include:qemu"],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = [o for o in QAPI_OUTPUTS if o.endswith(".h")] + ["qapi-features.h"],
+    includes = ["."],
+    visibility = ["//include:__pkg__"],
+)
+
+qemu_archive_part(
+    # of libqemuutil.a
+    name = "util_ss",
+    srcs = [
+        "opts-visitor.c",
+        "qapi-clone-visitor.c",
+        "qapi-dealloc-visitor.c",
+        "qapi-forward-visitor.c",
+        "qapi-util.c",
+        "qapi-visit-core.c",
+        "qobject-input-visitor.c",
+        "qobject-output-visitor.c",
+        "string-input-visitor.c",
+        "string-output-visitor.c",
+    ] + [o for o in QAPI_OUTPUTS if o.endswith(".c")],
+    when = [
+        when(
+            "have_system",
+            ["qapi-type-helpers.c"],
+        ),
+        when(
+            "have_system|have_tools|have_ga",
+            [
+                "qmp-dispatch.c",
+                "qmp-event.c",
+                "qmp-registry.c",
+            ],
+        ),
+    ],
+    deps = [":local_headers"],
+)
+
+qemu_package()

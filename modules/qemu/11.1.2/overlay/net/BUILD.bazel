@@ -1,0 +1,167 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_archive_part", "qemu_enabled", "qemu_package", "qemu_source_set", "when")
+
+# Translated from net/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+# vmnet (macOS) is not supported here.
+qemu_source_set(
+    name = "system_ss",
+    srcs = [
+        "announce.c",
+        "checksum.c",
+        "dgram.c",
+        "dump.c",
+        "eth.c",
+        "filter.c",
+        "filter-buffer.c",
+        "filter-mirror.c",
+        "hub.c",
+        "net.c",
+        "queue.c",
+        "socket.c",
+        "stream.c",
+        "stream_data.c",
+        "util.c",
+    ],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "have_hmp",
+            ["net-hmp-cmds.c"],
+        ),
+        when(
+            "replication|colo_proxy",
+            [
+                "colo-compare.c",
+                "colo.c",
+            ],
+        ),
+        when(
+            [
+                "!replication",
+                "!colo_proxy",
+            ],
+            ["colo-stubs.c"],
+        ),
+        when(
+            "colo_proxy",
+            ["filter-rewriter.c"],
+        ),
+        when(
+            "CONFIG_TCG",
+            ["filter-replay.c"],
+        ),
+        when(
+            "have_l2tpv3",
+            ["l2tpv3.c"],
+        ),
+        when(
+            "enable_passt",
+            ["passt.c"],
+        ),
+        when(
+            "slirp",
+            ["slirp.c"],
+        ),
+        when(
+            "vde",
+            ["vde.c"],
+        ),
+        when(
+            "have_netmap",
+            ["netmap.c"],
+        ),
+        when(
+            [
+                "libxdp",
+                "libbpf",
+            ],
+            ["af-xdp.c"],
+        ),
+        when(
+            [
+                "have_vhost_net_user",
+                "CONFIG_VIRTIO_NET",
+            ],
+            ["vhost-user.c"],
+        ),
+        when(
+            "CONFIG_WIN32",
+            ["tap-win32.c"],
+        ),
+        when(
+            [
+                "!CONFIG_WIN32",
+                "CONFIG_LINUX",
+            ],
+            [
+                "tap.c",
+                "tap-linux.c",
+            ],
+        ),
+        when(
+            [
+                "!CONFIG_WIN32",
+                "!CONFIG_LINUX",
+                "CONFIG_BSD",
+            ],
+            [
+                "tap.c",
+                "tap-bsd.c",
+            ],
+        ),
+        when(
+            [
+                "!CONFIG_WIN32",
+                "!CONFIG_LINUX",
+                "!CONFIG_BSD",
+                "CONFIG_SOLARIS",
+            ],
+            [
+                "tap.c",
+                "tap-solaris.c",
+            ],
+        ),
+        when(
+            [
+                "!CONFIG_WIN32",
+                "!CONFIG_LINUX",
+                "!CONFIG_BSD",
+                "!CONFIG_SOLARIS",
+            ],
+            [
+                "tap.c",
+                "tap-stub.c",
+            ],
+        ),
+        when(
+            [
+                "have_vhost_net_vdpa",
+                "CONFIG_VIRTIO_NET",
+            ],
+            ["vhost-vdpa.c"],
+        ),
+    ],
+    deps = [":headers"] + (["@qemu_libslirp"] if qemu_enabled("slirp") else []),
+)
+
+qemu_archive_part(
+    # of libqemuutil.a
+    name = "stub_ss",
+    srcs = [
+        "vhost-user-stub.c",
+        "vhost-vdpa-stub.c",
+    ],
+    deps = [":headers"],
+)
+
+qemu_package(subdirs = ["can"])

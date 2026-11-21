@@ -1,0 +1,39 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_target_source_set")
+
+# ABI-specific generators (linux-user/x86_64/meson.build).
+genrule(
+    name = "syscall_nr",
+    srcs = ["syscall_64.tbl"],
+    outs = ["syscall_64_nr.h"],
+    cmd = "sh $(execpath syscallhdr.sh) $< $@ common,64",
+    tools = ["syscallhdr.sh"],
+)
+
+genrule(
+    name = "vdso_inc",
+    srcs = ["vdso.so"],
+    outs = ["vdso.c.inc"],
+    cmd = "$(execpath //linux-user:gen-vdso) -o $@ $<",
+    tools = ["//linux-user:gen-vdso"],
+)
+
+cc_library(
+    name = "abi_headers",
+    hdrs = glob(["*.h"]) + ["syscall_64_nr.h"],
+    includes = ["."],
+    textual_hdrs = ["vdso.c.inc"],
+    visibility = ["//visibility:public"],
+)
+
+qemu_target_source_set(
+    name = "abi_srcs",
+    srcs = [
+        "cpu_loop.c",
+        "elfload.c",
+        "signal.c",
+    ],
+    arch = "i386",
+    mode = "user",
+    visibility = ["//visibility:public"],
+)

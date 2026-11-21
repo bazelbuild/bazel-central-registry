@@ -1,0 +1,42 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_package", "qemu_target_source_set")
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "decodetree",
+    srcs = ["insn.decode"],
+    outs = ["decode-insn.c.inc"],
+    # decodetree's topological sort iterates over a set of independent fields.
+    cmd = "PYTHONHASHSEED=0 $(execpath //scripts:decodetree) $< --decode decode_insn --insnwidth 16 -o $@",
+    tools = ["//scripts:decodetree"],
+)
+
+qemu_target_source_set(
+    name = "avr_ss",
+    srcs = [
+        "cpu.c",
+        "disas.c",
+        "helper.c",
+        "translate.c",
+    ],
+    arch = "avr",
+    textual_hdrs = ["decode-insn.c.inc"],
+)
+
+qemu_target_source_set(
+    name = "avr_common_system_ss",
+    srcs = [
+        "gdbstub.c",
+        "machine.c",
+    ],
+    arch = "avr",
+    kind = "common_arch",
+)
+
+qemu_package()

@@ -1,0 +1,222 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:python_gen.bzl", "python_gen")
+load("//bazel:qemu.bzl", "qemu_package", "qemu_source_set", "when")
+
+# Translated from block/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    visibility = ["//visibility:public"],
+)
+
+# The block drivers built as modules (curl, iscsi, ...); none are
+# enabled, so the list module_block.py reads is empty.
+BLOCK_MODULE_SRCS = []
+
+python_gen(
+    name = "module_block_h",
+    srcs = BLOCK_MODULE_SRCS,
+    outs = ["module_block.h"],
+    arguments = [
+        "{out}",
+        "{inputs}",
+    ],
+    script = "//scripts:modules/module_block.py",
+)
+
+# block_ss.add(module_block_h): the generated header's directory is on
+# every block_ss compile line.
+cc_library(
+    name = "module_block",
+    hdrs = ["module_block.h"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+# Coroutine wrappers for the functions marked co_wrapper in these headers.
+python_gen(
+    name = "block_gen_c",
+    srcs = [
+        "coroutines.h",
+        "//include:block/block-global-state.h",
+        "//include:block/block-io.h",
+        "//include:block/block_int-io.h",
+        "//include:block/dirty-bitmap.h",
+        "//include:system/block-backend-global-state.h",
+        "//include:system/block-backend-io.h",
+    ],
+    outs = ["block-gen.c"],
+    arguments = [
+        "{out}",
+        "{inputs}",
+    ],
+    script = "//scripts:block-coroutine-wrapper.py",
+)
+
+qemu_source_set(
+    name = "block_ss",
+    srcs = [
+        "accounting.c",
+        "aio_task.c",
+        "amend.c",
+        "backup.c",
+        "blkdebug.c",
+        "blklogwrites.c",
+        "blkverify.c",
+        "block-backend.c",
+        "block-copy.c",
+        "block-gen.c",
+        "commit.c",
+        "copy-before-write.c",
+        "copy-on-read.c",
+        "create.c",
+        "crypto.c",
+        "dirty-bitmap.c",
+        "filter-compress.c",
+        "graph-lock.c",
+        "io.c",
+        "mirror.c",
+        "nbd.c",
+        "null.c",
+        "preallocate.c",
+        "progress_meter.c",
+        "qapi.c",
+        "qcow2.c",
+        "qcow2-bitmap.c",
+        "qcow2-cache.c",
+        "qcow2-cluster.c",
+        "qcow2-refcount.c",
+        "qcow2-snapshot.c",
+        "qcow2-threads.c",
+        "quorum.c",
+        "raw-format.c",
+        "reqlist.c",
+        "snapshot.c",
+        "snapshot-access.c",
+        "stream.c",
+        "throttle.c",
+        "throttle-groups.c",
+        "write-threshold.c",
+    ],
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "qcow1",
+            ["qcow.c"],
+        ),
+        when(
+            "vdi",
+            ["vdi.c"],
+        ),
+        when(
+            "vhdx",
+            [
+                "vhdx-endian.c",
+                "vhdx-log.c",
+                "vhdx.c",
+            ],
+        ),
+        when(
+            "vmdk",
+            ["vmdk.c"],
+        ),
+        when(
+            "vpc",
+            ["vpc.c"],
+        ),
+        when(
+            "cloop",
+            ["cloop.c"],
+        ),
+        when(
+            "bochs",
+            ["bochs.c"],
+        ),
+        when(
+            "vvfat",
+            ["vvfat.c"],
+        ),
+        when(
+            "dmg",
+            ["dmg.c"],
+        ),
+        when(
+            "qed",
+            [
+                "qed-check.c",
+                "qed-cluster.c",
+                "qed-l2-cache.c",
+                "qed-table.c",
+                "qed.c",
+            ],
+        ),
+        when(
+            "parallels",
+            [
+                "parallels.c",
+                "parallels-ext.c",
+            ],
+        ),
+        when(
+            "CONFIG_WIN32",
+            [
+                "file-win32.c",
+                "win32-aio.c",
+            ],
+        ),
+        when(
+            "!CONFIG_WIN32",
+            ["file-posix.c"],
+        ),
+        when(
+            "libiscsi",
+            ["iscsi-opts.c"],
+        ),
+        when(
+            "CONFIG_LINUX",
+            ["nvme.c"],
+        ),
+        when(
+            "replication",
+            ["replication.c"],
+        ),
+        when(
+            "libaio",
+            ["linux-aio.c"],
+        ),
+        when(
+            "linux_io_uring",
+            ["io_uring.c"],
+        ),
+    ],
+    deps = [
+        ":headers",
+        ":module_block",
+        "@zlib",
+    ],
+)
+
+qemu_source_set(
+    name = "system_ss",
+    srcs = [
+        "block-ram-registrar.c",
+        "qapi-system.c",
+    ],
+    kind = "system",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "CONFIG_TCG",
+            ["blkreplay.c"],
+        ),
+    ],
+    deps = [":headers"],
+)
+
+qemu_package(subdirs = [
+    "export",
+    "monitor",
+])

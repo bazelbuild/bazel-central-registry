@@ -1,0 +1,117 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_package", "qemu_target_source_set", "when")
+
+# Translated from target/i386/meson.build.
+
+exports_files(["trace-events"])
+
+cc_library(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    # meson.build: target_inc, on every per-target compile line
+    includes = ["."],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//accel/tcg:headers",
+        "//target/i386/kvm:headers",
+        "//target/i386/tcg:headers",
+    ],
+)
+
+qemu_target_source_set(
+    name = "i386_ss",
+    srcs = [
+        "cpu.c",
+        "cpu-dump.c",
+        "gdbstub.c",
+        "helper.c",
+    ],
+    arch = "i386",
+    mode = "both",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "CONFIG_SEV",
+            [
+                "host-cpu.c",
+                "confidential-guest.c",
+            ],
+        ),
+        when(
+            "CONFIG_KVM",
+            [
+                "xsave_helper.c",
+                "host-cpu.c",
+            ],
+        ),
+        when(
+            "CONFIG_HVF",
+            [
+                "xsave_helper.c",
+                "host-cpu.c",
+            ],
+        ),
+        when(
+            "CONFIG_WHPX",
+            [
+                "xsave_helper.c",
+                "host-cpu.c",
+            ],
+        ),
+        when(
+            "CONFIG_NVMM",
+            ["host-cpu.c"],
+        ),
+        when(
+            "CONFIG_MSHV",
+            [
+                "xsave_helper.c",
+                "host-cpu.c",
+            ],
+        ),
+    ],
+    deps = [
+        ":headers",
+        "//target/i386/hvf:headers",
+        "//target/i386/whpx:headers",
+    ],
+)
+
+qemu_target_source_set(
+    name = "i386_system_ss",
+    srcs = [
+        "arch_dump.c",
+        "arch_memory_mapping.c",
+        "cpu-apic.c",
+        "cpu-system.c",
+        "machine.c",
+        "monitor.c",
+    ],
+    arch = "i386",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "CONFIG_SEV",
+            ["sev.c"],
+            if_false = ["sev-system-stub.c"],
+        ),
+        when(
+            "igvm",
+            ["igvm.c"],
+        ),
+    ],
+    deps = [
+        ":headers",
+        "//hw/i386:headers",
+    ],
+)
+
+qemu_package(subdirs = [
+    "kvm",
+    "whpx",
+    "nvmm",
+    "hvf",
+    "tcg",
+    "emulate",
+    "mshv",
+])

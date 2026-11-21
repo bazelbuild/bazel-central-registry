@@ -1,0 +1,89 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:qemu.bzl", "qemu_target_source_set", "when")
+
+exports_files(["trace-events"])
+
+# Native tool used by the per-ABI vDSO generation rules.
+cc_binary(
+    name = "gen-vdso",
+    srcs = [
+        "gen-vdso.c",
+        "gen-vdso-elfn.c.inc",
+    ],
+    copts = [
+        "-std=gnu11",
+        "-Wall",
+    ],
+    local_defines = ["_FILE_OFFSET_BITS=64"],
+    visibility = ["//linux-user:__subpackages__"],
+)
+
+cc_library(
+    name = "common_headers",
+    hdrs = glob([
+        "include/*.h",
+        "include/host/x86_64/*.h",
+    ]),
+    includes = [
+        "include",
+        "include/host/x86_64",
+    ],
+    visibility = ["//visibility:public"],
+    deps = ["//common-user:headers"],
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob([
+        "*.h",
+        "generic/*.h",
+        "i386/*.h",
+    ]),
+    includes = ["."],
+    textual_hdrs = glob(["*.c.inc"]) + [
+        "i386/cpu_loop.c",
+        "i386/signal.c",
+        "strace.list",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [":common_headers"],
+)
+
+qemu_target_source_set(
+    name = "linux_user_ss",
+    srcs = [
+        "elfload.c",
+        "exit.c",
+        "fd-trans.c",
+        "linuxload.c",
+        "main.c",
+        "mmap.c",
+        "signal.c",
+        "strace.c",
+        "syscall.c",
+        "thunk.c",
+        "uaccess.c",
+        "uname.c",
+    ],
+    mode = "user",
+    visibility = ["//visibility:public"],
+    when = [
+        when(
+            "TARGET_HAS_BFLT",
+            ["flatload.c"],
+        ),
+        when(
+            "TARGET_I386",
+            ["vm86.c"],
+        ),
+        when(
+            "CONFIG_ARM_COMPATIBLE_SEMIHOSTING",
+            ["semihost.c"],
+        ),
+        when(
+            "plugins",
+            ["plugin-api.c"],
+        ),
+    ],
+)
