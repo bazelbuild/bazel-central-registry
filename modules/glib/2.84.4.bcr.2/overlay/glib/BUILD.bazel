@@ -12,7 +12,8 @@ package(default_package_metadata = ["//:package_metadata"])
 # Bazel 7's MSVC toolchain also passes /DCOMPILER_MSVC by default, which
 # collides with the CompilerType enum in gio/glib-compile-resources.c.
 # Bazel 8 dropped it; glib reads _MSC_VER, never this, so drop it too.
-MSVC_COPTS = select({
+WINDOWS_COPTS = select({
+    "//:windows_clang": ["-finput-charset=UTF-8", "-UCOMPILER_MSVC"],
     "@platforms//os:windows": [
         "/utf-8",
         "/UCOMPILER_MSVC",
@@ -343,7 +344,7 @@ cc_library(
         "-I" + INCLUDE_PREFIX,
         "-I%s/glib" % (INCLUDE_PREFIX,),
         "-I%s/glib/deprecated" % (INCLUDE_PREFIX,),
-    ] + MSVC_COPTS,
+    ] + WINDOWS_COPTS,
     implementation_deps = [
         ":glib_internal_textual_hdrs",
         "//:config_h",
@@ -369,8 +370,11 @@ cc_library(
         ],
         # Upstream's win32_ldflags, which meson also exposes through
         # glib-2.0.pc, plus winmm for the timeGetTime()/timeBeginPeriod()
-        # calls in gmain.c.  Spelled for link.exe, since the Windows arm of
-        # this port targets MSVC.
+        # calls in gmain.c. Keep the Windows linker dialect toolchain-specific.
+        "//:windows_clang": [
+            "-lws2_32", "-lole32", "-lwinmm", "-lshlwapi", "-luuid",
+            "-ladvapi32", "-luser32", "-lshell32",
+        ],
         "@platforms//os:windows": [
             "-DEFAULTLIB:ws2_32.lib",
             "-DEFAULTLIB:ole32.lib",
@@ -418,14 +422,12 @@ cc_library(
     copts = [
         "-I" + INCLUDE_PREFIX,
         "-I%s/glib" % (INCLUDE_PREFIX,),
-    ] + MSVC_COPTS,
-    linkopts = [] if suffix else [
-        # meson's win_subsystem : 'windows'.  Without HELPER_CONSOLE the
-        # entry point is WinMain, and the console helper is the one that
-        # keeps a console attached.
-        "-SUBSYSTEM:WINDOWS",
-        "-ENTRY:WinMainCRTStartup",
-    ],
+    ] + WINDOWS_COPTS,
+    # The GUI helper uses WinMain; the console helper stays attached.
+    linkopts = [] if suffix else select({
+        "//:windows_clang": ["-mwindows"],
+        "//conditions:default": ["-SUBSYSTEM:WINDOWS", "-ENTRY:WinMainCRTStartup"],
+    }),
     local_defines = [
         "G_LOG_DOMAIN='\"GLib\"'",
         "GLIB_COMPILATION",
