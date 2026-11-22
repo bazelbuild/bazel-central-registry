@@ -1,0 +1,227 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+# Dual licensed FreeImage and GPL
+# https://freeimage.sourceforge.io/license.html. Only the FreeImage license is
+# listed here as it is more permissive.
+license(
+    name = "license",
+    package_name = "freeimage",
+    license_kinds = ["@rules_license//licenses/spdx:FreeImage"],
+    license_text = ":license-fi.txt",
+)
+
+freeimage_public_headers = ["Source/FreeImage.h"]
+
+freeimage_sources = glob(
+    include = [
+        "Source/FreeImage/*.cpp",
+        "Source/FreeImageToolkit/*.cpp",
+        "Source/Metadata/*.cpp",
+    ],
+)
+
+freeimage_private_headers = glob(
+    include = [
+        "Source/*.h",
+        "Source/FreeImage/*.h",
+        "Source/FreeImageToolkit/*.h",
+        "Source/Metadata/*.h",
+    ],
+    exclude = freeimage_public_headers,
+)
+
+cc_library(
+    name = "freeimage",
+    srcs = freeimage_sources + freeimage_private_headers,
+    hdrs = freeimage_public_headers,
+    copts = select({
+        "@platforms//os:windows": ["/w"],
+        "//conditions:default": [
+            "-w",
+            "-Wno-error=implicit-function-declaration",
+        ],
+    }),
+    defines = [
+        "FREEIMAGE_LIB",
+    ],
+    includes = [
+        "Source",
+    ],
+    local_defines = [
+        "FREEIMAGE_SYSTEM_LIBJPEG=1",
+        "FREEIMAGE_SYSTEM_LIBOPENJPEG=1",
+        "FREEIMAGE_SYSTEM_LIBPNG=1",
+        "FREEIMAGE_SYSTEM_LIBTIFF=1",
+        "FREEIMAGE_SYSTEM_OPENEXR=1",
+        "FREEIMAGE_SYSTEM_WEBP=1",
+        "FREEIMAGE_SYSTEM_ZLIB=1",
+        "INCLUDE_LIB_OPENEXR=1",
+        "INCLUDE_LIB_WEBP=1",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@imath",
+        "@libjpeg_turbo",
+        "@libjpeg_turbo//:transform",
+        "@libpng",
+        "@libtiff//:tiff",
+        "@libwebp",
+        "@openexr//:OpenEXR",
+        "@openjpeg",
+        "@zlib",
+    ],
+)
+
+freeimageplus_sources = glob(
+    include = [
+        "Wrapper/FreeImagePlus/src/*.cpp",
+    ],
+)
+
+freeimageplus_public_headers = ["Wrapper/FreeImagePlus/FreeImagePlus.h"]
+
+cc_library(
+    name = "freeimageplus",
+    srcs = freeimageplus_sources,
+    hdrs = freeimageplus_public_headers,
+    copts = select({
+        "@platforms//os:windows": ["/w"],
+        "//conditions:default": ["-w"],
+    }),
+    includes = ["Wrapper/FreeImagePlus"],
+    linkopts = select({
+        "@platforms//os:windows": [
+            "-DEFAULTLIB:gdi32.lib",
+            "-DEFAULTLIB:user32.lib",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":freeimage"],
+)
+
+cc_test(
+    name = "bcr_unbundled_test",
+    size = "small",
+    srcs = ["bcr_unbundled_test.cpp"],
+    deps = [
+        ":freeimage",
+        ":freeimageplus",
+    ],
+)
+
+cc_library(
+    name = "tag_lib_test_headers",
+    testonly = True,
+    hdrs = [
+        "Source/FreeImage.h",
+        "Source/Metadata/FreeImageTag.h",
+        "Source/Metadata/TagLibData.h",
+        "Source/Utilities.h",
+    ],
+    defines = ["FREEIMAGE_LIB"],
+    includes = ["Source"],
+    textual_hdrs = ["Source/Metadata/TagLib.cpp"],
+)
+
+cc_test(
+    name = "tag_lib_test",
+    size = "small",
+    srcs = ["TestAPI/Metadata/TagLibTest.cpp"],
+    copts = select({
+        "@platforms//os:windows": [
+            "/UNDEBUG",
+            "/w",
+        ],
+        "//conditions:default": [
+            "-UNDEBUG",
+            "-w",
+        ],
+    }),
+    deps = [":tag_lib_test_headers"],
+)
+
+cc_test(
+    name = "dependency_info_test",
+    size = "small",
+    srcs = ["TestAPI/testDependencies.cpp"],
+    deps = [":freeimage"],
+)
+
+cc_test(
+    name = "metadata_strip_test",
+    size = "small",
+    srcs = ["TestAPI/testMetadataStrip.cpp"],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-pthread"],
+    }),
+    deps = [":freeimage"],
+)
+
+cc_test(
+    name = "large_file_tiff_test",
+    size = "small",
+    srcs = ["TestAPI/testLargeFileTIFF.cpp"],
+    local_defines = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["_FILE_OFFSET_BITS=64"],
+    }),
+    deps = [":freeimage"],
+)
+
+cc_test(
+    name = "unicode_multipage_test",
+    size = "small",
+    srcs = ["TestAPI/testUnicodeMultiPage.cpp"],
+    deps = [":freeimage"],
+)
+
+cc_test(
+    name = "codec_display_test",
+    size = "small",
+    srcs = [
+        "Examples/codec-diagnostics/Preview.h",
+        "TestAPI/testCodecDisplay.cpp",
+    ],
+    args = ["codec-display.jp2"],
+    local_defines = [
+        "FREEIMAGE_TEST_JP2=1",
+        "FREEIMAGE_TEST_JXR=0",
+    ],
+    deps = [":freeimage"],
+)
+
+cc_test(
+    name = "j2k_callbacks_test",
+    size = "small",
+    srcs = ["TestAPI/testJ2KCallbacks.cpp"],
+    deps = [":freeimage"],
+)
+
+[
+    cc_test(
+        name = name,
+        size = "small",
+        srcs = [src],
+        deps = [":freeimage"],
+    )
+    for name, src in [
+        ("bmp_rle_cursor_test", "TestAPI/testBmpRleCursor.cpp"),
+        ("double_rgbf_test", "TestAPI/testDoubleRGBF.cpp"),
+        ("gif_playback_bounds_test", "TestAPI/testGifPlaybackBounds.cpp"),
+        ("hdr_dimensions_test", "TestAPI/testHdrDimensions.cpp"),
+        ("iff_pbm_rle_test", "TestAPI/testIffPbmRle.cpp"),
+        ("image_analysis_test", "TestAPI/testAnalysis.cpp"),
+        ("mem_write_position_test", "TestAPI/testMemWritePosition.cpp"),
+        ("pict_truncated_test", "TestAPI/testPictTruncated.cpp"),
+        ("ras_word_loop_test", "TestAPI/testRasWordLoop.cpp"),
+        ("save_errors_test", "TestAPI/testSaveErrors.cpp"),
+        ("wbmp_truncated_test", "TestAPI/testWbmpTruncated.cpp"),
+    ]
+]

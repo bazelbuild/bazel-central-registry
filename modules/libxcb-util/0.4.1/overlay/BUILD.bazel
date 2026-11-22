@@ -1,0 +1,76 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+HDRS = [
+    "src/xcb_atom.h",
+    "src/xcb_aux.h",
+    "src/xcb_event.h",
+    "src/xcb_util.h",
+]
+
+# Public headers, exposed as <xcb/xcb_*.h> to match the installed layout.
+cc_library(
+    name = "xcb-util_prefixed_hdrs",
+    hdrs = HDRS,
+    include_prefix = "xcb",
+    strip_include_prefix = "src",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    deps = ["@libxcb"],
+)
+
+# Unprefixed headers for xcb-util's own sources, which use #include "xcb_*.h".
+# Used via implementation_deps so the bare "src" include path does not
+# propagate to xcb-util's dependents.
+cc_library(
+    name = "xcb-util_private_hdrs",
+    hdrs = HDRS,
+    includes = ["src"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:private"],
+    deps = ["@libxcb"],
+)
+
+cc_library(
+    name = "xcb-util",
+    srcs = [
+        "src/atoms.c",
+        "src/event.c",
+        "src/xcb_aux.c",
+    ],
+    implementation_deps = [":xcb-util_private_hdrs"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":xcb-util_prefixed_hdrs",
+        "@libxcb",
+        "@xorgproto",
+    ],
+)
+
+alias(
+    name = "libxcb-util",
+    actual = ":xcb-util",
+    visibility = ["//visibility:public"],
+)

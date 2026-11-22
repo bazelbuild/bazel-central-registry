@@ -1,0 +1,77 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# Public header, exposed as <xcb/xcb_icccm.h> to match the installed layout.
+cc_library(
+    name = "icccm_prefixed_hdrs",
+    hdrs = ["icccm/xcb_icccm.h"],
+    include_prefix = "xcb",
+    strip_include_prefix = "icccm",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    deps = ["@libxcb"],
+)
+
+# Unprefixed header for icccm.c, which uses #include "xcb_icccm.h". Used via
+# implementation_deps so the bare "icccm" include path does not propagate to
+# dependents.
+cc_library(
+    name = "icccm_private_hdrs",
+    hdrs = ["icccm/xcb_icccm.h"],
+    includes = ["icccm"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:private"],
+    deps = ["@libxcb"],
+)
+
+cc_library(
+    name = "xcb-icccm",
+    srcs = ["icccm/icccm.c"],
+    implementation_deps = [":icccm_private_hdrs"],
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":icccm_prefixed_hdrs",
+        "@libxcb",
+        "@xorgproto",
+    ],
+)
+
+alias(
+    name = "libxcb-wm",
+    actual = ":xcb-icccm",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "xcb-wm",
+    actual = ":xcb-icccm",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "icccm",
+    actual = ":xcb-icccm",
+    visibility = ["//visibility:public"],
+)

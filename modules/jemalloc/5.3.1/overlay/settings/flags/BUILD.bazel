@@ -1,0 +1,595 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "int_flag", "string_flag")
+load("//settings:platform_defaults.bzl", "DARWIN_OSES", "JE_PREFIX_OSES", "resolved_setting")
+load("//settings:unsupported.bzl", "unsupported")
+
+package(default_visibility = ["//:__subpackages__"])
+
+### Bazel-ification of optional flags accepted by ./configure ###
+
+# JEMALLOC_CACHE_OBLIVIOUS
+bool_flag(
+    name = "enable_cache_oblivious",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "cache_oblivious",
+    flag_values = {":enable_cache_oblivious": "True"},
+)
+
+# JEMALLOC_CONFIG_ENV and JEMALLOC_CONFIG_FILE (--disable-user-config): read the malloc conf from the MALLOC_CONF
+# environment variable and the /etc/malloc.conf link
+bool_flag(
+    name = "enable_user_config",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "user_config",
+    flag_values = {":enable_user_config": "True"},
+)
+
+# JEMALLOC_ENABLE_CXX. jemalloc 5.3 cannot build its C++ support with cl or clang-cl: jemalloc_cpp.cpp throws with
+# libstdc++'s and libc++'s std::__throw_bad_alloc, which the MSVC STL lacks, and the internal headers it includes use C
+# compound literals, which cl rejects in C++. 5.4.0 drops both constructs (jemalloc/jemalloc 1a15fe33 and 70d4102f).
+# So __auto__ is off with those compilers and on with every other, and True with them fails analysis. Configure instead
+# turns C++ off for cl whatever --enable-cxx says, as its C++14 check fails there (cl reports __cplusplus as 199711L),
+# which leaves a program's operator new and delete with the C runtime without a word.
+string_flag(
+    name = "enable_cxx",
+    build_setting_default = "__auto__",
+    values = [
+        "True",
+        "False",
+        "__auto__",
+    ],
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "enable_cxx_is_true",
+    flag_values = {":enable_cxx": "True"},
+)
+
+config_setting(
+    name = "enable_cxx_is_auto",
+    flag_values = {":enable_cxx": "__auto__"},
+)
+
+[
+    config_setting(
+        name = "enable_cxx_is_auto_" + compiler.replace("-", "_"),
+        flag_values = {
+            ":enable_cxx": "__auto__",
+            "@rules_cc//cc/compiler:compiler": compiler,
+        },
+    )
+    for compiler in [
+        "clang-cl",
+        "msvc-cl",
+    ]
+]
+
+# C++ is on: True, or __auto__ with a compiler other than cl and clang-cl. The negation has no config_setting, so this
+# resolves to a setting that matches where it holds and to :enable_cxx_is_true, which cannot match there, where it does
+# not. :enable_cxx_is_auto_clang_cl and :enable_cxx_is_auto_msvc_cl specialize :enable_cxx_is_auto.
+alias(
+    name = "cxx",
+    actual = select({
+        ":enable_cxx_is_auto": ":enable_cxx_is_auto",
+        ":enable_cxx_is_auto_clang_cl": ":enable_cxx_is_true",
+        ":enable_cxx_is_auto_msvc_cl": ":enable_cxx_is_true",
+        "//conditions:default": ":enable_cxx_is_true",
+    }),
+)
+
+config_setting(
+    name = "cxx_with_msvc_cl",
+    flag_values = {
+        ":enable_cxx": "True",
+        "@rules_cc//cc/compiler:compiler": "msvc-cl",
+    },
+)
+
+config_setting(
+    name = "cxx_with_clang_cl",
+    flag_values = {
+        ":enable_cxx": "True",
+        "@rules_cc//cc/compiler:compiler": "clang-cl",
+    },
+)
+
+unsupported(
+    name = "cxx_unsupported_with_cl",
+    message = "jemalloc 5.3's C++ support (operator new and delete, src/jemalloc_cpp.cpp) needs libstdc++ or libc++, " +
+              "and cl and clang-cl build against the MSVC STL. Build without it: leave " +
+              "--@jemalloc//settings/flags:enable_cxx at __auto__, or set it to False",
+    # Only a dependency under the unsupported settings analyzes it; //... must not.
+    tags = ["manual"],
+)
+
+# JEMALLOC_DEBUG (--enable-debug). "__auto__" follows the compilation mode, defining it in -c dbg builds only;
+# "yes" and "no" set it in any compilation mode. configure's --enable-debug also drops the -O3 (-O2, -O) it otherwise
+# adds (configure.ac:1393-1405); here the compilation mode owns optimization, so that is not mirrored.
+string_flag(
+    name = "enable_debug",
+    build_setting_default = "__auto__",
+    values = [
+        "yes",
+        "no",
+        "__auto__",
+    ],
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "enable_debug_is_yes",
+    flag_values = {":enable_debug": "yes"},
+)
+
+config_setting(
+    name = "enable_debug_is_auto_dbg",
+    flag_values = {":enable_debug": "__auto__"},
+    values = {"compilation_mode": "dbg"},
+)
+
+selects.config_setting_group(
+    name = "debug",
+    match_any = [
+        ":enable_debug_is_auto_dbg",
+        ":enable_debug_is_yes",
+    ],
+)
+
+# JEMALLOC_DSS (--disable-dss): allocate from the data segment with sbrk(2) where the target has it
+bool_flag(
+    name = "enable_dss",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "dss",
+    flag_values = {":enable_dss": "True"},
+)
+
+# JEMALLOC_EXPERIMENTAL_SMALLOCX_API
+bool_flag(
+    name = "enable_experimental_smallocx",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "experimental_smallocx_api",
+    flag_values = {":enable_experimental_smallocx": "True"},
+)
+
+# JEMALLOC_EXPERIMENTAL_USDT_STAP or JEMALLOC_EXPERIMENTAL_USDT_CUSTOM (--enable-experimental-sdt): USDT probes for
+# systemtap, bpftrace and similar tracers
+bool_flag(
+    name = "enable_experimental_sdt",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "experimental_sdt",
+    flag_values = {":enable_experimental_sdt": "True"},
+)
+
+# JEMALLOC_FILL (support for junk/zero filling)
+bool_flag(
+    name = "enable_fill",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "fill",
+    flag_values = {":enable_fill": "True"},
+)
+
+config_setting(
+    name = "fill_disabled",
+    flag_values = {":enable_fill": "False"},
+)
+
+# JEMALLOC_FORCE_GETENV (--enable-force-getenv): read MALLOC_CONF with getenv rather than secure_getenv
+bool_flag(
+    name = "enable_force_getenv",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "force_getenv",
+    flag_values = {":enable_force_getenv": "True"},
+)
+
+# JEMALLOC_LAZY_LOCK
+string_flag(
+    name = "enable_lazy_lock",
+    build_setting_default = "__auto__",
+    values = [
+        "yes",
+        "no",
+        "__auto__",
+    ],
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "enable_lazy_lock_is_yes",
+    flag_values = {":enable_lazy_lock": "yes"},
+)
+
+# configure.ac's default enables lazy locking on FreeBSD only
+config_setting(
+    name = "enable_lazy_lock_is_auto_freebsd",
+    constraint_values = ["@platforms//os:freebsd"],
+    flag_values = {":enable_lazy_lock": "__auto__"},
+)
+
+selects.config_setting_group(
+    name = "lazy_lock",
+    match_any = [
+        ":enable_lazy_lock_is_auto_freebsd",
+        ":enable_lazy_lock_is_yes",
+    ],
+)
+
+config_setting(
+    name = "enable_lazy_lock_is_yes_windows",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {":enable_lazy_lock": "yes"},
+)
+
+# JEMALLOC_LOG
+bool_flag(
+    name = "enable_log",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "log",
+    flag_values = {":enable_log": "True"},
+)
+
+# JEMALLOC_OPT_SAFETY_CHECKS (--enable-opt-safety-checks); JEMALLOC_DEBUG implies the checks as well
+bool_flag(
+    name = "enable_opt_safety_checks",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "opt_safety_checks",
+    flag_values = {":enable_opt_safety_checks": "True"},
+)
+
+# JEMALLOC_OPT_SIZE_CHECKS (--enable-opt-size-checks); JEMALLOC_DEBUG implies the checks as well
+bool_flag(
+    name = "enable_opt_size_checks",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "opt_size_checks",
+    flag_values = {":enable_opt_size_checks": "True"},
+)
+
+# JEMALLOC_PAGEID (--enable-pageid): name jemalloc's anonymous mappings with prctl(PR_SET_VMA_ANON_NAME)
+bool_flag(
+    name = "enable_pageid",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "pageid",
+    flag_values = {":enable_pageid": "True"},
+)
+
+# JEMALLOC_STATS
+bool_flag(
+    name = "enable_stats",
+    build_setting_default = True,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "stats",
+    flag_values = {":enable_stats": "True"},
+)
+
+# JEMALLOC_UAF_DETECTION
+bool_flag(
+    name = "enable_uaf_detection",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "uaf_detection",
+    flag_values = {":enable_uaf_detection": "True"},
+)
+
+# JEMALLOC_XMALLOC
+bool_flag(
+    name = "enable_xmalloc",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "xmalloc",
+    flag_values = {":enable_xmalloc": "True"},
+)
+
+# --with-jemalloc-prefix. __auto__ takes configure's default for the target platform, as :jemalloc_prefix_resolved and
+# :no_jemalloc_prefix resolve it. C reserves identifiers that begin with two underscores (C11 7.1.3), so no real
+# prefix is __auto__.
+string_flag(
+    name = "jemalloc_prefix",
+    build_setting_default = "__auto__",
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+# JEMALLOC_PREFIX: :jemalloc_prefix with __auto__ resolved to configure's default, "je_" for the macho and pecoff ABIs
+resolved_setting(
+    name = "jemalloc_prefix_resolved",
+    defaults = select({
+        ":jemalloc_prefix_is_auto_je": {"default": "je_"},
+        "//conditions:default": {"default": ""},
+    }),
+    make_variable = "JEMALLOC_PREFIX",
+    setting = ":jemalloc_prefix",
+)
+
+# JEMALLOC_CPREFIX: JEMALLOC_PREFIX uppercased
+resolved_setting(
+    name = "jemalloc_cprefix",
+    make_variable = "JEMALLOC_CPREFIX",
+    setting = ":jemalloc_prefix_resolved",
+    upper = True,
+)
+
+config_setting(
+    name = "jemalloc_prefix_is_empty",
+    flag_values = {":jemalloc_prefix": ""},
+)
+
+config_setting(
+    name = "jemalloc_prefix_is_auto",
+    flag_values = {":jemalloc_prefix": "__auto__"},
+)
+
+[
+    config_setting(
+        name = "jemalloc_prefix_is_auto_" + os,
+        constraint_values = ["@platforms//os:" + os],
+        flag_values = {":jemalloc_prefix": "__auto__"},
+    )
+    for os in JE_PREFIX_OSES
+]
+
+# __auto__ where configure's default prefix is je_: the macho and pecoff ABIs. It matches as the per-OS setting it
+# resolves to, which specializes :jemalloc_prefix_is_auto.
+selects.config_setting_group(
+    name = "jemalloc_prefix_is_auto_je",
+    match_any = [":jemalloc_prefix_is_auto_" + os for os in JE_PREFIX_OSES],
+)
+
+# JEMALLOC_PREFIX is empty: "", or __auto__ outside :jemalloc_prefix_is_auto_je. The negation has no config_setting, so
+# this resolves, as selects.config_setting_group does, to a setting that matches where it holds and to
+# :jemalloc_prefix_is_empty, which cannot match there, where it does not. :jemalloc_prefix_is_auto_je specializes
+# :jemalloc_prefix_is_auto.
+alias(
+    name = "no_jemalloc_prefix",
+    actual = select({
+        ":jemalloc_prefix_is_auto": ":jemalloc_prefix_is_auto",
+        ":jemalloc_prefix_is_auto_je": ":jemalloc_prefix_is_empty",
+        "//conditions:default": ":jemalloc_prefix_is_empty",
+    }),
+)
+
+# LG_QUANTUM Base 2 log of minimum allocation alignment (--with-lg-quantum), -1 is undefined for resolution internal
+# to the headers
+int_flag(
+    name = "lg_quantum",
+    build_setting_default = -1,
+    make_variable = "LG_QUANTUM",
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "no_lg_quantum",
+    flag_values = {":lg_quantum": "-1"},
+)
+
+# MALLOC_CONF Specify default malloc_conf (--with-malloc-conf)
+string_flag(
+    name = "malloc_conf",
+    build_setting_default = "",
+    make_variable = "MALLOC_CONF",
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+# PRIVATE_NAMESPACE Prefix to prepend to all library-private APIs (--with-private-namespace)
+string_flag(
+    name = "private_namespace",
+    build_setting_default = "",
+    make_variable = "PRIVATE_NAMESPACE",
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+# EXPERIMENTAL_SYS_PROCESS_MADVISE_NR (--with-experimental-sys-process-madvise): the process_madvise system call number,
+# written into the header as is, for C libraries whose headers lack SYS_process_madvise. Empty for none.
+string_flag(
+    name = "experimental_sys_process_madvise",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "no_experimental_sys_process_madvise",
+    flag_values = {":experimental_sys_process_madvise": ""},
+)
+
+# JEMALLOC_EXPORT via --without-export which disables the export of the jemalloc API
+bool_flag(
+    name = "without_export",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "export",
+    flag_values = {":without_export": "True"},
+)
+
+# JEMALLOC_ZONE Enable/Disable zone allocator for Darwin
+string_flag(
+    name = "enable_zone_allocator",
+    build_setting_default = "__auto__",
+    values = [
+        "yes",
+        "no",
+        "__auto__",
+    ],
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+config_setting(
+    name = "enable_zone_allocator_is_no",
+    flag_values = {":enable_zone_allocator": "no"},
+)
+
+config_setting(
+    name = "enable_zone_allocator_is_auto",
+    flag_values = {":enable_zone_allocator": "__auto__"},
+)
+
+[
+    config_setting(
+        name = "enable_zone_allocator_is_{}_{}".format(value, os),
+        constraint_values = ["@platforms//os:" + os],
+        flag_values = {":enable_zone_allocator": flag_value},
+    )
+    for value, flag_value in [
+        ("auto", "__auto__"),
+        ("yes", "yes"),
+    ]
+    for os in DARWIN_OSES
+]
+
+# The zone allocator is on: "yes" or configure's default on Darwin. It matches as the per-OS setting it resolves to,
+# which specializes :enable_zone_allocator_is_auto.
+selects.config_setting_group(
+    name = "zone_allocator",
+    match_any = [
+        ":enable_zone_allocator_is_{}_{}".format(value, os)
+        for value in [
+            "auto",
+            "yes",
+        ]
+        for os in DARWIN_OSES
+    ],
+)
+
+# JEMALLOC_PROF Enable allocation profiling with specified backtracing implementation
+string_flag(
+    name = "enable_prof",
+    build_setting_default = "no",
+    values = [
+        "frame_pointer",
+        "gcc",
+        "libgcc",
+        "libunwind",
+        "no",
+    ],
+    visibility = ["//visibility:public"],
+    scope = "target",
+)
+
+selects.config_setting_group(
+    name = "prof",
+    match_any = [
+        ":prof_frame_pointer",
+        ":prof_gcc",
+        ":prof_libgcc",
+        ":prof_libunwind",
+    ],
+)
+
+config_setting(
+    name = "no_prof",
+    flag_values = {":enable_prof": "no"},
+)
+
+# JEMALLOC_PROF_FRAME_POINTER (--enable-prof-frameptr)
+config_setting(
+    name = "prof_frame_pointer",
+    flag_values = {":enable_prof": "frame_pointer"},
+)
+
+# JEMALLOC_PROF_GCC
+config_setting(
+    name = "prof_gcc",
+    flag_values = {":enable_prof": "gcc"},
+)
+
+# JEMALLOC_PROF_LIBUNWIND
+config_setting(
+    name = "prof_libunwind",
+    flag_values = {":enable_prof": "libunwind"},
+)
+
+# JEMALLOC_PROF_LIBGCC
+config_setting(
+    name = "prof_libgcc",
+    flag_values = {":enable_prof": "libgcc"},
+)
+
+# NM, the nm configure runs as DUMP_SYMS to list the library's symbols for private_namespace.h. Unset, it is the C++
+# toolchain's nm (CcToolchainInfo.nm_executable). rules_cc's rule-based toolchains supply that only through a
+# cc_legacy_tool, so for one that declares none, set this to an nm target, such as @llvm//tools:llvm-nm. A plain file
+# brings no runfiles, so an nm that needs any (shared libraries, an interpreter) must be an executable target.
+label_flag(
+    name = "nm",
+    build_setting_default = ":toolchain_nm",
+    visibility = ["//visibility:public"],
+)
+
+# The unset value of :nm.
+filegroup(name = "toolchain_nm")
