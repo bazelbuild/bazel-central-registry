@@ -234,7 +234,7 @@ def update_version_in_content(content: str, old_version: str, new_version: str) 
     Updates:
     - Module version = "old" -> version = "new"
     - boost-{old} tags -> boost-{new}
-    - ALL boost.* dependency versions -> new_version (ensures consistency)
+    - ALL boost and boost.* dependency versions -> new_version (ensures consistency)
     - Common dependencies -> DEPENDENCY_VERSIONS
     """
     # Replace version = "old"
@@ -247,12 +247,12 @@ def update_version_in_content(content: str, old_version: str, new_version: str) 
     # Replace boost-old tags
     content = content.replace(f"boost-{old_version}", f"boost-{new_version}")
 
-    # Update ALL boost.* dependency versions to new_version
+    # Update ALL boost and boost.* dependency versions to new_version
     # This ensures all boost dependencies are consistently at the target version
     # Handles both single-line and multi-line bazel_dep declarations
     # Matches: bazel_dep(name = "boost.XXX", version = "ANY_VERSION")
     content = re.sub(
-        r'(bazel_dep\([^)]*name\s*=\s*"boost\.[^"]*"[^)]*version\s*=\s*")[^"]*(")',
+        r'(bazel_dep\([^)]*name\s*=\s*"boost(?:\.[^"]*)?"[^)]*version\s*=\s*")[^"]*(")',
         rf"\g<1>{new_version}\g<2>",
         content,
         flags=re.DOTALL,
