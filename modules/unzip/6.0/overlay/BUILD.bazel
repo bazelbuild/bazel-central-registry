@@ -1,0 +1,243 @@
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:autoconf_linkopts.bzl", "autoconf_linkopts")
+load(":configure.bzl", "CONFIGURE_CHECKS", "LCHMOD_CHECKS", "LCHMOD_CHECKS_LINUX")
+
+package(default_package_metadata = [":package_metadata"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:Info-ZIP",
+    text = "LICENSE",
+    visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
+
+# `make -f unix/Makefile generic`: unix/configure's probes, their answers as
+# the header every Unix compile gets with -include, and the libraries two of
+# them may add to the link line.
+autoconf(
+    name = "configure",
+    checks = CONFIGURE_CHECKS + select({
+        "@platforms//os:linux": LCHMOD_CHECKS_LINUX,
+        "//conditions:default": LCHMOD_CHECKS,
+    }),
+)
+
+autoconf_hdr(
+    name = "flags_h",
+    out = "unix/flags.h",
+    template = "unix/flags.h.in",
+    deps = [":configure"],
+)
+
+autoconf_linkopts(
+    name = "configure_linkopts",
+    vars = [
+        "DIR_LIB",
+        "READLINK_LIB",
+    ],
+    deps = [":configure"],
+)
+
+COPTS = select({
+    # `-J` is win32/Makefile's CF_LOC: plain `char` is unsigned, as the port expects.
+    "@rules_cc//cc/compiler:clang-cl": [
+        "/w",
+        "/J",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "/w",
+        "/J",
+    ],
+    "//conditions:default": ["-w"],
+}) + select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [
+        "-include",
+        "$(execpath :flags_h)",
+    ],
+})
+
+# The Makefiles' fixed flags: CF's -DUNIX on Unix; win32/Makefile's CF_LOC with
+# the assembler CRC left out (NO_ASM) on Windows, where win32/w32cfg.h turns on
+# Unicode and large files by itself and nothing is probed.
+DEFINES = select({
+    "@platforms//os:windows": [
+        "WIN32",
+        "_MBCS",
+        "IZ_CRCOPTIM_UNFOLDTBL",
+        "NO_ASM",
+    ],
+    "//conditions:default": ["UNIX"],
+})
+
+LINKOPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": [
+        "-DEFAULTLIB:advapi32.lib",
+        "-DEFAULTLIB:user32.lib",
+    ],
+    "@rules_cc//cc/compiler:mingw-gcc": [
+        "-ladvapi32",
+        "-luser32",
+    ],
+    "@rules_cc//cc/compiler:msvc-cl": [
+        "-DEFAULTLIB:advapi32.lib",
+        "-DEFAULTLIB:user32.lib",
+    ],
+    "//conditions:default": [],
+})
+
+HDRS = glob([
+    "*.h",
+    "unix/*.h",
+    "win32/*.h",
+])
+
+# The -include file of COPTS, as an input of every Unix compile.
+COMPILER_INPUTS = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [":flags_h"],
+})
+
+DEPS = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [":configure_linkopts"],
+})
+
+OS_SRCS = select({
+    "@platforms//os:windows": [
+        "win32/nt.c",
+        "win32/win32.c",
+        "win32/win32i64.c",
+    ],
+    "//conditions:default": ["unix/unix.c"],
+})
+
+# funzip's object list only carries OS code on Win32 (win32/Makefile's OBJFS).
+FUNZIP_OS_SRCS = select({
+    "@platforms//os:windows": [
+        "win32/win32.c",
+        "win32/win32i64.c",
+    ],
+    "//conditions:default": [],
+})
+
+FUNZIP_SRCS = [
+    "crc32.c",
+    "crypt.c",
+    "globals.c",
+    "inflate.c",
+    "ttyio.c",
+]
+
+SFX_SRCS = FUNZIP_SRCS + [
+    "extract.c",
+    "fileio.c",
+    "match.c",
+    "process.c",
+    "ubz2err.c",
+]
+
+UNZIP_SRCS = SFX_SRCS + [
+    "envargs.c",
+    "explode.c",
+    "list.c",
+    "unreduce.c",
+    "unshrink.c",
+    "zipinfo.c",
+]
+
+# Library -> (sources, extra defines). Each holds a whole program, main() and
+# all, because COPTS must reach every object alike (the globals' layout depends
+# on them) and Bazel 7 and 8 take `additional_compiler_inputs` on cc_library
+# only. The same files are compiled once per library because `SFX` and `FUNZIP`
+# change what they contain; `alwayslink` links every object, as the Makefile
+# lists them.
+LIBRARIES = {
+    "funzip": (
+        ["funzip.c"] + FUNZIP_SRCS + FUNZIP_OS_SRCS,
+        ["FUNZIP"],
+    ),
+    "unzip": (
+        ["unzip.c"] + UNZIP_SRCS + OS_SRCS,
+        [],
+    ),
+    "unzipsfx": (
+        ["unzip.c"] + SFX_SRCS + OS_SRCS,
+        ["SFX"],
+    ),
+}
+
+[
+    cc_library(
+        name = name + "_lib",
+        srcs = srcs,
+        hdrs = HDRS,
+        additional_compiler_inputs = COMPILER_INPUTS,
+        copts = COPTS,
+        linkopts = LINKOPTS,
+        local_defines = DEFINES + defines,
+        deps = DEPS,
+        alwayslink = True,
+    )
+    for name, (srcs, defines) in LIBRARIES.items()
+]
+
+# Program -> library. ZipInfo is unzip run under that name (unzip.c checks
+# argv[0]), the same objects linked a second time in place of the Makefile's
+# `ln`.
+PROGRAMS = {
+    "funzip": "funzip",
+    "unzip": "unzip",
+    "unzipsfx": "unzipsfx",
+    "zipinfo": "unzip",
+}
+
+[
+    cc_binary(
+        name = name,
+        visibility = ["//visibility:public"],
+        deps = [":" + library + "_lib"],
+    )
+    for name, library in PROGRAMS.items()
+]
+
+# The Makefile's `check` target, as far as it reads only: each built program
+# on the testmake.zip the sources ship, run by smoke_test.cc, which finds both
+# through the runfiles library so Windows needs no runfiles tree.  unzipsfx
+# needs the archive appended to its own executable and has no test.
+TEST_FLAGS = {
+    "funzip": [],
+    "unzip": ["-t"],
+    "zipinfo": [],
+}
+
+[
+    cc_test(
+        name = program + "_test",
+        srcs = ["smoke_test.cc"],
+        args = ["$(rlocationpath :" + program + ")"] + flags + ["$(rlocationpath testmake.zip)"],
+        data = [
+            "testmake.zip",
+            ":" + program,
+        ],
+        deps = ["@rules_cc//cc/runfiles"],
+    )
+    for program, flags in TEST_FLAGS.items()
+]
