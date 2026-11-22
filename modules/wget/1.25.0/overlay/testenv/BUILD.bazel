@@ -1,0 +1,143 @@
+"""Upstream's Python test suite (from testenv/Makefile.am).
+
+Each test spawns a stdlib http.server on localhost, runs the wget built by
+`@wget` against it and checks the downloaded files, so it needs nothing beyond
+a Python 3 interpreter, which rules_python's hermetic toolchain supplies.
+
+This directory is a module of its own (see MODULE.bazel here): it depends on
+`@wget` and carries the rules_python dependency, so consumers of `@wget` never
+see it.  BCR presubmit runs it as the `bcr_test_module`, building and testing
+both `@wget//...` and `//...` from here.
+"""
+
+load("@rules_python//python:py_library.bzl", "py_library")
+load("@rules_python//python:py_test.bzl", "py_test")
+
+# DEFAULT_TESTS (testenv/Makefile.am:28).  METALINK_TESTS (:78) are not
+# listed: they need `--with-metalink`, whose libmetalink is not in the
+# registry.
+DEFAULT_TESTS = [
+    "Test-504.py",
+    "Test-416.py",
+    "Test-auth-basic-fail.py",
+    "Test-auth-basic.py",
+    "Test-auth-basic-netrc.py",
+    "Test-auth-basic-netrc-user-given.py",
+    "Test-auth-basic-netrc-pass-given.py",
+    "Test-auth-basic-no-netrc-fail.py",
+    "Test-auth-both.py",
+    "Test-auth-digest.py",
+    "Test-auth-no-challenge.py",
+    "Test-auth-no-challenge-url.py",
+    "Test-auth-retcode.py",
+    "Test-auth-with-content-disposition.py",
+    "Test-c-full.py",
+    "Test-condget.py",
+    "Test-Content-disposition-2.py",
+    "Test-Content-disposition.py",
+    "test_css_url.py",
+    "Test--convert-links--content-on-error.py",
+    "Test-cookie-401.py",
+    "Test-cookie-domain-mismatch.py",
+    "Test-cookie-expires.py",
+    "Test-cookie.py",
+    "Test-Head.py",
+    "Test-hsts.py",
+    "Test-https-k.py",
+    "Test--https.py",
+    "Test--https-crl.py",
+    "Test-k.py",
+    "Test-missing-scheme-retval.py",
+    "Test-O.py",
+    "Test-pinnedpubkey-der-https.py",
+    "Test-pinnedpubkey-der-no-check-https.py",
+    "Test-pinnedpubkey-hash-https.py",
+    "Test-pinnedpubkey-hash-no-check-fail-https.py",
+    "Test-pinnedpubkey-pem-fail-https.py",
+    "Test-pinnedpubkey-pem-https.py",
+    "Test-Post.py",
+    "Test-recursive-basic.py",
+    "Test-recursive-include.py",
+    "Test-recursive-redirect.py",
+    "Test-redirect.py",
+    "Test-redirect-crash.py",
+    "Test--rejected-log.py",
+    "Test-reserved-chars.py",
+    "Test--spider-r.py",
+    "Test-no_proxy-env.py",
+]
+
+# The harness packages the tests import (testenv/README): conf, exc, misc,
+# server and test.  `imports = ["."]` is PYTHONPATH=$(srcdir).  The HTTPS
+# server reads its certificate relative to its own file
+# (testenv/server/http/http_server.py:44), hence `certs/` in `data`.
+py_library(
+    name = "testenv",
+    testonly = True,
+    srcs = glob([
+        "conf/*.py",
+        "exc/*.py",
+        "misc/*.py",
+        "server/**/*.py",
+        "test/*.py",
+    ]),
+    data = glob(["certs/*"]),
+    imports = ["."],
+)
+
+# AM_TESTS_ENVIRONMENT (testenv/Makefile.am:112): SSL_TESTS follows WITH_SSL,
+# and the tests that need TLS skip themselves when it is unset.
+TEST_ENV = select({
+    "@wget//:_ssl_openssl": {"SSL_TESTS": "1"},
+    "//conditions:default": {},
+})
+
+# The two tests that exercise Digest authentication do not check for it the
+# way the TLS tests check SSL_TESTS; upstream simply fails them under
+# --disable-digest, so here they are switched off with the feature.
+DIGEST_TESTS = [
+    "Test-auth-both.py",
+    "Test-auth-digest.py",
+]
+
+# Test-no_proxy-env.py:111 sets http_proxy to nonexisting.localhost:8080 and
+# expects the connection to be refused, which only holds while nothing on the
+# host listens there (a BCR runner did).  The runner skips it in that case; a
+# `block-network` namespace would make the port certain but would also cut the
+# tests off from systemd-resolved, which is what answers for *.localhost on
+# Ubuntu.
+CLOSED_PORT_TESTS = {
+    "Test-no_proxy-env.py": "8080",
+}
+
+# `$(rlocationpath)` rather than `$(rootpath)` because the working directory
+# is not the repository root, see run_testenv.py.
+[
+    py_test(
+        name = test.removesuffix(".py"),
+        size = "small",
+        srcs = [
+            "run_testenv.py",
+            test,
+        ],
+        args = [
+            "$(rlocationpath {})".format(test),
+            "$(rlocationpath @wget//:wget)",
+        ] + (["--closed-port=" + CLOSED_PORT_TESTS[test]] if test in CLOSED_PORT_TESTS else []),
+        data = [
+            test,
+            "@wget",
+        ],
+        env = TEST_ENV,
+        main = "run_testenv.py",
+        target_compatible_with = select({
+            "@wget//:_with_digest": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }) if test in DIGEST_TESTS else [],
+        deps = [
+            ":testenv",
+            "@rules_python//python/runfiles",
+        ],
+    )
+    for test in DEFAULT_TESTS
+]

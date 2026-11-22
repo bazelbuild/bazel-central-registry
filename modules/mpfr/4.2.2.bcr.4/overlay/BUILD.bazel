@@ -1,0 +1,113 @@
+load("@bazel_skylib//lib:selects.bzl", "selects")
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//bazel:mpfr_utils.bzl", "mpfr_gen_patches")
+load(":autoconf.bzl", "autoconf_targets")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+autoconf_targets()
+
+# --enable-decimal-float: configure tests the option in acinclude.m4's macro
+# body, which the conversion does not follow across bodies, so it is declared
+# here and the DECIMAL_* defines key on these settings by decision. `auto`
+# (the default) compiles the _Decimal64 probe.
+string_flag(
+    name = "decimal_float",
+    build_setting_default = "auto",
+    values = [
+        "auto",
+        "bid",
+        "dpd",
+        "generic",
+        "no",
+        "yes",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+[
+    config_setting(
+        name = "decimal_float_" + value,
+        flag_values = {":decimal_float": value},
+    )
+    for value in [
+        "bid",
+        "dpd",
+        "generic",
+        "no",
+        "yes",
+    ]
+]
+
+# The format of `long double`, which configure finds by running a program:
+# x87 extended on x86 (but a plain double under the Windows ABIs), IEEE quad
+# on aarch64 Linux, a plain double on aarch64 macOS and Windows.
+[
+    config_setting(
+        name = cpu_name + "_" + os_name,
+        constraint_values = [
+            "@platforms//cpu:" + cpu_name,
+            "@platforms//os:" + os_name,
+        ],
+    )
+    for cpu_name in [
+        "aarch64",
+        "x86_64",
+    ]
+    for os_name in [
+        "linux",
+        "macos",
+        "windows",
+    ]
+]
+
+selects.config_setting_group(
+    name = "ldouble_ext_little",
+    match_any = [
+        ":x86_64_linux",
+        ":x86_64_macos",
+        "@platforms//cpu:x86_32",
+    ],
+)
+
+selects.config_setting_group(
+    name = "ldouble_quad_little",
+    match_any = [":aarch64_linux"],
+)
+
+selects.config_setting_group(
+    name = "ldouble_is_double",
+    match_any = [
+        ":aarch64_macos",
+        ":aarch64_windows",
+        ":x86_64_windows",
+    ],
+)
+
+# get_patches.c, which src/Makefile.am writes from the PATCHES file.
+mpfr_gen_patches(
+    name = "gen_get_patches_c",
+    out = "src/get_patches.c",
+    patches = "PATCHES",
+)
+
+# The names earlier versions of this module exported.
+alias(
+    name = "libmpfr",
+    actual = ":src/mpfr",
+    visibility = ["//visibility:public"],
+)
+
+# The internal headers with config.h, for the test package (which must see
+# the same MPFR_USE_THREAD_SAFE the library was built with).
+cc_library(
+    name = "_mpfr_hdrs",
+    visibility = ["//tests:__subpackages__"],
+    deps = [
+        ":config_headers",
+        ":src/mpfr_private_headers",
+    ],
+)

@@ -1,0 +1,40 @@
+load("@hegel_cpp_crates//:defs.bzl", "all_crate_deps")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+
+# libhegel, Hegel's native engine: the in-tree hegeltest-c crate, built from
+# source the way the CMake build builds it with cargo. Its Cargo dependencies
+# come from the release's Cargo.lock through crate_universe (see
+# MODULE.bazel). A static library, so consumers need no shared engine at
+# runtime; upstream publishes the engine as a static archive as well.
+rust_static_library(
+    name = "hegel_c",
+    srcs = glob(["src/**/*.rs"]),
+    # Grammars, Unicode tables and the TLD list, embedded with include_str!
+    # and include_bytes!.
+    compile_data = glob(
+        ["src/**"],
+        exclude = ["src/**/*.rs"],
+    ),
+    # The crate's default feature: link the Rust standard library into the
+    # artifact for allocation, panics and unwinding.
+    crate_features = ["std"],
+    edition = "2024",
+    # cargo builds the engine with --release. It is compute-heavy and an
+    # unoptimized engine makes property tests crawl, so optimize it whatever
+    # the Bazel compilation mode.
+    rustc_flags = ["-Copt-level=3"],
+    deps = all_crate_deps(normal = True),
+)
+
+# The engine's C ABI header plus the engine, as one target. Equivalent to
+# the CMake imported target hegel::libhegel. The header is generated from
+# this same crate (libhegel/include/hegel.h is checked against cbindgen's
+# output upstream), so it matches the engine by construction.
+cc_library(
+    name = "libhegel",
+    hdrs = ["include/hegel.h"],
+    includes = ["include"],
+    visibility = ["//:__pkg__"],
+    deps = [":hegel_c"],
+)

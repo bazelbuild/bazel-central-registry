@@ -1,0 +1,32 @@
+Bypass C99 restrict-in-array-bound on MSVC in lib/regex.h.
+
+gnulib's regex.h declares regexec's __pmatch parameter as
+  regmatch_t __pmatch[_Restrict_arr_ _REGEX_NELTS (__nmatch)]
+which expands `_Restrict_arr_` to bare `restrict` on any compiler that
+claims __STDC_VERSION__ >= 199901L.  MSVC under /std:c11 sets that
+version macro but does not accept the restrict qualifier inside array
+dimensions and errors out with C2143.
+
+Force-include of a polyfill header via copts `/FI` did not survive
+Bazel's MSVC toolchain translation reliably, so patch the source
+directly: add an _MSC_VER branch that resolves `_Restrict_arr_` to
+empty before the existing __STDC_VERSION__ check fires.  No-op on every
+other compiler (the existing branches are unchanged, just promoted from
+`# ifdef` to `# elif defined`).
+
+--- a/lib/regex.h
++++ b/lib/regex.h
+@@ -647,7 +647,12 @@
+    Otherwise, GCC 3.1 and clang support this syntax (but not in C++ mode).
+    Other ISO C99 compilers support it as well.  */
+ #ifndef _Restrict_arr_
+-# ifdef __restrict_arr
++# if defined _MSC_VER && !defined __clang__
++/* MSVC under /std:c11 advertises __STDC_VERSION__ >= 199901L but does
++   not accept `restrict` inside an array bound, so the original elif
++   chain below would expand `_Restrict_arr_` to `restrict` and fail.  */
++#  define _Restrict_arr_
++# elif defined __restrict_arr
+ #  define _Restrict_arr_ __restrict_arr
+ # else
+ #  if ((199901L <= __STDC_VERSION__ \

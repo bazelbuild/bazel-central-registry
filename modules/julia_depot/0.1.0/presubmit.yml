@@ -1,0 +1,45 @@
+# What BCR's CI runs against each published version. It builds the e2e module, which is
+# already a consumer of this one: BCR extracts the release archive and runs bazel in
+# e2e/, where the local_path_override to ".." lands on the archive's own root.
+#
+# A smoke subset rather than //...: the full suite downloads two Julias, builds
+# PackageCompiler sysimages and pulls a container base image, which is CI's job (see
+# .github/workflows/e2e.yml), not the registry's. These targets cover the consumer seam:
+# the distribution, a depot fetch, a hook, and a declared depot.
+#
+# Linux x86_64 only: it is the supported platform. julia.dist refuses macOS and Windows, and
+# its aarch64 path is untested and not supported.
+# Bazel 9 only, because e2e/MODULE.bazel needs it (see the aspect_bazel_lib note there).
+# The anonymous module test: a module with nothing but bazel_dep(julia_depot) builds
+# the targets this module exposes to its dependents, which checks it works as a non-root
+# dependency. Neither needs Julia.
+matrix:
+  platform: ["debian13", "ubuntu2404"]
+  bazel: ["9.*"]
+tasks:
+  verify_targets:
+    name: Verify build targets
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - "@julia_depot//julia:image_scripts"
+      - "@julia_depot//julia:sysimage_envs"
+
+bcr_test_module:
+  module_path: "e2e"
+  matrix:
+    platform: ["debian13", "ubuntu2404"]
+    bazel: ["9.*"]
+  tasks:
+    run_tests:
+      name: "Run test module"
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      # Loads julia/image.bzl, which no test target above does, without fetching Julia.
+      build_targets:
+        - "//image:image_env_1_12"
+      test_targets:
+        - "//tests:dist_version_1_12_test"
+        - "//tests:depot_stamp_1_12_test"
+        - "//tests:hook_1_12_test"
+        - "//tests:declared_depot_1_12_test"

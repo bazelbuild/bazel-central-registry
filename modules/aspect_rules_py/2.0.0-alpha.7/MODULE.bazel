@@ -1,0 +1,175 @@
+"aspect-build/rules_py"
+
+module(
+    name = "aspect_rules_py",
+    # Require:
+    #    >=8.5 for Facts API
+    #    >=8.6 and >=9.0.1 for https://github.com/bazelbuild/bazel/pull/28551 and https://github.com/bazelbuild/bazel/pull/28649
+    bazel_compatibility = [
+        ">=8.6.0",
+        "-9.0.0",
+    ],
+    compatibility_level = 1,
+    version = "2.0.0-alpha.7",
+)
+
+bazel_dep(name = "bazel_lib", version = "3.0.0")
+bazel_dep(name = "bazel_skylib", version = "1.4.2")
+bazel_dep(name = "gawk", version = "5.3.2.bcr.7")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.16")
+bazel_dep(name = "rules_python", version = "1.9.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "tar.bzl", version = "0.10.1")
+bazel_dep(name = "hermetic_launcher", version = "0.0.14")
+
+tools = use_extension("//py:extensions.bzl", "py_tools")
+tools.rules_py_tools()
+use_repo(tools, "rules_py_tools")
+use_repo(tools, "rules_py_pex_2_3_1")
+
+register_toolchains(
+    "@rules_py_tools//:all",
+)
+
+http_file = use_repo_rule(
+    "@bazel_tools//tools/build_defs/repo:http.bzl",
+    "http_file",
+)
+
+[
+    http_file(
+        name = "toml2json_" + name,
+        executable = True,
+        sha256 = sha256,
+        url = "https://github.com/hermeticbuild/toml2json/releases/download/v0.0.26/toml2json_" + name + ext,
+    )
+    for name, sha256, ext in [
+        ("darwin_amd64", "632da497331d7aa5f2dd36b7c3c4339639e203bbafa56db77f0bb46cf46089a6", ""),
+        ("darwin_arm64", "13e000bb10f66fd3eb7e72c1fbb382a72859fefb9a75b99173728b0136bd932f", ""),
+        ("linux_amd64", "87921b36ceb343af152fc988be59eec49ac9865f2e499a48152bed03e66f8228", ""),
+        ("linux_arm64", "b271e043e58814353a3f289fb7ce78198d742e730149325d0622d71f3d8595b5", ""),
+        ("windows_amd64", "3fb037472c7ec2485b1c965253404841bfa32d571489b76dfbbc1c7ad6848884", ".exe"),
+        ("windows_arm64", "f825f7b6aea181bb050d4112d3234ec4ef0de45fadc9e6f99c0adcb08db9cf64", ".exe"),
+    ]
+]
+
+host = use_extension("//uv/private/host:extension.bzl", "host_platform")
+use_repo(host, "aspect_rules_py_uv_host")
+
+# PBS interpreters — used at repo-rule time for sdist inspection (needs >= 3.11
+# for tomllib) and available as build-time toolchains.
+interpreters = use_extension("//py:extensions.bzl", "python_interpreters")
+interpreters.configure(
+    releases = [
+        "20260303",
+    ],
+)
+interpreters.toolchain(
+    python_version = "3.13",
+)
+use_repo(
+    interpreters,
+    "python_interpreters",
+    # Individual platform repos — must be visible so the uv extension can
+    # reference the host interpreter for sdist configure tooling.
+    "python_3_13_aarch64_apple_darwin",
+    "python_3_13_aarch64_unknown_linux_gnu",
+    "python_3_13_aarch64_unknown_linux_musl",
+    "python_3_13_i686_pc_windows_msvc",
+    "python_3_13_x86_64_apple_darwin",
+    "python_3_13_x86_64_pc_windows_msvc",
+    "python_3_13_x86_64_unknown_linux_gnu",
+    "python_3_13_x86_64_unknown_linux_musl",
+)
+
+register_toolchains("@python_interpreters//:all")
+
+bazel_dep(name = "aspect_tools_telemetry", version = "0.5.2")
+
+tel = use_extension("@aspect_tools_telemetry//:extension.bzl", "telemetry")
+use_repo(tel, "aspect_tools_telemetry_report")
+
+################################################################################
+# Dev deps are the remainder of the file
+
+# LLVM configuration
+bazel_dep(name = "llvm", version = "0.8.3", dev_dependency = True)
+
+register_toolchains(
+    "@llvm//toolchain:all",
+    dev_dependency = True,
+)
+
+osx = use_extension("@llvm//extensions:osx.bzl", "osx", dev_dependency = True)
+use_repo(osx, "macos_sdk")
+
+bazel_dep(name = "aspect_gazelle_prebuilt", version = "0.0.18", dev_dependency = True)
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.2", dev_dependency = True)
+bazel_dep(name = "bazelrc-preset.bzl", version = "1.9.2", dev_dependency = True)
+bazel_dep(name = "bazel_env.bzl", version = "0.5.0", dev_dependency = True)
+bazel_dep(name = "rules_multitool", version = "1.9.0", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.1", dev_dependency = True)
+
+# The stardoc renderer is this repo's only Java target; its toolchain resolution
+# validates the go toolchains registered via gazelle, and rules_go 0.51 (resolved
+# by gazelle 0.40) uses the CcInfo symbol removed in Bazel 9. 0.61.1 is the fix
+# without dragging rules_android (which rules_jvm_external pulls via newer protobuf).
+bazel_dep(name = "rules_go", version = "0.61.1", dev_dependency = True)
+
+multitool = use_extension("@rules_multitool//multitool:extension.bzl", "multitool", dev_dependency = True)
+multitool.hub(lockfile = "//tools:tools.lock.json")
+use_repo(multitool, "multitool")
+
+# Second interpreter version for multi-version test coverage.
+dev_interpreters = use_extension("//py:extensions.bzl", "python_interpreters", dev_dependency = True)
+dev_interpreters.toolchain(
+    python_version = "3.12",
+)
+
+# Third-party deps come from our own uv machinery
+uv_bin = use_extension("//uv:extensions.bzl", "uv_bin", dev_dependency = True)
+uv_bin.toolchain()
+use_repo(uv_bin, "uv")
+
+uv = use_extension("//uv:extensions.bzl", "uv", dev_dependency = True)
+uv.declare_hub(
+    hub_name = "pypi",
+)
+uv.project(
+    name = "aspect_rules_py",
+    default_build_dependencies = [
+        "build",
+        "setuptools",
+        "maturin",
+    ],
+    hub_name = "pypi",
+    lock = "//:uv.lock",
+    pyproject = "//:pyproject.toml",
+)
+uv.annotate_packages(
+    src = "//:annotations.toml",
+    lock = "//:uv.lock",
+)
+use_repo(
+    uv,
+    "aspect_rules_py_pip_configurations",
+    "project__aspect_rules_py",
+    "pypi",
+    "sdist_build__aspect_rules_py__bravado__11_0_3",
+    "sdist_build__aspect_rules_py__bravado_core__6_1_1",
+    "whl_install__aspect_rules_py__attrs__23_2_0",
+    "whl_install__aspect_rules_py__numpy__1_26_4",
+)
+
+self_exclusion_fixture = use_extension(
+    "//uv/private/uv_project/tests:self_exclusion_fixture.bzl",
+    "self_exclusion_fixture",
+    dev_dependency = True,
+)
+use_repo(
+    self_exclusion_fixture,
+    "uv_project_self_exclusion_layout",
+    "uv_project_self_exclusion_sdist",
+    "uv_project_self_exclusion_test",
+)

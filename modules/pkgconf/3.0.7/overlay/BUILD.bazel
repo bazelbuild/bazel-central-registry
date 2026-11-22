@@ -1,0 +1,625 @@
+"""https://github.com/pkgconf/pkgconf
+
+Ported from upstream `meson.build`; `configure.ac` is only consulted where the
+two agree, since upstream deprecated autotools in 3.0.7 and removes it in 3.1.
+`modules/pkgconf/README.md` in the registry covers what a version bump needs.
+
+Four parts of `meson.build` are deliberately not ported:
+
+  * the fuzzers, off unless `-Dfuzzing=true` and wanting a clang/libFuzzer unix
+    environment --
+    https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L217-L219
+  * the OOM and fuzz-replay tests, which need `-Wl,--wrap` and, for the
+    spdxtool one, a *shared* libpkgconf --
+    https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L355-L426
+  * the Windows manifest resource, which asks every executable for a UTF-8
+    active code page and long-path awareness. Bazel's MSVC toolchain has no
+    resource-compile action. No test case sets `RequireUtf8Locale`, so nothing
+    here is left untested by its absence, but a Windows `pkgconf.exe` built by
+    Bazel will not read paths over MAX_PATH --
+    https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L237-L250
+  * the install rules and the WiX packaging that follows them, neither of which
+    has a Bazel equivalent. `pkg.m4` and `COPYING` are exported below so a
+    consumer can install them itself --
+    https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L454-L464
+"""
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks")
+load("@rules_cc_autoconf//autoconf:package_info.bzl", "package_info")
+load(":utils.bzl", "pkg_config_alias", "runfiles_filelist")
+
+# Upstream's install rules, linked above, put pkg.m4 under share/aclocal and
+# COPYING under share/doc/pkgconf.
+exports_files([
+    "COPYING",
+    "pkg.m4",
+])
+
+# =============================================================================
+# Build settings
+# =============================================================================
+#
+# The four search paths configure bakes into config.h. Upstream derives them
+# from the autotools/meson install prefix, which Bazel does not have, so they
+# are string_flags defaulting to the layout a distro `./configure` produces.
+# Consumers that install elsewhere override them, e.g.
+#     --@pkgconf//:pkg_config_dir=/opt/lib/pkgconfig
+#
+# https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson_options.txt
+
+# meson_options.txt: with-pkg-config-dir.
+string_flag(
+    name = "pkg_config_dir",
+    build_setting_default = "/usr/lib/pkgconfig:/usr/share/pkgconfig",
+    visibility = ["//visibility:public"],
+)
+
+# meson_options.txt: with-system-libdir.
+string_flag(
+    name = "system_libdir",
+    build_setting_default = "/usr/lib",
+    visibility = ["//visibility:public"],
+)
+
+# meson_options.txt: with-system-includedir.
+string_flag(
+    name = "system_includedir",
+    build_setting_default = "/usr/include",
+    visibility = ["//visibility:public"],
+)
+
+# configure.ac: --with-personality-dir. Autotools only; meson has no option
+# for it.
+string_flag(
+    name = "personality_dir",
+    build_setting_default = "/usr/share/pkgconfig/personality.d",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# config.h
+# =============================================================================
+
+# Upstream puts these on CPPFLAGS for every translation unit, then repeats them
+# in front of each feature probe so a probe sees the same declarations the real
+# sources will -- without them glibc hides strndup/reallocarray and the probes
+# answer "no" for functions the build then happily calls. _FEATURE_TEST_MACROS
+# is used for both roles below.
+# https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L81-L100
+#
+# The MSVC CRT ignores all six, which is why upstream keeps them off the branch
+# it takes for MSVC-syntax compilers; the probes take them unconditionally
+# because a check list cannot hold a select().
+_FEATURE_TEST_MACROS = [
+    "_ATFILE_SOURCE",
+    "_BSD_SOURCE",
+    "_DARWIN_C_SOURCE",
+    "_DEFAULT_SOURCE",
+    "_POSIX_C_SOURCE=200809L",
+    "_XOPEN_SOURCE=700",
+]
+
+_PROBE_COPTS = ["-D" + macro for macro in _FEATURE_TEST_MACROS]
+
+# The AC_INIT / meson `project()` metadata. PACKAGE_VERSION is read out of
+# MODULE.bazel so the version lives in exactly one place; strip_bcr_version
+# drops any `.bcr.N` suffix a rebuild would add.
+package_info(
+    name = "package",
+    module_bazel = "MODULE.bazel",
+    package_bugreport = "https://todo.sr.ht/~kaniini/pkgconf",
+    package_tarname = "pkgconf",
+    strip_bcr_version = True,
+)
+
+autoconf(
+    name = "autoconf",
+    build_settings = [
+        checks.AC_BUILD_SETTING(
+            name = "ac_cv_pkg_default_path",
+            define = "PKG_DEFAULT_PATH",
+            target = ":pkg_config_dir",
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "ac_cv_system_libdir",
+            define = "SYSTEM_LIBDIR",
+            target = ":system_libdir",
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "ac_cv_system_includedir",
+            define = "SYSTEM_INCLUDEDIR",
+            target = ":system_includedir",
+        ),
+        checks.AC_BUILD_SETTING(
+            name = "ac_cv_personality_path",
+            define = "PERSONALITY_PATH",
+            target = ":personality_dir",
+        ),
+    ],
+    # Upstream's probe list, which has to be kept in step with the entries in
+    # config.h.meson by hand: a template entry with no check here renders as
+    # `/* #undef ... */` and pkgconf silently takes its fallback path, and a
+    # check with no template entry is silently dropped. README.md has the
+    # procedure for checking both on a version bump.
+    # https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/configure.ac#L30-L41
+    #
+    # pkgconf reads every one of these with `#if`, not `#ifdef`, so a failed
+    # check has to render `#define HAVE_DECL_X 0` -- which is what
+    # AC_CHECK_DECL does.
+    checks = [
+        checks.AC_CHECK_DECL(
+            symbol,
+            copts = _PROBE_COPTS,
+            define = "HAVE_DECL_" + symbol.upper(),
+            includes = ["#include <{}>".format(header)],
+        )
+        for symbol, header in [
+            ("getc_unlocked", "stdio.h"),
+            ("mkdtemp", "stdlib.h"),
+            ("pledge", "unistd.h"),
+            ("readlinkat", "unistd.h"),
+            ("reallocarray", "stdlib.h"),
+            ("strndup", "string.h"),
+            ("unveil", "unistd.h"),
+        ]
+    ] + [
+        # nl_langinfo_l needs locale.h for locale_t on top of langinfo.h, and
+        # xlocale.h as well on Apple platforms, so it cannot share the
+        # single-header probe above.
+        checks.AC_CHECK_DECL(
+            "nl_langinfo_l",
+            copts = _PROBE_COPTS,
+            define = "HAVE_DECL_NL_LANGINFO_L",
+            # do not sort: these are preprocessor lines, not include paths.
+            includes = [
+                "#ifdef __APPLE__",
+                "#include <xlocale.h>",
+                "#endif",
+                "#include <locale.h>",
+                "#include <langinfo.h>",
+            ],
+        ),
+    ] + [
+        # Upstream sets HAVE_<FN> beside HAVE_DECL_<FN> for all ten functions
+        # it probes, but config.h.meson only has entries for these two -- the
+        # pair libpkgconf/bsdstubs.c can substitute -- so the other eight would
+        # go nowhere.
+        # https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L68-L107
+        checks.AC_CHECK_FUNC(
+            fn,
+            copts = _PROBE_COPTS,
+            define = "HAVE_" + fn.upper(),
+        )
+        for fn in [
+            "reallocarray",
+            "strndup",
+        ]
+    ],
+    deps = [
+        ":package",
+        # configure.ac: AC_SYS_LARGEFILE.
+        "@rules_cc_autoconf//autoconf/macros/AC_SYS_LARGEFILE",
+    ],
+)
+
+# The tarball's own template, so a later release's entries come from upstream
+# rather than a copy kept here. `#mesondefine NAME` is meson's spelling of
+# autoheader's `#undef NAME` -- a keyword rename and nothing more.
+expand_template(
+    name = "_config_hin",
+    out = "config.hin",
+    substitutions = {"#mesondefine": "#undef"},
+    template = "libpkgconf/config.h.meson",
+)
+
+# configure.ac: AC_CONFIG_HEADERS.
+#
+# An entry with no matching check is commented out, and a check with no entry in
+# the template is dropped -- both without a warning, which is why the check list
+# above is exactly upstream's.
+autoconf_hdr(
+    name = "config_h",
+    out = "libpkgconf/config.h",
+    template = ":_config_hin",
+    deps = [":autoconf"],
+)
+
+# =============================================================================
+# libpkgconf
+# =============================================================================
+
+# pkgconf is nearly always built as a tool inside somebody else's build, where
+# its own warnings are noise; upstream otherwise asks for a list of -W flags and
+# /wd suppressions. It branches on the compiler's argument *syntax* rather than
+# its identity, which is what puts clang-cl with MSVC here and in
+# _LOCAL_DEFINES.
+# https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L13-L50
+_COPTS = select({
+    "@rules_cc//cc/compiler:clang-cl": ["/w"],
+    "@rules_cc//cc/compiler:msvc-cl": ["/w"],
+    "//conditions:default": ["-w"],
+})
+
+# The same split applied to the feature-test macros.
+_LOCAL_DEFINES = select({
+    "@rules_cc//cc/compiler:clang-cl": [],
+    "@rules_cc//cc/compiler:msvc-cl": [],
+    "//conditions:default": _FEATURE_TEST_MACROS,
+})
+
+# Named `lib/pkgconf` so the archive comes out as `lib/libpkgconf.a`, matching
+# upstream's `library('pkgconf', ...)`; a target named `libpkgconf` would
+# produce `liblibpkgconf.a`. Depend on the `:libpkgconf` alias below.
+cc_library(
+    name = "lib/pkgconf",
+    # https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L179-L201
+    srcs = [
+        "libpkgconf/argvsplit.c",
+        "libpkgconf/audit.c",
+        "libpkgconf/bsdstubs.c",
+        "libpkgconf/buffer.c",
+        "libpkgconf/bufferset.c",
+        "libpkgconf/bytecode.c",
+        "libpkgconf/cache.c",
+        "libpkgconf/client.c",
+        "libpkgconf/dependency.c",
+        "libpkgconf/fileio.c",
+        "libpkgconf/fragment.c",
+        "libpkgconf/license.c",
+        "libpkgconf/output.c",
+        "libpkgconf/parser.c",
+        "libpkgconf/path.c",
+        "libpkgconf/personality.c",
+        "libpkgconf/pkg.c",
+        "libpkgconf/queue.c",
+        "libpkgconf/tuple.c",
+        "libpkgconf/variable.c",
+        "libpkgconf/version.c",
+    ] + glob(["libpkgconf/*.h"]),
+    # Upstream installs the first five; the rest of libpkgconf/*.h is
+    # internal and rides along in `srcs`. config.h is not installed, but every
+    # cli/ source includes it and `hdrs` is the only way for it to reach them.
+    # https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/libpkgconf/meson.build#L6-L11
+    hdrs = [
+        "libpkgconf/bsdstubs.h",
+        "libpkgconf/iter.h",
+        "libpkgconf/libpkgconf.h",
+        "libpkgconf/libpkgconf-api.h",
+        "libpkgconf/stdinc.h",
+        ":config_h",
+    ],
+    copts = _COPTS,
+    # Upstream picks this or PKGCONFIG_IS_NOT_STATIC from `default_library`;
+    # a cc_library is an archive, so only the static half applies.
+    # libpkgconf-api.h short-circuits its dllexport/dllimport ladder on it, so
+    # it has to reach consumers -- `defines`, not `copts`, matching the
+    # `extra_cflags` of the .pc file upstream generates.
+    # https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L172-L177
+    defines = ["PKGCONFIG_IS_STATIC"],
+    # Sources say `#include <libpkgconf/...>`, so the archive root is the
+    # include root, matching upstream's `include_directories('.')`.
+    includes = ["."],
+    linkopts = select({
+        # libpkgconf/path.c reads the search paths out of the registry and
+        # Bazel's MSVC toolchain does not link advapi32 by default.
+        "@platforms//os:windows": ["advapi32.lib"],
+        "//conditions:default": [],
+    }),
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "libpkgconf",
+    actual = ":lib/pkgconf",
+    visibility = ["//visibility:public"],
+)
+
+# =============================================================================
+# Command line tools
+# =============================================================================
+
+# The one CLI source every tool links alongside its own main.c.
+cc_library(
+    name = "_getopt_long",
+    srcs = ["cli/getopt_long.c"],
+    hdrs = ["cli/getopt_long.h"],
+    copts = _COPTS,
+    # Upstream's `cli_include`; the tools under cli/<name>/ include this
+    # header unqualified.
+    includes = ["cli"],
+    local_defines = _LOCAL_DEFINES,
+    deps = [":libpkgconf"],
+)
+
+# The rest of the shared CLI code, which upstream gives only to `pkgconf` and
+# the test runner. Keeping it off the other three matters because each of them
+# has its own `core.h`.
+cc_library(
+    name = "_cli",
+    srcs = [
+        "cli/core.c",
+        "cli/renderer-msvc.c",
+    ],
+    hdrs = [
+        "cli/core.h",
+        "cli/renderer-msvc.h",
+    ],
+    copts = _COPTS,
+    includes = ["cli"],
+    local_defines = _LOCAL_DEFINES,
+    deps = [":_getopt_long"],
+)
+
+cc_binary(
+    name = "pkgconf",
+    srcs = ["cli/main.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":_cli"],
+)
+
+# Not upstream: distributions ship pkgconf *as* the system `pkg-config`, so a
+# consumer expecting that name gets it here too. The only thing pkgconf reads
+# off argv[0] is deduce_personality, which looks for a `-pkg` infix to pick a
+# cross-compilation personality; `pkg-config` has none, so behaviour is
+# identical rather than merely similar.
+# https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/cli/main.c#L74-L102
+pkg_config_alias(
+    name = "pkg-config",
+    pkgconf = ":pkgconf",
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "bomtool",
+    srcs = ["cli/bomtool/main.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":_getopt_long"],
+)
+
+cc_binary(
+    name = "spdxtool",
+    srcs = ["cli/spdxtool/main.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [
+        ":_getopt_long",
+        ":_spdxtool",
+    ],
+)
+
+# Everything spdxtool is built from except main.c -- upstream links the same
+# set, and nothing else from cli/, into the test-api-serialize unit test.
+cc_library(
+    name = "_spdxtool",
+    srcs = [
+        "cli/spdxtool/core.c",
+        "cli/spdxtool/generate.c",
+        "cli/spdxtool/serialize.c",
+        "cli/spdxtool/simplelicensing.c",
+        "cli/spdxtool/software.c",
+        "cli/spdxtool/util.c",
+    ],
+    hdrs = glob(["cli/spdxtool/*.h"]),
+    copts = _COPTS,
+    includes = ["cli/spdxtool"],
+    local_defines = _LOCAL_DEFINES,
+    deps = [":libpkgconf"],
+)
+
+cc_binary(
+    name = "pccritic",
+    srcs = [
+        "cli/pccritic/critic.c",
+        "cli/pccritic/critic.h",
+        "cli/pccritic/main.c",
+    ],
+    copts = _COPTS,
+    includes = ["cli/pccritic"],
+    local_defines = _LOCAL_DEFINES,
+    visibility = ["//visibility:public"],
+    deps = [":_getopt_long"],
+)
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+# One executable per tests/api/test-<name>.c, each linking libpkgconf and
+# nothing else. The two files the glob of that directory would also match are
+# deliberate omissions: test-serialize has its own target below, and
+# test-oom-spdxtool is one of the unported OOM tests.
+[
+    cc_test(
+        name = "test_api_{}".format(api_test.replace("-", "_")),
+        size = "small",
+        srcs = ["tests/api/test-{}.c".format(api_test)],
+        copts = _COPTS,
+        local_defines = _LOCAL_DEFINES,
+        deps = [
+            ":_test_api_hdrs",
+            ":libpkgconf",
+        ],
+    )
+    for api_test in [
+        "audit",
+        "buffer",
+        "bytecode",
+        "client",
+        "dependency",
+        "fileio",
+        "fragment",
+        "license",
+        "path-utils",
+        "personality",
+        "queue",
+        "tuple",
+        "variable",
+        "version",
+    ]
+]
+
+# tests/api/test-api.h includes <tests/win-shim.h>, so both the archive root
+# and tests/api have to be on the include path.
+cc_library(
+    name = "_test_api_hdrs",
+    testonly = True,
+    hdrs = [
+        "tests/api/oom.h",
+        "tests/api/test-api.h",
+        "tests/win-shim.h",
+    ],
+    includes = [
+        ".",
+        "tests/api",
+    ],
+)
+
+# Unlike the loop above, this one also compiles the spdxtool sources it
+# exercises.
+cc_test(
+    name = "test_api_serialize",
+    size = "small",
+    srcs = ["tests/api/test-serialize.c"],
+    copts = _COPTS,
+    local_defines = _LOCAL_DEFINES,
+    deps = [
+        ":_spdxtool",
+        ":_test_api_hdrs",
+        ":libpkgconf",
+    ],
+)
+
+# The harness that reads the `t/<suite>/*.test` case files. Kept as a library
+# so each suite below is a separate `bazel test` target without recompiling it
+# fourteen times.
+#
+# `main` occurs exactly once in test-runner.c, at its definition, so renaming it
+# with -D is enough to let bazel_test_main.cc call it as an ordinary function
+# instead of spawning it as a second process.
+cc_library(
+    name = "_test_runner_impl",
+    testonly = True,
+    srcs = [
+        "tests/test-runner.c",
+        "tests/win-shim.h",
+    ],
+    copts = _COPTS,
+    # test-runner.c includes <tests/win-shim.h>.
+    includes = ["."],
+    local_defines = _LOCAL_DEFINES + ["main=pkgconf_test_runner_main"],
+    deps = [":_cli"],
+)
+
+# test-runner takes directories, which have to be resolved out of the runfiles
+# in-process; bazel_test_main.cc explains why. Separate from the library above
+# so that `-Dmain=` renames only test-runner.c's entry point, and alwayslink
+# because this archive holds the real `main`.
+cc_library(
+    name = "_test_runner",
+    testonly = True,
+    srcs = ["bazel_test_main.cc"],
+    copts = _COPTS,
+    deps = [
+        ":_test_runner_impl",
+        "@rules_cc//cc/runfiles",
+    ],
+    alwayslink = True,
+)
+
+# The fixture tree upstream passes as `--test-fixtures`. `t/` cases reach into
+# it with paths like `../../tests/lib-sbom-files/basic.json`, which
+# ExpectedStdoutFile resolves against the `.test` file's own directory, so
+# wherever these end up the `t/<suite>` directory has to stay two levels below
+# them.
+# https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/tests/test-runner.c#L1335-L1341
+_FIXTURES = glob([
+    "tests/lib*/**",
+    "tests/personality-data/**",
+])
+
+# Upstream's suite list, keyed by the target-name spelling of each suite.
+# https://github.com/pkgconf/pkgconf/blob/pkgconf-3.0.7/meson.build#L431-L445
+_SUITES = {
+    suite.replace("-", "_"): suite
+    for suite in [
+        "basic",
+        "bomtool",
+        "cli",
+        "link-abi",
+        "ordering",
+        "parser",
+        "pccritic",
+        "personality",
+        "sbom",
+        "solver",
+        "spdxtool",
+        "symlink",
+        "sysroot",
+        "tuple",
+    ]
+}
+
+# Every suite can reach every tool, because bazel_test_main puts the whole
+# directory on PATH rather than naming one tool.
+_TEST_TOOLS = [
+    ":bomtool",
+    ":pccritic",
+    ":pkgconf",
+    ":spdxtool",
+]
+
+# One target per suite carrying the files the suite needs plus the list of where
+# they land in the runfiles, so a launcher with no tree to point at can rebuild
+# the directories. Deriving the list from the same glob as the runfiles keeps
+# `exclude` honoured either way, and writing it to a file keeps it off a command
+# line Windows caps at 32k.
+#
+# The glob is not just `*.test`: `ExpectedStdoutFile` names a sibling file too,
+# and test-runner ignores anything without a `.test` suffix as it scans.
+[
+    runfiles_filelist(
+        name = "_test_{}_files".format(name),
+        testonly = True,
+        srcs = _FIXTURES + glob(
+            ["t/{}/*".format(suite)],
+            # pkg_get_parent_dir() in libpkgconf/pkg.c resolves the .pc file
+            # through symlinks before taking its directory, and every file in a
+            # runfiles tree is a symlink into the external repository, so
+            # PCFILEDIR reports where Bazel unpacked pkgconf rather than the
+            # fixture directory. No invocation of test-runner reconciles the two.
+            exclude = ["t/basic/print-variables-env.test"],
+        ),
+    )
+    for name, suite in _SUITES.items()
+]
+
+[
+    cc_test(
+        name = "test_{}".format(name),
+        size = "small",
+        args = [
+            "$(rlocationpath :_test_{}_files)".format(name),
+            # Upstream hands test-runner one `--tool-dir` because Bazel, like
+            # meson, puts all four tools in the same place; pointing at pkgconf
+            # itself picks up the `.exe` suffix without guessing.
+            "$(rlocationpath :pkgconf)",
+            "t/{}".format(suite),
+        ],
+        data = [":_test_{}_files".format(name)] + _TEST_TOOLS,
+        deps = [":_test_runner"],
+    )
+    for name, suite in _SUITES.items()
+]

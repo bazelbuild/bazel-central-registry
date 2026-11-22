@@ -1,0 +1,132 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+
+exports_files(["LICENSE"])
+
+bool_flag(
+    name = "profiling",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "daqp_profiling",
+    flag_values = {":profiling": "true"},
+)
+
+bool_flag(
+    name = "soft_weights",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "daqp_no_soft_weights",
+    flag_values = {":soft_weights": "false"},
+)
+
+bool_flag(
+    name = "single_precision",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "daqp_single_precision",
+    flag_values = {":single_precision": "true"},
+)
+
+bool_flag(
+    name = "faster_math",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "daqp_faster_math_windows",
+    constraint_values = ["@platforms//os:windows"],
+    flag_values = {":faster_math": "true"},
+)
+
+config_setting(
+    name = "daqp_faster_math_enabled",
+    flag_values = {":faster_math": "true"},
+)
+
+cc_library(
+    name = "daqp",
+    srcs = glob(["src/*.c"]) + ["codegen/codegen.c"],
+    hdrs = glob(["include/*.h"]) + ["codegen/codegen.h"],
+    copts = select({
+        ":daqp_faster_math_windows": [],
+        ":daqp_faster_math_enabled": [
+            "-fassociative-math",
+            "-fno-signed-zeros",
+            "-fno-trapping-math",
+        ],
+        "//conditions:default": [],
+    }),
+    defines = select({
+        ":daqp_profiling": ["PROFILING"],
+        "//conditions:default": [],
+    }) + select({
+        ":daqp_no_soft_weights": ["DAQP_NO_SOFT_WEIGHTS"],
+        "//conditions:default": [],
+    }) + select({
+        ":daqp_single_precision": ["DAQP_SINGLE_PRECISION"],
+        "//conditions:default": [],
+    }),
+    includes = [
+        "codegen",
+        "include",
+    ],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
+    name = "daqp_eigen",
+    srcs = ["interfaces/daqp-eigen/daqp.cpp"],
+    hdrs = ["interfaces/daqp-eigen/daqp.hpp"],
+    includes = ["interfaces/daqp-eigen"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":daqp",
+        "@eigen",
+    ],
+)
+
+[
+    cc_test(
+        name = test_name,
+        size = "small",
+        srcs = ["interfaces/daqp-eigen/tests/" + test_name + ".cpp"],
+        # Needed for M_PI on MSVC (used by 15_degenerate_lp_skip).
+        local_defines = ["_USE_MATH_DEFINES"],
+        # 04_slack_sign fails until upstream PR #192 is released.
+        tags = ["manual"] if test_name == "04_slack_sign" else [],
+        deps = [":daqp_eigen"],
+    )
+    for test_name in [
+        "00_basic_qp",
+        "01_static_func",
+        "02_class",
+        "03_update",
+        "04_slack_sign",
+        "05_warmstart",
+        "06_general_hessian",
+        "07_symmetrize_hessian",
+        "08_unconstrained_check",
+        "09_soft_weights",
+        "10_eq_reduction",
+        "11_warm_update_M",
+        "12_update_state",
+        "13_warm_start_drift",
+        "14_degenerate_lp_warm",
+        "15_degenerate_lp_skip",
+        "16_update_M",
+        "17_cold_start_reduction",
+        "18_equality_warm_activation",
+        "19_fully_determined_eq",
+        "20_degenerate_cycling",
+    ]
+]

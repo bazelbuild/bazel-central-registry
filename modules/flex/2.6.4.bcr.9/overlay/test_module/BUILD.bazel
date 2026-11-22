@@ -1,0 +1,84 @@
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_flex//flex:flex.bzl", "flex_cc_library", "flex_toolchain_info")
+
+# buildifier: disable=bzl-visibility
+load("@rules_m4//m4/internal:toolchain_info.bzl", "m4_toolchain_info")
+
+flex_toolchain_info(
+    name = "flex_toolchain_info",
+    flex_lexer_h = "@flex//:src/FlexLexer.h",
+    flex_tool = "@flex//:flex",
+)
+
+toolchain(
+    name = "flex_toolchain",
+    toolchain = ":flex_toolchain_info",
+    toolchain_type = "@rules_flex//flex:toolchain_type",
+)
+
+m4_toolchain_info(
+    name = "m4_toolchain_info",
+    m4_tool = "@m4//:m4",
+)
+
+toolchain(
+    name = "m4_toolchain",
+    toolchain = ":m4_toolchain_info",
+    toolchain_type = "@rules_m4//m4:toolchain_type",
+)
+
+write_file(
+    name = "hello_l",
+    out = "hello.l",
+    content = """\
+%{
+/* How many times the scanner saw the word. */
+int hello_count = 0;
+%}
+
+%option noyywrap nounistd never-interactive
+
+%%
+
+"hello" { hello_count++; }
+.|\\n    { }
+
+%%
+""".splitlines(),
+    newline = "unix",
+)
+
+flex_cc_library(
+    name = "hello_scanner",
+    src = ":hello_l",
+    # `%option nounistd` only defines YY_NO_UNISTD_H in the scanner; the
+    # header keeps `#include <unistd.h>` behind that guard, which MSVC cannot
+    # satisfy. The command-line flag drops the include from both files.
+    flex_options = ["--nounistd"],
+)
+
+write_file(
+    name = "hello_test_c",
+    out = "hello_test.c",
+    content = """\
+#include "hello_scanner.h"
+
+extern int hello_count;
+
+/* Scans a string through the generated scanner and counts its matches. */
+int main(void) {
+    YY_BUFFER_STATE buffer = yy_scan_string("hello world, hello\\n");
+    yylex();
+    yy_delete_buffer(buffer);
+    return hello_count == 2 ? 0 : 1;
+}
+""".splitlines(),
+    newline = "unix",
+)
+
+cc_test(
+    name = "hello_test",
+    srcs = [":hello_test_c"],
+    deps = [":hello_scanner"],
+)

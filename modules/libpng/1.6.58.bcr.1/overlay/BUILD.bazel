@@ -1,0 +1,131 @@
+# Copied from https://github.com/google-deepmind/lab2d/blob/09474439959534b1de3fce3d4a4ed35d565ea230/bazel/png.BUILD
+# with minor modifications available under Apache 2.0 License
+# SPDX-License-Identifier: Apache-2.0
+
+# Description:
+#   libpng is the official PNG reference library.
+
+load("@bazel_skylib//rules:common_settings.bzl", "string_list_flag")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_license//rules:license.bzl", "license")
+load("defs.bzl", "gen_pnglibconf")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+exports_files([
+    "LICENSE",
+])
+
+license(
+    name = "license",
+    license_kinds = ["@rules_license//licenses/spdx:libpng-2.0"],
+    license_text = "LICENSE",
+)
+
+string_list_flag(
+    name = "pnglibconf_options",
+    build_setting_default = [],
+    help = """
+A string_list flag with strings of the form `+PNG_OPTION_NAME` or
+`-PNG_OPTION_NAME`, where `PNG_OPTION_NAME` is an option understood by libpng.
+See https://github.com/pnggroup/libpng/blob/libpng18/pnglibconf.h.prebuilt for
+a list of options. The `+` form enables an option which is disabled, and the
+`-` form disables an option which is enabled by default.
+""",
+)
+
+gen_pnglibconf(
+    name = "pnglibconf",
+    src = "scripts/pnglibconf.h.prebuilt",
+    out = "pnglibconf.h",
+    options_flag = ":pnglibconf_options",
+)
+
+cc_library(
+    name = "png",
+    srcs = [
+        "png.c",
+        "pngdebug.h",
+        "pngerror.c",
+        "pngget.c",
+        "pnginfo.h",
+        "pngmem.c",
+        "pngpread.c",
+        "pngpriv.h",
+        "pngread.c",
+        "pngrio.c",
+        "pngrtran.c",
+        "pngrutil.c",
+        "pngset.c",
+        "pngstruct.h",
+        "pngtrans.c",
+        "pngwio.c",
+        "pngwrite.c",
+        "pngwtran.c",
+        "pngwutil.c",
+        ":pnglibconf",
+    ] + select({
+        "@platforms//cpu:arm64": [
+            "arm/arm_init.c",
+            "arm/filter_neon.S",
+            "arm/filter_neon_intrinsics.c",
+            "arm/palette_neon_intrinsics.c",
+        ],
+        "@platforms//cpu:armv7": [
+            "arm/arm_init.c",
+            "arm/filter_neon.S",
+            "arm/filter_neon_intrinsics.c",
+            "arm/palette_neon_intrinsics.c",
+        ],
+        "@platforms//cpu:i386": [
+            "intel/filter_sse2_intrinsics.c",
+            "intel/intel_init.c",
+        ],
+        "@platforms//cpu:x86_32": [
+            "intel/filter_sse2_intrinsics.c",
+            "intel/intel_init.c",
+        ],
+        "@platforms//cpu:x86_64": [
+            "intel/filter_sse2_intrinsics.c",
+            "intel/intel_init.c",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "png.h",
+        "pngconf.h",
+    ],
+    includes = ["."],
+    linkopts = select({
+        "@platforms//os:windows": [],
+        "//conditions:default": ["-lm"],
+    }),
+    local_defines = select({
+        "@platforms//cpu:arm64": [
+            "PNG_ARM_NEON_OPT=2",
+        ],
+        "@platforms//cpu:armv7": [
+            "PNG_ARM_NEON_OPT=2",
+        ],
+        "@platforms//cpu:i386": [
+            "PNG_INTEL_SSE_OPT=1",
+        ],
+        "@platforms//cpu:x86_32": [
+            "PNG_INTEL_SSE_OPT=1",
+        ],
+        "@platforms//cpu:x86_64": [
+            "PNG_INTEL_SSE_OPT=1",
+        ],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["@zlib"],
+)
+
+alias(
+    name = "libpng",
+    actual = ":png",
+    visibility = ["//visibility:public"],
+)

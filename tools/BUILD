@@ -15,6 +15,7 @@ compile_pip_requirements_3_11(
 py_binary(
     name = "add_module",
     srcs = ["add_module.py"],
+    legacy_create_init = 0,
     deps = [
         ":bcr_validation",
         ":registry",
@@ -24,6 +25,7 @@ py_binary(
 py_binary(
     name = "calc_integrity",
     srcs = ["calc_integrity.py"],
+    legacy_create_init = 0,
     deps = [
         ":registry",
         requirement("validators"),
@@ -33,6 +35,7 @@ py_binary(
 py_binary(
     name = "migrate_to_bzlmod",
     srcs = ["migrate_to_bzlmod.py"],
+    legacy_create_init = 0,
     deps = [
         ":registry",
     ],
@@ -41,6 +44,7 @@ py_binary(
 py_binary(
     name = "print_all_src_urls",
     srcs = ["print_all_src_urls.py"],
+    legacy_create_init = 0,
     deps = [
         ":registry",
     ],
@@ -49,6 +53,7 @@ py_binary(
 py_binary(
     name = "bcr_validation",
     srcs = ["bcr_validation.py"],
+    legacy_create_init = 0,
     deps = [
         ":attestations",
         ":registry",
@@ -62,6 +67,7 @@ py_binary(
 py_test(
     name = "bcr_validation_test",
     srcs = ["bcr_validation_test.py"],
+    legacy_create_init = 0,
     deps = [":bcr_validation"],
 )
 
@@ -97,6 +103,7 @@ py_library(
 py_binary(
     name = "update_integrity",
     srcs = ["update_integrity.py"],
+    legacy_create_init = 0,
     deps = [
         ":registry",
         requirement("click"),
@@ -106,6 +113,7 @@ py_binary(
 py_binary(
     name = "module_selector",
     srcs = ["module_selector.py"],
+    legacy_create_init = 0,
     deps = [
         ":registry",
     ],
@@ -117,6 +125,7 @@ py_binary(
     data = [
         "@buildozer_binary//:buildozer.exe",
     ],
+    legacy_create_init = 0,
     deps = [
         ":module_selector",
         requirement("networkx"),
@@ -129,6 +138,7 @@ py_binary(
 py_binary(
     name = "mcp_server",
     srcs = ["mcp_server.py"],
+    legacy_create_init = 0,
     deps = [
         ":registry",
         requirement("fastmcp"),
@@ -168,6 +178,7 @@ py_binary(
     name = "setup_presubmit_repos",
     srcs = ["setup_presubmit_repos.py"],
     imports = ["."],
+    legacy_create_init = 0,
     deps = [
         ":bcr_presubmit",
     ],
@@ -185,6 +196,7 @@ py_test(
     srcs = [
         "registry_test.py",
     ],
+    legacy_create_init = 0,
     deps = [
         "registry",
     ],
@@ -195,6 +207,7 @@ py_test(
     srcs = [
         "version_test.py",
     ],
+    legacy_create_init = 0,
     deps = [
         "registry",
     ],
@@ -205,6 +218,7 @@ py_test(
     srcs = [
         "module_selector_test.py",
     ],
+    legacy_create_init = 0,
     deps = [
         "module_selector",
     ],

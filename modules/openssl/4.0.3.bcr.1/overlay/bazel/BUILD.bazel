@@ -1,0 +1,77 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_perl//perl:perl.bzl", "perl_binary")
+
+cc_binary(
+    name = "redirect_stdout",
+    srcs = ["redirect_stdout.cc"],
+    visibility = ["//:__pkg__"],
+)
+
+cc_binary(
+    name = "quiet_run",
+    srcs = ["quiet_run.cc"],
+    visibility = ["//:__pkg__"],
+)
+
+cc_binary(
+    name = "collate_into_directory",
+    srcs = ["collate_into_directory.cc"],
+    copts = select({
+        "@rules_cc//cc/compiler:msvc-cl": ["/std:c++17"],
+        "//conditions:default": ["-std=c++17"],
+    }),
+)
+
+# Runs OpenSSL's stdout generator scripts (util/mkerr.pl, crypto/objects/
+# objects.pl, ...) with a pinned clock; the script is passed as an argument.
+# configdata is for mkerr.pl, perl_utils for the scripts using
+# OpenSSL::copyright.
+perl_binary(
+    name = "run_generator",
+    srcs = ["run_generator.pl"],
+    main = "run_generator.pl",
+    tags = ["manual"],
+    visibility = ["//:__pkg__"],
+    deps = [
+        "//:configdata",
+        "//:perl_utils",
+    ],
+)
+
+perl_binary(
+    name = "batch_dofile",
+    srcs = ["batch_dofile.pl"],
+    main = "batch_dofile.pl",
+    # oids_to_c is loaded by the script itself (see there), not by -M as upstream does.
+    perlopt = ["-Mconfigdata"],
+    visibility = ["//:__pkg__"],
+    deps = [
+        "//:configdata",
+        "//:der_codegen",
+        "//:external_perl",
+        "//:openssl_platform",
+        "//:perl_utils",
+    ],
+)
+
+cc_test(
+    name = "sha256_test",
+    srcs = ["sha256_test.cc"],
+    copts = select({
+        "//configs:windows_arm64": ["/std:c++17"],
+        "//configs:windows_x64": ["/std:c++17"],
+        "//conditions:default": ["-std=c++17"],
+    }),
+    data = ["@openssl"],
+    env = {
+        "OPENSSL": "$(rlocationpath @openssl)",
+    },
+    deps = ["@rules_cc//cc/runfiles"],
+)
+
+cc_test(
+    name = "build_test",
+    srcs = ["build_test.cc"],
+    deps = ["@openssl//:ssl"],
+)
