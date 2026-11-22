@@ -1,0 +1,50 @@
+# julia_depot: a Julia environment pinned to a committed Manifest.toml, as Bazel
+# repositories and scripts. See README.md for the contract and the consumer interface.
+#
+# compatibility_level records breaking changes to the consumer interface, which is small and
+# explicit: a change to it breaks every consumer at once, so the module graph should be able to
+# record that. Raise it when one of these changes incompatibly; added behaviour does not count:
+#
+#   - the `julia` extension's tag classes (dist, depot, cc) and their attributes
+#   - the rules and functions in julia/image.bzl, their attributes, and the providers
+#     JuliaImageEnvInfo, JuliaSysimageInfo and JuliaDepotInfo
+#   - the names PORTABLE_X86_64_CPU_TARGET and PORTABLE_AARCH64_CPU_TARGET (their values may
+#     gain CPU clones in any release, as Julia's official builds do)
+#   - a sysimage's inputs file: the `inputs` output group, the format of the file (its
+#     "format" key; a change to what it records without a change of format is a bug), and
+#     where julia_sysimage_layer puts it, beside the sysimage as `<path without .so>.inputs.json`
+#     and byte for byte the julia_sysimage's own
+#   - what a depot repository provides: its default target (JuliaDepotInfo, with the Julia and
+#     the Project.toml and Manifest it was fetched for), :env, env.sh (which exports
+#     JULIA_DEPOT_PATH and nothing else) and stamp.txt with its keys manifest_sha256,
+#     julia_version, host_triplet and depot (the whole depot path env.sh exports: the entry
+#     written to, `dir`, followed by any read_only_depots)
+#   - what a dist repository provides: its default target, :dist and bin/julia
+#   - what a cc repository provides: its default target, :cc and bin/cc, and the module's own
+#     @julia_depot_cc, the compiler julia_sysimage uses by default
+#   - what a hook is given: JULIA_DEPOT_BIN, JULIA_DEPOT_PATH and its hook_environ variables
+#
+# Internal and free to change in any release: julia/dist.bzl, julia/depot.bzl, julia/cc.bzl and
+# julia/depot_info.bzl (use the extension, which also checks repository names across the graph,
+# and do not load their rules with use_repo_rule), and every script under julia/ with its
+# arguments and variables (image_depot.sh, sysimage.sh, image_layers.sh, instantiate.sh): the
+# rules in julia/image.bzl are the interface to them. The scripts stay visible for this module's own tests.
+#
+# Built and tested with Bazel 9 only.
+module(
+    name = "julia_depot",
+    version = "0.2.0",
+    bazel_compatibility = [">=9.0.0"],
+    compatibility_level = 2,
+)
+
+# The CPU constraints the image rules read to pick a portable CPU target list for the target
+# platform (x86_64 or aarch64).
+bazel_dep(name = "platforms", version = "1.0.0")
+
+# The compiler that links sysimages unless a consumer names another: zig at the version and glibc
+# target julia/cc.bzl defaults to. Declared here so julia_sysimage_layer can default to it, and
+# visible to any module that uses the extension through use_repo(julia, "julia_depot_cc").
+julia = use_extension("//julia:extensions.bzl", "julia")
+julia.cc(name = "julia_depot_cc")
+use_repo(julia, "julia_depot_cc")

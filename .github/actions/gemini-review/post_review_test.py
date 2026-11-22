@@ -30,9 +30,8 @@ class PostReviewTest(unittest.TestCase):
         self.root = pathlib.Path(self.tmp_dir.name)
         self.old_cwd = os.getcwd()
         os.chdir(self.root)
-        (self.root / ".gemini").mkdir()
         (self.root / "gemini-artifacts").mkdir()
-        (self.root / ".gemini" / "context.json").write_text(
+        (self.root / "gemini-artifacts" / "context.json").write_text(
             json.dumps(
                 {
                     "repository": "bazelbuild/bazel-central-registry",
@@ -285,7 +284,7 @@ class PostReviewTest(unittest.TestCase):
         self.assertIn("🟡 Consider pinning dep version.", summary_text)
 
     def test_normalizes_head_file_path_prefix_and_reuses_context_changed_files(self):
-        (self.root / ".gemini" / "context.json").write_text(
+        (self.root / "gemini-artifacts" / "context.json").write_text(
             json.dumps(
                 {
                     "repository": "bazelbuild/bazel-central-registry",
