@@ -3,6 +3,11 @@
 _PYTHON_TOOLCHAIN = "@rules_python//python:toolchain_type"
 
 def _visibility_macros_impl(ctx):
+    # Run the generator with the exec-configured Python interpreter rather than
+    # through a py_binary: rules_python's launcher needs a host python3 (default
+    # bootstrap) or Bash (script bootstrap) to start, which breaks consumers that
+    # run actions with an empty PATH and no host tools. Calling the interpreter
+    # directly on the script needs neither, on Linux, macOS and Windows.
     runtime = ctx.toolchains[_PYTHON_TOOLCHAIN].py3_runtime
     out = ctx.outputs.outs[0]
     src = ctx.file.src
