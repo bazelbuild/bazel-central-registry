@@ -1,0 +1,205 @@
+# Bazel overlay for Unicorn 2.1.4, derived from google/silifuzz
+# third_party/BUILD.unicorn (Apache-2.0). Unicorn itself is GPL-2.0.
+#
+# Public targets (link exactly one: each builds uc.c for its own set of
+# guest architectures):
+#   :unicorn        ARM, AArch64 and x86 guests
+#   :unicorn_arm    32-bit ARM guests only
+#   :unicorn_arm64  AArch64 guests only
+#   :unicorn_x86    x86 guests only
+# Consumers include <unicorn/unicorn.h>.
+# Hosts: Linux and macOS on x86-64 and AArch64 (GCC/Clang), Windows on x86-64
+# (MSVC).
+
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load(
+    "//:unicorn.bzl",
+    "HOST_COMPATIBILITY",
+    "config_headers",
+    "test_copts",
+    "unicorn_common",
+    "unicorn_hosts",
+    "unicorn_library",
+    "unicorn_softmmu",
+)
+
+package(default_visibility = ["//visibility:private"])
+
+licenses(["restricted"])
+
+exports_files(["COPYING"])
+
+unicorn_hosts()
+
+unicorn_common(name = "unicorn_common")
+
+unicorn_softmmu(
+    name = "arm_softmmu",
+    common = ":unicorn_common",
+    softmmu = "arm",
+    srcs = [
+        "qemu/target/arm/cpu.c",
+        "qemu/target/arm/crypto_helper.c",
+        "qemu/target/arm/debug_helper.c",
+        "qemu/target/arm/helper.c",
+        "qemu/target/arm/iwmmxt_helper.c",
+        "qemu/target/arm/m_helper.c",
+        "qemu/target/arm/neon_helper.c",
+        "qemu/target/arm/op_helper.c",
+        "qemu/target/arm/psci.c",
+        "qemu/target/arm/tlb_helper.c",
+        "qemu/target/arm/translate.c",
+        "qemu/target/arm/vec_helper.c",
+        "qemu/target/arm/vfp_helper.c",
+        "qemu/target/arm/unicorn_arm.c",
+    ],
+    target_dir = "arm",
+)
+
+unicorn_softmmu(
+    name = "aarch64_softmmu",
+    common = ":unicorn_common",
+    softmmu = "aarch64",
+    srcs = [
+        "qemu/target/arm/cpu64.c",
+        "qemu/target/arm/cpu.c",
+        "qemu/target/arm/crypto_helper.c",
+        "qemu/target/arm/debug_helper.c",
+        "qemu/target/arm/helper-a64.c",
+        "qemu/target/arm/helper.c",
+        "qemu/target/arm/iwmmxt_helper.c",
+        "qemu/target/arm/m_helper.c",
+        "qemu/target/arm/neon_helper.c",
+        "qemu/target/arm/op_helper.c",
+        "qemu/target/arm/pauth_helper.c",
+        "qemu/target/arm/psci.c",
+        "qemu/target/arm/sve_helper.c",
+        "qemu/target/arm/tlb_helper.c",
+        "qemu/target/arm/translate-a64.c",
+        "qemu/target/arm/translate.c",
+        "qemu/target/arm/translate-sve.c",
+        "qemu/target/arm/vec_helper.c",
+        "qemu/target/arm/vfp_helper.c",
+        "qemu/target/arm/unicorn_aarch64.c",
+    ],
+    target_dir = "arm",
+)
+
+unicorn_softmmu(
+    name = "x86_64_softmmu",
+    common = ":unicorn_common",
+    softmmu = "x86_64",
+    srcs = [
+        "qemu/hw/i386/x86.c",
+        "qemu/target/i386/arch_memory_mapping.c",
+        "qemu/target/i386/bpt_helper.c",
+        "qemu/target/i386/cc_helper.c",
+        "qemu/target/i386/cpu.c",
+        "qemu/target/i386/excp_helper.c",
+        "qemu/target/i386/fpu_helper.c",
+        "qemu/target/i386/helper.c",
+        "qemu/target/i386/int_helper.c",
+        "qemu/target/i386/machine.c",
+        "qemu/target/i386/mem_helper.c",
+        "qemu/target/i386/misc_helper.c",
+        "qemu/target/i386/mpx_helper.c",
+        "qemu/target/i386/seg_helper.c",
+        "qemu/target/i386/smm_helper.c",
+        "qemu/target/i386/svm_helper.c",
+        "qemu/target/i386/translate.c",
+        "qemu/target/i386/xsave_helper.c",
+        "qemu/target/i386/unicorn.c",
+    ],
+    target_dir = "i386",
+)
+
+unicorn_library(
+    name = "unicorn",
+    archs = [
+        "ARM",
+        "ARM64",
+        "X86",
+    ],
+    softmmus = [
+        ":arm_softmmu",
+        ":aarch64_softmmu",
+        ":x86_64_softmmu",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+unicorn_library(
+    name = "unicorn_arm",
+    archs = ["ARM"],
+    softmmus = [":arm_softmmu"],
+    visibility = ["//visibility:public"],
+)
+
+unicorn_library(
+    name = "unicorn_arm64",
+    archs = ["ARM64"],
+    softmmus = [":aarch64_softmmu"],
+    visibility = ["//visibility:public"],
+)
+
+unicorn_library(
+    name = "unicorn_x86",
+    archs = ["X86"],
+    softmmus = [":x86_64_softmmu"],
+    visibility = ["//visibility:public"],
+)
+
+# Upstream unit tests (tests/unit, acutest). test_ctl has #ifdef
+# UNICORN_HAS_<ARCH> sections, so it is built with the same defines as the
+# library it links.
+_ALL_ARCH_DEFINES = [
+    "-DUNICORN_HAS_ARM",
+    "-DUNICORN_HAS_ARM64",
+    "-DUNICORN_HAS_X86",
+]
+
+[
+    cc_test(
+        name = "%s%s" % (test, suffix),
+        # test_mem takes about 40 s in fastbuild on a fast host.
+        size = "medium" if test == "test_mem" else "small",
+        srcs = [
+            "tests/unit/%s.c" % test,
+            "tests/unit/acutest.h",
+            "tests/unit/unicorn_test.h",
+        ] + config_headers(),
+        copts = test_copts(defines),
+        target_compatible_with = HOST_COMPATIBILITY,
+        visibility = ["//visibility:public"],
+        deps = [library],
+    )
+    for test, suffix, library, defines in [
+        ("test_arm", "", ":unicorn", _ALL_ARCH_DEFINES),
+        ("test_arm64", "", ":unicorn", _ALL_ARCH_DEFINES),
+        ("test_x86", "", ":unicorn", _ALL_ARCH_DEFINES),
+        ("test_mem", "", ":unicorn", _ALL_ARCH_DEFINES),
+        ("test_ctl", "", ":unicorn", _ALL_ARCH_DEFINES),
+        # The 32-bit ARM-only variant on its own.
+        ("test_arm", "_arm_only", ":unicorn_arm", ["-DUNICORN_HAS_ARM"]),
+    ]
+]
+
+# Each variant supports exactly its guest architectures (and the others fail
+# uc_open), so linking the wrong variant is caught.
+[
+    cc_test(
+        name = "variant_test_" + library,
+        size = "small",
+        srcs = ["bazel/variant_test.c"],
+        copts = ["-DEXPECT_%s=1" % arch for arch in archs],
+        target_compatible_with = HOST_COMPATIBILITY,
+        visibility = ["//visibility:public"],
+        deps = [":" + library],
+    )
+    for library, archs in [
+        ("unicorn", ["ARM", "ARM64", "X86"]),
+        ("unicorn_arm", ["ARM"]),
+        ("unicorn_arm64", ["ARM64"]),
+        ("unicorn_x86", ["X86"]),
+    ]
+]
