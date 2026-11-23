@@ -77,6 +77,7 @@ Validations performed in the scripts are:
 - Verify the patches and overlay files (if any) apply to the source archive. The checked-in `MODULE.bazel` file doesn't need to match the one in the source archive since Bazel always uses the checked-in one.
 - Verify the `compatibility_level` in `MODULE.bazel` matches the previous version. If the bump is intentional, comment `@bazel-io skip_check compatibility_level` in the PR to skip this optional check.
 - Check if the module is new or the `presubmit.yml` file is too different compared to the last version, if so a BCR maintainer review will be required to run jobs specified in `presubmit.yml`.
+- Verify no binary files are added or modified compared to `main`.
 
 Additional validations implemented in the [bcr_presubmit.py](https://github.com/bazelbuild/continuous-integration/blob/master/buildkite/bazel-central-registry/bcr_presubmit.py) script:
 
