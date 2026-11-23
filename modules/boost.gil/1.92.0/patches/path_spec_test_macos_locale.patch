@@ -1,0 +1,40 @@
+diff --git a/test/core/io/path_spec.cpp b/test/core/io/path_spec.cpp
+index 8179512e6a..e8881003e0 100644
+--- a/test/core/io/path_spec.cpp
++++ b/test/core/io/path_spec.cpp
+@@ -47,9 +47,32 @@ void test_convert_to_native_string_from_wstring()
+ 
+ int main()
+ {
+-    // Set global locale to one that uses UTF-8. Could be "en_US.UTF-8" or
+-    // "C.UTF-8" or something similar, as long as it exists on the system.
+-    std::locale::global(std::locale("C.UTF-8"));
++    // Set global locale to one that uses UTF-8. The exact name of such a
++    // locale is platform-dependent (e.g. "C.UTF-8" on glibc systems is not
++    // available on macOS), so try a few common candidates and fall back to
++    // the current locale if none of them exist on this system.
++    // ".UTF-8" is tried first: it is the cross-platform-safe form documented
++    // by Microsoft (since VS2015 Update 2 / Windows 10 1803) that is
++    // recognized by both std::locale and the underlying setlocale() call it
++    // triggers; POSIX-style names such as "en_US.UTF-8" can construct a
++    // valid std::locale on MSVC without actually switching the C runtime's
++    // multibyte conversion (used by wcstombs) to UTF-8, silently leaving it
++    // on the system ANSI codepage.
++    char const* const utf8_locale_names[] = {
++        ".UTF-8", "C.UTF-8", "en_US.UTF-8", "UTF-8", "en_US.utf8"
++    };
++    for (char const* name : utf8_locale_names)
++    {
++        try
++        {
++            std::locale::global(std::locale(name));
++            break;
++        }
++        catch (std::runtime_error const&)
++        {
++            // Try the next candidate.
++        }
++    }
+ 
+     test_convert_to_string_from_wstring();
+     test_convert_to_native_string_from_wchar_t_ptr();

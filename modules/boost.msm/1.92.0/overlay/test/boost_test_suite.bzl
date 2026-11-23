@@ -46,11 +46,14 @@ def boost_test_suite(name, srcs, cxxstd = None, local_defines = {}):
                 ":test_headers",
                 "@boost.core",
                 "@boost.fusion",
+                "@boost.json",
                 "@boost.msm",
+                "@boost.msm.doc//:attachments",
                 "@boost.parameter",
                 "@boost.serialization",
                 "@boost.test",
                 "@boost.test//:unit_test_main",
+                "@nlohmann_json//:json",
             ],
         )
     native.test_suite(name = name, tests = tests)

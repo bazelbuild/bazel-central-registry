@@ -66,13 +66,12 @@ def boost_test_common():
         deps = _DEPS,
     )
 
-def boost_test_suite(name, srcs, unit_test_main = False):
+def boost_test_suite(name, srcs):
     """Generates a cc_test target per upstream test.
 
     Args:
         name: name of the generated test_suite.
         srcs: test sources, one translation unit per test.
-        unit_test_main: whether the tests get their main from Boost.Test.
     """
     tests = []
     for src in srcs:
@@ -87,7 +86,6 @@ def boost_test_suite(name, srcs, unit_test_main = False):
             # shared library and in the test binary, and are destroyed twice.
             linkstatic = True,
             local_defines = _LOCAL_DEFINES,
-            deps = _DEPS + [":redis_test_common"] +
-                   (["@boost.test//:unit_test_main"] if unit_test_main else []),
+            deps = _DEPS + [":redis_test_common"],
         )
     native.test_suite(name = name, tests = tests)
