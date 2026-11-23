@@ -26,6 +26,7 @@ Validations performed are:
     - If not, we should require BCR maintainer review.
   - Verify the patches and overlay files apply to the source archive.
   - Verify attestations (SLSA provenance / VSA) referenced by attestations.json (if it exists).
+  - Verify no binary files are added or modified compared to main.
 """
 
 import argparse
@@ -100,6 +101,11 @@ ATTESTATION_HISTORY_CHECK_OPT_OUT = frozenset(
         "protobuf",  # accidentally introduced attestations.json
     ]
 )
+
+# Universal SHA-1 of the empty tree in Git, passed via GIT_ATTR_SOURCE so in-tree
+# .gitattributes files on a PR branch do not override --numstat binary detection
+# on Git >= 2.40 (silently ignored on older Git versions).
+_GIT_EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 
 def print_collapsed_group(name):
@@ -761,6 +767,54 @@ class BcrValidator:
                         f"Symlink is not allowed: {full_path}",
                     )
 
+    def _resolve_base_ref(self):
+        for ref in ("refs/remotes/upstream/main", "refs/remotes/origin/main", "refs/heads/main"):
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                cwd=self.registry.root,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if result.returncode == 0:
+                return ref
+        raise BcrValidationException(
+            f"Could not find 'upstream/main', 'origin/main', or 'main' ref to diff against in '{self.registry.root}'."
+        )
+
+    def verify_no_binary_files(self):
+        """Verify no binary files are added or modified compared to main."""
+        base_ref = self._resolve_base_ref()
+        # Git paths are raw bytes on POSIX and `git diff -z` emits them verbatim.
+        # Use PEP 383 `surrogateescape` (https://peps.python.org/pep-0383/) so
+        # non-UTF-8 filename bytes decode losslessly instead of raising
+        # UnicodeDecodeError, then format with `ascii(path)` before printing so
+        # lone surrogates and control characters are safely escaped.
+        try:
+            output = subprocess.check_output(
+                ["git", "diff", f"{base_ref}...HEAD", "--numstat", "--no-renames", "--diff-filter=d", "-z"],
+                cwd=self.registry.root,
+                env={**os.environ, "GIT_ATTR_SOURCE": _GIT_EMPTY_TREE_SHA1},
+                stderr=subprocess.PIPE,
+            ).decode("utf-8", errors="surrogateescape")
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or b"").decode("utf-8", errors="replace").strip()
+            raise BcrValidationException(
+                f"Failed to diff '{base_ref}...HEAD' in '{self.registry.root}': {stderr}"
+            ) from e
+        found_binary = False
+        for entry in output.split("\0"):
+            if not entry:
+                continue
+            added, deleted, path = entry.split("\t", 2)
+            if added == "-" and deleted == "-":
+                found_binary = True
+                self.report(
+                    BcrValidationResult.FAILED,
+                    f"Binary file is not allowed: {ascii(path)}",
+                )
+        if not found_binary:
+            self.report(BcrValidationResult.GOOD, "No binary files detected.")
+
     def validate_module(self, module_name, version, skipped_validations):
         print_expanded_group(f"Validating {module_name}@{version}")
         self.verify_module_existence(module_name, version)
@@ -939,6 +993,7 @@ class BcrValidator:
         """General global checks for BCR"""
         self.verify_module_name_conflict()
         self.verify_no_symlinks()
+        self.verify_no_binary_files()
 
     def getValidationReturnCode(self):
         # Calculate the overall return code
