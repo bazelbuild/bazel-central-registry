@@ -1,0 +1,42 @@
+matrix:
+  platform:
+  - debian13
+  - ubuntu2204
+  - ubuntu2404
+  bazel:
+  - 8.x
+  - 9.x
+  - rolling
+  # The default-toolchain task already covers every Bazel version, so test
+  # hermetic LLVM on 9.x only to keep CI load down.
+  hermetic_llvm_bazel: [9.x]
+tasks:
+  verify_targets:
+    name: Verify build targets
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets: &build_targets
+    - '@poco//:PocoFoundation'
+    - '@poco//:PocoNet'
+  # Build against glibc 2.31, where shm_open/shm_unlink are still in librt.
+  verify_targets_hermetic_llvm_linux_amd64_gnu_2_31:
+    name: Verify build targets (hermetic llvm, linux_amd64_gnu.2.31)
+    platform: ubuntu2404
+    bazel: ${{ hermetic_llvm_bazel }}
+    setup: &hermetic_llvm_setup
+    - echo 'bazel_dep(name = "llvm", version = "0.8.27")' >> MODULE.bazel
+    build_flags:
+    - '--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1'
+    - '--extra_toolchains=@llvm//toolchain:all'
+    - '--platforms=@llvm//platforms:linux_amd64_gnu.2.31'
+    build_targets: *build_targets
+  verify_targets_hermetic_llvm_linux_aarch64_gnu_2_31:
+    name: Verify build targets (hermetic llvm, linux_aarch64_gnu.2.31)
+    platform: ubuntu2404_arm64
+    bazel: ${{ hermetic_llvm_bazel }}
+    setup: *hermetic_llvm_setup
+    build_flags:
+    - '--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1'
+    - '--extra_toolchains=@llvm//toolchain:all'
+    - '--platforms=@llvm//platforms:linux_aarch64_gnu.2.31'
+    build_targets: *build_targets
