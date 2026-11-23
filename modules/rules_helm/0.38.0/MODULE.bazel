@@ -1,0 +1,133 @@
+"""periareon/rules_helm"""
+
+module(
+    name = "rules_helm",
+    version = "0.38.0",
+)
+
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "rules_go", version = "0.63.0")
+bazel_dep(name = "gazelle", version = "0.53.0")
+bazel_dep(name = "bazel_lib", version = "3.0.0")
+bazel_dep(name = "package_metadata", version = "0.0.15")
+
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1", dev_dependency = True)
+bazel_dep(name = "rules_cc", version = "0.2.17", dev_dependency = True)
+
+# This module depends on no image rules, not even for tests. The image
+# modules under `extensions/` and the book under `docs/` are separate Bazel
+# modules that depend on this one and are tested from their own directories.
+# Nothing here may depend on them.
+
+go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
+go_sdk.from_file(go_mod = "//:go.mod")
+
+go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
+go_deps.from_file(go_mod = "//:go.mod")
+use_repo(
+    go_deps,
+    "com_github_opencontainers_go_digest",
+    "com_github_opencontainers_image_spec",
+    "in_gopkg_yaml_v3",
+    "io_k8s_sigs_yaml",
+    "sh_helm_helm_v4",
+)
+
+helm = use_extension("@rules_helm//helm:extensions.bzl", "helm")
+helm.host_tools()
+use_repo(
+    helm,
+    "helm",
+    "helm_toolchains",
+)
+
+register_toolchains(
+    "@helm_toolchains//:all",
+)
+
+helm_dev = use_extension(
+    "@rules_helm//helm:extensions.bzl",
+    "helm",
+    dev_dependency = True,
+)
+helm_dev.plugin(
+    name = "cm-push",
+    integrity = {
+        "darwin-amd64": "sha256-zUUHz8RskD/Oq5n1qKSmvRXp5FZek6CSkd8w9awSQas=",
+        "darwin-arm64": "sha256-oKyCvUYCHt/LPcIj99ZaVP6PlpGPy7dgwTl/yo43SqI=",
+        "linux-amd64": "sha256-KfH3E2mbR+PJwY1gtQVffA6LzBIh1mOcBX54fgi2Vqg=",
+        "linux-arm64": "sha256-Y92zov8e7yjSH6X0aYY2xVtCAxUr2cbM+stO8JFBsNI=",
+        "windows-amd64": "sha256-aFkN3IJXd8TVlJ/NY3v2sZ4Rerp644e02u0HNqboELw=",
+    },
+    url_templates = {
+        "darwin-amd64": ["https://github.com/chartmuseum/helm-push/releases/download/v{version}/helm-push_{version}_darwin_amd64.tar.gz"],
+        "darwin-arm64": ["https://github.com/chartmuseum/helm-push/releases/download/v{version}/helm-push_{version}_darwin_arm64.tar.gz"],
+        "linux-amd64": ["https://github.com/chartmuseum/helm-push/releases/download/v{version}/helm-push_{version}_linux_amd64.tar.gz"],
+        "linux-arm64": ["https://github.com/chartmuseum/helm-push/releases/download/v{version}/helm-push_{version}_linux_arm64.tar.gz"],
+        "windows-amd64": ["https://github.com/chartmuseum/helm-push/releases/download/v{version}/helm-push_{version}_windows_amd64.tar.gz"],
+    },
+    version = "0.10.4",
+)
+helm_dev.toolchain(
+    name = "with_cm_push",
+    plugins = ["cm-push"],
+)
+use_repo(
+    helm_dev,
+    "with_cm_push_toolchains",
+)
+
+helm_test = use_extension("@rules_helm//tests:test_extensions.bzl", "helm_test", dev_dependency = True)
+use_repo(
+    helm_test,
+    "helm_cm_push_linux",
+    "helm_cm_push_macos",
+    "helm_cm_push_windows",
+    "helm_test_deps__with_external_deps_bank_vaults",
+    "helm_test_deps__with_external_deps_cert_manager",
+    "helm_test_deps__with_external_deps_grafana",
+    "helm_test_deps__with_external_deps_karpenter",
+    "helm_test_deps__with_external_deps_postgresql",
+    "helm_test_deps__with_external_deps_redis",
+    "helm_test_deps__with_external_deps_trust_manager",
+    "helm_test_deps__with_external_deps_vault",
+)
+
+helm_charts = use_extension(
+    "@rules_helm//helm:extensions.bzl",
+    "helm_charts",
+    dev_dependency = True,
+)
+helm_charts.chart(
+    name = "helm_charts_test_cert_manager",
+    url = "oci://quay.io/jetstack/charts/cert-manager:1.19.4",
+)
+helm_charts.chart(
+    name = "helm_charts_test_cert_manager_pinned",
+    sha256 = "d0c202f57b8653eb957fb5b2f9472c1b11cf6b51acc5c777e4b824f7b5a9ea87",
+    url = "oci://quay.io/jetstack/charts/cert-manager:1.19.4",
+)
+helm_charts.chart(
+    name = "helm_charts_test_pre_release",
+    sha256 = "0041fc0111fab7d62beed6d46d283f5ef4d851ad8c77055466bb4c82e36b6a6d",
+    url = "oci://quay.io/jetstack/charts/cert-manager:1.21.0-beta.0",
+)
+helm_charts.chart(
+    name = "helm_charts_test_vault_operator",
+    sha256 = "9abd372c9d843b974d918442cd0e68c9669f57d8630566ce74dfaf63447c282a",
+    url = "oci://ghcr.io/bank-vaults/helm-charts/vault-operator:1.23.0",
+)
+helm_charts.chart(
+    name = "cert-manager",
+    sha256 = "d0c202f57b8653eb957fb5b2f9472c1b11cf6b51acc5c777e4b824f7b5a9ea87",
+    url = "oci://quay.io/jetstack/charts/cert-manager:1.19.4",
+)
+use_repo(
+    helm_charts,
+    "cert-manager",
+    "helm_charts_test_cert_manager",
+    "helm_charts_test_cert_manager_pinned",
+    "helm_charts_test_pre_release",
+    "helm_charts_test_vault_operator",
+)

@@ -23,7 +23,7 @@ inputs:
   gemini_model:
     description: 'Gemini model name'
     required: false
-    default: 'gemini-4-argon'
+    default: 'gemini-4-carbon'
 
 runs:
   using: 'composite'
@@ -36,8 +36,10 @@ runs:
         REPOSITORY: ${{ github.repository }}
         COMMENT_ID: ${{ github.event.comment.id }}
       run: |-
-        gh api "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
-          -f content='eyes' || true
+        if [[ "${REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "${COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]; then
+          gh api "repos/${REPOSITORY}/issues/comments/${COMMENT_ID}/reactions" \
+            -f content='eyes' || true
+        fi
 
     - name: Prepare BCR review context
       id: prepare_context
@@ -73,33 +75,59 @@ runs:
         AGY_CLI_MODEL_API_MAX_RETRIES: '10'
       run: |-
         set -euo pipefail
-        curl -fsSL https://antigravity.google/cli/install.sh | bash
-        export PATH="${HOME}/.local/bin:${PATH}"
+        AGY_BIN_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/agy-bin.XXXXXX")"
+        SETTINGS_FILE="$(mktemp "${RUNNER_TEMP:-/tmp}/agy-settings.XXXXXX.json")"
+        trap 'rm -rf "${AGY_BIN_DIR}" "${SETTINGS_FILE}"' EXIT
+
+        curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "${AGY_BIN_DIR}"
+        export PATH="${AGY_BIN_DIR}:${PATH}"
         agy --version
 
+        if [[ ! "${GEMINI_MODEL}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+          echo "::error::Invalid GEMINI_MODEL value."
+          exit 1
+        fi
+
         mkdir -p gemini-artifacts
-        cat <<'EOF' > /tmp/agy-settings.json
-        {
-          "modelProvider": "gemini",
-          "permissions": {
-            "allow": [
-              "read_file(*)"
-            ],
-            "deny": [
-              "write_file(*)",
-              "command(*)"
-            ]
-          }
+        python3 - "${SETTINGS_FILE}" <<'PY'
+        import json, os, sys
+        ws = os.path.realpath(os.getcwd())
+        settings = {
+            "modelProvider": "gemini",
+            "allowNonWorkspaceAccess": False,
+            "permissions": {
+                "allow": [
+                    f"read_file({ws})",
+                ],
+                "deny": [
+                    f"read_file({ws}/.git)",
+                    "read_file(/proc)",
+                    "read_file(/sys)",
+                    "read_file(/etc)",
+                    "read_file(/tmp)",
+                    "read_file(/var)",
+                    "read_file(/root)",
+                    "write_file(*)",
+                    "command(*)",
+                    "read_url(*)",
+                    "execute_url(*)",
+                    "download_url(*)",
+                    "mcp(*)",
+                    "escalate_admin(*)",
+                ],
+            },
         }
-        EOF
+        with open(sys.argv[1], "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+        PY
 
         if ! agy \
           --output-format json \
           --model "${GEMINI_MODEL}" \
           --disable-slash-commands \
-          --settings /tmp/agy-settings.json \
+          --settings "${SETTINGS_FILE}" \
           --log-file gemini-artifacts/cli.log \
-          < .gemini/prompt.md \
+          < gemini-artifacts/prompt.md \
           > gemini-artifacts/stdout.log \
           2> gemini-artifacts/stderr.log; then
           echo "::error::Antigravity CLI exited with an error."
@@ -114,18 +142,18 @@ runs:
               if [[ -s gemini-artifacts/stderr.log ]]; then
                 echo "<details open><summary><strong>stderr.log</strong></summary>"
                 echo ""
-                echo '```text'
+                echo '~~~~~~text'
                 tail -n 100 gemini-artifacts/stderr.log
-                echo '```'
+                echo '~~~~~~'
                 echo "</details>"
                 echo ""
               fi
               if [[ -s gemini-artifacts/cli.log ]]; then
                 echo "<details><summary><strong>cli.log (last 100 lines)</strong></summary>"
                 echo ""
-                echo '```text'
+                echo '~~~~~~text'
                 tail -n 100 gemini-artifacts/cli.log
-                echo '```'
+                echo '~~~~~~'
                 echo "</details>"
                 echo ""
               fi
@@ -146,4 +174,4 @@ runs:
       if: always()
       shell: bash
       run: |-
-        rm -rf /tmp/agy-settings.json .gemini/context.json .gemini/prompt.md gemini-artifacts
+        rm -rf "${RUNNER_TEMP:-/tmp}"/agy-bin.* "${RUNNER_TEMP:-/tmp}"/agy-settings*.json /tmp/agy-settings*.json gemini-artifacts

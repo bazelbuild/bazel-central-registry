@@ -15,11 +15,13 @@
 """Unit tests for prepare_context.py."""
 
 import base64
+import io
 import json
 import os
 import pathlib
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 import prepare_context
@@ -41,8 +43,15 @@ class PrepareContextTest(unittest.TestCase):
         self.modules_root.mkdir()
         self.old_cwd = os.getcwd()
         os.chdir(self.root)
+        self.eol_patcher = patch.object(
+            prepare_context,
+            "fetch_eol_platforms",
+            return_value=["debian11", "ubuntu2004"],
+        )
+        self.eol_patcher.start()
 
     def tearDown(self):
+        self.eol_patcher.stop()
         os.chdir(self.old_cwd)
         self.tmp_dir.cleanup()
 
@@ -161,7 +170,7 @@ class PrepareContextTest(unittest.TestCase):
             rc = prepare_context.main()
             self.assertEqual(rc, 0)
 
-        ctx = json.loads((self.root / ".gemini" / "context.json").read_text(encoding="utf-8"))
+        ctx = json.loads((self.root / "gemini-artifacts" / "context.json").read_text(encoding="utf-8"))
         self.assertFalse(ctx["needs_bcr_maintainer_review"])
         self.assertEqual(ctx["bcr_maintainer_review_reasons"], [])
         self.assertEqual(ctx["non_module_files"], [])
@@ -217,7 +226,7 @@ class PrepareContextTest(unittest.TestCase):
             rc = prepare_context.main()
             self.assertEqual(rc, 0)
 
-        ctx = json.loads((self.root / ".gemini" / "context.json").read_text(encoding="utf-8"))
+        ctx = json.loads((self.root / "gemini-artifacts" / "context.json").read_text(encoding="utf-8"))
         self.assertTrue(ctx["needs_bcr_maintainer_review"])
         # Only MODULE.bazel is flagged as violating the add-only policy, not presubmit.yml.
         self.assertEqual(ctx["mutated_existing_version_files"], ["modules/foo/1.0.0/MODULE.bazel"])
@@ -246,21 +255,17 @@ class PrepareContextTest(unittest.TestCase):
             self.assertEqual(prepare_context.main(), 0)
             self.assertIn("should_run=false", out_file.read_text(encoding="utf-8"))
 
-    def test_render_review_prompt_expands_styleguide_before_context(self):
+    def test_render_review_prompt_expands_context_json(self):
         tpl_dir = self.root / ".github" / "actions" / "gemini-review"
         tpl_dir.mkdir(parents=True)
         (tpl_dir / "prompt_template.md").write_text(
-            "Context:\n" "@{.gemini/context.json}\n" "Guide:\n" "@{.gemini/styleguide.md}\n",
+            "Context:\n{{CONTEXT_JSON}}\n",
             encoding="utf-8",
         )
-        (self.root / ".gemini").mkdir(exist_ok=True)
-        (self.root / ".gemini" / "styleguide.md").write_text("# BCR Style Guide", encoding="utf-8")
-        # Ensure @{.gemini/styleguide.md} inside context.json is not expanded.
-        ctx_str = '{"note": "@{.gemini/styleguide.md}"}'
+        ctx_str = '{"pull_request_number": 42}'
         self.assertTrue(prepare_context.render_review_prompt(ctx_str))
-        rendered = (self.root / ".gemini" / "prompt.md").read_text(encoding="utf-8")
-        self.assertIn('{"note": "@{.gemini/styleguide.md}"}', rendered)
-        self.assertIn("Guide:\n# BCR Style Guide", rendered)
+        rendered = (self.root / "gemini-artifacts" / "prompt.md").read_text(encoding="utf-8")
+        self.assertIn('{"pull_request_number": 42}', rendered)
 
     def test_stage_pr_files_reconstructs_added_files_and_flags_symlinks(self):
         pr_files = [
@@ -305,6 +310,86 @@ class PrepareContextTest(unittest.TestCase):
         self.assertEqual(changed_info[0]["head_file_path"], str(staged_mod.resolve()))
         self.assertIsNone(changed_info[1]["head_file_path"])
         self.assertTrue(any("Symlink detected" in r for r in reasons))
+
+    def test_new_rules_module_adds_explicit_warning_reason(self):
+        def fake_gh_api(endpoint, paginate=False, slurp=False):
+            if endpoint == "repos/bazelbuild/bazel-central-registry/pulls/20":
+                return {
+                    "state": "open",
+                    "draft": False,
+                    "changed_files": 2,
+                    "user": {"login": "alice"},
+                    "head": {"sha": "f" * 40},
+                }
+            if "pulls/20/files" in endpoint:
+                return [
+                    [
+                        {"filename": "modules/rules_foo/metadata.json", "status": "added"},
+                        {"filename": "modules/rules_foo/0.1.0/MODULE.bazel", "status": "added"},
+                    ]
+                ]
+            if "contents/modules/rules_foo/metadata.json" in endpoint:
+                return _b64_content(json.dumps({"versions": ["0.1.0"], "maintainers": []}))
+            raise AssertionError(f"Unexpected endpoint: {endpoint}")
+
+        env = {
+            "REPOSITORY": "bazelbuild/bazel-central-registry",
+            "EVENT_NAME": "pull_request_target",
+            "EVENT_ACTION": "opened",
+            "PR_NUMBER": "20",
+            "GITHUB_OUTPUT": str(self.root / "output.txt"),
+        }
+        with patch.dict(os.environ, env, clear=False), patch.object(prepare_context, "gh_api", side_effect=fake_gh_api):
+            self.assertEqual(prepare_context.main(), 0)
+
+        ctx = json.loads((self.root / "gemini-artifacts" / "context.json").read_text(encoding="utf-8"))
+        self.assertTrue(ctx["needs_bcr_maintainer_review"])
+        self.assertTrue(
+            any("starts with the 'rules_' prefix" in r for r in ctx["bcr_maintainer_review_reasons"]),
+            ctx["bcr_maintainer_review_reasons"],
+        )
+
+    def test_fetch_eol_platforms(self):
+        self.eol_patcher.stop()
+        try:
+            snippet = 'EOL_PLATFORMS = frozenset([\n    "ubuntu2004",\n    "debian11",\n])\n'
+
+            class FakeResp(io.BytesIO):
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    pass
+
+            with patch.object(
+                prepare_context.urllib.request,
+                "urlopen",
+                return_value=FakeResp(snippet.encode("utf-8")),
+            ):
+                self.assertEqual(prepare_context.fetch_eol_platforms(), ["debian11", "ubuntu2004"])
+
+            with patch.object(
+                prepare_context.urllib.request,
+                "urlopen",
+                side_effect=urllib.error.URLError("offline"),
+            ):
+                self.assertEqual(prepare_context.fetch_eol_platforms(), [])
+        finally:
+            self.eol_patcher.start()
+
+    def test_get_latest_bazel_majors(self):
+        releases = [
+            {"tag_name": "10.0.0rc1", "prerelease": True, "draft": False},
+            {"tag_name": "10.0.0", "prerelease": False, "draft": True},
+            {"tag_name": "9.3.0", "prerelease": False, "draft": False},
+            {"tag_name": "8.4.2", "prerelease": False, "draft": False},
+            {"tag_name": "7.6.1", "prerelease": False, "draft": False},
+        ]
+        with patch.object(prepare_context, "gh_api", return_value=releases):
+            self.assertEqual(prepare_context.get_latest_bazel_majors(), [8, 9])
+
+        with patch.object(prepare_context, "gh_api", side_effect=RuntimeError("API error")):
+            self.assertEqual(prepare_context.get_latest_bazel_majors(), [8, 9])
 
 
 if __name__ == "__main__":

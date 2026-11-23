@@ -16,9 +16,14 @@
 
 import unittest
 from registry import RegistryClient
-from tools.bcr_validation import BcrValidator, BcrValidationException, is_ref_in_original_repo
+from tools.bcr_validation import (
+    BcrValidationException,
+    BcrValidationResult,
+    BcrValidator,
+    is_ref_in_original_repo,
+)
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 class TestBcrValidation(unittest.TestCase):
@@ -74,6 +79,44 @@ class TestBcrValidation(unittest.TestCase):
             "pull/1234/merge",
         ):
             self.assertFalse(is_ref_in_original_repo("fake/repo", ref), ref)
+
+    def _verify_source_repo(self, repositories, source_url):
+        self.bcr_validator.validation_results.clear()
+        self.bcr_validator.registry.get_source = MagicMock(return_value={"url": source_url})
+        self.bcr_validator.registry.get_metadata = MagicMock(return_value={"repository": repositories})
+        self.bcr_validator.verify_source_archive_url_match_github_repo(module_name="foobar", version="1.0.0")
+        return self.bcr_validator.validation_results[-1][0]
+
+    def test_verify_source_archive_url_match_https_github_repo(self):
+        repo = "https://github.com/example-owner/example-repo"
+        release_url = f"{repo}/releases/download/v1.0.0/pkg.tar.gz"
+        archive_url = f"{repo}/archive/0123456789abcdef0123456789abcdef01234567.tar.gz"
+
+        with patch("tools.bcr_validation.requests.get") as mock_get:
+            self.assertEqual(BcrValidationResult.GOOD, self._verify_source_repo([repo], release_url))
+            self.assertEqual(BcrValidationResult.GOOD, self._verify_source_repo([f"{repo}/"], release_url))
+            self.assertEqual(
+                BcrValidationResult.GOOD,
+                self._verify_source_repo(
+                    ["https://mirror.bazel.build/github.com/example-owner/example-repo/"],
+                    "https://mirror.bazel.build/github.com/example-owner/example-repo/pkg.tar.gz",
+                ),
+            )
+            self.assertEqual(
+                BcrValidationResult.FAILED,
+                self._verify_source_repo([repo], f"{repo}/archive/refs/pull/1234/head.tar.gz"),
+            )
+            self.assertEqual(BcrValidationResult.FAILED, self._verify_source_repo(["https://github.com/"], release_url))
+            mock_get.assert_not_called()
+
+            mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"isSpoofed": False}))
+            self.assertEqual(BcrValidationResult.GOOD, self._verify_source_repo([f"{repo}/"], archive_url))
+
+            mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value={"isSpoofed": True}))
+            self.assertEqual(
+                BcrValidationResult.FAILED,
+                self._verify_source_repo(["https://example.org/foo", repo], archive_url),
+            )
 
 
 if __name__ == "__main__":

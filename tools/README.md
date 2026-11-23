@@ -21,6 +21,17 @@ $ ./tools/calc_integrity.py ./v1.2.13.zip
 sha256-woVpUbvzDjCGGs43ZVldhroT8s8BJ52QH2xiJYxX9P8=
 ```
 
+## update_integrity.py
+
+Update the SRI hashes recorded in a module version's `source.json`.
+
+```
+$ bazel run -- //tools:update_integrity zlib
+Updating integrity of module='zlib' version='1.4' in registry='/path/to/bazel-central-registry'
+
+$ bazel run -- //tools:update_integrity zlib --version=1.4
+```
+
 ## bcr_validation.py
 
 A script to validate module information in the BCR. It is used in the BCR presubmit.
