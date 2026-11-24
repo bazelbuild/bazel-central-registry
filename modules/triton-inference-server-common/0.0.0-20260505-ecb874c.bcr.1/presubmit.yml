@@ -1,9 +1,16 @@
 matrix:
   platform:
     - ubuntu2404
+    - ubuntu2404_arm64
     - ubuntu2204
+    - ubuntu2204_arm64
     - macos
     - macos_arm64
+  bazel9_platform:
+    - ubuntu2404
+    - ubuntu2404_arm64
+    - ubuntu2204
+    - ubuntu2204_arm64
   bazel:
     - 7.x
     - 8.x
@@ -21,18 +28,6 @@ tasks:
       - '@triton-inference-server-common//protobuf:common_cc_grpc'
       - '@triton-inference-server-common//protobuf:common_py_pb2'
       - '@triton-inference-server-common//protobuf:common_py_pb2_grpc'
-  # Bazel 9 no longer provides cc_library/cc_binary as built-ins, and some of
-  # gRPC's transitive dependencies (e.g. gRPC's own cython_library.bzl, re2)
-  # still use them without a load(). Restore them from rules_cc for those.
-  verify_targets_bazel9:
-    name: Verify build targets (Bazel 9)
-    platform: ${{ platform }}
-    bazel: 9.x
-    build_flags:
-      - '--cxxopt=-std=c++17'
-      - '--host_cxxopt=-std=c++17'
-      - '--incompatible_autoload_externally=+@rules_cc'
-    build_targets: *unix_build_targets
   verify_targets_windows:
     name: Verify build targets (Windows)
     platform: windows
@@ -43,20 +38,23 @@ tasks:
       - '--cxxopt=/Zc:__cplusplus'
       - '--host_cxxopt=/Zc:__cplusplus'
       - '--dynamic_mode=off'
-    build_targets: &windows_build_targets
+    build_targets:
       # Only test the native C++ targets on Windows
       - '@triton-inference-server-common//protobuf:common_proto'
       - '@triton-inference-server-common//protobuf:common_cc_proto'
       - '@triton-inference-server-common//protobuf:common_cc_grpc'
-  verify_targets_windows_bazel9:
-    name: Verify build targets (Windows, Bazel 9)
-    platform: windows
+  # gRPC 1.74 does not build with Bazel 9, so test Bazel 9 against gRPC 1.76,
+  # which still needs the C++ rules restored from rules_cc. Linux only: gRPC
+  # 1.76 fails to build on macOS and on Windows with Bazel 8+.
+  verify_targets_bazel9:
+    name: Verify build targets (Bazel 9)
+    platform: ${{ bazel9_platform }}
     bazel: 9.x
+    setup:
+      - echo 'bazel_dep(name = "grpc", version = "1.76.0.bcr.1")' >> MODULE.bazel
+      - echo 'bazel_dep(name = "protobuf", version = "33.0")' >> MODULE.bazel
     build_flags:
-      - '--cxxopt=/std:c++17'
-      - '--host_cxxopt=/std:c++17'
-      - '--cxxopt=/Zc:__cplusplus'
-      - '--host_cxxopt=/Zc:__cplusplus'
-      - '--dynamic_mode=off'
+      - '--cxxopt=-std=c++17'
+      - '--host_cxxopt=-std=c++17'
       - '--incompatible_autoload_externally=+@rules_cc'
-    build_targets: *windows_build_targets
+    build_targets: *unix_build_targets
