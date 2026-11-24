@@ -1,0 +1,210 @@
+"""https://www.kernel.org/doc/html/latest/kbuild/kconfig-language.html"""
+
+module(
+    name = "rules_kconfig",
+    version = "0.8.1",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.9")
+bazel_dep(name = "rules_cc_autoconf", version = "0.35.0")
+bazel_dep(name = "rules_python", version = "1.7.0")
+bazel_dep(name = "rules_venv", version = "0.37.0")
+
+bazel_dep(name = "rules_req_compile", version = "1.7.1", dev_dependency = True)
+bazel_dep(name = "rules_rust_mdbook", version = "0.75.0", dev_dependency = True)
+bazel_dep(name = "rules_shell", version = "0.6.1", dev_dependency = True)
+bazel_dep(name = "stardoc", version = "0.8.0", dev_dependency = True)
+
+# The WebAssembly module links the kernel's parser (see
+# kconfig/private/parser/kernel), generated at build time with the `bison()` and
+# `flex()` rules the BCR builds of the tools ship; they bring m4 themselves.
+bazel_dep(name = "bison", version = "3.8.2.bcr.13", dev_dependency = True)
+bazel_dep(name = "flex", version = "2.6.4.bcr.10", dev_dependency = True)
+
+# The C toolchains rules_cc configures for the host, so that .bazelrc can
+# name the clang-cl ones on Windows (`build:windows`).
+cc_configure = use_extension("@rules_cc//cc:extensions.bzl", "cc_configure_extension", dev_dependency = True)
+use_repo(cc_configure, "local_config_cc")
+
+# A C toolchain for `wasm32-wasip1`, so that the kernel's parser builds for
+# WebAssembly with Bazel's C++ rules and links into the Rust module
+# (`--platforms=//tools/wasi_sdk:wasm32-wasip1`, or `--config=wasm32`).
+wasi_sdk = use_repo_rule("//tools/wasi_sdk:repository.bzl", "wasi_sdk_repository")
+
+wasi_sdk(
+    name = "wasi_sdk",
+    dev_dependency = True,
+)
+
+register_toolchains(
+    "@wasi_sdk//:toolchain",
+    dev_dependency = True,
+)
+
+# The WebAssembly module is Rust around the kernel's parser
+# (kconfig/private/parser), built for `wasm32-wasip1` with
+# `--config=wasm32`, and natively for its tests.
+bazel_dep(name = "rules_rust", version = "0.75.0", dev_dependency = True)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust", dev_dependency = True)
+rust.toolchain(
+    edition = "2024",
+    extra_target_triples = ["wasm32-wasip1"],
+)
+
+# The release's Linux builds of the parser link musl statically, so that one
+# build runs on any glibc, or none (see tools/platforms): Rust toolchains for
+# `*-unknown-linux-musl`, held to the `musl` constraint, from the hosts the
+# release and its developers build on (a set's second target names only
+# what differs; a set has no default version, so the one `rust.toolchain`
+# defaults to is named, and goes up with rules_rust). They are registered
+# ahead of the host's, which a musl platform satisfies as well, being Linux
+# on the same CPU; the host's platforms lack the constraint and never take
+# these.
+RUST_VERSION = "1.99.1"
+
+rust.repository_set(
+    name = "rust_linux_x86_64_musl",
+    edition = "2024",
+    exec_triple = "x86_64-unknown-linux-gnu",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "//tools/platforms:musl",
+    ],
+    target_triple = "x86_64-unknown-linux-musl",
+    versions = [RUST_VERSION],
+)
+rust.repository_set(
+    name = "rust_linux_x86_64_musl",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+        "//tools/platforms:musl",
+    ],
+    target_triple = "aarch64-unknown-linux-musl",
+)
+rust.repository_set(
+    name = "rust_linux_aarch64_musl",
+    edition = "2024",
+    exec_triple = "aarch64-unknown-linux-gnu",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "//tools/platforms:musl",
+    ],
+    target_triple = "x86_64-unknown-linux-musl",
+    versions = [RUST_VERSION],
+)
+rust.repository_set(
+    name = "rust_linux_aarch64_musl",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+        "//tools/platforms:musl",
+    ],
+    target_triple = "aarch64-unknown-linux-musl",
+)
+rust.repository_set(
+    name = "rust_macos_aarch64_musl",
+    edition = "2024",
+    exec_triple = "aarch64-apple-darwin",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+        "//tools/platforms:musl",
+    ],
+    target_triple = "x86_64-unknown-linux-musl",
+    versions = [RUST_VERSION],
+)
+rust.repository_set(
+    name = "rust_macos_aarch64_musl",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:aarch64",
+        "//tools/platforms:musl",
+    ],
+    target_triple = "aarch64-unknown-linux-musl",
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains(
+    "@rust_toolchains//:rust_linux_x86_64_musl__x86_64-unknown-linux-musl__stable",
+    "@rust_toolchains//:rust_linux_x86_64_musl__aarch64-unknown-linux-musl__stable",
+    "@rust_toolchains//:rust_linux_aarch64_musl__x86_64-unknown-linux-musl__stable",
+    "@rust_toolchains//:rust_linux_aarch64_musl__aarch64-unknown-linux-musl__stable",
+    "@rust_toolchains//:rust_macos_aarch64_musl__x86_64-unknown-linux-musl__stable",
+    "@rust_toolchains//:rust_macos_aarch64_musl__aarch64-unknown-linux-musl__stable",
+    "@rust_toolchains//:all",
+    dev_dependency = True,
+)
+
+# The C toolchains for those platforms: musl's gcc, held to the `musl`
+# constraint so that the host's builds keep rules_cc's toolchain.
+bazel_dep(name = "toolchains_musl", version = "0.2.0", dev_dependency = True)
+
+toolchains_musl = use_extension("@toolchains_musl//:toolchains_musl.bzl", "toolchains_musl", dev_dependency = True)
+toolchains_musl.config(
+    extra_target_compatible_with = ["//tools/platforms:musl"],
+)
+use_repo(toolchains_musl, "musl_toolchains_hub")
+
+register_toolchains(
+    "@musl_toolchains_hub//:all",
+    dev_dependency = True,
+)
+
+# The module's crates. To change them, edit the module's Cargo.toml, then
+# `CARGO_BAZEL_REPIN=1 bazel sync --only=crates`.
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate", dev_dependency = True)
+crate.from_cargo(
+    name = "crates",
+    cargo_lockfile = "//kconfig/private/parser:Cargo.lock",
+    lockfile = "//:cargo-bazel-lock.json",
+    manifests = ["//kconfig/private/parser:Cargo.toml"],
+)
+use_repo(crate, "crates")
+
+python = use_extension(
+    "@rules_python//python/extensions:python.bzl",
+    "python",
+    dev_dependency = True,
+)
+python.toolchain(python_version = "3.14")
+use_repo(python, "python_3_14_host")
+
+kconfig = use_extension("//kconfig:extensions.bzl", "kconfig")
+use_repo(kconfig, "kconfiglib", "kernel_kconfig_4_19", "kernel_kconfig_6_12")
+
+register_toolchains(
+    "//kconfig/toolchain:toolchain",
+)
+
+requirements = use_extension("@rules_req_compile//extensions:python.bzl", "requirements", dev_dependency = True)
+requirements.parse(
+    name = "kconfig_pip_deps",
+    config_settings = {
+        "//tools/constraints:linux-aarch64": "linux_aarch64",
+        "//tools/constraints:linux-x86_64": "linux_x86_64",
+        "//tools/constraints:macos-aarch64": "macos_aarch64",
+        "//tools/constraints:windows-x86_64": "windows_x86_64",
+    },
+    requirements_locks = {
+        "//tools/requirements:requirements_linux_aarch64.txt": "linux_aarch64",
+        "//tools/requirements:requirements_linux_x86_64.txt": "linux_x86_64",
+        "//tools/requirements:requirements_macos_aarch64.txt": "macos_aarch64",
+        "//tools/requirements:requirements_windows_x86_64.txt": "windows_x86_64",
+    },
+)
+use_repo(requirements, "kconfig_pip_deps")
+
+register_toolchains(
+    "//tools/toolchains:black_toolchain",
+    "//tools/toolchains:isort_toolchain",
+    "//tools/toolchains:mypy_toolchain",
+    "//tools/toolchains:pylint_toolchain",
+    "//tools/toolchains:pytest_toolchain",
+    dev_dependency = True,
+)
