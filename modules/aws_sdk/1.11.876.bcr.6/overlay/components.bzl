@@ -451,9 +451,26 @@ AWS_SDK_SERVICES = [
     "xray",
 ]
 
-# Dependencies beyond @aws_sdk//:core, taken from the CMake projects and the
-# headers each service includes.
+# Dependencies beyond @aws_sdk//:core, from the CMake projects and the headers
+# each service includes. Services that use the CBOR protocol include aws/crt
+# headers directly, so they depend on crt for layering_check.
 AWS_SDK_SERVICE_EXTRA_DEPS = {
+    "application-insights": ["crt"],
+    "appstream": ["crt"],
+    "backup-gateway": ["crt"],
+    "comprehendmedical": ["crt"],
+    "compute-optimizer": ["crt"],
+    "compute-optimizer-automation": ["crt"],
+    "connectcases": ["crt"],
+    "gamelift": ["crt"],
+    "interconnect": ["crt"],
+    "iotsitewise": ["crt"],
+    "kendra-ranking": ["crt"],
+    "mailmanager": ["crt"],
+    "marketplace-entitlement": ["crt"],
+    "monitoring": ["crt"],
+    "partnercentral-revenue-measurement": ["crt"],
+    "rds-data": ["crt"],
     "s3": ["aws-c-auth"],
     "s3-crt": [
         "aws-c-auth",
@@ -463,7 +480,9 @@ AWS_SDK_SERVICE_EXTRA_DEPS = {
         "aws-c-s3",
         "crt",
     ],
+    "snowball": ["crt"],
     "sts": ["aws-c-auth"],
+    "workspaces-instances": ["crt"],
 }
 
 def aws_sdk_target_name(service):

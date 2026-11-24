@@ -73,7 +73,9 @@ cc_library(
     target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
     deps = [
+        ":aws-c-common",
         ":core",
+        ":crt",
         ":s3",
     ],
 )
@@ -120,6 +122,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":core",
+        ":crt",
         ":kms",
         ":s3",
     ],
@@ -136,6 +139,7 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":core",
+        ":crt",
         ":s3",
     ],
 )
@@ -252,9 +256,7 @@ cc_library(
     }) + select({
         ":opentelemetry": glob(_OPENTELEMETRY_SOURCES),
         "//conditions:default": [],
-    }) + [
-        ":gen_SDKConfig",
-    ],
+    }),
     hdrs = glob(
         include = [_CORE_HEADERS + "**/*.h"],
         exclude = [
@@ -272,7 +274,10 @@ cc_library(
     }) + select({
         ":opentelemetry": glob(_OPENTELEMETRY_HEADERS),
         "//conditions:default": [],
-    }),
+    }) + [
+        # Generated public header, included by Core_EXPORTS.h and AWSAllocator.h.
+        ":gen_SDKConfig",
+    ],
     copts = common_copts + [
         "-Wno-format-nonliteral",
     ],
@@ -316,6 +321,7 @@ cc_library(
     deps = [
         ":aws-c-auth",
         ":aws-c-common",
+        ":aws-c-event-stream",
         ":aws-c-http",
         ":crt",
     ] + select({
@@ -363,11 +369,15 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":aws-c-auth",
+        ":aws-c-cal",
         ":aws-c-common",
         ":aws-c-event-stream",
+        ":aws-c-http",
+        ":aws-c-io",
         ":aws-c-mqtt",
         ":aws-c-s3",
         ":aws-c-sdkutils",
+        ":aws-checksums",
     ],
 )
 
@@ -396,9 +406,7 @@ cc_library(
         "crt/aws-crt-cpp/crt/aws-c-common/source/external/libcbor/cbor/*.c",
         "crt/aws-crt-cpp/crt/aws-c-common/source/external/libcbor/cbor/internal/*.c",
         "crt/aws-crt-cpp/crt/aws-c-common/source/posix/*.c",
-    ]) + [
-        ":gen_config",
-    ] + select({
+    ]) + select({
         "@platforms//cpu:aarch64": glob(
             [
                 "crt/aws-crt-cpp/crt/aws-c-common/source/arch/arm/auxv/*.c",
@@ -428,7 +436,11 @@ cc_library(
     hdrs = glob([
         "crt/aws-crt-cpp/crt/aws-c-common/include/**/*.h",
         "crt/aws-crt-cpp/crt/aws-c-common/source/external/libcbor/**/*.h",
-    ]) + ["crt/aws-crt-cpp/crt/aws-c-common/source/external/cJSON.h"],
+    ]) + [
+        "crt/aws-crt-cpp/crt/aws-c-common/source/external/cJSON.h",
+        # Generated public header, included by aws/common/common.h and platform.h.
+        ":gen_config",
+    ],
     copts = common_copts + [
         "-Wno-sign-compare",
         "-Wno-format-nonliteral",
@@ -605,6 +617,10 @@ cc_library(
 cc_library(
     name = "aws-checksums",
     srcs = glob(["crt/aws-crt-cpp/crt/aws-checksums/source/*.c"]),
+    # Public headers, so dependents pass layering_check. aws-checksums-headers
+    # also has them for the ISA-specific libraries above.
+    hdrs = glob(["crt/aws-crt-cpp/crt/aws-checksums/include/**/*.h"]),
+    includes = ["crt/aws-crt-cpp/crt/aws-checksums/include"],
     copts = _CHECKSUMS_COPTS,
     local_defines = _CHECKSUMS_DEFINES,
     target_compatible_with = ["@platforms//os:linux"],
@@ -654,7 +670,11 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":aws-c-auth",
+        ":aws-c-cal",
         ":aws-c-common",
+        ":aws-c-http",
+        ":aws-c-io",
+        ":aws-c-sdkutils",
         ":aws-checksums",
     ],
 )
@@ -684,6 +704,7 @@ cc_library(
     textual_hdrs = glob(["crt/aws-crt-cpp/crt/aws-c-http/include/**/*.def"]),
     visibility = ["//visibility:public"],
     deps = [
+        ":aws-c-cal",
         ":aws-c-common",
         ":aws-c-compression",
         ":aws-c-io",
@@ -712,6 +733,7 @@ cc_library(
     target_compatible_with = ["@platforms//os:linux"],
     visibility = ["//visibility:public"],
     deps = [
+        ":aws-c-cal",
         ":aws-c-common",
         ":aws-c-http",
         ":aws-c-io",
