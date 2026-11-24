@@ -1,0 +1,197 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag", "string_flag")
+load("//:components.bzl", "AWS_SDK_SERVICES", "aws_sdk_target_name")
+load("//:settings.bzl", "make_variable_from_setting")
+
+# aws_sdk uses @curl//:ssl_lib to select BoringSSL (the default) or OpenSSL
+# for both curl and AWS SDK crypto. To use OpenSSL, add
+# bazel_dep(name = "curl", version = "8.11.0.bcr.5") to your root MODULE.bazel
+# and pass --@curl//:ssl_lib=openssl. Other curl TLS backends are unsupported.
+#
+# The build settings below mirror the SDK's CMake options. See README.md.
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "bundled.BUILD",
+    "compiler_select.bzl",
+    "components.bzl",
+])
+
+# HTTP client compiled into core: "curl" (CMake's default on Linux), "crt"
+# (USE_CRT_HTTP_CLIENT) or "none" (NO_HTTP_CLIENT; the application must install
+# its own HttpClientFactory).
+string_flag(
+    name = "http_client",
+    build_setting_default = "curl",
+    values = [
+        "crt",
+        "curl",
+        "none",
+    ],
+)
+
+# Minimum TLS version the curl client negotiates: "1.2" (USE_TLS_V1_2, CMake's
+# default), "1.3" (USE_TLS_V1_3) or "1.0" (curl's default, the behavior of
+# earlier aws_sdk BCR versions).
+string_flag(
+    name = "min_tls_version",
+    build_setting_default = "1.2",
+    values = [
+        "1.0",
+        "1.2",
+        "1.3",
+    ],
+)
+
+# Compress request bodies with zlib for operations that support it
+# (ENABLE_ZLIB_REQUEST_COMPRESSION).
+bool_flag(
+    name = "request_compression",
+    build_setting_default = True,
+)
+
+# Pipe curl's internal log to the SDK logger (ENABLE_CURL_LOGGING).
+bool_flag(
+    name = "curl_logging",
+    build_setting_default = True,
+)
+
+# Never fall back to IMDSv1 when fetching EC2 instance metadata
+# (DISABLE_INTERNAL_IMDSV1_CALLS).
+bool_flag(
+    name = "disable_imdsv1",
+    build_setting_default = False,
+)
+
+# Route SDK allocations through Aws::Utils::Memory so applications can install
+# a custom MemorySystemInterface (CUSTOM_MEMORY_MANAGEMENT).
+bool_flag(
+    name = "memory_management",
+    build_setting_default = False,
+)
+
+# Build the OpenTelemetry telemetry provider in core (BUILD_OPTEL). On by
+# default to match earlier aws_sdk BCR versions.
+bool_flag(
+    name = "opentelemetry",
+    build_setting_default = True,
+)
+
+# Token appended to the User-Agent of every request
+# (AWS_USER_AGENT_CUSTOMIZATION). Empty by default.
+string_flag(
+    name = "user_agent_customization",
+    build_setting_default = "",
+)
+
+make_variable_from_setting(
+    name = "user_agent_customization_variable",
+    setting = ":user_agent_customization",
+    variable = "AWS_USER_AGENT_CUSTOMIZATION",
+)
+
+# One target per generated service client, for example @aws_sdk//:s3 and
+# @aws_sdk//:redshift_serverless.
+[
+    alias(
+        name = aws_sdk_target_name(service),
+        actual = "@aws_sdk_bundled//:" + aws_sdk_target_name(service),
+    )
+    for service in AWS_SDK_SERVICES
+]
+
+# Hand-written high-level libraries from src/.
+[
+    alias(
+        name = name,
+        actual = "@aws_sdk_bundled//:" + name,
+    )
+    for name in [
+        "access_management",
+        "identity_management",
+        "queues",
+        "s3_encryption",
+        "s3_transfer",
+        "text_to_speech",
+        "transfer",
+    ]
+]
+
+alias(
+    name = "aws_sdk",
+    actual = ":core",
+)
+
+alias(
+    name = "license",
+    actual = "@aws_sdk_bundled//:license",
+)
+
+alias(
+    name = "core",
+    actual = "@aws_sdk_bundled//:core",
+)
+
+alias(
+    name = "crt",
+    actual = "@aws_sdk_bundled//:crt",
+)
+
+alias(
+    name = "aws-c-common",
+    actual = "@aws_sdk_bundled//:aws-c-common",
+)
+
+alias(
+    name = "aws-c-event-stream",
+    actual = "@aws_sdk_bundled//:aws-c-event-stream",
+)
+
+alias(
+    name = "aws-checksums",
+    actual = "@aws_sdk_bundled//:aws-checksums",
+)
+
+alias(
+    name = "aws-c-cal",
+    actual = "@aws_sdk_bundled//:aws-c-cal",
+)
+
+alias(
+    name = "aws-c-s3",
+    actual = "@aws_sdk_bundled//:aws-c-s3",
+)
+
+alias(
+    name = "aws-c-compression",
+    actual = "@aws_sdk_bundled//:aws-c-compression",
+)
+
+alias(
+    name = "aws-c-http",
+    actual = "@aws_sdk_bundled//:aws-c-http",
+)
+
+alias(
+    name = "aws-c-sdkutils",
+    actual = "@aws_sdk_bundled//:aws-c-sdkutils",
+)
+
+alias(
+    name = "aws-c-auth",
+    actual = "@aws_sdk_bundled//:aws-c-auth",
+)
+
+alias(
+    name = "aws-c-mqtt",
+    actual = "@aws_sdk_bundled//:aws-c-mqtt",
+)
+
+alias(
+    name = "aws-c-io",
+    actual = "@aws_sdk_bundled//:aws-c-io",
+)
+
+alias(
+    name = "s2n",
+    actual = "@aws_sdk_bundled//:s2n",
+)
