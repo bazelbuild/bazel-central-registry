@@ -754,6 +754,8 @@ cc_library(
         "crt/aws-crt-cpp/crt/aws-c-io/source/pkcs11/v2.40/*.h",
     ]),
     copts = common_copts + [
+        # Compiles out the Intel ITT tracing calls in aws/io/private/tracing.h.
+        "-DINTEL_NO_ITTNOTIFY_API",
         "-DUSE_S2N",
         "-DAWS_USE_EPOLL",
         "-DAWS_ENABLE_EPOLL",

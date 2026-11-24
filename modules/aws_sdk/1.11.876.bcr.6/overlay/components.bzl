@@ -6,11 +6,8 @@ service, and by the BUILD files, which alias each component.
 
 AWS_SDK_VERSION = "1.11.876"
 
-# Compiler options for every SDK library. Mirrors the definitions CMake sets for
-# all SDK targets on Linux.
+# Warning flags for every SDK library.
 AWS_SDK_COMMON_COPTS = [
-    "-DPLATFORM_LINUX",
-    "-DINTEL_NO_ITTNOTIFY_API",
     "-Wno-cast-align",
     "-Wno-cast-qual",
 ]

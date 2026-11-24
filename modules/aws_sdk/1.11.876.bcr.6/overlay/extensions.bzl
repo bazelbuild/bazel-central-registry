@@ -71,7 +71,7 @@ cc_library(
     includes = ["include"],
     # Linked statically like core; see bundled.BUILD.
     linkstatic = True,
-    target_compatible_with = ["@platforms//os:linux"],
+    # No target_compatible_with: a service supports the platforms core does.
     visibility = ["//visibility:public"],
     deps = {deps},
 )
