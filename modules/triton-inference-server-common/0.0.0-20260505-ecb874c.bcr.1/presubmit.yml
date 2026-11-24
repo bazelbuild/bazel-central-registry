@@ -1,7 +1,6 @@
-
 matrix:
   platform:
-    - ubuntu2004
+    - ubuntu2404
     - ubuntu2204
     - macos
     - macos_arm64
@@ -16,12 +15,24 @@ tasks:
     build_flags:
       - '--cxxopt=-std=c++17'
       - '--host_cxxopt=-std=c++17'
-    build_targets:
+    build_targets: &unix_build_targets
       - '@triton-inference-server-common//protobuf:common_proto'
       - '@triton-inference-server-common//protobuf:common_cc_proto'
       - '@triton-inference-server-common//protobuf:common_cc_grpc'
       - '@triton-inference-server-common//protobuf:common_py_pb2'
       - '@triton-inference-server-common//protobuf:common_py_pb2_grpc'
+  # Bazel 9 no longer provides cc_library/cc_binary as built-ins, and some of
+  # gRPC's transitive dependencies (e.g. gRPC's own cython_library.bzl, re2)
+  # still use them without a load(). Restore them from rules_cc for those.
+  verify_targets_bazel9:
+    name: Verify build targets (Bazel 9)
+    platform: ${{ platform }}
+    bazel: 9.x
+    build_flags:
+      - '--cxxopt=-std=c++17'
+      - '--host_cxxopt=-std=c++17'
+      - '--incompatible_autoload_externally=+@rules_cc'
+    build_targets: *unix_build_targets
   verify_targets_windows:
     name: Verify build targets (Windows)
     platform: windows
@@ -32,8 +43,20 @@ tasks:
       - '--cxxopt=/Zc:__cplusplus'
       - '--host_cxxopt=/Zc:__cplusplus'
       - '--dynamic_mode=off'
-    build_targets:
+    build_targets: &windows_build_targets
       # Only test the native C++ targets on Windows
       - '@triton-inference-server-common//protobuf:common_proto'
       - '@triton-inference-server-common//protobuf:common_cc_proto'
       - '@triton-inference-server-common//protobuf:common_cc_grpc'
+  verify_targets_windows_bazel9:
+    name: Verify build targets (Windows, Bazel 9)
+    platform: windows
+    bazel: 9.x
+    build_flags:
+      - '--cxxopt=/std:c++17'
+      - '--host_cxxopt=/std:c++17'
+      - '--cxxopt=/Zc:__cplusplus'
+      - '--host_cxxopt=/Zc:__cplusplus'
+      - '--dynamic_mode=off'
+      - '--incompatible_autoload_externally=+@rules_cc'
+    build_targets: *windows_build_targets
