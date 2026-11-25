@@ -1,0 +1,99 @@
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@package_metadata//purl:purl.bzl", "purl")
+
+bool_flag(
+    name = "use_freetype",
+    build_setting_default = True,
+)
+
+config_setting(
+    name = "use_freetype_setting",
+    flag_values = {":use_freetype": "true"},
+)
+
+PLATFORM_LINKOPTS = select({
+    "@platforms//os:windows": [],
+    "//conditions:default": [
+        "-lm",
+    ],
+})
+
+cc_library(
+    name = "plutosvg",
+    srcs = [
+        "source/plutosvg.c",
+    ],
+    hdrs = [
+        "source/plutosvg.h",
+        "source/plutosvg-ft.h",
+    ],
+    deps = [
+        "@plutovg",
+    ],
+    implementation_deps = select({
+        ":use_freetype_setting": ["@freetype"],
+        "//conditions:default": [],
+    }),
+    package_metadata = [":metadata.plutosvg"],
+    includes = ["source"],
+    linkopts = PLATFORM_LINKOPTS,
+    local_defines = [
+        "PLUTOSVG_BUILD"
+    ] + select({
+        ":use_freetype_setting": ["PLUTOSVG_HAS_FREETYPE"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "metadata.plutosvg",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//:__subpackages__"],
+)
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE.txt",
+)
+
+exports_files([
+    "LICENSE.txt",
+])
+
+# test build
+
+cc_test(
+    name = "camera2png",
+    srcs = ["examples/camera2png.c"],
+    deps = [":plutosvg"],
+    data = [":camera_svg"],
+)
+
+cc_test(
+    name = "emoji2png",
+    srcs = ["examples/emoji2png.c"],
+    deps = [":plutosvg", "@freetype"],
+    target_compatible_with = ["use_freetype_setting"],
+)
+
+cc_test(
+    name = "svg2png",
+    srcs = ["examples/svg2png.c"],
+    deps = [":plutosvg"],
+)
+
+copy_file(
+    name = "camera_svg",
+    src = "examples/camera.svg",
+    out = "camera.svg",
+)
