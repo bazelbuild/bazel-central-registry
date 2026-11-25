@@ -1,0 +1,55 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# A kernel module as far as kmod's ELF reader is concerned: a relocatable
+# object with a .modinfo section of key=value strings, which is all modinfo,
+# depmod and modprobe read of a .ko (no kernel headers, no vermagic).  The
+# object comes out of the ordinary C compile through its output group.
+cc_library(
+    name = "fake_module",
+    testonly = True,
+    srcs = ["fake_module.c"],
+)
+
+filegroup(
+    name = "fake_module_objects",
+    testonly = True,
+    srcs = [":fake_module"],
+    output_group = "compilation_outputs",
+)
+
+# The first object (pic or not, both carry the section) under the name kmod
+# wants: depmod and modprobe take the module's name from the file name.
+genrule(
+    name = "fake_ko",
+    testonly = True,
+    srcs = [":fake_module_objects"],
+    outs = ["fake.ko"],
+    cmd = "cp $$(echo $(SRCS) | cut -d ' ' -f 1) $@",
+)
+
+# The binary (//:bin; //:kmod is the library) and its compat symlinks as a
+# consumer runs them, over a module tree under $TEST_TMPDIR: modinfo on
+# the fake module, depmod indexing it, modprobe resolving its alias and
+# dependencies without loading anything.
+cc_test(
+    name = "kmod_smoke_test",
+    size = "small",
+    srcs = ["kmod_smoke_test.cc"],
+    copts = ["-std=c++17"],
+    data = [
+        ":fake_ko",
+        "//:bin",
+        "//:depmod",
+        "//:modinfo",
+        "//:modprobe",
+    ],
+    env = {
+        "DEPMOD_RLOCATIONPATH": "$(rlocationpath //:depmod)",
+        "FAKE_KO_RLOCATIONPATH": "$(rlocationpath :fake_ko)",
+        "KMOD_RLOCATIONPATH": "$(rlocationpath //:bin)",
+        "MODINFO_RLOCATIONPATH": "$(rlocationpath //:modinfo)",
+        "MODPROBE_RLOCATIONPATH": "$(rlocationpath //:modprobe)",
+    },
+    deps = ["@rules_cc//cc/runfiles"],
+)
