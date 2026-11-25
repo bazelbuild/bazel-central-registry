@@ -1,0 +1,60 @@
+matrix:
+  platform:
+    - ubuntu2404
+    - ubuntu2404_arm64
+    - ubuntu2204
+    - ubuntu2204_arm64
+    - macos
+    - macos_arm64
+  bazel9_platform:
+    - ubuntu2404
+    - ubuntu2404_arm64
+    - ubuntu2204
+    - ubuntu2204_arm64
+  bazel:
+    - 7.x
+    - 8.x
+tasks:
+  verify_targets:
+    name: Verify build targets
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_flags:
+      - '--cxxopt=-std=c++17'
+      - '--host_cxxopt=-std=c++17'
+    build_targets: &unix_build_targets
+      - '@triton-inference-server-common//protobuf:common_proto'
+      - '@triton-inference-server-common//protobuf:common_cc_proto'
+      - '@triton-inference-server-common//protobuf:common_cc_grpc'
+      - '@triton-inference-server-common//protobuf:common_py_pb2'
+      - '@triton-inference-server-common//protobuf:common_py_pb2_grpc'
+  verify_targets_windows:
+    name: Verify build targets (Windows)
+    platform: windows
+    bazel: ${{ bazel }}
+    build_flags:
+      - '--cxxopt=/std:c++17'
+      - '--host_cxxopt=/std:c++17'
+      - '--cxxopt=/Zc:__cplusplus'
+      - '--host_cxxopt=/Zc:__cplusplus'
+      - '--dynamic_mode=off'
+    build_targets:
+      # Only test the native C++ targets on Windows
+      - '@triton-inference-server-common//protobuf:common_proto'
+      - '@triton-inference-server-common//protobuf:common_cc_proto'
+      - '@triton-inference-server-common//protobuf:common_cc_grpc'
+  # gRPC 1.74 does not build with Bazel 9, so test Bazel 9 against gRPC 1.76,
+  # which still needs the C++ rules restored from rules_cc. Linux only: gRPC
+  # 1.76 fails to build on macOS and on Windows with Bazel 8+.
+  verify_targets_bazel9:
+    name: Verify build targets (Bazel 9)
+    platform: ${{ bazel9_platform }}
+    bazel: 9.x
+    setup:
+      - echo 'bazel_dep(name = "grpc", version = "1.76.0.bcr.1")' >> MODULE.bazel
+      - echo 'bazel_dep(name = "protobuf", version = "33.0")' >> MODULE.bazel
+    build_flags:
+      - '--cxxopt=-std=c++17'
+      - '--host_cxxopt=-std=c++17'
+      - '--incompatible_autoload_externally=+@rules_cc'
+    build_targets: *unix_build_targets
