@@ -1,0 +1,218 @@
+load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_shared_library.bzl", "cc_shared_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_cc_autoconf//autoconf:checks.bzl", "checks", "macros")
+load(":autoconf.bzl", "SYSTEM_EXTENSIONS", "configure")
+
+# The targets of configure.ac and the Makefile.am files, declared by the generated
+# autoconf.bzl beside this file; this file is hand-written and kept as it is.  A target
+# added below is the module's own; one named like a generated target replaces it at the
+# next conversion.
+configure()
+
+COMPAT_TOOLS = [
+    "depmod",
+    "insmod",
+    "lsmod",
+    "modinfo",
+    "modprobe",
+    "rmmod",
+]
+
+# Two groups of configure.ac's compiler checks the conversion gets wrong, made
+# here and fed to the config header beside the generated :autoconf.
+#
+# AC_CHECK_DECLS_ONCE([[basename]]) reaches the conversion with its inner
+# brackets, as a probe of a declaration named `[basename]`.  glibc declares
+# basename in <string.h> under _GNU_SOURCE, musl 1.2.5 no longer does, and
+# shared/missing.h defines one when HAVE_DECL_BASENAME is 0.
+#
+# CC_CHECK_FUNC_BUILTIN (m4/attributes.m4) picks each builtin's call with
+# m4_case, which the conversion leaves unexpanded; the project's copies are
+# dropped by decision.  m4_case has no arm for the four u*_overflow builtins,
+# so upstream links an empty program for them and always answers yes; they
+# get a real call here.
+autoconf(
+    name = "autoconf_compiler",
+    checks = macros.AC_CHECK_DECLS(
+        ["basename"],
+        compile_defines = SYSTEM_EXTENSIONS,
+        includes = ["#include <string.h>"],
+    ) + [
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_clz",
+            code = "int main(void) { __builtin_clz(0); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_CLZ",
+            1,
+            requires = ["cc_cv_have___builtin_clz"],
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_types_compatible_p",
+            code = "int main(void) { __builtin_types_compatible_p(int, int); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_TYPES_COMPATIBLE_P",
+            1,
+            requires = ["cc_cv_have___builtin_types_compatible_p"],
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_uadd_overflow",
+            code = "int main(void) { unsigned r; __builtin_uadd_overflow(0U, 0U, &r); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_UADD_OVERFLOW",
+            condition = "cc_cv_have___builtin_uadd_overflow",
+            if_false = 0,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_uaddl_overflow",
+            code = "int main(void) { unsigned long r; __builtin_uaddl_overflow(0UL, 0UL, &r); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_UADDL_OVERFLOW",
+            condition = "cc_cv_have___builtin_uaddl_overflow",
+            if_false = 0,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_uaddll_overflow",
+            code = "int main(void) { unsigned long long r; __builtin_uaddll_overflow(0ULL, 0ULL, &r); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_UADDLL_OVERFLOW",
+            condition = "cc_cv_have___builtin_uaddll_overflow",
+            if_false = 0,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_umul_overflow",
+            code = "int main(void) { unsigned r; __builtin_umul_overflow(0U, 0U, &r); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_UMUL_OVERFLOW",
+            condition = "cc_cv_have___builtin_umul_overflow",
+            if_false = 0,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_umull_overflow",
+            code = "int main(void) { unsigned long r; __builtin_umull_overflow(0UL, 0UL, &r); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_UMULL_OVERFLOW",
+            condition = "cc_cv_have___builtin_umull_overflow",
+            if_false = 0,
+            if_true = 1,
+        ),
+        checks.AC_TRY_LINK(
+            name = "cc_cv_have___builtin_umulll_overflow",
+            code = "int main(void) { unsigned long long r; __builtin_umulll_overflow(0ULL, 0ULL, &r); return 0; }",
+        ),
+        checks.AC_DEFINE(
+            "HAVE___BUILTIN_UMULLL_OVERFLOW",
+            condition = "cc_cv_have___builtin_umulll_overflow",
+            if_false = 0,
+            if_true = 1,
+        ),
+    ],
+    visibility = ["//visibility:private"],
+    deps = ["@rules_cc_autoconf//autoconf/macros/AC_USE_SYSTEM_EXTENSIONS"],
+)
+
+autoconf_hdr(
+    name = "config",
+    out = "config.h",
+    template = "config.h.in",
+    visibility = ["//visibility:private"],
+    deps = [
+        ":autoconf",
+        ":autoconf_compiler",
+    ],
+)
+
+# The library under the name it is installed as (//:kmod is the generated alias
+# of the same target), and the multi-call binary as //:bin.
+alias(
+    name = "libkmod",
+    actual = ":libkmod/kmod",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "bin",
+    actual = ":tools/kmod",
+    visibility = ["//visibility:public"],
+)
+
+# kmod is one multi-call binary: `kmod modinfo` is not a command, modinfo is what
+# the binary does when its argv[0] is modinfo.  The Makefile's noinst_SCRIPTS and
+# install-exec-hook make these symlinks; here each compat command is a symlink
+# target beside tools/kmod, usable as a tool and as `bazel run`'s program.
+[
+    copy_file(
+        name = "tools/" + tool,
+        src = ":tools/kmod",
+        out = "tools/" + tool,
+        allow_symlink = True,
+        is_executable = True,
+        visibility = ["//visibility:public"],
+    )
+    for tool in COMPAT_TOOLS
+]
+
+[
+    alias(
+        name = tool,
+        actual = ":tools/" + tool,
+        visibility = ["//visibility:public"],
+    )
+    for tool in COMPAT_TOOLS
+]
+
+# libkmod-internal.la is libkmod.la's sources again, for linking the tools
+# against the uninstalled library; the conversion loses the `if ENABLE_XZ`
+# (zlib, zstd) sources in the `$(libkmod_libkmod_la_SOURCES)` indirection, and
+# :libkmod/kmod is already linked statically, so it stands in.
+alias(
+    name = "libkmod/kmod-internal",
+    actual = ":libkmod/kmod",
+    visibility = ["//visibility:private"],
+)
+
+# The libraries configure's PKG_CHECK_MODULES finds under --with-zstd, --with-xz,
+# --with-zlib and --with-openssl.  The Makefile links them as ${libzstd_LIBS} and
+# friends, which the conversion resolves through the link decisions to these
+# targets; each one is empty unless its option is on.
+[
+    cc_library(
+        name = name,
+        visibility = ["//visibility:private"],
+        deps = select({
+            ":" + option + "_enabled": [dep],
+            "//conditions:default": [],
+        }),
+    )
+    for name, option, dep in [
+        ("pkg_libcrypto", "openssl", "@openssl//:crypto"),
+        ("pkg_liblzma", "xz", "@xz//:lzma"),
+        ("pkg_libzstd", "zstd", "@zstd"),
+        ("pkg_zlib", "zlib", "@zlib//:z"),
+    ]
+]
+
+# libkmod.la links with -Wl,--version-script=libkmod/libkmod.sym, which with
+# -fvisibility=hidden is the shared library's exported ABI; the conversion drops
+# libtool's LDFLAGS, so the shared library is declared here with it.
+cc_shared_library(
+    name = "libkmod/kmod_shared",
+    additional_linker_inputs = ["libkmod/libkmod.sym"],
+    shared_lib_name = "libkmod/libkmod.so",
+    user_link_flags = ["-Wl,--version-script=$(location libkmod/libkmod.sym)"],
+    visibility = ["//visibility:public"],
+    deps = [":libkmod/kmod"],
+)
