@@ -1,0 +1,396 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Native Dawn/Tint overlay for fec851bab7b360449e3de9ebf771bd13d7942194.
+# Source lists follow src/dawn and src/tint's checked-in sources; tests, tools,
+# optional validators, and non-platform backends are excluded. Tint's generated
+# sources are checked in at this revision, so no Go or CMake build is needed.
+# flatten-tint-packages.patch mechanically deletes src/{tint,utils}/**/BUILD.bazel
+# from the pinned archive so the recursive globs below own these sources.
+# Windows is covered by BCR presubmit; Linux and macOS are not yet CI-validated.
+
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:defs.bzl", "cc_library", "objc_library")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:private"],
+)
+
+exports_files(["LICENSE"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:BSD-3-Clause",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "dawn",
+    actual = ":webgpu_dawn",
+    visibility = ["//visibility:public"],
+)
+
+_COPTS = select({
+    "@platforms//os:windows": [
+        "/std:c++20",
+        "/Zc:__cplusplus",
+        "/Zc:preprocessor",
+        "/permissive-",
+        "/bigobj",
+    ],
+    "//conditions:default": ["-std=c++20"],
+})
+
+_DEFINES = [
+    "DAWN_HAVE_UTILS_BUILD_CONFIG",
+    "DAWN_FORCE_SYSTEM_COMPONENT_LOAD",
+    "TINT_BUILD_IR=1",
+    "TINT_BUILD_WGSL_READER=1",
+    "TINT_BUILD_WGSL_WRITER=1",
+] + select({
+    "@platforms//os:windows": [
+        "DAWN_ENABLE_BACKEND_D3D11",
+        "DAWN_ENABLE_BACKEND_D3D12",
+        "TINT_BUILD_HLSL_WRITER=1",
+    ],
+    "@platforms//os:macos": [
+        "DAWN_ENABLE_BACKEND_METAL",
+        "TINT_BUILD_MSL_WRITER=1",
+    ],
+    "@platforms//os:linux": [
+        "DAWN_ENABLE_BACKEND_VULKAN",
+        "DAWN_USE_X11",
+        "TINT_BUILD_SPV_WRITER=1",
+    ],
+})
+
+_NON_LIBRARY_SOURCES = [
+    "**/*_test*",
+    "**/*_bench*",
+    "**/*_fuzz*",
+    "**/test_*",
+]
+
+py_library(
+    name = "generator_lib",
+    srcs = glob(
+        ["generator/*.py"],
+        exclude = ["generator/__init__.py"],
+    ),
+    imports = ["generator"],
+    deps = [
+        "@dawn_pypi//jinja2",
+        "@dawn_pypi//markupsafe",
+    ],
+)
+
+[
+    py_binary(
+        name = script,
+        srcs = ["generator/{}.py".format(script)],
+        legacy_create_init = 0,
+        main = "generator/{}.py".format(script),
+        python_version = "3.14",
+        deps = [":generator_lib"],
+    )
+    for script in [
+        "dawn_json_generator",
+        "dawn_gpu_info_generator",
+        "dawn_version_generator",
+    ]
+]
+
+_TEMPLATES = glob(["generator/templates/**"])
+
+_JSON_OUTPUTS = [
+    "include/dawn/webgpu.h",
+    "include/dawn/wire/client/webgpu.h",
+    "include/dawn/dawn_proc_table.h",
+    "include/dawn/webgpu_cpp.h",
+    "include/dawn/wire/client/webgpu_cpp.h",
+    "include/dawn/webgpu_cpp_print.h",
+    "include/dawn/wire/client/webgpu_cpp_print.h",
+    "include/webgpu/webgpu_cpp_chained_struct.h",
+    "src/dawn/native/webgpu_dawn_native_proc.cpp",
+    "src/dawn/native/ValidationUtils_autogen.h",
+    "src/dawn/native/ValidationUtils_autogen.cpp",
+    "src/dawn/native/dawn_platform_autogen.h",
+    "src/dawn/native/wgpu_structs_autogen.h",
+    "src/dawn/native/wgpu_structs_autogen.cpp",
+    "src/dawn/native/wgpu_structs_defaults_autogen.h",
+    "src/dawn/native/wgpu_structs_defaults_autogen.cpp",
+    "src/dawn/native/ProcTable.cpp",
+    "src/dawn/native/ChainUtils_autogen.h",
+    "src/dawn/native/ChainUtils_autogen.cpp",
+    "src/dawn/native/Features_autogen.h",
+    "src/dawn/native/Features_autogen.inl",
+    "src/dawn/native/webgpu_absl_format_autogen.h",
+    "src/dawn/native/webgpu_absl_format_autogen.cpp",
+    "src/dawn/native/webgpu_StreamImpl_autogen.cpp",
+    "src/dawn/native/ObjectType_autogen.h",
+    "src/dawn/native/ObjectType_autogen.cpp",
+]
+
+genrule(
+    name = "generate_api",
+    srcs = _TEMPLATES + [
+        "src/dawn/dawn.json",
+        "src/dawn/dawn_wire.json",
+        "src/dawn/dawn_native.json",
+        "src/dawn/dawn_version.json",
+    ],
+    outs = _JSON_OUTPUTS,
+    cmd = "$(execpath :dawn_json_generator)" +
+          " --dawn-json $(execpath src/dawn/dawn.json)" +
+          " --wire-json $(execpath src/dawn/dawn_wire.json)" +
+          " --native-json $(execpath src/dawn/dawn_native.json)" +
+          " --addin-jsons $(execpath src/dawn/dawn_version.json)" +
+          " --template-dir $$(dirname $(execpath generator/templates/api.h))" +
+          " --targets headers,cpp_headers,native_utils,webgpu_dawn_native_proc" +
+          " --output-dir $(RULEDIR)",
+    tools = [":dawn_json_generator"],
+)
+
+genrule(
+    name = "generate_gpu_info",
+    srcs = _TEMPLATES + ["src/dawn/gpu_info.json"],
+    outs = [
+        "src/dawn/common/GPUInfo_autogen.h",
+        "src/dawn/common/GPUInfo_autogen.cpp",
+    ],
+    cmd = "$(execpath :dawn_gpu_info_generator)" +
+          " --gpu-info-json $(execpath src/dawn/gpu_info.json)" +
+          " --template-dir $$(dirname $(execpath generator/templates/api.h))" +
+          " --output-dir $(RULEDIR)",
+    tools = [":dawn_gpu_info_generator"],
+)
+
+genrule(
+    name = "generate_version",
+    srcs = _TEMPLATES + ["src/dawn/dawn_version.json"],
+    outs = ["include/dawn/dawn_version.h"],
+    cmd = "$(execpath :dawn_version_generator) gen" +
+          " --version-json $(execpath src/dawn/dawn_version.json)" +
+          " --dawn-dir $$(dirname $$(dirname $$(dirname $(execpath src/dawn/dawn_version.json))))" +
+          " --template-dir $$(dirname $(execpath generator/templates/api.h))" +
+          " --output-dir $(RULEDIR)",
+    tools = [":dawn_version_generator"],
+)
+
+cc_library(
+    name = "absl",
+    deps = [
+        "@abseil_cpp//absl/base:no_destructor",
+        "@abseil_cpp//absl/container:btree",
+        "@abseil_cpp//absl/container:flat_hash_map",
+        "@abseil_cpp//absl/container:flat_hash_set",
+        "@abseil_cpp//absl/container:inlined_vector",
+        "@abseil_cpp//absl/functional:overload",
+        "@abseil_cpp//absl/strings",
+        "@abseil_cpp//absl/strings:str_format",
+        "@abseil_cpp//absl/types:span",
+    ],
+)
+
+cc_library(
+    name = "tint",
+    srcs = glob(
+        [
+            "src/tint/api/**/*.cc",
+            "src/tint/lang/core/**/*.cc",
+            "src/tint/lang/wgsl/**/*.cc",
+            "src/tint/utils/**/*.cc",
+        ],
+        exclude = _NON_LIBRARY_SOURCES + [
+            "src/tint/lang/core/ir/binary/**",
+            "src/tint/utils/command/**",
+            "src/tint/utils/file/tmpfile_*.cc",
+            "src/tint/utils/protos/**",
+            "src/tint/utils/system/**",
+            "src/tint/utils/text/styled_text_printer_*.cc",
+        ],
+    ) + select({
+        "@platforms//os:windows": glob(
+            ["src/tint/lang/hlsl/**/*.cc"],
+            exclude = _NON_LIBRARY_SOURCES + ["src/tint/lang/hlsl/validate/**"],
+        ) + [
+            "src/tint/utils/file/tmpfile_windows.cc",
+            "src/tint/utils/system/env_windows.cc",
+            "src/tint/utils/system/terminal_windows.cc",
+            "src/tint/utils/text/styled_text_printer_windows.cc",
+        ],
+        "@platforms//os:macos": glob(
+            ["src/tint/lang/msl/**/*.cc"],
+            exclude = _NON_LIBRARY_SOURCES + ["src/tint/lang/msl/validate/**"],
+        ) + [
+            "src/tint/utils/file/tmpfile_posix.cc",
+            "src/tint/utils/system/env_other.cc",
+            "src/tint/utils/system/terminal_posix.cc",
+            "src/tint/utils/text/styled_text_printer_posix.cc",
+        ],
+        "@platforms//os:linux": glob(
+            [
+                "src/tint/lang/spirv/writer/**/*.cc",
+                "src/tint/lang/spirv/ir/**/*.cc",
+                "src/tint/lang/spirv/intrinsic/**/*.cc",
+                "src/tint/lang/spirv/type/**/*.cc",
+            ],
+            exclude = _NON_LIBRARY_SOURCES,
+        ) + [
+            "src/tint/lang/spirv/builtin_fn.cc",
+            "src/tint/utils/file/tmpfile_posix.cc",
+            "src/tint/utils/system/env_other.cc",
+            "src/tint/utils/system/terminal_posix.cc",
+            "src/tint/utils/text/styled_text_printer_posix.cc",
+        ],
+    }) + [
+        "src/utils/assert.cc",
+        "src/utils/log.cc",
+    ],
+    hdrs = glob([
+        "include/tint/*.h",
+        "src/tint/**/*.h",
+        "src/utils/*.h",
+    ]),
+    copts = _COPTS,
+    defines = _DEFINES,
+    includes = [
+        ".",
+        "include",
+    ],
+    deps = [":absl"] + select({
+        "@platforms//os:linux": [
+            "@spirv_headers//:spirv_c_headers",
+            "@spirv_headers//:spirv_cpp11_headers",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+cc_library(
+    name = "headers",
+    hdrs = glob([
+        "include/dawn/**/*.h",
+        "include/webgpu/*.h",
+        "src/dawn/**/*.h",
+        "src/dawn/**/*.inl",
+        "src/dawn/partition_alloc/partition_alloc/pointers/*.h",
+    ]) + [f for f in _JSON_OUTPUTS if not f.endswith(".cpp")] + [
+        "include/dawn/dawn_version.h",
+        "src/dawn/common/GPUInfo_autogen.h",
+    ],
+    defines = _DEFINES + ["TINT_BUILD_SPV_READER=0"] + select({
+        "@platforms//os:windows": [
+            "_WIN32_WINNT=0x0A00",
+            "WINVER=0x0A00",
+        ],
+        "//conditions:default": [],
+    }),
+    includes = [
+        ".",
+        "include",
+        "src",
+        "src/dawn/partition_alloc",
+    ],
+    deps = [":tint"],
+)
+
+objc_library(
+    name = "metal",
+    srcs = glob([
+        "src/dawn/common/*.mm",
+        "src/dawn/native/metal/*.mm",
+    ]) + ["src/dawn/native/Surface_metal.mm"],
+    copts = [
+        "-std=c++20",
+        "-fno-objc-arc",
+    ],
+    sdk_frameworks = [
+        "Cocoa",
+        "Metal",
+        "IOKit",
+        "IOSurface",
+        "QuartzCore",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [":headers"],
+)
+
+cc_library(
+    name = "webgpu_dawn",
+    srcs = glob(
+        [
+            "src/dawn/common/*.cpp",
+            "src/dawn/platform/**/*.cpp",
+            "src/dawn/native/*.cpp",
+            "src/dawn/native/stream/*.cpp",
+        ],
+        exclude = [
+            "src/dawn/common/DRMUtils.cpp",
+            "src/dawn/common/IOSurfaceUtils.cpp",
+            "src/dawn/common/WindowsUtils.cpp",
+            "src/dawn/native/AHBFunctions.cpp",
+            "src/dawn/native/SpirvValidation.cpp",
+            "src/dawn/native/X11Functions.cpp",
+        ],
+    ) + [f for f in _JSON_OUTPUTS if f.endswith(".cpp")] + [
+        "src/dawn/common/GPUInfo_autogen.cpp",
+        "src/dawn/native/utils/NativeHelpers.cpp",
+    ] + select({
+        "@platforms//os:windows": glob([
+            "src/dawn/native/d3d/*.cpp",
+            "src/dawn/native/d3d11/*.cpp",
+            "src/dawn/native/d3d12/*.cpp",
+        ]) + ["src/dawn/common/WindowsUtils.cpp"],
+        "@platforms//os:macos": [
+            "src/dawn/common/IOSurfaceUtils.cpp",
+        ],
+        "@platforms//os:linux": glob(
+            ["src/dawn/native/vulkan/**/*.cpp"],
+            exclude = [
+                "**/*Android*",
+                "**/*AHB*",
+                "**/*Zircon*",
+            ],
+        ) + [
+            "src/dawn/common/DRMUtils.cpp",
+            "src/dawn/native/X11Functions.cpp",
+        ],
+    }),
+    copts = _COPTS,
+    linkopts = select({
+        "@platforms//os:windows": [
+            "user32.lib",
+            "dxguid.lib",
+            "onecore_apiset.lib",
+        ],
+        "@platforms//os:macos": [],
+        "@platforms//os:linux": [
+            "-ldl",
+            "-lpthread",
+            "-lX11",
+        ],
+    }),
+    visibility = ["//visibility:public"],
+    deps = [":headers"] + select({
+        "@platforms//os:macos": [":metal"],
+        "@platforms//os:linux": [
+            "@vulkan_headers",
+            "@vulkan_utility_libraries//:vulkan_utility_headers",
+        ],
+        "//conditions:default": [],
+    }),
+)
