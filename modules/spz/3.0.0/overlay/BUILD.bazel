@@ -1,0 +1,106 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//purl:purl.bzl", "purl")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(
+    default_package_metadata = [":package_metadata"],
+    default_visibility = ["//visibility:public"],
+)
+
+exports_files(["LICENSE"])
+
+license(
+    name = "license",
+    kind = "@package_metadata//licenses/spdx:MIT",
+    text = "LICENSE",
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [":license"],
+    purl = purl.bazel(
+        module_name(),
+        module_version(),
+    ),
+)
+
+# Mirrors the upstream CMake option SPZ_BUILD_EXTENSIONS (default: off): SPZ extensions such as
+# SPZ_ADOBE_safe_orbit_camera. It changes the public API (GaussianCloud::extensions).
+bool_flag(
+    name = "extensions",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "extensions_enabled",
+    flag_values = {":extensions": "True"},
+)
+
+# CMake: spz (spz::spz). #include "load-spz.h"
+cc_library(
+    name = "spz",
+    srcs = [
+        "src/cc/load-spz.cc",
+        "src/cc/splat-c-types.cc",
+        "src/cc/splat-types.cc",
+    ] + select({
+        ":extensions_enabled": [
+            "extensions/cc/safe-orbit-camera-adobe.cc",
+            "extensions/cc/splat-extensions.cc",
+        ],
+        "//conditions:default": [],
+    }),
+    hdrs = [
+        "src/cc/load-spz.h",
+        "src/cc/splat-c-types.h",
+        "src/cc/splat-types.h",
+    ] + select({
+        ":extensions_enabled": [
+            "extensions/cc/safe-orbit-camera-adobe.h",
+            "extensions/cc/splat-extensions.h",
+        ],
+        "//conditions:default": [],
+    }),
+    defines = select({
+        ":extensions_enabled": ["SPZ_BUILD_EXTENSIONS"],
+        "//conditions:default": [],
+    }),
+    implementation_deps = [
+        "@zlib",
+        "@zstd",
+    ],
+    includes = ["src/cc"] + select({
+        ":extensions_enabled": ["extensions/cc"],
+        "//conditions:default": [],
+    }),
+    # The inline logging of load-spz.h uses __android_log_print on Android.
+    linkopts = select({
+        "@platforms//os:android": ["-llog"],
+        "//conditions:default": [],
+    }),
+)
+
+# CMake (SPZ_BUILD_TOOLS): the command line tools, which #include "cc/load-spz.h".
+cc_binary(
+    name = "ply_to_spz",
+    srcs = ["cli_tools/src/ply_to_spz.cpp"],
+    includes = ["src"],
+    deps = [":spz"],
+)
+
+cc_binary(
+    name = "spz_info",
+    srcs = ["cli_tools/src/spz_info.cpp"],
+    includes = ["src"],
+    deps = [":spz"],
+)
+
+cc_binary(
+    name = "spz_to_ply",
+    srcs = ["cli_tools/src/spz_to_ply.cpp"],
+    includes = ["src"],
+    deps = [":spz"],
+)
