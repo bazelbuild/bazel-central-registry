@@ -1,0 +1,752 @@
+# Rendered by `bazel run //tools:render_presubmit -- --llvm-version 19.1.0`
+# from tools/presubmit.template.yml and this version's prepared .bazelrc. Every
+# `--config=NAME` entry in the template was replaced by the flags NAME selects
+# there; everything else is copied from the template as written.
+#
+# This file belongs to 19.1.0: hand edits it needs are fine. Re-render
+# after a patch changes the .bazelrc, or run with `--check` to see the drift.
+matrix:
+  platform:
+    - ubuntu2404
+  bazel:
+    - 7.x
+    - 8.x
+    - 9.x
+  # Bazel 7's embedded cc_configure misparses the version line of Clang >= 22
+  # and cannot set up a clang-cl toolchain; Bazel 8+ takes cc_configure from
+  # rules_cc, which carries the fix. Only the clang-cl task reads this axis.
+  bazel_clang_cl:
+    - 8.x
+    - 9.x
+  # Bazel 7 resolves @bazel_tools' built-in macOS C++ toolchain ahead of the
+  # apple_support one that lldb's objc_library targets need unless the root
+  # module depends on apple_support itself. Rather than force a toolchain
+  # registration on consumers, the macOS tasks skip 7.x; Bazel 8+ takes the
+  # macOS toolchain from apple_support via rules_cc. Only the macOS tasks read
+  # this axis.
+  bazel_macos:
+    - 8.x
+    - 9.x
+tasks:
+  run_tests:
+    name: bazel test //... (linux, clang)
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    # generic_clang links with -fuse-ld=lld ("assume that anybody using clang
+    # also has lld available"); bazelci's Linux images do not.
+    shell_commands:
+      - sudo apt-get update
+      - sudo apt-get install -y --no-install-recommends lld
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --linkopt=-fuse-ld=lld
+      - --host_linkopt=-fuse-ld=lld
+      - --build_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --linkopt=-fuse-ld=lld
+      - --host_linkopt=-fuse-ld=lld
+      - --build_tag_filters=-nobuildkite
+      - --test_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+  run_tests_debian10:
+    name: bazel test //... (debian10, clang)
+    platform: debian10
+    bazel: ${{ bazel }}
+    # generic_clang links with -fuse-ld=lld ("assume that anybody using clang
+    # also has lld available"); bazelci's Linux images do not.
+    shell_commands:
+      - sudo apt-get update
+      - sudo apt-get install -y --no-install-recommends lld
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --linkopt=-fuse-ld=lld
+      - --host_linkopt=-fuse-ld=lld
+      - --build_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+      # debian10 ships gcc 8.3 and clang 7. libc documents Clang >= 11 and
+      # GCC >= 12.2 (libc/docs/compiler_support.rst) and in this release every
+      # libc target and test is compiled with -ftrivial-auto-var-init=pattern,
+      # which neither compiler accepts, so nothing under //libc builds here.
+      # Build and test everything else.
+      - '-@llvm-project//libc/...'
+      # debian10's lld 7 predates --export-dynamic-symbol-list (lld 14), which
+      # liblldb passes on Linux, so nothing that links liblldb builds here.
+      - '-@llvm-project//lldb/...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --linkopt=-fuse-ld=lld
+      - --host_linkopt=-fuse-ld=lld
+      - --build_tag_filters=-nobuildkite
+      - --test_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+      # debian10 ships gcc 8.3 and clang 7. libc documents Clang >= 11 and
+      # GCC >= 12.2 (libc/docs/compiler_support.rst) and in this release every
+      # libc target and test is compiled with -ftrivial-auto-var-init=pattern,
+      # which neither compiler accepts, so nothing under //libc builds here.
+      # Build and test everything else.
+      - '-@llvm-project//libc/...'
+      # debian10's lld 7 predates --export-dynamic-symbol-list (lld 14), which
+      # liblldb passes on Linux, so nothing that links liblldb builds here.
+      - '-@llvm-project//lldb/...'
+  run_tests_gcc:
+    name: bazel test //... (linux, gcc)
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_gcc
+      - --repo_env=CC=gcc
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --copt=-Wno-unused-parameter
+      - --host_copt=-Wno-unused-parameter
+      - --copt=-Wno-comment
+      - --host_copt=-Wno-comment
+      - --cxxopt=-Wno-class-memaccess
+      - --host_cxxopt=-Wno-class-memaccess
+      - --copt=-Wno-maybe-uninitialized
+      - --host_copt=-Wno-maybe-uninitialized
+      - --copt=-Wno-misleading-indentation
+      - --host_copt=-Wno-misleading-indentation
+      - --build_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+      # GCC rejects the [[gnu::alias]] in LLVM_LIBC_FUNCTION when glibc also
+      # defines the function as an extern inline under optimization (vprintf in
+      # bits/stdio.h, feraiseexcept in bits/fenvinline.h on debian10's glibc
+      # 2.28) and the libc rules force -O3. Overlay-mode GCC builds are a known gap upstream
+      # (llvm/llvm-project#60481). Only the public-packaging variants alias; the
+      # tests link the .__internal__ ones and are unaffected.
+      - '-@llvm-project//libc:feraiseexcept'
+      - '-@llvm-project//libc:vprintf'
+      # The autoconfigured GCC toolchain links with ld.gold, which rejects the
+      # --export-dynamic-symbol-list that liblldb passes (an lld / bfd 2.35
+      # option) and, unlike lld, does not resolve the backward references
+      # among lldb's cyclic Bazel targets, so liblldb and lldb-server fail to
+      # link. Upstream builds lldb with --config=generic_clang (lld) only; the
+      # target merges that remove the cycles (llvm/llvm-project#229101,
+      # #237392) are on main, not in this release.
+      - '-@llvm-project//lldb/...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_gcc
+      - --repo_env=CC=gcc
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --copt=-Wno-unused-parameter
+      - --host_copt=-Wno-unused-parameter
+      - --copt=-Wno-comment
+      - --host_copt=-Wno-comment
+      - --cxxopt=-Wno-class-memaccess
+      - --host_cxxopt=-Wno-class-memaccess
+      - --copt=-Wno-maybe-uninitialized
+      - --host_copt=-Wno-maybe-uninitialized
+      - --copt=-Wno-misleading-indentation
+      - --host_copt=-Wno-misleading-indentation
+      - --build_tag_filters=-nobuildkite
+      - --test_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+      # The autoconfigured GCC toolchain links with ld.gold, which rejects the
+      # --export-dynamic-symbol-list that liblldb passes (an lld / bfd 2.35
+      # option) and, unlike lld, does not resolve the backward references
+      # among lldb's cyclic Bazel targets, so liblldb and lldb-server fail to
+      # link. Upstream builds lldb with --config=generic_clang (lld) only; the
+      # target merges that remove the cycles (llvm/llvm-project#229101,
+      # #237392) are on main, not in this release.
+      - '-@llvm-project//lldb/...'
+  run_tests_gcc_debian10:
+    name: bazel test //... (debian10, gcc)
+    platform: debian10
+    bazel: ${{ bazel }}
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_gcc
+      - --repo_env=CC=gcc
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --copt=-Wno-unused-parameter
+      - --host_copt=-Wno-unused-parameter
+      - --copt=-Wno-comment
+      - --host_copt=-Wno-comment
+      - --cxxopt=-Wno-class-memaccess
+      - --host_cxxopt=-Wno-class-memaccess
+      - --copt=-Wno-maybe-uninitialized
+      - --host_copt=-Wno-maybe-uninitialized
+      - --copt=-Wno-misleading-indentation
+      - --host_copt=-Wno-misleading-indentation
+      - --build_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+      # debian10 ships gcc 8.3 and clang 7. libc documents Clang >= 11 and
+      # GCC >= 12.2 (libc/docs/compiler_support.rst) and in this release every
+      # libc target and test is compiled with -ftrivial-auto-var-init=pattern,
+      # which neither compiler accepts, so nothing under //libc builds here.
+      # Build and test everything else.
+      - '-@llvm-project//libc/...'
+      # The autoconfigured GCC toolchain links with ld.gold, which rejects the
+      # --export-dynamic-symbol-list that liblldb passes (an lld / bfd 2.35
+      # option) and, unlike lld, does not resolve the backward references
+      # among lldb's cyclic Bazel targets, so liblldb and lldb-server fail to
+      # link. Upstream builds lldb with --config=generic_clang (lld) only; the
+      # target merges that remove the cycles (llvm/llvm-project#229101,
+      # #237392) are on main, not in this release.
+      - '-@llvm-project//lldb/...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_gcc
+      - --repo_env=CC=gcc
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --copt=-Wno-unused-parameter
+      - --host_copt=-Wno-unused-parameter
+      - --copt=-Wno-comment
+      - --host_copt=-Wno-comment
+      - --cxxopt=-Wno-class-memaccess
+      - --host_cxxopt=-Wno-class-memaccess
+      - --copt=-Wno-maybe-uninitialized
+      - --host_copt=-Wno-maybe-uninitialized
+      - --copt=-Wno-misleading-indentation
+      - --host_copt=-Wno-misleading-indentation
+      - --build_tag_filters=-nobuildkite
+      - --test_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+      # debian10 ships gcc 8.3 and clang 7. libc documents Clang >= 11 and
+      # GCC >= 12.2 (libc/docs/compiler_support.rst) and in this release every
+      # libc target and test is compiled with -ftrivial-auto-var-init=pattern,
+      # which neither compiler accepts, so nothing under //libc builds here.
+      # Build and test everything else.
+      - '-@llvm-project//libc/...'
+      # The autoconfigured GCC toolchain links with ld.gold, which rejects the
+      # --export-dynamic-symbol-list that liblldb passes (an lld / bfd 2.35
+      # option) and, unlike lld, does not resolve the backward references
+      # among lldb's cyclic Bazel targets, so liblldb and lldb-server fail to
+      # link. Upstream builds lldb with --config=generic_clang (lld) only; the
+      # target merges that remove the cycles (llvm/llvm-project#229101,
+      # #237392) are on main, not in this release.
+      - '-@llvm-project//lldb/...'
+  # generic_clang's -fuse-ld=lld is unsatisfied on the bazelci macOS runners
+  # (clang looks for ld64.lld, which homebrew's keg-only lld does not put on
+  # PATH). Upstream runs no Bazel CI on macOS, so the flag is untested there
+  # either way; a version's rendered file may drop the two linkopts by hand.
+  run_tests_macos:
+    name: bazel test //... (macOS x86_64, clang)
+    platform: macos
+    bazel: ${{ bazel_macos }}
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --build_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --build_tag_filters=-nobuildkite
+      - --test_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+  run_tests_macos_arm64:
+    name: bazel test //... (macOS arm64, clang)
+    platform: macos_arm64
+    bazel: ${{ bazel_macos }}
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --build_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=generic_clang
+      - --repo_env=CC=clang
+      - --cxxopt=-std=c++17
+      - --host_cxxopt=-std=c++17
+      - --copt=-Wall
+      - --host_copt=-Wall
+      - --cxxopt=-Wno-range-loop-analysis
+      - --host_cxxopt=-Wno-range-loop-analysis
+      - --copt=-Wno-deprecated
+      - --host_copt=-Wno-deprecated
+      - --build_tag_filters=-nobuildkite
+      - --test_tag_filters=-nobuildkite
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+  # `no_windows` is upstream's own tag for targets whose test driver needs a
+  # POSIX shell (mlir's gentbl_test); the tag is inert unless filtered on.
+  run_tests_windows_clang_cl:
+    name: bazel test //... (windows, clang-cl)
+    platform: windows
+    bazel: ${{ bazel_clang_cl }}
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=clang-cl
+      - --force_pic
+      - --noforce_pic
+      - --cxxopt=/std:c++17
+      - --host_cxxopt=/std:c++17
+      - --copt=/Zc:strictStrings
+      - --host_copt=/Zc:strictStrings
+      - --copt=/Oi
+      - --host_copt=/Oi
+      - --cxxopt=/Zc:rvalueCast
+      - --host_cxxopt=/Zc:rvalueCast
+      - --copt=/Zc:inline
+      - --host_copt=/Zc:inline
+      - --cxxopt=/Zc:__cplusplus
+      - --host_cxxopt=/Zc:__cplusplus
+      - --copt=/permissive-
+      - --host_copt=/permissive-
+      - --cxxopt=/bigobj
+      - --host_cxxopt=/bigobj
+      - --compiler=clang-cl
+      - --repo_env=USE_CLANG_CL=1
+      - --copt=/clang:-Wall
+      - --host_copt=/clang:-Wall
+      - --copt=/clang:-Werror
+      - --host_copt=/clang:-Werror
+      - --copt=/clang:-Wno-unused
+      - --host_copt=/clang:-Wno-unused
+      - --copt=/clang:-Wno-unused-const-variable
+      - --host_copt=/clang:-Wno-unused-const-variable
+      - --copt=/clang:-Wno-inconsistent-dllimport
+      - --host_copt=/clang:-Wno-inconsistent-dllimport
+      - --cxxopt=/clang:-Wno-c++11-narrowing
+      - --host_cxxopt=/clang:-Wno-c++11-narrowing
+      - --build_tag_filters=-nobuildkite,-no_windows
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+      # This release's lldb overlay has no Windows support (upstream added the
+      # @platforms//os:windows branches in 2026, llvm/llvm-project#201283 and
+      # #203146); the ungated Utility library fails under /WX on C4005
+      # (NOMINMAX redefinition) and C4068 (#pragma mark).
+      - '-@llvm-project//lldb/...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=clang-cl
+      - --force_pic
+      - --noforce_pic
+      - --cxxopt=/std:c++17
+      - --host_cxxopt=/std:c++17
+      - --copt=/Zc:strictStrings
+      - --host_copt=/Zc:strictStrings
+      - --copt=/Oi
+      - --host_copt=/Oi
+      - --cxxopt=/Zc:rvalueCast
+      - --host_cxxopt=/Zc:rvalueCast
+      - --copt=/Zc:inline
+      - --host_copt=/Zc:inline
+      - --cxxopt=/Zc:__cplusplus
+      - --host_cxxopt=/Zc:__cplusplus
+      - --copt=/permissive-
+      - --host_copt=/permissive-
+      - --cxxopt=/bigobj
+      - --host_cxxopt=/bigobj
+      - --compiler=clang-cl
+      - --repo_env=USE_CLANG_CL=1
+      - --copt=/clang:-Wall
+      - --host_copt=/clang:-Wall
+      - --copt=/clang:-Werror
+      - --host_copt=/clang:-Werror
+      - --copt=/clang:-Wno-unused
+      - --host_copt=/clang:-Wno-unused
+      - --copt=/clang:-Wno-unused-const-variable
+      - --host_copt=/clang:-Wno-unused-const-variable
+      - --copt=/clang:-Wno-inconsistent-dllimport
+      - --host_copt=/clang:-Wno-inconsistent-dllimport
+      - --cxxopt=/clang:-Wno-c++11-narrowing
+      - --host_cxxopt=/clang:-Wno-c++11-narrowing
+      - --build_tag_filters=-nobuildkite,-no_windows
+      - --test_tag_filters=-nobuildkite,-no_windows
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+      # This release's lldb overlay has no Windows support (upstream added the
+      # @platforms//os:windows branches in 2026, llvm/llvm-project#201283 and
+      # #203146); the ungated Utility library fails under /WX on C4005
+      # (NOMINMAX redefinition) and C4068 (#pragma mark).
+      - '-@llvm-project//lldb/...'
+  run_tests_windows_msvc:
+    name: bazel test //... (windows, msvc)
+    platform: windows
+    bazel: ${{ bazel }}
+    build_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=msvc
+      - --force_pic
+      - --noforce_pic
+      - --cxxopt=/std:c++17
+      - --host_cxxopt=/std:c++17
+      - --copt=/Zc:strictStrings
+      - --host_copt=/Zc:strictStrings
+      - --copt=/Oi
+      - --host_copt=/Oi
+      - --cxxopt=/Zc:rvalueCast
+      - --host_cxxopt=/Zc:rvalueCast
+      - --copt=/Zc:inline
+      - --host_copt=/Zc:inline
+      - --cxxopt=/Zc:__cplusplus
+      - --host_cxxopt=/Zc:__cplusplus
+      - --copt=/permissive-
+      - --host_copt=/permissive-
+      - --cxxopt=/bigobj
+      - --host_cxxopt=/bigobj
+      - --copt=/Zc:preprocessor
+      - --host_copt=/Zc:preprocessor
+      - --copt=/WX
+      - --host_copt=/WX
+      - --copt=/wd4141
+      - --host_copt=/wd4141
+      - --copt=/wd4244
+      - --host_copt=/wd4244
+      - --copt=/wd4267
+      - --host_copt=/wd4267
+      - --copt=/wd4273
+      - --host_copt=/wd4273
+      - --copt=/wd4319
+      - --host_copt=/wd4319
+      - --copt=/wd4624
+      - --host_copt=/wd4624
+      - --copt=/wd4804
+      - --host_copt=/wd4804
+      - --copt=/wd4805
+      - --host_copt=/wd4805
+      - --linkopt=/WX
+      - --host_linkopt=/WX
+      - --linkopt=/IGNORE:4001
+      - --host_linkopt=/IGNORE:4001
+      - --build_tag_filters=-nobuildkite,-no_windows
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    build_targets:
+      - '@llvm-project//...'
+      # This release's lldb overlay has no Windows support (upstream added the
+      # @platforms//os:windows branches in 2026, llvm/llvm-project#201283 and
+      # #203146); the ungated Utility library fails under /WX on C4005
+      # (NOMINMAX redefinition) and C4068 (#pragma mark).
+      - '-@llvm-project//lldb/...'
+    test_flags:
+      # .bazelrc: unconditional flags
+      - --experimental_guard_against_concurrent_changes
+      - --nolegacy_external_runfiles
+      - --enable_platform_specific_config
+      - --dynamic_mode=off
+      - --strip=never
+      - --features=layering_check
+      - --incompatible_no_implicit_file_export
+      - --incompatible_disallow_empty_glob
+      - --experimental_cc_shared_library
+      # .bazelrc: --config=msvc
+      - --force_pic
+      - --noforce_pic
+      - --cxxopt=/std:c++17
+      - --host_cxxopt=/std:c++17
+      - --copt=/Zc:strictStrings
+      - --host_copt=/Zc:strictStrings
+      - --copt=/Oi
+      - --host_copt=/Oi
+      - --cxxopt=/Zc:rvalueCast
+      - --host_cxxopt=/Zc:rvalueCast
+      - --copt=/Zc:inline
+      - --host_copt=/Zc:inline
+      - --cxxopt=/Zc:__cplusplus
+      - --host_cxxopt=/Zc:__cplusplus
+      - --copt=/permissive-
+      - --host_copt=/permissive-
+      - --cxxopt=/bigobj
+      - --host_cxxopt=/bigobj
+      - --copt=/Zc:preprocessor
+      - --host_copt=/Zc:preprocessor
+      - --copt=/WX
+      - --host_copt=/WX
+      - --copt=/wd4141
+      - --host_copt=/wd4141
+      - --copt=/wd4244
+      - --host_copt=/wd4244
+      - --copt=/wd4267
+      - --host_copt=/wd4267
+      - --copt=/wd4273
+      - --host_copt=/wd4273
+      - --copt=/wd4319
+      - --host_copt=/wd4319
+      - --copt=/wd4624
+      - --host_copt=/wd4624
+      - --copt=/wd4804
+      - --host_copt=/wd4804
+      - --copt=/wd4805
+      - --host_copt=/wd4805
+      - --linkopt=/WX
+      - --host_linkopt=/WX
+      - --linkopt=/IGNORE:4001
+      - --host_linkopt=/IGNORE:4001
+      - --build_tag_filters=-nobuildkite,-no_windows
+      - --test_tag_filters=-nobuildkite,-no_windows
+      - --keep_going
+      - --incompatible_disallow_empty_glob=true
+      - --incompatible_autoload_externally=
+    test_targets:
+      - '@llvm-project//...'
+      # This release's lldb overlay has no Windows support (upstream added the
+      # @platforms//os:windows branches in 2026, llvm/llvm-project#201283 and
+      # #203146); the ungated Utility library fails under /WX on C4005
+      # (NOMINMAX redefinition) and C4068 (#pragma mark).
+      - '-@llvm-project//lldb/...'
