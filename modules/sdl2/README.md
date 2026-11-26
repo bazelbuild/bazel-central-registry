@@ -20,6 +20,17 @@ Enabled backends:
 - macOS: Cocoa video, CoreAudio audio, Metal/OpenGL rendering, IOKit joystick/haptics, pthread timer/loadso/filesystem/power.
 - Windows: WinMM audio, Windows video, Windows joystick/sensor, Windows timer/loadso/filesystem/power.
 
+Build settings (Linux only, all default to `True`):
+
+- `@sdl2//:with_alsa`: ALSA audio.
+- `@sdl2//:with_wayland`: Wayland video.
+- `@sdl2//:with_x11`: X11 video.
+
+EGL / OpenGL ES 2 are enabled when Wayland or X11 is. With all three off, for example
+`--@sdl2//:with_alsa=False --@sdl2//:with_wayland=False --@sdl2//:with_x11=False`, SDL builds
+headless (joystick, game controller, haptics, dummy video/audio) without the X11, Wayland or ALSA
+dependencies.
+
 Limitations:
 
 - Linux build does not currently enable Wayland `libdecor`, PulseAudio, or PipeWire.
@@ -30,4 +41,5 @@ Limitations:
 Presubmit:
 
 - Builds and tests `@sdl2//:sdl2_headers_consumer_compile_test` for `SDL2/...` includes and `@sdl2//:sdl2_consumer_link_test` for flat `SDL.h` includes.
+- Builds and tests `@sdl2//:sdl2_consumer_link_test` on Linux with all backend settings off.
 - Uses the standard module presubmit path across all supported platforms on Bazel 8, Bazel 9, and rolling.
