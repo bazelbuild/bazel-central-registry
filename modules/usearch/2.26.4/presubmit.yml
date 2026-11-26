@@ -1,0 +1,84 @@
+matrix:
+  platform: [debian13, ubuntu2204, ubuntu2404, macos, macos_arm64, windows]
+  bazel: [7.x, 8.x, 9.x, rolling]
+  hermetic_llvm_unix_platform: [ubuntu2404, ubuntu2404_arm64, macos, macos_arm64]
+  hermetic_llvm_windows_platform:
+    - windows
+    # windows_arm64 is disabled: bazelci.py runs `setup` through cmd.exe as a
+    # batch command only when the platform is exactly "windows". On
+    # windows_arm64 it runs the line as a shell script (prefixed with
+    # `set -e`) through cmd.exe, which fails before the build starts.
+    # - windows_arm64
+  # The other tasks already cover every Bazel version with the default
+  # toolchains, so test hermetic LLVM on 9.x only to keep CI load down.
+  hermetic_llvm_bazel: [9.x]
+tasks:
+  verify_targets:
+    name: Verify build targets
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets: ['@usearch//...']
+  verify_targets_hermetic_llvm_unix:
+    name: Verify build targets (hermetic llvm, unix)
+    platform: ${{ hermetic_llvm_unix_platform }}
+    bazel: ${{ hermetic_llvm_bazel }}
+    setup:
+      - echo 'bazel_dep(name = "llvm", version = "0.8.27")' >> MODULE.bazel
+    build_flags: &hermetic_llvm_flags
+      - '--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1'
+      - '--repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1'
+      - '--extra_toolchains=@llvm//toolchain:all'
+    build_targets: ['@usearch//...']
+  # Windows runs setup through cmd.exe, which does not strip single quotes: the
+  # line would be appended as a bare Starlark string (a silent no-op), so echo unquoted.
+  verify_targets_hermetic_llvm_windows:
+    name: Verify build targets (hermetic llvm, windows)
+    platform: ${{ hermetic_llvm_windows_platform }}
+    bazel: ${{ hermetic_llvm_bazel }}
+    setup:
+      - echo bazel_dep(name = "llvm", version = "0.8.27")>> MODULE.bazel
+    build_flags: *hermetic_llvm_flags
+    build_targets: ['@usearch//...']
+
+bcr_test_module:
+  module_path: tests
+  matrix:
+    platform: [debian13, ubuntu2204, ubuntu2404, macos, macos_arm64, windows]
+    bazel: [7.x, 8.x, 9.x, rolling]
+    hermetic_llvm_unix_platform: [ubuntu2404, ubuntu2404_arm64, macos, macos_arm64]
+    hermetic_llvm_windows_platform:
+      - windows
+      # windows_arm64 is disabled: bazelci.py runs `setup` through cmd.exe as a
+      # batch command only when the platform is exactly "windows". On
+      # windows_arm64 it runs the line as a shell script (prefixed with
+      # `set -e`) through cmd.exe, which fails before the build starts.
+      # - windows_arm64
+    # The other tasks already cover every Bazel version with the default
+    # toolchains, so test hermetic LLVM on 9.x only to keep CI load down.
+    hermetic_llvm_bazel: [9.x]
+  tasks:
+    run_tests:
+      name: Run test module
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets: ['//...']
+    run_tests_hermetic_llvm_unix:
+      name: Run test module (hermetic llvm, unix)
+      platform: ${{ hermetic_llvm_unix_platform }}
+      bazel: ${{ hermetic_llvm_bazel }}
+      setup:
+        - echo 'bazel_dep(name = "llvm", version = "0.8.27")' >> MODULE.bazel
+      test_flags: &test_hermetic_llvm_flags
+        - '--repo_env=BAZEL_DO_NOT_DETECT_CPP_TOOLCHAIN=1'
+        - '--repo_env=BAZEL_NO_APPLE_CPP_TOOLCHAIN=1'
+        - '--extra_toolchains=@llvm//toolchain:all'
+      test_targets: ['//...']
+    # cmd.exe does not strip single quotes, hence the unquoted echo.
+    run_tests_hermetic_llvm_windows:
+      name: Run test module (hermetic llvm, windows)
+      platform: ${{ hermetic_llvm_windows_platform }}
+      bazel: ${{ hermetic_llvm_bazel }}
+      setup:
+        - echo bazel_dep(name = "llvm", version = "0.8.27")>> MODULE.bazel
+      test_flags: *test_hermetic_llvm_flags
+      test_targets: ['//...']
