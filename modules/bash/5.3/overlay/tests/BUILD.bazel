@@ -1,0 +1,125 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+# Upstream's own suite: every tests/run-<name> driver is one test, run by the
+# built bash against the shipped .right files.  The drivers are plain sh, so
+# the built shell interprets them too; the only host programs involved are the
+# utilities the .tests scripts call (cat, ls, diff, ...), which the registry's
+# Linux and macOS lanes have.  POSIX only, as the module is.
+SUITE_FILES = glob(
+    ["**"],
+    exclude = [
+        "BUILD.bazel",
+        "*.cc",
+    ],
+)
+
+DRIVERS = glob(
+    ["run-*"],
+    exclude = [
+        # The whole suite in one process; the per-driver tests below cover it.
+        "run-all",
+        "run-minimal",
+    ],
+)
+
+# Drivers that cannot pass inside a test sandbox: a controlling terminal for
+# job control and the /dev/tty reads, installed locales for the multibyte and
+# message-catalog checks, a C compiler and the configured loadables Makefile
+# for the one that builds a loadable builtin on the fly.  Kept defined for
+# `bazel test //tests:jobs_test` on a developer machine.
+MANUAL = {
+    "run-execscript": "runs interactive shells (bash -i) that need a controlling terminal; upstream also expects signal-numbering differences",
+    "run-glob-bracket": "compiles a loadable builtin with CC from examples/loadables/Makefile",
+    "run-glob-test": "needs the zh_TW.big5 locale installed",
+    "run-history": "runs interactive shells (bash -i) that need a controlling terminal",
+    "run-intl": "needs the en_US.UTF-8 and de_DE locales installed",
+    "run-jobs": "needs a controlling terminal",
+    "run-printf": "printf7.sub expects an 11-digit precision to be accepted; glibc's strtoimax reports ERANGE and upstream's own build fails the same way",
+    "run-read": "reads /dev/tty",
+    "run-test": "redirects from /dev/tty",
+    "run-vredir": "opens /dev/tty",
+}
+
+# Drivers whose scripts switch to a specific locale, skipped (exit 0, with a message) where
+# the C library does not have it: the registry's Linux images ship no en_US.UTF-8, macOS
+# does.  And drivers with cases that expect an unprivileged user (a refused `ulimit -u`,
+# unreadable files), skipped when the test runs as root, as the registry's Linux images do.
+REQUIRED_LOCALE = {
+    "run-alias": "en_US.UTF-8",
+    "run-builtins": "en_US.UTF-8",
+    "run-extglob": "en_US.UTF-8",
+    "run-new-exp": "en_US.UTF-8",
+}
+
+NOT_AS_ROOT = [
+    "run-builtins",
+]
+
+# builtins11.sub raises the soft core-file limit to unlimited; the registry's macOS runners
+# cap the hard limit, and the driver is skipped where that is so.
+NEEDS_UNLIMITED_CORE = [
+    "run-builtins",
+]
+
+# Timing: nameref11.sub reads a coproc's NAME_PID variable before and after `wait`, and
+# trap8.sub counts SIGCHLD trap runs for three children that exit together; under a loaded
+# test runner the reaping order shifts and a line goes missing.  Upstream's run-trap says
+# as much ("schedule processes differently"); both pass reliably on an idle machine.
+FLAKY = [
+    "run-nameref",
+    "run-trap",
+]
+
+filegroup(
+    name = "suite_files",
+    srcs = SUITE_FILES,
+)
+
+cc_library(
+    name = "suite_runner",
+    testonly = True,
+    srcs = ["suite_runner.cc"],
+    copts = ["-std=c++17"],
+    deps = ["@rules_cc//cc/runfiles"],
+    alwayslink = True,
+)
+
+# A test cannot share its name with the driver file it runs (the label would be the rule,
+# a cycle through the filegroup), so `run-arith` is the test `arith_test`.
+[
+    cc_test(
+        name = driver.removeprefix("run-").replace("-", "_") + "_test",
+        size = "medium",
+        args = [driver],
+        data = [
+            ":suite_files",
+            "//:bash",
+            "//:config",
+            "//:printenv",
+            "//:recho",
+            "//:version_h",
+            "//:xcase",
+            "//:y.tab.c",
+            "//:zecho",
+        ],
+        env = {
+            "BASH_RLOCATIONPATH": "$(rlocationpath //:bash)",
+            "BUILD_DIR_RLOCATIONPATHS": "$(rlocationpaths //:config) $(rlocationpaths //:version_h) $(rlocationpath //:y.tab.c)",
+            "NEEDS_UNLIMITED_CORE": "1" if driver in NEEDS_UNLIMITED_CORE else "",
+            "NOT_AS_ROOT": "1" if driver in NOT_AS_ROOT else "",
+            "REQUIRED_LOCALE": REQUIRED_LOCALE.get(driver, ""),
+            "SUITE_RLOCATIONPATHS": "$(rlocationpaths :suite_files)",
+            "TOOL_RLOCATIONPATHS": "$(rlocationpaths //:printenv) $(rlocationpaths //:recho) $(rlocationpaths //:xcase) $(rlocationpaths //:zecho)",
+        },
+        flaky = driver in FLAKY,
+        tags = ["manual"] if driver in MANUAL else [],
+        deps = [":suite_runner"],
+    )
+    for driver in DRIVERS
+]
+
+test_suite(
+    name = "tests",
+    tests = [driver.removeprefix("run-").replace("-", "_") + "_test" for driver in DRIVERS if driver not in MANUAL],
+)
