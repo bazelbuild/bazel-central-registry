@@ -1,0 +1,68 @@
+load("@bazel_skylib//rules:expand_template.bzl", "expand_template")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+
+expand_template(
+    name = "version_header",
+    out = "src/libslirp-version.h",
+    substitutions = {
+        "@SLIRP_MAJOR_VERSION@": "4",
+        "@SLIRP_MINOR_VERSION@": "9",
+        "@SLIRP_MICRO_VERSION@": "5",
+        "@SLIRP_VERSION_STRING@": '"4.9.5"',
+    },
+    template = "src/libslirp-version.h.in",
+)
+
+# The Windows build uses the GNU-driver Clang toolchain, not MSVC or clang-cl.
+config_setting(
+    name = "windows_x86_64_clang",
+    constraint_values = ["@platforms//os:windows", "@platforms//cpu:x86_64"],
+    flag_values = {"@rules_cc//cc/compiler:compiler": "clang"},
+)
+
+cc_library(
+    name = "slirp",
+    srcs = glob(
+        [
+            "src/*.c",
+            "src/*.h",
+        ],
+        exclude = ["src/libslirp.h"],
+    ),
+    hdrs = [
+        "src/libslirp.h",
+        "src/libslirp-version.h",
+    ],
+    copts = ["-std=gnu99"],
+    defines = ["LIBSLIRP_STATIC"],
+    includes = ["src"],
+    linkopts = select({
+        ":windows_x86_64_clang": ["-liphlpapi", "-lws2_32"],
+        "//conditions:default": [],
+    }),
+    linkstatic = True,
+    local_defines = [
+        'G_LOG_DOMAIN=\\"Slirp\\"',
+    ],
+    target_compatible_with = select({
+        "@platforms//os:linux": [],
+        ":windows_x86_64_clang": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    visibility = ["//visibility:public"],
+    deps = ["@glib//glib"],
+)
+
+alias(
+    name = "libslirp",
+    actual = ":slirp",
+    visibility = ["//visibility:public"],
+)
+
+cc_test(
+    name = "version_test",
+    srcs = ["bazel_version_test.c"],
+    deps = [":libslirp"],
+    target_compatible_with = ["@platforms//os:linux"],
+)
