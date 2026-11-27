@@ -1,0 +1,87 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc_autoconf//autoconf:autoconf.bzl", "autoconf")
+load("@rules_cc_autoconf//autoconf:autoconf_hdr.bzl", "autoconf_hdr")
+load("@rules_license//rules:license.bzl", "license")
+load(":libsm_config_checks.bzl", "LIBSM_CONFIG_CHECKS")
+
+package(
+    default_applicable_licenses = [":license"],
+)
+
+license(
+    name = "license",
+    license_kinds = [
+        "@rules_license//licenses/spdx:MIT",
+        "@rules_license//licenses/spdx:MIT-open-group",
+    ],
+    license_text = "COPYING",
+)
+
+exports_files(["COPYING"])
+
+_UNIX_COMPATIBLE = select({
+    "@platforms//os:linux": [],
+    "@platforms//os:macos": [],
+    "@platforms//os:freebsd": [],
+    "@platforms//os:openbsd": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+autoconf(
+    name = "config_checks",
+    checks = LIBSM_CONFIG_CHECKS,
+)
+
+# config.h.in is shipped in the upstream release tarball (autoheader output).
+autoconf_hdr(
+    name = "config_h",
+    out = "generated/config.h",
+    template = "config.h.in",
+    deps = [
+        ":config_checks",
+        "@rules_cc_autoconf//autoconf/macros/AC_CHECK_INCLUDES_DEFAULT",
+    ],
+)
+
+# Private: exposes the generated config.h (included as <config.h>) to libsm's
+# own sources only, so it never lands on consumers' include paths.
+cc_library(
+    name = "config",
+    hdrs = [":config_h"],
+    strip_include_prefix = "generated",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:private"],
+)
+
+cc_library(
+    name = "sm",
+    srcs = glob([
+        "src/*.c",
+        "src/*.h",
+    ]),
+    hdrs = glob(["include/X11/SM/*.h"]),
+    copts = [
+        "-DHAVE_CONFIG_H",
+        "-Wno-unused-parameter",
+    ] + select({
+        # Previously hard-coded in the overlay config.h; upstream config.h.in
+        # has no slot for it, so it is passed on the command line instead.
+        "@platforms//os:linux": ["-D_GNU_SOURCE=1"],
+        "//conditions:default": [],
+    }),
+    implementation_deps = [":config"],
+    strip_include_prefix = "include",
+    target_compatible_with = _UNIX_COMPATIBLE,
+    visibility = ["//visibility:public"],
+    deps = [
+        "@libice",
+        "@libxtrans",
+        "@xorgproto",
+    ],
+)
+
+alias(
+    name = "libsm",
+    actual = ":sm",
+    visibility = ["//visibility:public"],
+)
