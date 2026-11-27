@@ -1,0 +1,132 @@
+"""Bazel rules for running the Yarn package manager."""
+
+# Bazel 8.3.0 is where `repository_ctx.repo_metadata` arrives, which
+# yarn/private/repositories.bzl calls. Declaring it means an older Bazel is
+# turned away while the module graph resolves, instead of failing inside this
+# ruleset's files.
+# `version` stays at the placeholder in the repository. The Bazel Central
+# Registry entry carries the real version, which `publish-to-bcr` supplies as
+# a generated patch over the released archive — the same arrangement
+# rules_shell uses.
+module(
+    name = "parkrevil_rules_yarn",
+    version = "0.2.0",
+    bazel_compatibility = [">=8.3.0"],
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "rules_nodejs", version = "6.7.5")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+bazel_dep(name = "tar.bzl", version = "0.10.9")
+
+bazel_dep(name = "platforms", version = "1.1.0", dev_dependency = True)
+bazel_dep(name = "rules_testing", version = "0.9.0", dev_dependency = True)
+
+# yarn.install runs Yarn on Node.js in a repository rule, where toolchain
+# resolution is not available, so it takes the default toolchain's per-platform
+# repositories directly. rules_nodejs declares that toolchain itself.
+node_repositories = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
+use_repo(
+    node_repositories,
+    "nodejs_darwin_amd64",
+    "nodejs_darwin_arm64",
+    "nodejs_linux_amd64",
+    "nodejs_linux_arm64",
+)
+
+# yarn.install builds a package from its pinned tarball with tar.bzl's bsdtar,
+# as rules_js does: its build actions take the registered toolchain, and its
+# repository rule, where toolchains cannot be resolved, the host's binary from
+# these repositories (tar/extensions.bzl at v0.10.9, create_repositories).
+tar_toolchains = use_extension("@tar.bzl//tar:extensions.bzl", "toolchains")
+use_repo(
+    tar_toolchains,
+    "bsd_tar_toolchains_darwin_amd64",
+    "bsd_tar_toolchains_darwin_arm64",
+    "bsd_tar_toolchains_linux_amd64",
+    "bsd_tar_toolchains_linux_arm64",
+)
+
+# yarn.install reads yarn.lock and .yarnrc.yml as Yarn 4.18.0 does: with the
+# js-yaml its own lockfile pins at that tag (4.3.0), by the integrity the npm
+# registry publishes for it. https://registry.npmjs.org/js-yaml/4.3.0
+# http_archive's urls, integrity, strip_prefix and build_file_content are
+# documented in Bazel 8.3.0's tools/build_defs/repo/http.bzl.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "js_yaml",
+    build_file_content = """exports_files(["index.js"])
+
+filegroup(
+    name = "js_yaml",
+    srcs = ["index.js", "package.json"] + glob(["lib/**"]),
+    visibility = ["//visibility:public"],
+)
+""",
+    integrity = "sha512-1td788aAnnZ5qs7V2QIRl1owjtYpbKt749Y3xauqQgwIIGF/xXWz1wMTEBx5O3LK3lXLVuqXPdPxj2BoFHaW9Q==",
+    strip_prefix = "package",
+    urls = ["https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.0.tgz"],
+)
+
+# The Bazel the tests in tests/integration run inside a test, one binary per
+# host platform, each pinned by the SHA-256 Bazel publishes beside it at
+# https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-<platform>.sha256.
+# It is the version in .bazelversion, which
+# //tests/integration:bazel_binary_test checks. http_file's urls, sha256,
+# executable and downloaded_file_path are documented in Bazel 8.3.0's
+# tools/build_defs/repo/http.bzl; a repository rule's dev_dependency in its
+# ModuleFileGlobals.java (repo_rule_proxy).
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+http_file(
+    name = "bazel_binary_darwin_arm64",
+    dev_dependency = True,
+    downloaded_file_path = "bazel",
+    executable = True,
+    sha256 = "dd466352a3e4d3581b8898740ee1ff208866ccbe25f8d367c5dcb950219587e6",
+    urls = ["https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-darwin-arm64"],
+)
+
+http_file(
+    name = "bazel_binary_darwin_x86_64",
+    dev_dependency = True,
+    downloaded_file_path = "bazel",
+    executable = True,
+    sha256 = "14c9bcb01303b38192e0e2895051c1bcf19bf89d7e416f5aeeeb48b6b624cfbf",
+    urls = ["https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-darwin-x86_64"],
+)
+
+http_file(
+    name = "bazel_binary_linux_arm64",
+    dev_dependency = True,
+    downloaded_file_path = "bazel",
+    executable = True,
+    sha256 = "049dd21f40ad979db11c3ee68c96a42ce75f1185e69ac61ab20de1501427a410",
+    urls = ["https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-linux-arm64"],
+)
+
+http_file(
+    name = "bazel_binary_linux_x86_64",
+    dev_dependency = True,
+    downloaded_file_path = "bazel",
+    executable = True,
+    sha256 = "7668a95db1250f12c40407251e4e203b4ec8bf39bc495d2f485b2d8c99048694",
+    urls = ["https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-linux-x86_64"],
+)
+
+node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node", dev_dependency = True)
+node.toolchain(node_version = "24.21.0")
+
+# Bazel-managed Node.js for the host platform, for the tests of the ruleset's
+# own Node.js programs.
+use_repo(node, "nodejs")
+
+register_toolchains(
+    "//tests/yarn_binary:host_path_node_runtime_toolchain",
+    dev_dependency = True,
+)
+
+yarn = use_extension("//yarn:extensions.bzl", "yarn", dev_dependency = True)
+yarn.distribution(version = "4.18.0")
+use_repo(yarn, "yarn")
