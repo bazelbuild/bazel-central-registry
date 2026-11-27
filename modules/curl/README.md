@@ -1,6 +1,7 @@
 # curl
 
-Starting with `8.22.0.bcr.2`, HTTP/2 support can be enabled with nghttp2:
+Starting with `8.12.0.bcr.3` and `8.22.0.bcr.2`, HTTP/2 support can be enabled
+with nghttp2:
 
 ```text
 build --@curl//:http2=true
