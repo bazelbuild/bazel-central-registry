@@ -1,0 +1,42 @@
+name: Check File Sizes
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check-file-sizes:
+    name: Check Git blob sizes (<= 25 MiB)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run unit tests
+        run: python3 .github/scripts/check_file_sizes_test.py -v
+
+      - name: Check repository blob sizes
+        env:
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && -n "${PUSH_BEFORE_SHA}" && "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            python3 .github/scripts/check_file_sizes.py --base-ref "${PUSH_BEFORE_SHA}"
+          else
+            python3 .github/scripts/check_file_sizes.py
+          fi
