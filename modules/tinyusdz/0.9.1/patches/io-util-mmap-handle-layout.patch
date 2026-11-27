@@ -1,0 +1,23 @@
+Backport of upstream commit e961e7bf7349c56d581f128c4cf7a32616101911
+(io-util: fix MMapFileHandle layout mismatch (WIN32 vs _WIN32)).
+
+MSVC predefines _WIN32 but not WIN32 (CMake adds /DWIN32 to its default flags), so without
+that define LoadUSDAFromFile/LoadUSDCFromFile/LoadUSDZFromFile crash on Windows.
+
+--- a/src/io-util.hh
++++ b/src/io-util.hh
+@@ -131,7 +131,13 @@ bool IsMMapSupported();
+ struct MMapFileHandle
+ {
+   std::string filename;
+-#if defined(WIN32)
++  // NOTE: gate on `_WIN32` (defined by the compiler everywhere on Windows), not
++  // bare `WIN32` (only defined once <windows.h> is included). The MMapFile
++  // implementation accesses hFile/unicode_filename under `_WIN32`; using `WIN32`
++  // here made this struct's layout differ between TUs that include <windows.h>
++  // and those that don't, corrupting `addr` in the caller (crash on USDC load
++  // under llvm-mingw, where the compiler does not predefine bare `WIN32`).
++#if defined(_WIN32)
+   std::wstring unicode_filename;
+   void *hFile = nullptr;
+ #endif
