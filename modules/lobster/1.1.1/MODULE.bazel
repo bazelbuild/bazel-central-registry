@@ -1,0 +1,152 @@
+module(
+    name = "lobster",
+    version = "1.1.1",
+    compatibility_level = 1,
+)
+
+bazel_dep(
+    name = "rules_python",
+    version = "1.5.1",
+)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    configure_coverage_tool = True,
+    is_default = True,
+    python_version = "3.12",
+)
+python.toolchain(python_version = "3.10")
+python.toolchain(python_version = "3.11")
+use_repo(python, "python_versions")
+
+uv = use_extension("@rules_python//python/uv:uv.bzl", "uv")
+uv.configure(version = "0.8.24")
+
+bazel_dep(name = "googletest", version = "1.13.0")
+bazel_dep(name = "platforms", version = "0.0.11")
+
+# Pinned Chrome for Testing binaries for the Selenium system test.
+# To update: pick a version from https://googlechromelabs.github.io/chrome-for-testing/
+# and refresh the sha256 values for each platform archive.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "chrome_linux64",
+    build_file_content = """filegroup(name = "all_files", srcs = glob(["**"]), visibility = ["//visibility:public"])
+exports_files(["chrome"])
+""",
+    sha256 = "55672d1f392fd3e7b7a08621b6e804e6bcb39d40cf155504abb74b3a021ea8ea",
+    strip_prefix = "chrome-linux64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/linux64/chrome-linux64.zip",
+)
+
+http_archive(
+    name = "chromedriver_linux64",
+    build_file_content = """exports_files(["chromedriver"], visibility = ["//visibility:public"])
+""",
+    sha256 = "a65f025c692e686ec2a21fa6b9639c69fa9813683a47af9cabf1ba0b1f453e42",
+    strip_prefix = "chromedriver-linux64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/linux64/chromedriver-linux64.zip",
+)
+
+http_archive(
+    name = "chrome_windows64",
+    build_file_content = """filegroup(name = "all_files", srcs = glob(["**"]), visibility = ["//visibility:public"])
+exports_files(["chrome.exe"])
+""",
+    sha256 = "59ab2a6e99bde9c0bc180414988394f9f5355a0d3764c704151ee8ecea235c7e",
+    strip_prefix = "chrome-win64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/win64/chrome-win64.zip",
+)
+
+http_archive(
+    name = "chromedriver_windows64",
+    build_file_content = """exports_files(["chromedriver.exe"], visibility = ["//visibility:public"])
+""",
+    sha256 = "2c08ba237981b72b824ac8063927f545c4cdf7f59b49f5eaeaa3a5d4e1a20eaf",
+    strip_prefix = "chromedriver-win64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/win64/chromedriver-win64.zip",
+)
+
+http_archive(
+    name = "chrome_macos_x64",
+    build_file_content = """filegroup(name = "all_files", srcs = glob(["**"]), visibility = ["//visibility:public"])
+filegroup(name = "chrome", srcs = glob(["Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"]), visibility = ["//visibility:public"])
+""",
+    sha256 = "9e4da7961d4a426078f02e89ecfa569a7926ada2dc88aa53c0bd9ed0d46c3bb7",
+    strip_prefix = "chrome-mac-x64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-x64/chrome-mac-x64.zip",
+)
+
+http_archive(
+    name = "chromedriver_macos_x64",
+    build_file_content = """exports_files(["chromedriver"], visibility = ["//visibility:public"])
+""",
+    sha256 = "f99a8d5580796a8c3d2177bfc3baeb49702e71e7b0953149d4b1674cc8d844a8",
+    strip_prefix = "chromedriver-mac-x64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-x64/chromedriver-mac-x64.zip",
+)
+
+http_archive(
+    name = "chrome_macos_arm64",
+    build_file_content = """filegroup(name = "all_files", srcs = glob(["**"]), visibility = ["//visibility:public"])
+filegroup(name = "chrome", srcs = glob(["Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"]), visibility = ["//visibility:public"])
+""",
+    sha256 = "529a71bd61aaa2ef266a4d4bd300ae9572ba6a3468a8d55c3023ffeffb5b6b4e",
+    strip_prefix = "chrome-mac-arm64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-arm64/chrome-mac-arm64.zip",
+)
+
+http_archive(
+    name = "chromedriver_macos_arm64",
+    build_file_content = """exports_files(["chromedriver"], visibility = ["//visibility:public"])
+""",
+    sha256 = "765c1a4c3e5eeca0e8a5eb5d0810998152394f1eb8c96ac7a7e711c97220e8f3",
+    strip_prefix = "chromedriver-mac-arm64",
+    url = "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-arm64/chromedriver-mac-arm64.zip",
+)
+
+# trlc is used here exclusively for its Bazel rules and providers
+# (see bazel/private/lobster_trlc.bzl: TrlcProviderInfo, trlc.bzl).
+# The lobster-trlc Python tool itself uses the pip-installed trlc wheel
+# at runtime (pinned in requirements_lock.txt), NOT this Bazel module.
+bazel_dep(name = "trlc", version = "3.0.1")
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+
+[
+    pip.parse(
+        envsubst = ["PIP_INDEX_URL"],
+        # For all .whl artifacts use the Bazel downloader, allowing caching of artifacts.
+        # Also, the Bazel download approach is supposed to be faster and on top offers parallel downloading.
+        # For sdist packages this will fall back automatically to 'python -m pip --isolated wheel ..', unless we set 'download_only = True'.
+        experimental_index_url = "${PIP_INDEX_URL:-https://pypi.org/simple}",
+        hub_name = "lobster_pip_hub_dependencies",
+        python_version = "3.{}".format(version),
+        requirements_lock = "//:requirements_lock_3_{}.txt".format(version),
+    )
+    for version in [
+        "10",
+        "11",
+        "12",
+    ]
+]
+
+use_repo(pip, "lobster_pip_hub_dependencies")
+
+pip.parse(
+    experimental_requirement_cycles = {
+        "sphinx": [
+            "sphinx",
+            "sphinxcontrib-serializinghtml",
+            "sphinxcontrib-qthelp",
+            "sphinxcontrib-htmlhelp",
+            "sphinxcontrib-devhelp",
+            "sphinxcontrib-applehelp",
+        ],
+    },
+    hub_name = "lobster_sphinx_dependencies",
+    python_version = "3.12",
+    requirements_lock = "//:requirements_dev.txt",
+)
+use_repo(pip, "lobster_sphinx_dependencies")
