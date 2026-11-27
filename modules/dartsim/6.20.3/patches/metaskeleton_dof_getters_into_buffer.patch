@@ -1,0 +1,178 @@
+perf: add MetaSkeleton DOF state getters that write into a buffer
+
+Backport of https://github.com/dartsim/dart/pull/3995 (library sources only;
+the changelog entry and test from the PR are omitted).
+
+diff --git a/dart/dynamics/MetaSkeleton.cpp b/dart/dynamics/MetaSkeleton.cpp
+index 02fa573d26769..9beffda78eddc 100644
+--- a/dart/dynamics/MetaSkeleton.cpp
++++ b/dart/dynamics/MetaSkeleton.cpp
+@@ -190,11 +190,11 @@ static Eigen::VectorXd getValuesFromVector(
+ 
+ //==============================================================================
+ template <double (DegreeOfFreedom::*getValue)() const>
+-static Eigen::VectorXd getValuesFromAllDofs(
+-    const MetaSkeleton* skel, std::string_view fname)
++static void getValuesFromAllDofs(
++    const MetaSkeleton* skel, Eigen::VectorXd& values, std::string_view fname)
+ {
+   std::size_t nDofs = skel->getNumDofs();
+-  Eigen::VectorXd values(nDofs);
++  values.resize(static_cast<Eigen::Index>(nDofs));
+ 
+   for (std::size_t i = 0; i < nDofs; ++i) {
+     const DegreeOfFreedom* dof = skel->getDof(i);
+@@ -209,7 +209,15 @@ static Eigen::VectorXd getValuesFromAllDofs(
+       DART_ASSERT(false);
+     }
+   }
++}
+ 
++//==============================================================================
++template <double (DegreeOfFreedom::*getValue)() const>
++static Eigen::VectorXd getValuesFromAllDofs(
++    const MetaSkeleton* skel, std::string_view fname)
++{
++  Eigen::VectorXd values;
++  getValuesFromAllDofs<getValue>(skel, values, fname);
+   return values;
+ }
+ 
+@@ -336,6 +344,13 @@ Eigen::VectorXd MetaSkeleton::getCommands() const
+       this, "getCommands");
+ }
+ 
++//==============================================================================
++void MetaSkeleton::getCommands(Eigen::VectorXd& commands) const
++{
++  getValuesFromAllDofs<&DegreeOfFreedom::getCommand>(
++      this, commands, "getCommands");
++}
++
+ //==============================================================================
+ Eigen::VectorXd MetaSkeleton::getCommands(
+     const std::vector<std::size_t>& _indices) const
+@@ -386,6 +401,13 @@ Eigen::VectorXd MetaSkeleton::getPositions() const
+       this, "getPositions");
+ }
+ 
++//==============================================================================
++void MetaSkeleton::getPositions(Eigen::VectorXd& positions) const
++{
++  getValuesFromAllDofs<&DegreeOfFreedom::getPosition>(
++      this, positions, "getPositions");
++}
++
+ //==============================================================================
+ Eigen::VectorXd MetaSkeleton::getPositions(
+     const std::vector<std::size_t>& _indices) const
+@@ -525,6 +547,13 @@ Eigen::VectorXd MetaSkeleton::getVelocities() const
+       this, "getVelocities");
+ }
+ 
++//==============================================================================
++void MetaSkeleton::getVelocities(Eigen::VectorXd& velocities) const
++{
++  getValuesFromAllDofs<&DegreeOfFreedom::getVelocity>(
++      this, velocities, "getVelocities");
++}
++
+ //==============================================================================
+ Eigen::VectorXd MetaSkeleton::getVelocities(
+     const std::vector<std::size_t>& _indices) const
+@@ -664,6 +693,13 @@ Eigen::VectorXd MetaSkeleton::getAccelerations() const
+       this, "getAccelerations");
+ }
+ 
++//==============================================================================
++void MetaSkeleton::getAccelerations(Eigen::VectorXd& accelerations) const
++{
++  getValuesFromAllDofs<&DegreeOfFreedom::getAcceleration>(
++      this, accelerations, "getAccelerations");
++}
++
+ //==============================================================================
+ Eigen::VectorXd MetaSkeleton::getAccelerations(
+     const std::vector<std::size_t>& _indices) const
+@@ -815,6 +851,12 @@ Eigen::VectorXd MetaSkeleton::getForces() const
+   return getValuesFromAllDofs<&DegreeOfFreedom::getForce>(this, "getForces");
+ }
+ 
++//==============================================================================
++void MetaSkeleton::getForces(Eigen::VectorXd& forces) const
++{
++  getValuesFromAllDofs<&DegreeOfFreedom::getForce>(this, forces, "getForces");
++}
++
+ //==============================================================================
+ Eigen::VectorXd MetaSkeleton::getForces(
+     const std::vector<std::size_t>& _indices) const
+diff --git a/dart/dynamics/MetaSkeleton.hpp b/dart/dynamics/MetaSkeleton.hpp
+index cfc69239d544f..24568668bdf80 100644
+--- a/dart/dynamics/MetaSkeleton.hpp
++++ b/dart/dynamics/MetaSkeleton.hpp
+@@ -268,6 +268,12 @@ class MetaSkeleton : public common::Subject
+   /// Get commands for all generalized coordinates
+   Eigen::VectorXd getCommands() const;
+ 
++  /// Write the commands for all generalized coordinates into a buffer.
++  ///
++  /// The buffer is resized to getNumDofs(). One that already has that size
++  /// is not reallocated, so reusing it makes this call allocation-free.
++  void getCommands(Eigen::VectorXd& commands) const;
++
+   /// Get commands for a subset of the generalized coordinates
+   Eigen::VectorXd getCommands(const std::vector<std::size_t>& _indices) const;
+ 
+@@ -297,6 +303,12 @@ class MetaSkeleton : public common::Subject
+   /// Get the positions for all generalized coordinates
+   Eigen::VectorXd getPositions() const;
+ 
++  /// Write the positions for all generalized coordinates into a buffer.
++  ///
++  /// The buffer is resized to getNumDofs(). One that already has that size
++  /// is not reallocated, so reusing it makes this call allocation-free.
++  void getPositions(Eigen::VectorXd& positions) const;
++
+   /// Get the positions for a subset of the generalized coordinates
+   Eigen::VectorXd getPositions(const std::vector<std::size_t>& _indices) const;
+ 
+@@ -368,6 +380,12 @@ class MetaSkeleton : public common::Subject
+   /// Get the velocities for all generalized coordinates
+   Eigen::VectorXd getVelocities() const;
+ 
++  /// Write the velocities for all generalized coordinates into a buffer.
++  ///
++  /// The buffer is resized to getNumDofs(). One that already has that size
++  /// is not reallocated, so reusing it makes this call allocation-free.
++  void getVelocities(Eigen::VectorXd& velocities) const;
++
+   /// Get the velocities for a subset of the generalized coordinates
+   Eigen::VectorXd getVelocities(const std::vector<std::size_t>& _indices) const;
+ 
+@@ -443,6 +461,12 @@ class MetaSkeleton : public common::Subject
+   /// Get the accelerations for all generalized coordinates
+   Eigen::VectorXd getAccelerations() const;
+ 
++  /// Write the accelerations for all generalized coordinates into a buffer.
++  ///
++  /// The buffer is resized to getNumDofs(). One that already has that size
++  /// is not reallocated, so reusing it makes this call allocation-free.
++  void getAccelerations(Eigen::VectorXd& accelerations) const;
++
+   /// Get the accelerations for a subset of the generalized coordinates
+   Eigen::VectorXd getAccelerations(
+       const std::vector<std::size_t>& _indices) const;
+@@ -518,6 +542,12 @@ class MetaSkeleton : public common::Subject
+   /// Get the forces for all generalized coordinates
+   Eigen::VectorXd getForces() const;
+ 
++  /// Write the forces for all generalized coordinates into a buffer.
++  ///
++  /// The buffer is resized to getNumDofs(). One that already has that size
++  /// is not reallocated, so reusing it makes this call allocation-free.
++  void getForces(Eigen::VectorXd& forces) const;
++
+   /// Get the forces for a subset of the generalized coordinates
+   Eigen::VectorXd getForces(const std::vector<std::size_t>& _indices) const;
+ 
