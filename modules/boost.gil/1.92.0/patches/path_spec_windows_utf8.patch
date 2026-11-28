@@ -1,0 +1,164 @@
+diff --git a/include/boost/gil/io/path_spec.hpp b/include/boost/gil/io/path_spec.hpp
+index 0dd499b04a..3a8f05586f 100644
+--- a/include/boost/gil/io/path_spec.hpp
++++ b/include/boost/gil/io/path_spec.hpp
+@@ -12,12 +12,46 @@
+ #include <boost/gil/io/detail/filesystem.hpp>
+ 
+ #include <cstdlib>
++#include <cstring>
+ #include <cwchar>
+ #include <string>
+ #include <type_traits>
+ 
++#if defined(_WIN32)
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#include <windows.h>
++#endif
++
+ namespace boost { namespace gil { namespace detail {
+ 
++#if defined(_WIN32)
++// Converts a wide string (UTF-16 on Windows) to UTF-8 without relying on
++// the current C/global locale. wcstombs/wcsrtombs depend on setlocale()
++// state, and MSVC's setlocale() parser is stricter than std::locale's own
++// constructor about which locale-name strings it accepts, so a locale that
++// constructs successfully can still leave the C runtime on the system ANSI
++// codepage instead of UTF-8. WideCharToMultiByte with CP_UTF8 sidesteps
++// that mismatch entirely.
++inline std::string wide_to_utf8(wchar_t const* str, std::size_t len)
++{
++    if (len == 0)
++    {
++        return std::string();
++    }
++    int const size = ::WideCharToMultiByte(
++        CP_UTF8, 0, str, static_cast<int>(len), nullptr, 0, nullptr, nullptr);
++    std::string result(static_cast<std::size_t>(size), '\0');
++    ::WideCharToMultiByte(
++        CP_UTF8, 0, str, static_cast<int>(len), &result[0], size, nullptr, nullptr);
++    return result;
++}
++#endif
++
+ template<typename P> struct is_supported_path_spec              : std::false_type {};
+ template<> struct is_supported_path_spec< std::string >         : std::true_type {};
+ template<> struct is_supported_path_spec< const std::string >   : std::true_type {};
+@@ -43,6 +77,9 @@ inline std::string convert_to_string( std::string const& obj)
+ 
+ inline std::string convert_to_string( std::wstring const& s )
+ {
++#if defined(_WIN32)
++    return wide_to_utf8( s.c_str(), s.size() );
++#else
+     std::mbstate_t state = std::mbstate_t();
+     const wchar_t* str = s.c_str();
+     const std::size_t len = std::wcsrtombs(nullptr, &str, 0, &state);
+@@ -50,6 +87,7 @@ inline std::string convert_to_string( std::wstring const& s )
+     std::wcstombs( &result[0], s.c_str(), len );
+ 
+     return result;
++#endif
+ }
+ 
+ inline std::string convert_to_string( char const* str )
+@@ -84,16 +122,27 @@ inline char const* convert_to_native_string( const std::string& str )
+ 
+ inline char const* convert_to_native_string( const wchar_t* str )
+ {
++#if defined(_WIN32)
++    std::string const utf8 = wide_to_utf8( str, std::wcslen( str ) );
++    char* c = new char[utf8.size() + 1];
++    std::memcpy( c, utf8.c_str(), utf8.size() + 1 );
++
++    return c;
++#else
+     std::mbstate_t state = std::mbstate_t();
+     const std::size_t len = std::wcsrtombs(nullptr, &str, 0, &state) + 1;
+     char* c = new char[len];
+     std::wcstombs( c, str, len );
+ 
+     return c;
++#endif
+ }
+ 
+ inline char const* convert_to_native_string( std::wstring const& str )
+ {
++#if defined(_WIN32)
++    return convert_to_native_string( str.c_str() );
++#else
+     std::mbstate_t state = std::mbstate_t();
+     const wchar_t* wstr = str.c_str();
+     const std::size_t len = std::wcsrtombs(nullptr, &wstr, 0, &state) + 1;
+@@ -101,6 +150,7 @@ inline char const* convert_to_native_string( std::wstring const& str )
+     std::wcstombs( c, str.c_str(), len );
+ 
+     return c;
++#endif
+ }
+ 
+ }}} // namespace boost::gil::detail
+diff --git a/test/core/io/path_spec.cpp b/test/core/io/path_spec.cpp
+index e8881003e0..7d1a71129d 100644
+--- a/test/core/io/path_spec.cpp
++++ b/test/core/io/path_spec.cpp
+@@ -15,7 +15,7 @@ namespace gil = boost::gil;
+ 
+ void test_convert_to_string_from_wstring()
+ {
+-    std::wstring const path = L"/some_path/傳/привет/qwerty";
++    std::wstring const path = L"/some_path/\u50B3/\u043F\u0440\u0438\u0432\u0435\u0442/qwerty";
+     std::string const expected = "/some_path/\xE5\x82\xB3/\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82/qwerty";
+ 
+     std::string string = gil::detail::convert_to_string(path);
+@@ -25,7 +25,7 @@ void test_convert_to_string_from_wstring()
+ 
+ void test_convert_to_native_string_from_wchar_t_ptr()
+ {
+-    wchar_t const* path = L"/some_path/傳/привет/qwerty";
++    wchar_t const* path = L"/some_path/\u50B3/\u043F\u0440\u0438\u0432\u0435\u0442/qwerty";
+     char const* expected = "/some_path/\xE5\x82\xB3/\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82/qwerty";
+ 
+     char const* string = gil::detail::convert_to_native_string(path);
+@@ -36,7 +36,7 @@ void test_convert_to_native_string_from_wchar_t_ptr()
+ 
+ void test_convert_to_native_string_from_wstring()
+ {
+-    std::wstring const path = L"/some_path/傳/привет/qwerty";
++    std::wstring const path = L"/some_path/\u50B3/\u043F\u0440\u0438\u0432\u0435\u0442/qwerty";
+     char const* expected = "/some_path/\xE5\x82\xB3/\xD0\xBF\xD1\x80\xD0\xB8\xD0\xB2\xD0\xB5\xD1\x82/qwerty";
+ 
+     char const* string = gil::detail::convert_to_native_string(path);
+@@ -47,19 +47,15 @@ void test_convert_to_native_string_from_wstring()
+ 
+ int main()
+ {
+-    // Set global locale to one that uses UTF-8. The exact name of such a
+-    // locale is platform-dependent (e.g. "C.UTF-8" on glibc systems is not
+-    // available on macOS), so try a few common candidates and fall back to
+-    // the current locale if none of them exist on this system.
+-    // ".UTF-8" is tried first: it is the cross-platform-safe form documented
+-    // by Microsoft (since VS2015 Update 2 / Windows 10 1803) that is
+-    // recognized by both std::locale and the underlying setlocale() call it
+-    // triggers; POSIX-style names such as "en_US.UTF-8" can construct a
+-    // valid std::locale on MSVC without actually switching the C runtime's
+-    // multibyte conversion (used by wcstombs) to UTF-8, silently leaving it
+-    // on the system ANSI codepage.
++    // On Windows, convert_to_string()/convert_to_native_string() encode
++    // UTF-8 directly via WideCharToMultiByte and don't depend on the
++    // global locale. On POSIX, they still use wcstombs/wcsrtombs, which
++    // require a UTF-8-capable global locale to be active. The exact name
++    // of such a locale is platform-dependent (e.g. "C.UTF-8" on glibc
++    // systems is not available on macOS), so try a few common candidates;
++    // this is a no-op in practice on Windows.
+     char const* const utf8_locale_names[] = {
+-        ".UTF-8", "C.UTF-8", "en_US.UTF-8", "UTF-8", "en_US.utf8"
++        "C.UTF-8", "en_US.UTF-8", "UTF-8", "en_US.utf8"
+     };
+     for (char const* name : utf8_locale_names)
+     {
