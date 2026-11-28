@@ -1,0 +1,115 @@
+"Bazel dependencies"
+
+# NOTE: The version field is intentionally omitted. Leaving it unset (the
+# default "") prevents issues when the module is used via non-registry
+# overrides (e.g. https://github.com/bazel-contrib/rules_go/issues/4380).
+# The publish-to-bcr GitHub Action patches in the release version when
+# submitting to the Bazel Central Registry.
+#
+# NOTE: compatibility_level is omitted (defaults to 0). Bumping it is very
+# disruptive — as soon as a module is requested at two different compatibility
+# levels in the dependency tree, users see an error. Only bump it when the
+# breaking change affects most use cases and isn't easy to work around, and
+# in the same commit that introduces the incompatible change.
+module(
+    name = "ai_rules_dart",
+    version = "0.21.0",
+    bazel_compatibility = [">=9.0.0"],
+    repo_name = "rules_dart",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "package_metadata", version = "0.0.13")
+bazel_dep(name = "platforms", version = "1.1.0")
+
+# The Gazelle plugin at //gazelle/dart is a go_library, so its BUILD file
+# loads @io_bazel_rules_go//go:def.bzl. In bzlmod, BUILD files are evaluated
+# in the context of their owning module — so rules_go must be a regular (not
+# dev) dependency for the plugin to be loadable from downstream modules.
+# The Go SDK and toolchain are only fetched if a target in //gazelle/... is
+# actually built; they are not downloaded for normal Dart-only usage.
+bazel_dep(name = "gazelle", version = "0.54.0", repo_name = "bazel_gazelle")
+bazel_dep(name = "rules_go", version = "0.64.2", repo_name = "io_bazel_rules_go")
+
+# Native code-asset support under //dart/ext/<package> (e.g. //dart/ext/sqlite3)
+# builds a cc_shared_library, so its BUILD loads @rules_cc and wraps a BCR
+# native module. Like rules_go above, these are regular (not dev) deps so the
+# `//dart/ext/sqlite3:code_asset` target is usable from downstream modules.
+# The native libraries are only built if a target referencing them is built;
+# they are not fetched for normal Dart-only usage.
+bazel_dep(name = "rules_cc", version = "0.2.26")
+bazel_dep(name = "sqlite3", version = "3.53.4")
+
+# Sources for //dart/ext/webcrypto: the pub archive itself, for its C glue and
+# the BoringSSL revision it vendors and generated its Dart bindings against.
+# Fetched only when that code asset is built.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "webcrypto_pub_archive",
+    build_file = "//dart/ext/webcrypto:webcrypto.BUILD",
+    sha256 = "9885ed99a846191542dd6ca820c83a098117df56be57453832233a3fef68f3f2",
+    urls = ["https://pub.dev/api/archives/webcrypto-0.6.1.tar.gz"],
+)
+
+# On macOS, rules_cc leaves C++ to apple_support's toolchain. 2.9.0 builds that
+# toolchain's helper tools for macOS 11, the oldest Xcode 27's libc++ accepts
+# without a warning. Dev-only: the C++ toolchain is the consuming module's call.
+bazel_dep(name = "apple_support", version = "2.10.1", dev_dependency = True)
+
+# On Linux, register a hermetic Zig-backed C/C++ toolchain for rules_dart's own
+# native targets and tests so builds do not probe the host via local_config_cc.
+bazel_dep(name = "hermetic_cc_toolchain", version = "4.3.0", dev_dependency = True)
+
+cc_toolchains = use_extension(
+    "@hermetic_cc_toolchain//toolchain:ext.bzl",
+    "toolchains",
+    dev_dependency = True,
+)
+use_repo(cc_toolchains, "zig_sdk")
+
+register_toolchains(
+    "@zig_sdk//toolchain:linux_amd64_gnu.2.28",
+    "@zig_sdk//toolchain:linux_arm64_gnu.2.28",
+    dev_dependency = True,
+)
+
+dart = use_extension("//dart:extensions.bzl", "dart")
+dart.toolchain(dart_version = "3.13.5")
+
+# Besides the scanner and the toolchains, the host SDK repositories for every
+# platform the pub archive scanner supports: the scanner repository compiles
+# its executable from the default toolchain's host SDK, resolved through this
+# module's own mapping (`Label("@dart_<platform>//:...")` in
+# `//dart/pub/private:pub_scanner_repo.bzl`), so no caller or consumer mapping
+# and no hand-built canonical name is ever involved. This module's own
+# non-dev `dart.toolchain` tag above guarantees the `dart` registration — and
+# with it every one of these repositories — exists in every build.
+use_repo(
+    dart,
+    "dart_linux-arm64",
+    "dart_linux-x64",
+    "dart_macos-arm64",
+    "dart_macos-x64",
+    "dart_pub_scanner",
+    "dart_toolchains",
+    "dart_windows-x64",
+)
+
+register_toolchains("@dart_toolchains//:all")
+
+# Copies files into one directory for `dart_source_set` and the staging rules.
+register_toolchains("//dart:copy_toolchain")
+
+# Pub deps for the //dart/ext/* shim binaries (build_runner replacement).
+# Pinned by //dart/ext:pubspec.lock; resolved into @ext_pub_deps so per-builder
+# shims can depend on packages like json_serializable, freezed, mockito, …
+pub = use_extension("//dart/pub:extensions.bzl", "pub")
+pub.from_lock(
+    name = "ext_pub_deps",
+    lock = "//dart/ext:pubspec.lock",
+    # A consumer's lock may be newer than ours for a package both name; ours
+    # yields rather than failing their build.
+    on_version_conflict = "upgrade",
+)
+use_repo(pub, "ext_pub_deps")
