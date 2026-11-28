@@ -1,0 +1,190 @@
+matrix:
+  platform:
+    - debian13
+    - ubuntu2204
+  bazel:
+    - 7.x
+    - 8.x
+    - 9.x
+
+tasks:
+  verify_targets:
+    name: Verify build targets
+    platform: ${{ platform }}
+    bazel: ${{ bazel }}
+    build_targets:
+      - '@aws_sdk//:access_management'
+      - '@aws_sdk//:cognito_identity'
+      - '@aws_sdk//:core'
+      - '@aws_sdk//:firehose'
+      - '@aws_sdk//:identity_management'
+      - '@aws_sdk//:kinesis'
+      - '@aws_sdk//:kms'
+      - '@aws_sdk//:monitoring'
+      - '@aws_sdk//:queues'
+      - '@aws_sdk//:redshift_serverless'
+      - '@aws_sdk//:s3'
+      - '@aws_sdk//:s3_crt'
+      - '@aws_sdk//:s3_encryption'
+      - '@aws_sdk//:s3_transfer'
+      - '@aws_sdk//:secretsmanager'
+      - '@aws_sdk//:sts'
+      - '@aws_sdk//:text_to_speech'
+      - '@aws_sdk//:transfer'
+    build_flags:
+      - '--cxxopt=-std=c++17'
+
+incompatible_flags:
+  # https://github.com/bazelbuild/bazel/issues/12933
+  "--incompatible_config_setting_private_default_visibility":
+    - 7.x
+    - 8.x
+    - 9.x
+  # https://github.com/bazelbuild/bazel/issues/17032
+  "--incompatible_disable_starlark_host_transitions":
+    - 7.x
+    - 8.x
+    - 9.x
+  # https://github.com/bazelbuild/bazel/issues/22080
+  "--incompatible_disable_native_repo_rules":
+    - 7.x
+    - 8.x
+    - 9.x
+  # Disabled because of a transitive dependency on `opentelemetry-cpp` that is
+  # incompatible.
+  "--incompatible_autoload_externally=":
+    - 7.x
+    #- 8.x
+  "--incompatible_disable_autoloads_in_main_repo":
+    - last_green
+    - rolling
+  # https://github.com/bazelbuild/bazel/issues/7026
+  "--incompatible_strict_action_env":
+    - 7.x
+    - 8.x
+    - 9.x
+
+bcr_test_module:
+  module_path: test
+  matrix:
+    platform:
+      - debian13
+      - ubuntu2204
+    bazel:
+      - 7.x
+      - 8.x
+      - 9.x
+    checksum_platform:
+      - x86_64_v1
+      - x86_64_v2
+      - x86_64_v3
+      - x86_64_v3_no_pclmul
+      - x86_64_v4
+      - x86_64_v4_no_vpclmul
+  tasks:
+    verify_targets_with_openssl:
+      name: Verify build targets with OpenSSL
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - '@aws_sdk//:access_management'
+        - '@aws_sdk//:cognito_identity'
+        - '@aws_sdk//:core'
+        - '@aws_sdk//:firehose'
+        - '@aws_sdk//:identity_management'
+        - '@aws_sdk//:kinesis'
+        - '@aws_sdk//:kms'
+        - '@aws_sdk//:monitoring'
+        - '@aws_sdk//:queues'
+        - '@aws_sdk//:redshift_serverless'
+        - '@aws_sdk//:s3'
+        - '@aws_sdk//:s3_crt'
+        - '@aws_sdk//:s3_encryption'
+        - '@aws_sdk//:s3_transfer'
+        - '@aws_sdk//:secretsmanager'
+        - '@aws_sdk//:sts'
+        - '@aws_sdk//:text_to_speech'
+        - '@aws_sdk//:transfer'
+      build_flags:
+        - '--cxxopt=-std=c++17'
+        - '--@curl//:ssl_lib=openssl'
+      test_targets:
+        - //:checksums_test
+        - //:components_test
+      test_flags:
+        - '--cxxopt=-std=c++17'
+        - '--@curl//:ssl_lib=openssl'
+    verify_components:
+      name: Verify components with default settings
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets:
+        - //:components_test
+      test_flags:
+        - '--cxxopt=-std=c++17'
+    verify_crt_http_client:
+      name: Verify components with the CRT HTTP client
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets:
+        - //:components_test
+      test_flags:
+        - '--cxxopt=-std=c++17'
+        - '--@aws_sdk//:http_client=crt'
+    verify_non_default_settings:
+      name: Verify components with non-default build settings
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets:
+        - //:components_test
+      test_flags:
+        - '--cxxopt=-std=c++17'
+        - '--@aws_sdk//:curl_logging=false'
+        - '--@aws_sdk//:disable_imdsv1=true'
+        - '--@aws_sdk//:memory_management=true'
+        - '--@aws_sdk//:min_tls_version=1.3'
+        - '--@aws_sdk//:opentelemetry=false'
+        - '--@aws_sdk//:request_compression=false'
+        - '--@aws_sdk//:user_agent_customization=bcr-presubmit/1.0'
+    verify_no_http_client:
+      name: Build components without an HTTP client
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      build_targets:
+        - //:components_test
+      build_flags:
+        - '--cxxopt=-std=c++17'
+        - '--@aws_sdk//:http_client=none'
+        - '--@aws_sdk//:min_tls_version=1.0'
+    verify_checksums_native:
+      name: Verify native hardware checksum dispatch
+      platform: ${{ platform }}
+      bazel: ${{ bazel }}
+      test_targets:
+        - //:checksums_test
+      test_flags:
+        - '--platforms=@platforms_contrib//host:native'
+    verify_checksums_x86_tiers:
+      name: Build checksum dispatch tiers
+      platform: ubuntu2204
+      bazel: ${{ bazel }}
+      build_targets:
+        - //:checksums_test
+      build_flags:
+        - '--platforms=//:${{ checksum_platform }}'
+    verify_checksums_arm64:
+      name: Initialize and verify checksums with -march=armv8-a
+      platform: ubuntu2204_arm64
+      bazel: ${{ bazel }}
+      test_targets:
+        - //:checksums_test
+      test_flags:
+        - '--copt=-march=armv8-a'
+    verify_checksums_armv8_2:
+      name: Initialize and verify checksums with -march=armv8.2-a
+      platform: ubuntu2204_arm64
+      bazel: ${{ bazel }}
+      test_targets:
+        - //:checksums_test
+      test_flags:
+        - '--copt=-march=armv8.2-a'
